@@ -388,7 +388,10 @@ import semver from 'semver';
 // server ignores the options and opens the sidebar pane in every tab, and has no
 // `alive`, so a manifest that needs either declares `^1.50.0`.
 //
-export const HOST_API_VERSION = '1.50.0';
+// 1.51.0 adds board.tray ownership, its Minimise replacement and atomic
+// client setMinimisedTasks. Extensions using them declare `^1.51.0`.
+//
+export const HOST_API_VERSION = '1.51.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

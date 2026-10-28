@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'board.tray']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -1939,4 +1939,91 @@ test('hosted payload and validation use the board registration order across anch
   const h = slots.forExtension('launcher').api.dispatchFields.mount(document.make(), { mode: 'job' });
   assert.deepEqual(h.read(), slots.dispatchFields({ mode: 'launch' }));
   assert.equal(h.validate(), slots.validateDispatch({ mode: 'launch' }));
+});
+
+test('board.tray owns one persistent mount and reports collisions once', () => {
+  const { document, slots, errors } = harness();
+  const log = [];
+  for (const ext of ['first', 'second']) slots.register('board.tray', ext, {
+    id: 'tray', mount: () => log.push(ext), unmount: () => log.push(`off:${ext}`),
+  });
+  const host = document.make();
+  assert.equal(slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {}), true);
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.deepEqual(log, ['first']);
+  assert.equal(host.children.length, 1);
+  assert.equal(errors.length, 1);
+  slots.removeExtension('first');
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.deepEqual(log, ['first', 'off:first', 'second']);
+  slots.removeExtension('second');
+  assert.equal(host.children.length, 0);
+  assert.equal(slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {}), false);
+});
+
+test('board.tray receives ordered task and minimised snapshots on every core view change', () => {
+  const { document, slots } = harness();
+  const seen = [];
+  slots.register('board.tray', 'owner', { id: 'tray', mount() {}, update(el, ctx) {
+    seen.push(structuredClone(ctx));
+    ctx.tasks[0].name = 'changed'; ctx.minimisedIds.push('wrong');
+  } });
+  const host = document.make();
+  const tasks = [{ id: 'b', name: 'Beta', adhoc: false }, { id: '__adhoc__', name: 'Unassigned', adhoc: true }, { id: 'a', name: 'Alpha', adhoc: false }];
+  const ctx = { tasks, minimisedIds: ['a'] };
+  slots.syncTray(host, {}, ctx, {});
+  slots.syncTray(host, {}, { tasks, minimisedIds: ['b', 'a'] }, {});
+  assert.deepEqual(seen.map((x) => x.tasks.map((t) => t.id)), [['b', '__adhoc__', 'a'], ['b', '__adhoc__', 'a']]);
+  assert.deepEqual(seen.map((x) => x.minimisedIds), [['a'], ['b', 'a']]);
+  assert.equal(tasks[0].name, 'Beta');
+  assert.deepEqual(ctx.minimisedIds, ['a']);
+});
+
+for (const phase of ['mount', 'update']) test(`board.tray ${phase} failure cleans up and promotes the next owner`, () => {
+  const { document, slots } = harness();
+  let cleanups = 0;
+  slots.register('board.tray', 'bad', { id: 'tray', mount() {}, [phase]() { throw Error('broken'); }, unmount() { cleanups++; } });
+  slots.register('board.tray', 'good', { id: 'tray', mount() {} });
+  const host = document.make();
+  assert.equal(slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {}), true);
+  assert.equal(cleanups, 1);
+  assert.equal(host.children[0].dataset.ext, 'good');
+  slots.removeExtension('good');
+  assert.equal(slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {}), false);
+});
+
+test('only the mounted tray owner replaces Minimise, including Unassigned; failures restore core', () => {
+  const { document, slots, errors } = harness();
+  const calls = [];
+  for (const ext of ['first', 'second']) slots.register('board.tray', ext, {
+    id: 'tray', mount() {}, minimiseItem(task, graph, api) {
+      return { label: 'Manage profiles…', run: () => calls.push([ext, task.id]) };
+    },
+  });
+  assert.equal(slots.trayMinimiseItem({ id: 'a' }, {}, {}), null);
+  slots.syncTray(document.make(), {}, { tasks: [], minimisedIds: [] }, {});
+  slots.trayMinimiseItem({ id: '__adhoc__', adhoc: true }, {}, {}).run();
+  assert.deepEqual(calls, [['first', '__adhoc__']]);
+  slots.removeExtension('first');
+  assert.equal(slots.trayMinimiseItem({ id: 'a' }, {}, {}), null);
+  slots.removeExtension('second');
+  slots.register('board.tray', 'broken', { id: 'tray', mount() {}, minimiseItem() { throw Error('broken'); } });
+  const host = document.make();
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.equal(slots.trayMinimiseItem({ id: 'a' }, {}, {}), null);
+  assert.equal(host.children.length, 0);
+  assert.ok(errors.some((x) => x.includes('minimiseItem')));
+});
+
+test('setMinimisedTasks validates the complete input before forwarding a snapshot', () => {
+  const { slots } = harness();
+  const applied = [];
+  const api = slots.forExtension('example', { setMinimisedTasks(ids) { applied.push(ids); return ids.length === 0; } }).api;
+  for (const ids of [null, 'a', new Set(['a']), ['a', 2], ['']]) assert.equal(api.setMinimisedTasks(ids), false);
+  assert.deepEqual(applied, []);
+  const ids = ['a'];
+  assert.equal(api.setMinimisedTasks(ids), false);
+  ids.push('b');
+  assert.deepEqual(applied, [['a']]);
+  assert.equal(api.setMinimisedTasks([]), true);
 });

@@ -1155,10 +1155,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 - **`task.action` is `card.action` for a TILE, and its subject is `{ id, name,
   adhoc }`, never the DOM cell.** `slots.taskMenuItems(task, graph, api)` shares
   `menuItems`'s whole body (`valueMenuItems`), so the item shape, escaping and
-  guards cannot drift between the two. It feeds ONLY the tile's right-click menu
-  (`app.js openTaskMenu`, between the task's own actions and Archive task) — NOT
-  the header kebab (`openTaskActionsMenu`), which already carries core's
-  Minimise/Focus and would show an extension's duplicate beside it. The right-click
+  guards cannot drift between the two. It feeds the tile's right-click menu
+  (`app.js openTaskMenu`) and the header menu (`openTaskActionsMenu`) for named
+  tasks; Unassigned receives these extra actions in its right-click menu. The right-click
   menu carries core's Minimise too; `extTaskMenuItems` drops the `Minimise` item
   contributed by the `minimise-task` extension (matched on extension id and label,
   in both menus) so that extension still loads without a duplicate. The no-task
@@ -1182,6 +1181,50 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   route, so an extension can reopen whatever the reader left. It never fires if
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
+- **`board.tray` (1.51.0)** is an exclusive mount-style slot for the bottom strip.
+  Register `{ id, mount(el, api, ctx), update?(el, ctx, graph), unmount?(el),
+  minimiseItem?(task, graph, api) }`. Its `ctx` is `{ tasks, minimisedIds }`:
+  `tasks` contains `{ id, name, adhoc }` in live board display order, including
+  Unassigned (`id: 'adhoc', adhoc: true`) and excluding archived/deleted tasks;
+  `minimisedIds` is an array of the browser's current minimised task ids.
+  Both are fresh snapshots. Core owns that set; enabling a tray does not change it.
+  `mount` receives the initial context, then `update` runs on every board render,
+  including graph changes, reorder, Focus, keyboard focus navigation, task/session
+  opening and bulk minimisation. New tasks are visible until explicitly minimised.
+  If housekeeping removes the last visible task, core clears the minimised set.
+
+  The first registered contribution wins; collisions are reported once per pair.
+  Later contributors remain unmounted until an earlier one is removed or fails.
+  The winner keeps its element across board renders and owns the entire strip,
+  which is visible even with no minimised tasks. Core's pills and Restore all are
+  absent while it owns the strip. Mount runs before the strip is placed on the board;
+  layout-dependent work belongs after placement (for example in an animation frame).
+  Disable, uninstall or failed module loading unmounts and removes its contribution.
+  A throwing `mount` or `update` does the same, then tries the next contributor in
+  registration order; with none left, core's strip returns in that render. Unmount
+  errors are reported but do not prevent cleanup. Re-enabling registers afresh.
+
+  Only the mounted tray owner's `minimiseItem` can replace core's **Minimise**,
+  in both the header menu and the tile right-click menu, including Unassigned.
+  Return `{ label, icon?, run(event) }`, or `null` to keep core's entry. Labels are
+  escaped text, icons follow the existing menu markup convention, and `run` errors
+  are caught and reported. **Focus** and other menu actions remain available.
+  A throwing callback or malformed item removes the tray contribution, returns
+  core's Minimise for that menu and requests a board render to restore the strip
+  (or promote the next contributor). Ordinary `task.action` contributions cannot
+  replace core's entry or claim tray ownership.
+
+  **`api.setMinimisedTasks(ids)` (1.51.0)** atomically replaces the whole browser
+  minimised set. Pass an array of non-empty task id strings (including `'adhoc'`).
+  Duplicate and non-live ids are pruned before checking the last-visible-tile guard.
+  A request hiding every live tile, or malformed input, returns `false` without
+  changing storage or rendering. Accepted requests return `true`; a changed set is
+  persisted and rendered once, and an unchanged set needs no render. `[]` restores
+  every task. This method is available to every client extension, like
+  `api.minimiseTask`; only menu replacement is tied to tray ownership. Declare
+  `engines.wranglerApi: '^1.51.0'` in both the runtime manifest and `package.json`'s
+  `wranglerExtension` when using these hooks. Server host access still requires
+  the capabilities listed in `requires`.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
   `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
