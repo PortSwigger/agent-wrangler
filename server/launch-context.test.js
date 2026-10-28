@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  collectLaunchContext, lastLaunchContext, launchEnvPrefix, launchAddDirArgs, launchEnvOf, launchAddDirsOf, launchEnvGuard,
+  collectLaunchContext, lastLaunchContext, launchEnvPrefix, launchAddDirArgs, launchCodexConfigArgs, launchEnvOf, launchAddDirsOf, launchEnvGuard,
   LAUNCH_REASONS, EMPTY_LAUNCH_CONTEXT, _resetLaunchContextForTests,
 } from './launch-context.js';
 import { BUILTIN, loadExtensions } from './extensions/index.js';
@@ -339,4 +339,109 @@ test('pane-shell finding: refuseIfSet refuses in the pane, names the variable, n
   const clean = runPane(lc, { shell: HAS_ZSH ? '/bin/zsh' : '/bin/sh' });
   assert.equal(clean.status, 0);
   assert.ok(clean.seen && !('ANTHROPIC_API_KEY' in clean.seen));
+});
+
+// ── codexConfig: nonsecret Codex `-c` overrides ──────────────────────────────
+
+const KEYRING = { cli_auth_credentials_store: 'keyring', forced_login_method: 'chatgpt', 'tui.notifications': false, model_context_window: 200000 };
+
+test('codexConfig merges across extensions; on a collision the later extension wins and the collision is logged', async () => {
+  const { errors, onError } = quiet();
+  const ext = registry(
+    ['a', () => ({ codexConfig: { cli_auth_credentials_store: 'file', forced_login_method: 'chatgpt' } })],
+    ['b', () => ({ codexConfig: { cli_auth_credentials_store: 'keyring', 'tui.notifications': false } })],
+  );
+  const out = await collectLaunchContext({ sid: 's', agent: 'codex' }, { ext, onError });
+  assert.deepEqual(out.codexConfig, { cli_auth_credentials_store: 'keyring', forced_login_method: 'chatgpt', 'tui.notifications': false });
+  assert.deepEqual(errors, ['[launch-context] codexConfig cli_auth_credentials_store set by a and b; b wins']);
+});
+
+for (const name of ['codex buildLaunch', 'codex buildResume', 'codex buildFork']) {
+  test(`codexConfig: ${name} carries each override as -c key=value`, () => {
+    const cmd = BUILDERS[name]({ env: {}, addDirs: [], codexConfig: KEYRING });
+    for (const flag of ["'-c' 'cli_auth_credentials_store=\"keyring\"'", "'-c' 'forced_login_method=\"chatgpt\"'", "'-c' 'tui.notifications=false'", "'-c' 'model_context_window=200000'"]) {
+      assert.ok(cmd.includes(flag), `${flag} in ${cmd.slice(0, 300)}`);
+    }
+  });
+}
+
+test('codexConfig: dispatch, resume and fork collect it and the Codex command carries it', async () => {
+  const ext = registry(['logins', () => ({ codexConfig: { cli_auth_credentials_store: 'keyring' } })]);
+  for (const [reason, build] of [['dispatch', BUILDERS['codex buildLaunch']], ['resume', BUILDERS['codex buildResume']], ['fork', BUILDERS['codex buildFork']]]) {
+    const lc = await collectLaunchContext({ sid: 'cx', agent: 'codex', reason }, { ext, onError: () => {} });
+    assert.ok(build(lc).includes("'-c' 'cli_auth_credentials_store=\"keyring\"'"), reason);
+  }
+});
+
+test('codexConfig: invalid or secret-looking overrides are dropped with a named error that never echoes the value', async () => {
+  const { errors, onError } = quiet();
+  const dropped = {
+    'bad key': 'x',
+    'a=b': 'x',
+    'projects."/repo".trust_level': 'trusted',
+    'nested.': 'x',
+    developer_instructions: 'x',
+    notify: 'x',
+    'mcp_servers.evil.command': '/bin/sh',
+    model: 'gpt-x',
+    model_reasoning_effort: 'high',
+    sandbox_mode: 'danger-full-access',
+    approval_policy: 'never',
+    'sandbox_workspace_write.network_access': true,
+    'projects.repo.trust_level': 'trusted',
+    profile: 'other',
+    'model_providers.acme.experimental_bearer_token': 'fixture-value-1',
+    'model_providers.acme.api_key': 'fixture-value-2',
+    'model_providers.acme.http_headers.X-Key': 'fixture-value-3',
+    'model_providers.acme.env.FOO': 'fixture-value-4',
+    'shell_environment_policy.set.password': 'fixture-value-5',
+    'shell_environment_policy.set.FOO': 'fixture-value-12',
+    client_secret: 'fixture-value-6',
+    openai_api_key: 'fixture-value-7',
+    some_setting: 'sk-fixture-value-8',
+    other_setting: 'Bearer fixture-value-9',
+    jwt_like: 'eyJfixture.value10',
+    gh_like: 'ghp_fixturevalue11',
+    multiline: 'one\ntwo',
+    huge: 'x'.repeat(1025),
+    nan: Number.NaN,
+    inf: Infinity,
+    arr: ['a'],
+    obj: { a: 1 },
+    nul: null,
+  };
+  const ext = registry(['x', () => ({ codexConfig: { ...dropped, cli_auth_credentials_store: 'keyring' } })]);
+  const out = await collectLaunchContext({ sid: 's', agent: 'codex' }, { ext, onError });
+  assert.deepEqual(out.codexConfig, { cli_auth_credentials_store: 'keyring' });
+  assert.equal(errors.length, Object.keys(dropped).length);
+  for (const key of Object.keys(dropped)) {
+    assert.ok(errors.some((e) => e.startsWith(`[ext:x] session.launchContext codexConfig ${JSON.stringify(key)} dropped (`)), key);
+  }
+  assert.ok(errors.includes('[ext:x] session.launchContext codexConfig "client_secret" dropped (key looks like a credential)'));
+  assert.ok(errors.includes('[ext:x] session.launchContext codexConfig "some_setting" dropped (value looks like a credential)'));
+  assert.ok(errors.includes('[ext:x] session.launchContext codexConfig "sandbox_mode" dropped (key is reserved for Agent Wrangler)'));
+  assert.ok(errors.every((e) => !/fixture|sk-|Bearer|ghp_|eyJ/.test(e)), 'no value reaches the log');
+
+  const odd = quiet();
+  for (const codexConfig of ['k=v', ['k=v'], 7]) {
+    const r = await collectLaunchContext({ sid: 's' }, { ext: registry(['y', () => ({ codexConfig })]), onError: odd.onError });
+    assert.deepEqual(r, { env: {}, addDirs: [] });
+  }
+  assert.deepEqual(launchCodexConfigArgs({ codexConfig: { sandbox_mode: 'danger-full-access', 'x y': 1, ok: 'a"b\\c' } }), ['-c', 'ok="a\\"b\\\\c"'], 'the builder re-validates and quotes');
+});
+
+test('codexConfig: Claude launches and launches without the field are unchanged', async () => {
+  const without = { env: { AW_X: '1' }, addDirs: ['/d'] };
+  const withIt = { ...without, codexConfig: KEYRING };
+  for (const [name, build] of Object.entries(BUILDERS)) {
+    if (name.startsWith('claude') || name.startsWith('devcontainer')) assert.equal(await build(withIt), await build(without), `${name} ignores codexConfig`);
+    else assert.equal(await build({ ...without, codexConfig: {} }), await build(without), `${name} with an empty field`);
+  }
+  for (const name of ['codex buildLaunch', 'codex buildResume', 'codex buildFork']) {
+    assert.doesNotMatch(BUILDERS[name](without), /cli_auth_credentials_store/);
+  }
+  const plain = await collectLaunchContext({ sid: 'p' }, { ext: registry(['a', () => ({ env: { AW_X: '1' } })], ['b', () => ({ codexConfig: {} })]), onError: () => {} });
+  assert.deepEqual(plain, { env: { AW_X: '1' }, addDirs: [] }, 'no codexConfig key when nothing survives');
+  assert.deepEqual(launchCodexConfigArgs(undefined), []);
+  assert.deepEqual(launchCodexConfigArgs({ env: {}, addDirs: [] }), []);
 });

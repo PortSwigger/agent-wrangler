@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { launchAddDirArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
+import { launchAddDirArgs, launchCodexConfigArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
 import { shellQuote } from './claude.js';
 import { analyzeCodex, listResumableCodex, activityInRangeCodex, findRollout } from './codex-rollout.js';
@@ -30,7 +30,7 @@ function envPrefix(sessionId, spawnedBy, launchContext) {
   return env;
 }
 
-// Flags shared by launch/resume/fork: autonomy, network, the extensions' directory grants, and
+// Flags shared by launch/resume/fork: autonomy, network, the extensions' config overrides and directory grants, and
 // the additive developer-instructions channel. Autonomy (sandbox, approval, the
 // network grant, --approve-for-me or bypass) comes from an extension's
 // `codexPolicy` answer when one answers (codexPolicyArgs,
@@ -54,6 +54,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
   const base = [mandatorySkillPrompt(undefined, { disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = codexPolicyArgs(codexPolicy);
+  args.push(...launchCodexConfigArgs(launchContext));
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
   args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
   args.push(...launchAddDirArgs(launchContext));
