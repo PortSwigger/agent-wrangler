@@ -409,7 +409,12 @@ import semver from 'semver';
 // server ignores the field and launches without them, so a manifest that relies
 // on it declares `^1.54.0`.
 //
-export const HOST_API_VERSION = '1.54.0';
+// 1.55.0 adds `remoteControl: { name }` to sessions.spawn: a Claude session
+// launched, and resumed every time after, with `--remote-control <name>`. Any
+// other agent is refused by name. An older server refuses nothing and launches
+// without the flag, so a manifest that relies on it declares `^1.55.0`.
+//
+export const HOST_API_VERSION = '1.55.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

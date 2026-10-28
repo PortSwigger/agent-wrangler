@@ -350,6 +350,16 @@ test('spawn offBoard stamps the CALLER\'s id, and absent or false asks for a boa
   assert.equal('offBoard' in seen.dispatch[2], false);
 });
 
+test('spawn remoteControl rides dispatch as { name } for Claude, and is absent otherwise', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo', remoteControl: { name: ' Phone ' } });
+  await host.sessions.spawn({ cwd: '/repo', agent: 'claude', remoteControl: { name: 'Phone' } });
+  await host.sessions.spawn({ cwd: '/repo' });
+  assert.deepEqual(seen.dispatch[0].remoteControl, { name: 'Phone' }, 'the default agent is Claude');
+  assert.deepEqual(seen.dispatch[1].remoteControl, { name: 'Phone' });
+  assert.equal('remoteControl' in seen.dispatch[2], false, 'an ordinary spawn never asks for Remote Control');
+});
+
 test('a mistyped spawn option is REFUSED by name, never launched around', async () => {
   const { seen, host } = spawnWiring();
   const bad = [
@@ -366,6 +376,14 @@ test('a mistyped spawn option is REFUSED by name, never launched around', async 
     [{ autoMergeOnPass: 'true' }, /autoMergeOnPass must be a boolean/],
     [{ autoFixPrChecks: 1 }, /autoFixPrChecks must be a boolean/],
     [{ offBoard: 'other-ext' }, /offBoard must be a boolean/],
+    [{ remoteControl: 'Phone' }, /remoteControl must be an object/],
+    [{ remoteControl: true }, /remoteControl must be an object/],
+    [{ remoteControl: { label: 'Phone' } }, /remoteControl has unknown option\(s\) label/],
+    [{ remoteControl: {} }, /remoteControl\.name must be a non-empty single-line string/],
+    [{ remoteControl: { name: '  ' } }, /remoteControl\.name must be a non-empty single-line string/],
+    [{ remoteControl: { name: 'a\nb' } }, /remoteControl\.name must be a non-empty single-line string/],
+    [{ remoteControl: { name: '--help' } }, /remoteControl\.name must not start with "-"/],
+    [{ agent: 'codex', remoteControl: { name: 'Phone' } }, /remoteControl is Claude only \(agent "codex"/],
   ];
   for (const [args, re] of bad) {
     await assert.rejects(() => host.sessions.spawn({ cwd: '/repo', ...args }), re, JSON.stringify(args));

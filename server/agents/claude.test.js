@@ -56,6 +56,15 @@ test('claude maps an auto-compaction threshold on launch, resume, and fork', () 
   assert.match(fork, /'--autocompact' '400000'/);
 });
 
+test('claude passes --remote-control <name> on launch and resume only when asked, and never on a fork', () => {
+  const rc = { name: 'Phone orchestrator' };
+  assert.match(claude.buildLaunch({ sessionId: 'SID', remoteControl: rc }), /'--remote-control' 'Phone orchestrator'/);
+  assert.match(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE', remoteControl: rc }), /'--remote-control' 'Phone orchestrator'/);
+  assert.doesNotMatch(claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC', remoteControl: rc }), /--remote-control/);
+  assert.doesNotMatch(claude.buildLaunch({ sessionId: 'SID' }), /--remote-control/);
+  assert.doesNotMatch(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }), /--remote-control/);
+});
+
 test('claude leaves auto-compaction unset when a session has no threshold', () => {
   assert.doesNotMatch(claude.buildLaunch({ sessionId: 'SID' }), /--autocompact/);
   assert.doesNotMatch(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }), /--autocompact/);

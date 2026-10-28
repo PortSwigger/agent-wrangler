@@ -163,6 +163,11 @@ test('forkEntry inherits the parent auto-compaction threshold', () => {
   assert.equal(entry.autoCompactTokens, 250000);
 });
 
+test('forkEntry never inherits Remote Control: two sessions under one name would race for the phone', () => {
+  const entry = forkEntry({ short: 'x', tmux: 'cc_x', cwd: '/c', parentEntry: { remoteControl: { name: 'Phone' } }, parentId: 'p', createdAt: 1 });
+  assert.equal('remoteControl' in entry, false);
+});
+
 test('forkEntry: a provided title sets a trimmed custom name', () => {
   const entry = forkEntry({
     short: 's', tmux: 'cc_s', cwd: '/repo',
@@ -356,6 +361,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
     childFullView: true,
     offBoard: 'jobs',
     autoCompactTokens: 250000,
+    remoteControl: { name: 'Phone' },
     nameInherited: true,
     priorLiveSessionIds: ['CLEARED1'],
   };
@@ -375,6 +381,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
   assert.equal(e.childFullView, true); // ditto for a child's full-view override
   assert.equal(e.offBoard, 'jobs'); // an extension-hosted card must not land on the board after resume
   assert.equal(e.autoCompactTokens, 250000);
+  assert.deepEqual(e.remoteControl, { name: 'Phone' }); // every relaunch must pass --remote-control again
   assert.equal(e.nameInherited, true); // the [FORK] marker must survive on a still-unnamed fork
   assert.equal(e.liveSessionId, 'L');
   assert.equal(e.intent, 'fix');
@@ -1070,6 +1077,26 @@ test('_doResume: devcontainer skips the host transcript guard and wraps in a dev
   await sm._doResume('c1', dir, {});   // must NOT throw
   assert.match(captured, /devcontainer up --workspace-folder/); // wrapped, not raw claude
   assert.ok(captured.includes(dir));                            // workspace = the resume dir
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('_doResume relaunches a Remote Control session with --remote-control, and a plain one without', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-rc-resume-'));
+  const sm = new SessionManager();
+  sm.map.clear();
+  sm.killForSession = async () => [];
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  const inners = [];
+  sm._newSession = async (_tmux, _dir, inner) => { inners.push(inner); };
+  // devcontainer skips the host transcript guard, so no ~/.claude transcript is needed.
+  sm.map.set('rc', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000001', cwd: dir, remoteControl: { name: 'Phone' } });
+  sm.map.set('plain', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000002', cwd: dir });
+  await sm._doResume('rc', dir, {});
+  await sm._doResume('plain', dir, {});
+  assert.match(inners[0], /--remote-control\W+Phone\W/);
+  assert.deepEqual(sm.map.get('rc').remoteControl, { name: 'Phone' }, 'still stored for the next resume');
+  assert.doesNotMatch(inners[1], /--remote-control/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -2052,6 +2079,26 @@ test('dispatch stores offBoard when passed, and leaves it undefined otherwise', 
   assert.equal(sm.map.get(hosted.sessionId).offBoard, 'jobs');
   const plain = await sm.dispatch({ cwd: os.tmpdir(), intent: 'y' });
   assert.equal(sm.map.get(plain.sessionId).offBoard, undefined);
+});
+
+test('dispatch with remoteControl launches with --remote-control and stores it; a plain dispatch has neither', async () => {
+  const sm = smForDispatch();
+  const inners = [];
+  sm._newSession = async (_tmux, _dir, inner) => { inners.push(inner); };
+  const rc = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', remoteControl: { name: 'Phone' } });
+  assert.match(inners[0], /'--remote-control' 'Phone'/);
+  assert.deepEqual(sm.map.get(rc.sessionId).remoteControl, { name: 'Phone' });
+  const plain = await sm.dispatch({ cwd: os.tmpdir(), intent: 'y' });
+  assert.doesNotMatch(inners[1], /--remote-control/);
+  assert.equal(sm.map.get(plain.sessionId).remoteControl, undefined);
+});
+
+test('dispatch refuses remoteControl for a Codex session before launching anything', async () => {
+  const sm = smForDispatch();
+  let launched = false;
+  sm._newSession = async () => { launched = true; };
+  await assert.rejects(() => sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex', remoteControl: { name: 'Phone' } }), /Remote Control is Claude only \(agent codex\)/);
+  assert.equal(launched, false);
 });
 
 test('dispatch leaves parentSession undefined when not passed', async () => {
