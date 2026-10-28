@@ -3195,6 +3195,27 @@ test('dispatch: a buildLaunch runtime refuses a launch context it cannot guard i
   assert.equal(sm.map.size, 0);
 });
 
+// The loader already makes a buildLaunch runtime `resumable: false`; registered
+// raw without it, resume and fork reach the same pane-guard refusal as dispatch.
+test('resume and fork: a buildLaunch runtime refuses a launch context it cannot guard in the pane', async () => {
+  const sm = smForDispatch();
+  const calls = [];
+  sm.killForSession = async () => [];
+  sm._newSession = async () => { calls.push('launch'); };
+  sm._ensureClaudeTrust = () => { calls.push('trust'); };
+  sm._mirrorWorktreeTrust = async () => { calls.push('mirror'); };
+  sm._launchContext = async () => ({ env: {}, addDirs: [], refuseIfSet: ['ANTHROPIC_API_KEY'] });
+  const own = { id: 'ownt', label: 'Own', skipsHostResumeGuard: true, buildLaunch: async () => 'echo handed-off' };
+  await withClaudeTrustSetting(true, () => withRuntime(own, 'own', async () => {
+    const entry = { agent: 'claude', runtime: 'ownt', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: os.tmpdir() };
+    sm.map.set('c1', entry);
+    await assert.rejects(sm._doResume('c1', os.tmpdir(), {}), /Runtime ownt builds its own launch, so it cannot check ANTHROPIC_API_KEY in the pane; launch refused/);
+    await assert.rejects(sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: entry, cwd: os.tmpdir() }), /Runtime ownt builds its own launch, so it cannot check ANTHROPIC_API_KEY in the pane; launch refused/);
+  }));
+  assert.deepEqual(calls, [], 'no trust written and nothing launched');
+  assert.deepEqual([...sm.map.keys()], ['c1']);
+});
+
 test('dispatch: a wrapLaunch extension runtime decorates the adapter\'s command', async () => {
   const sm = smForDispatch();
   let captured = '';

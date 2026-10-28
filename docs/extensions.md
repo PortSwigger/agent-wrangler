@@ -1450,7 +1450,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   environment and shell startup files count), before the agent runs: if any is
   set, even to an empty string, the launch exits naming it, and its value is
   never read. A runtime that builds its own launch cannot run the check, so
-  its dispatch is refused instead. Names merge across extensions; headless runs build their
+  a dispatch, resume or fork on it is refused instead. Names merge across extensions; headless runs build their
   environment in the server, where `refuse` already sees it. When the merged
   `env` sets `CLAUDE_CONFIG_DIR` (1.51.0), a Claude dispatch, resume or fork also writes
   the default launch's folder trust into that directory's `.claude.json`: the

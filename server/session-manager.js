@@ -290,6 +290,15 @@ export function shouldReloadWorkflowSkill(workflow) {
   return Boolean(workflow) && !isLegacyWorkerWorkflow(workflow);
 }
 
+// A runtime that builds its own launch has no pane-side `refuseIfSet` check, so
+// a dispatch, resume or fork that asks for one is refused. Resume and fork are
+// already refused upstream for such a runtime (it must be `resumable: false`);
+// this holds if that ever changes.
+export function ownLaunchRefusal(rt, launchContext) {
+  if (!rt?.buildLaunch || !launchContext?.refuseIfSet?.length) return null;
+  return `Runtime ${rt.id} builds its own launch, so it cannot check ${launchContext.refuseIfSet.join(', ')} in the pane; launch refused.`;
+}
+
 // Pure: the fresh mapping entry resume() rebuilds (without archivedAt, so the card
 // returns to the board) while preserving the durable bits of the prior entry. Split
 // out so the carry-forward set is unit-testable — provenance (forkedFrom, spawnedBy,
@@ -1200,6 +1209,8 @@ export class SessionManager {
       sid: sessionId, task: this._taskFor(sessionId) || null, agent, runtime: prev?.runtime || 'local',
       reason: ['message', 'snooze-wake'].includes(reason) ? reason : 'resume',
     });
+    const ownLaunch = ownLaunchRefusal(runtime, launchContext);
+    if (ownLaunch) throw new Error(ownLaunch);
     if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
     const addDirs = await withCodexGitDirAddDir(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
@@ -1288,6 +1299,8 @@ export class SessionManager {
     const launchContext = await this._launchContext({
       sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork', parentId,
     });
+    const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
+    if (ownLaunch) throw new Error(ownLaunch);
     if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
     const addDirs = await withCodexGitDirAddDir(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
@@ -1947,9 +1960,8 @@ export class SessionManager {
     const launchContext = await this._launchContext({
       sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
     });
-    if (builds && launchContext.refuseIfSet?.length) {
-      throw new Error(`Runtime ${runtime} builds its own launch, so it cannot check ${launchContext.refuseIfSet.join(', ')} in the pane; launch refused.`);
-    }
+    const ownLaunch = ownLaunchRefusal(rt, launchContext);
+    if (ownLaunch) throw new Error(ownLaunch);
     if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(cwd, launchContext);
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
