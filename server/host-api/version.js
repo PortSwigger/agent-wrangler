@@ -374,15 +374,21 @@ import semver from 'semver';
 // one-shot Claude runs merge the resulting env after cleaning the process env.
 // Extensions that depend on these launch surfaces declare `^1.48.0`.
 //
-// 1.49.0 adds `presentation: 'dialog'`, `title` and `key` to terminals.create,
+// 1.49.0 adds the optional `autoEffort` on each model of the client
+// `api.agents()`: the effort level the agent uses for that model when a launch
+// passes none ("Auto"), resolved from the user's and organization's settings,
+// and absent when unknown. An older board never sets it, so a manifest that
+// reads it declares `^1.49.0` or treats its absence as unknown.
+//
+// 1.50.0 adds `presentation: 'dialog'`, `title` and `key` to terminals.create,
 // and terminals.alive(terminalId). A dialog (which needs a key) opens only in the
 // tab whose control frame the handler is serving, over whatever is open there;
 // closing it detaches and leaves the shell running, and a create with the same
 // live `key` presents that shell again. The result gains `reused`. An older
 // server ignores the options and opens the sidebar pane in every tab, and has no
-// `alive`, so a manifest that needs either declares `^1.49.0`.
+// `alive`, so a manifest that needs either declares `^1.50.0`.
 //
-export const HOST_API_VERSION = '1.49.0';
+export const HOST_API_VERSION = '1.50.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

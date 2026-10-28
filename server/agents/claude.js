@@ -7,7 +7,7 @@ import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
-import { newestClaudeName, priceCatalogVersion, snapshotClaudeFamilies } from '../price-catalog.js';
+import { newestClaudeId, newestClaudeName, priceCatalogVersion, snapshotClaudeFamilies } from '../price-catalog.js';
 
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
 // as a plugin only on workflow launches (below), so it's available no matter which
@@ -179,6 +179,15 @@ export function derivedModels(families = snapshotClaudeFamilies()) {
       pillLabel: `${family} ${id.slice(`claude-${family}-`.length).replace('-', '.')}`,
       transcriptPrefixes: [`claude-${family}-`],
     }));
+}
+
+// The full model id a launch value runs today (opus → claude-opus-5-5): an alias
+// resolves to the price catalog's newest model of its family, the same one its
+// label names; a derived entry already is one. Null for opusplan, which runs two.
+export function claudeModelId(value) {
+  const family = MODELS.find((m) => m.value === value)?.family;
+  if (family) return newestClaudeId(family);
+  return /^claude-/.test(value || '') ? value : null;
 }
 
 let modelsMemo = null; // { version, models }

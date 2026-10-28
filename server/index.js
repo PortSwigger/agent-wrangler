@@ -72,6 +72,7 @@ import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
+import { withAutoEffort, watchAutoEffortSources } from './agents/auto-effort.js';
 import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
 import { createUpdateService, updateSupport, installDriftStatus } from './update-service.js';
 import { createExtensionUpdateCheck, currentExtensionUpdates } from './extensions/update-check.js';
@@ -1010,10 +1011,11 @@ function broadcastStylesIfChanged() {
 }
 
 // The dispatch dialog's agent/model/effort lists — sent on connect, and again to
-// every board whenever a model or price catalog refresh changes them.
+// every board whenever a model or price catalog refresh, or a settings file that
+// decides a model's Auto effort (`autoEffort`), changes them.
 async function agentsMessage() {
   const list = await availableAgents();
-  return JSON.stringify({ type: 'agents', agents: list.map((a) => ({ id: a.id, label: a.label, models: modelsWithDefault(a), efforts: a.efforts || [] })) });
+  return JSON.stringify({ type: 'agents', agents: list.map((a) => ({ id: a.id, label: a.label, models: withAutoEffort(a.id, modelsWithDefault(a)), efforts: a.efforts || [] })) });
 }
 
 function broadcastAgents() {
@@ -1357,6 +1359,7 @@ async function main() {
   validateDefaultModel();
   onPriceCatalogChange(broadcastAgents);
   onCodexCatalogChange(broadcastAgents);
+  watchAutoEffortSources(broadcastAgents);
   startPriceCatalogRefresh();
   startCodexCatalogRefresh();
 

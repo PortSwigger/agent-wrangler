@@ -14,6 +14,7 @@
     "max",
     "ultra"
    ],
+   "defaultEffort": "medium",
    "contextWindow": 272000
   },
   {
@@ -30,6 +31,7 @@
     "max",
     "ultra"
    ],
+   "defaultEffort": "low",
    "contextWindow": 272000
   },
   {
@@ -46,6 +48,7 @@
     "max",
     "ultra"
    ],
+   "defaultEffort": "medium",
    "contextWindow": 272000
   },
   {
@@ -61,6 +64,7 @@
     "xhigh",
     "max"
    ],
+   "defaultEffort": "medium",
    "contextWindow": 272000
   },
   {
@@ -77,6 +81,7 @@
     "max",
     "ultra"
    ],
+   "defaultEffort": "medium",
    "contextWindow": 272000
   },
   {
@@ -93,6 +98,7 @@
     "max",
     "ultra"
    ],
+   "defaultEffort": "medium",
    "contextWindow": 272000
   },
   {
@@ -108,6 +114,7 @@
     "xhigh",
     "max"
    ],
+   "defaultEffort": "medium",
    "contextWindow": 272000
   },
   {
@@ -124,6 +131,7 @@
     "max",
     "ultra"
    ],
+   "defaultEffort": null,
    "contextWindow": 272000
   },
   {
@@ -140,6 +148,7 @@
     "max",
     "ultra"
    ],
+   "defaultEffort": null,
    "contextWindow": 372000
   },
   {
@@ -154,6 +163,7 @@
     "high",
     "xhigh"
    ],
+   "defaultEffort": null,
    "contextWindow": 272000
   },
   {
@@ -169,6 +179,7 @@
     "xhigh",
     "max"
    ],
+   "defaultEffort": "medium",
    "contextWindow": 272000
   }
  ]

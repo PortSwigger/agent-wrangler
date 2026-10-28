@@ -1183,11 +1183,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
-  `[{ id, label, models: [{ value, label, default }], efforts: [{ value, label }] }]`,
+  `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
-  price catalogs — as a fresh deep copy per call. **`api.agents.onChange(fn)`**
+  price catalogs — as a fresh deep copy per call. A model's `autoEffort`
+  (1.49.0) is the level the agent runs it at when a launch passes no effort
+  ("Auto"), read from the user's and organization's settings (Claude: managed
+  settings, a settings `env` block's `CLAUDE_CODE_EFFORT_LEVEL`, user settings,
+  then the model's documented default; Codex: `config.toml`, then the model's
+  catalog default), and is absent when unknown. **`api.agents.onChange(fn)`**
   fires (with its own copy) whenever the server re-sends the `agents` frame: on
-  connect, and when a catalog refresh changes it. It returns the unsubscribe
+  connect, and when a catalog refresh or one of those settings files changes it. It returns the unsubscribe
   function; subscriptions die with the extension, and a throwing listener is
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
@@ -1371,14 +1376,14 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`terminals:create`)** opens a plain shell with `command` typed but not run,
   and resolves `{ terminalId, reused }`. The default presentation is a sidebar
   pane in every board tab, closed (and killed) with its pane. `presentation:
-  'dialog'` (1.49.0) opens it, headed by `title`, only in the tab whose control
+  'dialog'` (1.50.0) opens it, headed by `title`, only in the tab whose control
   message the calling handler is serving, over anything open there such as
   Settings; called from a sweep, hook or tool, or after that tab has gone, the
   shell starts but nothing is shown. Closing the dialog detaches: the shell keeps
   running until it exits, and focus returns to where it was. A dialog requires
   a `key`, and a create whose `key` matches a live shell this extension opened
   presents that shell again without retyping the command, so the same call
-  doubles as Reopen. `host.terminals.alive(terminalId)` (1.49.0) says whether
+  doubles as Reopen. `host.terminals.alive(terminalId)` (1.50.0) says whether
   one of this extension's own terminals is still running, for showing Reopen.
   The key is namespaced to the calling extension, and the tab is read from the
   handler's async context, never from an argument. Shell exit is never a success
