@@ -30,3 +30,8 @@ export async function createShellSession(cwd, socket, tmuxBin, command = '') {
 
   return name;
 }
+
+// `=` pins an exact name match: a bare `-t sh_ab12` also matches a prefix.
+export function tmuxSessionAlive(tmuxBin, socket, name) {
+  return exec(tmuxBin, [...tmuxSocketArgs(socket), 'has-session', '-t', `=${name}`]).then(() => true, () => false);
+}

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { routeControlMessage, invalidateHandlerMap, _resetRouterForTests } from './router.js';
 import { getExtensions, registerExtension, unregisterExtension, _resetExtensionsForTests } from '../extensions/index.js';
+import { requestOrigin } from '../request-origin.js';
 
 // A ctx double that records what each handler drove. reply() captures outbound
 // frames so we can assert the error envelope / acks.
@@ -108,4 +109,14 @@ test('extension handlers can reply only to the requesting socket with their own 
   });
   assert.deepEqual(requester.sent, [{ type: 'ext:sounds', kind: 'sounds', sounds: {} }]);
   assert.deepEqual(peer.sent, []);
+});
+
+test('an extension handler runs with its own tab as the request origin; a core handler and later code have none', async () => {
+  const c = ctx();
+  let during = 'unset';
+  await routeControlMessage(JSON.stringify({ type: 'fake-do' }), c, {
+    handlers: [{ type: 'fake-do', extId: 'fake', handler: async () => { await Promise.resolve(); during = requestOrigin(); } }],
+  });
+  assert.equal(during, c.reply);
+  assert.equal(requestOrigin(), null);
 });

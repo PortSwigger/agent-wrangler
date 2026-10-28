@@ -557,6 +557,32 @@ main.session-embedded #drag-handle { display: none; }
    it from (z-index cannot reach above the top layer). The UA dialog box is reset
    so the element itself is the full-viewport dim overlay, as the div modals
    above are: a click on it outside the card is a backdrop click. */
+/* An extension's terminal dialog: a <dialog> in the top layer, like the file
+   viewer below, so it paints over Settings without closing it. */
+#terminal-modal {
+  position: fixed; inset: 0; width: auto; height: auto; max-width: none; max-height: none;
+  margin: 0; padding: 0; border: 0; color: inherit; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center;
+}
+#terminal-modal:not([open]) { display: none; }
+#terminal-modal::backdrop { background: transparent; }
+.terminal-dialog-card {
+  background: var(--surface);
+  box-shadow: 0 12px 32px var(--shadow);
+  border: 1px solid var(--border); border-radius: 10px;
+  width: min(92vw, 900px); height: min(80vh, 600px);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.terminal-dialog-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border-muted);
+}
+.terminal-dialog-head h3 { margin: 0; font-size: 14px; }
+.terminal-dialog-ended {
+  padding: 5px 10px; font-size: 12px; color: var(--fg-muted);
+  background: var(--surface-2); border-bottom: 1px solid var(--border-muted);
+}
+.terminal-command-preview.hidden, .terminal-dialog-ended.hidden { display: none; }
 #ext-file-modal {
   position: fixed; inset: 0; width: auto; height: auto; max-width: none; max-height: none;
   margin: 0; padding: 0; border: 0; color: inherit; background: var(--overlay);

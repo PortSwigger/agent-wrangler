@@ -7,6 +7,7 @@ import { MAX_ATTACHMENTS_PER_MESSAGE, isPasteFileName } from '../paste-image.js'
 import { imageAvailable, claimExtImages, keepStagedPaste, readKeptPaste, removeKeptPaste } from '../paste-store.js';
 import { collectLaunchContext } from '../launch-context.js';
 import { deliverFirstPrompt } from '../dispatch-runner.js';
+import { requestOrigin } from '../request-origin.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -18,13 +19,14 @@ import { deliverFirstPrompt } from '../dispatch-runner.js';
 // the point: the vocabulary is closed and declared, not a second implementation
 // of session lifecycle that can drift from the board's.
 //
-// THREE FORCED VALUES live here — `broadcast`'s `type`, `mail.send`'s `from`,
-// and `wake`/`kill`'s `reason`. All three are closed over from the extension's
-// own id and are not caller-passable: narrowness of signature IS the access
-// control (the same reasoning as createExtDeliver's two arguments and the
+// FOUR FORCED VALUES live here — `broadcast`'s `type`, `mail.send`'s `from`,
+// `wake`/`kill`'s `reason` and `terminals.create`'s `key` namespace. All four are
+// closed over from the extension's own id and are not caller-passable:
+// narrowness of signature IS the access control (the same reasoning as
+// createExtDeliver's two arguments and the
 // checklist tools' missing `session` parameter), because a runtime check the
 // caller can pass a value through is not a control at all. An extension can
-// never impersonate the core, or another extension, on any of the three.
+// never impersonate the core, or another extension, on any of the four.
 
 const sessionsRead = ({ core }) => ({
   sessions: {
@@ -384,8 +386,29 @@ const boardBroadcast = ({ id, broadcast }) => ({
   broadcast: (payload) => broadcast({ ...(payload && typeof payload === 'object' ? payload : {}), type: `ext:${id}` }),
 });
 
-const terminalsCreate = ({ createTerminal }) => ({
-  terminals: { create: (opts) => createTerminal(opts) },
+const terminalError = (msg) => { throw new TypeError(`terminals.create: ${msg}`); };
+const PRESENTATIONS = ['sidebar', 'dialog'];
+
+// `key` FORCED into this extension's namespace, so one extension can never
+// re-present (and type into) a shell another one opened; `alive` answers only
+// for this extension's own terminals. The requesting tab is read here from the
+// handler's async context, never taken from the caller. A dialog needs a key:
+// closing it leaves the shell running, and the key is the only way back to it.
+const terminalsCreate = ({ id, extTerminals }) => ({
+  terminals: {
+    create: async (opts = {}) => {
+      const { presentation, title, key } = opts ?? {};
+      if (presentation !== undefined && !PRESENTATIONS.includes(presentation)) terminalError(`presentation must be one of ${PRESENTATIONS.join(', ')}`);
+      if (title !== undefined && (typeof title !== 'string' || title.length > 120)) terminalError('title must be a string of at most 120 characters');
+      if (key !== undefined && (typeof key !== 'string' || !key || key.length > 200)) terminalError('key must be a non-empty string of at most 200 characters');
+      if (presentation === 'dialog' && key === undefined) terminalError('a dialog needs a key, so a closed one can be presented again');
+      return extTerminals.create(
+        { ...opts, ...(key === undefined ? {} : { key: `${id}:${key}` }) },
+        { origin: requestOrigin(), owner: id },
+      );
+    },
+    alive: async (terminalId) => typeof terminalId === 'string' && extTerminals.alive(terminalId, id),
+  },
 });
 
 const schedulesRead = ({ scheduleStore }) => ({
