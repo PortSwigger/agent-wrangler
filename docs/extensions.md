@@ -1183,11 +1183,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
-  `[{ id, label, models: [{ value, label, default }], efforts: [{ value, label }] }]`,
+  `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
-  price catalogs — as a fresh deep copy per call. **`api.agents.onChange(fn)`**
+  price catalogs — as a fresh deep copy per call. A model's `autoEffort`
+  (1.49.0) is the level the agent runs it at when a launch passes no effort
+  ("Auto"), read from the user's and organization's settings (Claude: managed
+  settings, a settings `env` block's `CLAUDE_CODE_EFFORT_LEVEL`, user settings,
+  then the model's documented default; Codex: `config.toml`, then the model's
+  catalog default), and is absent when unknown. **`api.agents.onChange(fn)`**
   fires (with its own copy) whenever the server re-sends the `agents` frame: on
-  connect, and when a catalog refresh changes it. It returns the unsubscribe
+  connect, and when a catalog refresh or one of those settings files changes it. It returns the unsubscribe
   function; subscriptions die with the extension, and a throwing listener is
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
@@ -1424,14 +1429,14 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `onBeforeDispatch` before collecting launch context so hooks can read its bindings.
   A non-empty string `refuse` (1.47.0) fails the launch with that reason immediately,
   without asking later hooks or caching a partial context.
-  `refuseIfSet` (1.49.0) lists `UPPER_SNAKE` variable names that the pane checks
+  `refuseIfSet` (1.50.0) lists `UPPER_SNAKE` variable names that the pane checks
   under `/bin/sh` after the user's shell has started (so tmux's global
   environment and shell startup files count), before the agent runs: if any is
   set, even to an empty string, the launch exits naming it, and its value is
   never read. A runtime that builds its own launch cannot run the check, so
   its dispatch is refused instead. Names merge across extensions; headless runs build their
   environment in the server, where `refuse` already sees it. When the merged
-  `env` sets `CLAUDE_CONFIG_DIR` (1.49.0), a Claude dispatch, resume or fork also writes
+  `env` sets `CLAUDE_CONFIG_DIR` (1.50.0), a Claude dispatch, resume or fork also writes
   the default launch's folder trust into that directory's `.claude.json`: the
   sessions directory, a worktree whose repo the server's own Claude config
   trusts, and the launch folder when that config already trusts it. Only the
