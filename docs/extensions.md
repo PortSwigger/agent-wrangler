@@ -1558,6 +1558,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   removed, and the link falls through. Registering without `files:open` throws. Only the links
   core makes today reach it (`.md` and `.markdown` paths). `api.openFile` is unaffected. A
   manifest using it declares `^1.40.0`.
+- **Locking a session's input: the `session.inputGate` client slot** (1.52.0). A value slot,
+  `{ id, gate(session, graph, api) }`: return `{ reason, label? }` to lock the session or `null`
+  to leave it alone. While locked, typed input to the session's terminal (and to a sidebar
+  shell opened for it) is dropped, while mouse and focus reports still pass, so the wheel
+  scrolls, clicks land, and selecting and copying work. The chat composer is disabled, with
+  `reason` as its placeholder, and the first blocked keystroke of each lock shows a toast with
+  `reason`. Both strings are text. The first contribution that answers wins, in extension load
+  order. A `working` session is never asked and never locked. Gates are re-run on every graph
+  and when the extension calls `api.refreshInputGates()`, so a gate that depends on the clock
+  needs only a timer, and an unlock control calls it after changing its own state. A throwing
+  `gate` is reported and removed, and disabling the extension unlocks at once. Core draws
+  nothing on the card: show the lock with a `card.pill`. A raw `tmux attach` is not gated. A
+  manifest using it declares `^1.52.0`.
 - **Client `api.mountSession(el, sessionId, { onMaximize })`** (1.42.0) shows the board's own
   session panel inside the extension's element: the header and its controls (rename, Actions,
   the session's chips), the `panel.section` strips, Chat, Terminal, and the diff as a third
