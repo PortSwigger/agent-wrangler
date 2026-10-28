@@ -1155,10 +1155,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 - **`task.action` is `card.action` for a TILE, and its subject is `{ id, name,
   adhoc }`, never the DOM cell.** `slots.taskMenuItems(task, graph, api)` shares
   `menuItems`'s whole body (`valueMenuItems`), so the item shape, escaping and
-  guards cannot drift between the two. It feeds ONLY the tile's right-click menu
-  (`app.js openTaskMenu`, between the task's own actions and Archive task) — NOT
-  the header kebab (`openTaskActionsMenu`), which already carries core's
-  Minimise/Focus and would show an extension's duplicate beside it. The right-click
+  guards cannot drift between the two. It feeds the tile's right-click menu
+  (`app.js openTaskMenu`) and the header menu (`openTaskActionsMenu`) for named
+  tasks; Unassigned receives these extra actions in its right-click menu. The right-click
   menu carries core's Minimise too; `extTaskMenuItems` drops the `Minimise` item
   contributed by the `minimise-task` extension (matched on extension id and label,
   in both menus) so that extension still loads without a duplicate. The no-task
@@ -1182,6 +1181,55 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   route, so an extension can reopen whatever the reader left. It never fires if
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
+- **`board.tray` (1.53.0)** is an exclusive mount-style slot for the bottom strip.
+  Register `{ id, mount(el, api, ctx), update?(el, ctx, graph), unmount?(el),
+  minimiseItem?(task, graph, api), backgroundItem?(graph, api) }`.
+  Its `ctx` is `{ tasks, minimisedIds }`:
+  `tasks` contains `{ id, name, adhoc }` in live board display order, including
+  Unassigned (`id: 'adhoc', adhoc: true`) and excluding archived/deleted tasks;
+  `minimisedIds` is an array of the browser's current minimised task ids.
+  Both are fresh snapshots. Core owns that set; enabling a tray does not change it.
+  `mount` receives the initial context, then `update` runs on every board render,
+  including graph changes, reorder, Focus, keyboard focus navigation, task/session
+  opening and bulk minimisation. New tasks are visible until explicitly minimised.
+  If housekeeping removes the last visible task, core clears the minimised set.
+
+  The first registered contribution wins; collisions are reported once per pair.
+  Later contributors remain unmounted until an earlier one is removed or fails.
+  The winner keeps its element across board renders and owns the entire strip,
+  which is visible even with no minimised tasks. Core's pills and Restore all are
+  absent while it owns the strip. Mount runs before the strip is placed on the board;
+  layout-dependent work belongs after placement (for example in an animation frame).
+  Disable, uninstall or failed module loading unmounts and removes its contribution.
+  A throwing `mount` or `update` does the same, then tries the next contributor in
+  registration order; with none left, core's strip returns in that render. Unmount
+  errors are reported but do not prevent cleanup. Re-enabling registers afresh.
+
+  Only the mounted tray owner's `minimiseItem` can replace core's **Minimise**,
+  in both the header menu and the tile right-click menu, including Unassigned.
+  Return `{ label, icon?, run(event) }`, or `null` to keep core's entry. Labels are
+  escaped text, icons follow the existing menu markup convention, and `run` errors
+  are caught and reported. **Focus** and other menu actions remain available.
+  The owner's optional `backgroundItem(graph, api)` adds one action beside
+  **New task** in the blank task-view right-click menu. It receives no task target
+  and returns the same item shape, or `null` to leave only core's action.
+  A throwing menu callback or malformed item removes the tray contribution,
+  leaves core's menu actions and requests a board render to restore the strip
+  (or promote the next contributor). These guards apply to both callbacks.
+  Ordinary `task.action` contributions cannot replace core's entry, contribute
+  to the blank task-view menu or claim tray ownership.
+
+  **`api.setMinimisedTasks(ids)` (1.53.0)** atomically replaces the whole browser
+  minimised set. Pass an array of non-empty task id strings (including `'adhoc'`).
+  Duplicate and non-live ids are pruned before checking the last-visible-tile guard.
+  A request hiding every live tile, or malformed input, returns `false` without
+  changing storage or rendering. Accepted requests return `true`; a changed set is
+  persisted and rendered once, and an unchanged set needs no render. `[]` restores
+  every task. This method is available to every client extension, like
+  `api.minimiseTask`; only menu replacement is tied to tray ownership. Declare
+  `engines.wranglerApi: '^1.53.0'` in both the runtime manifest and `package.json`'s
+  `wranglerExtension` when using these hooks. Server host access still requires
+  the capabilities listed in `requires`.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
   `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
@@ -1409,7 +1457,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`sessions.archive`, or the task's Archive) and bills exactly as a board card
   does. A manifest using it declares `^1.41.0`.
 - **`host.sessions.spawn({ remoteControl: { name } })` turns on Claude Code
-  Remote Control for that one session** (1.53.0). The launch passes
+  Remote Control for that one session** (1.55.0). The launch passes
   `--remote-control <name>`, and the name is stored on the entry so every resume
   (idle-suspend wake, mail wake, a relaunch after an update) passes it again. A
   fork does not inherit it. Claude only: with any other `agent` the spawn is
@@ -1417,7 +1465,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   as is an unknown key or a `name` that is empty, multi-line or starts with `-`
   (the flag's value is optional, so Claude would read it as the next flag). Ordinary dispatch never
   sets it, so no board card gets Remote Control unless an extension asked for
-  it. A manifest using it declares `^1.53.0`.
+  it. A manifest using it declares `^1.55.0`.
 - **`adversarial-review`'s shape is a SKILL plus a
   TOOL on purpose.** A SKILL.md is static, so it cannot carry the human's
   configured process; Claude's `` !`cmd` `` injection would, but Codex reads
@@ -1438,7 +1486,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 ## Launch context, events and lifecycle
 
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, runtime,
-  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
+  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, codexConfig?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
   collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
   written after, so an extension can never override `AW_SESSION_ID`) and
@@ -1469,6 +1517,25 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   server's config authorises a folder. The directory must already exist and
   must not be the server's or the CLI's default config directory, and a
   symlinked `.claude.json` is left alone.
+  `codexConfig` (1.54.0) is `{ 'dotted.key': value }`, passed to a Codex
+  dispatch, resume and fork as `-c key=value`; Claude launches ignore it. It
+  merges across extensions like `env` (later wins, collisions logged) and is
+  absent from the result when empty. Keys are
+  bare dotted segments (`[A-Za-z0-9_-]`); values are strings (no control
+  characters, at most 1024 characters), finite numbers or booleans, and core
+  writes the TOML. Dropped, each with a logged error naming the key and the
+  reason but never the value: keys core or `codexPolicy` own, matched on the
+  first segment (`model`, `model_reasoning_effort`,
+  `model_auto_compact_token_limit`, `developer_instructions`, `notify`,
+  `mcp_servers`, `sandbox_mode`, `approval_policy`, `sandbox_workspace_write`,
+  `projects`, `profile`, `profiles`), so they cannot be overridden whatever the
+  `-c` order; credential-shaped keys (a segment such as `token`, `api_key`,
+  `secret`, `password`, `bearer`, `headers`, `env`, or
+  `shell_environment_policy.set.*`); and credential-shaped values
+  (`sk-`, `ghp_`, a JWT, `Bearer …`). This is not a credential API: overrides are
+  visible in argv, `ps` and the tmux pane, so pass only nonsecret settings such
+  as `cli_auth_credentials_store = "keyring"`. A runtime that builds its own
+  launch gets none of the context, this field included.
   `ext` (1.48.0) is this extension's narrowed dispatch-data slice or `null`, for
   every reason, including `headless` runs on behalf of a card or stored launch.
   Headless requests must leave the card's live session bindings unchanged; hooks

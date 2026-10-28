@@ -127,6 +127,18 @@ function minimise(id) {
   renderGrid();
 }
 
+function setMinimisedTasks(ids) {
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id)) return false;
+  const order = currentOrder();
+  const next = pruneMinimised(new Set(ids), new Set(order));
+  if (order.length && next.size === order.length) return false;
+  if (next.size === minimisedIds.size && [...next].every((id) => minimisedIds.has(id))) return true;
+  minimisedIds = next;
+  persistMinimised();
+  renderGrid();
+  return true;
+}
+
 function focusOnly(id) {
   minimisedIds = new Set(currentOrder().filter((x) => x !== id));
   persistMinimised();
@@ -357,6 +369,7 @@ const extApi = {
   // on the live board counts (an archived or unknown id would sit in the
   // minimised set until the next prune), and minimise() itself refuses the last
   // visible tile — so report whether the tile really went.
+  setMinimisedTasks,
   minimiseTask: (taskId) => {
     if (!currentOrder().includes(taskId) || minimisedIds.has(taskId)) return false;
     minimise(taskId);
@@ -589,9 +602,9 @@ function syncClientExtensions() {
   }
   // A panel re-render is what draws the gap the unmount left, and what gives a
   // freshly-loaded contribution its host to mount into.
-  if (unmounted) { extApi.requestPanelRender(); renderExtViews(); syncDispatchExtFields(); }
+  if (unmounted) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); }
   clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
-    .then((changed) => { if (changed) { extApi.requestPanelRender(); renderExtViews(); syncDispatchExtFields(); } });
+    .then((changed) => { if (changed) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); } });
 }
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
@@ -1596,6 +1609,33 @@ function restoreScrollState(el, { grid, bodies, tray }) {
   if (trayPills) trayPills.scrollTop = tray;
 }
 
+function reconcileMinimised(orderIds) {
+  const validIds = new Set(orderIds);
+  if (legacyFocusedId != null) {
+    minimisedIds = expandFocusToMinimised(orderIds, legacyFocusedId);
+    legacyFocusedId = null;
+    localStorage.removeItem(LEGACY_FOCUS_KEY);
+    persistMinimised();
+  }
+  let pruned = pruneMinimised(minimisedIds, validIds);
+  if (orderIds.length && pruned.size === orderIds.length) pruned = new Set();
+  if (pruned.size !== minimisedIds.size) { minimisedIds = pruned; persistMinimised(); }
+}
+
+function trayContext() {
+  return {
+    tasks: currentOrder().map((id) => ({
+      id, name: id === ADHOC_ID ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === id).name,
+      adhoc: id === ADHOC_ID,
+    })),
+    minimisedIds: [...minimisedIds],
+  };
+}
+
+const trayHost = document.createElement('div');
+trayHost.className = 'tray-pills';
+let extensionTrayActive = false;
+
 function renderGrid() {
   // Only the grid view lays the board out: focus mode's `display: flex` would
   // otherwise bring a hidden board back beside Search or an extension view.
@@ -1606,16 +1646,9 @@ function renderGrid() {
   // stale ids. minimisedIds drives everything below: the board shows every tile
   // NOT in the set; the tray (trayHtml) shows those that are.
   const orderIds = currentOrder();
-  const validIds = new Set(orderIds);
-  if (legacyFocusedId != null) {
-    minimisedIds = expandFocusToMinimised(orderIds, legacyFocusedId);
-    legacyFocusedId = null;
-    localStorage.removeItem(LEGACY_FOCUS_KEY);
-    persistMinimised();
-  }
-  const pruned = pruneMinimised(minimisedIds, validIds);
-  if (pruned.size !== minimisedIds.size) { minimisedIds = pruned; persistMinimised(); }
+  reconcileMinimised(orderIds);
 
+  extensionTrayActive = slots.syncTray(trayHost, extApi, trayContext(), latestGraph);
   const visible = visibleTileIds(orderIds, minimisedIds);
   // Exactly one visible tile → the big expanded focus view (unchanged look). More
   // than one → the normal packed grid. The tray is appended by both paths.
@@ -1686,7 +1719,7 @@ function renderGrid() {
   // tiles — a content-sized `auto` track so it never steals height from the tiles.
   // Without its own track it would auto-place into a tile cell, cramped to one
   // column (the bug this fixes).
-  const hasTray = minimisedIds.size > 0;
+  const hasTray = extensionTrayActive || minimisedIds.size > 0;
   const trayRow = hasTray ? ' auto' : '';
   const singleColumn = cols === 1;
   el.classList.toggle('single-column', singleColumn);
@@ -1780,6 +1813,7 @@ function sessionDotStatus(s) {
 // The bottom tray: the tiles NOT in `visible` (so grid and tray can never show the
 // same tile), one pill each. Reuses the .focus-switcher strip styling.
 function trayHtml(visible) {
+  if (extensionTrayActive) return '<div class="focus-switcher"><div data-tray-host></div></div>';
   const visibleSet = new Set(visible);
   const mins = currentOrder()
     .filter((id) => !visibleSet.has(id))
@@ -1804,6 +1838,8 @@ function trayHtml(visible) {
 }
 
 function wireTray(el) {
+  const placeholder = el.querySelector('[data-tray-host]');
+  if (placeholder) { placeholder.replaceWith(trayHost); return; }
   // Shift+click a pill to focus on just that task (everything else minimises),
   // same as the kebab menu's Focus action — a plain click only restores this one
   // alongside whatever's already visible.
@@ -2225,6 +2261,21 @@ function extTaskMenuItems(taskId, isNoTask) {
     }));
 }
 
+function taskMinimiseMenuItem(taskId) {
+  const adhoc = taskId === ADHOC_ID;
+  const task = { id: taskId, name: adhoc ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === taskId)?.name, adhoc };
+  return slots.trayMinimiseItem(task, latestGraph, extApi)
+    || { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(taskId) };
+}
+
+function openTaskViewMenu(x, y) {
+  const item = slots.trayBackgroundItem(latestGraph, extApi);
+  mountMenu([
+    { label: 'New task', icon: PLUS_ICON, run: () => createTask() },
+    ...(item ? [item] : []),
+  ], x, y);
+}
+
 function autoFixMenuItem(s) {
   let on = Boolean(s.autoFixPrChecks);
   return {
@@ -2500,7 +2551,7 @@ function openTaskActionsMenu(taskId, x, y) {
   const sortOn = activitySortedTasks.has(taskId);
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
-    { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(taskId) },
+    taskMinimiseMenuItem(taskId),
     { label: 'Sort by activity', icon: SORT_ICON, keepOpen: true, trailing: sortOn ? CHECK_ICON : '',
       run: (e) => {
         toggleActivitySort(taskId);
@@ -2606,7 +2657,7 @@ function openTaskMenu(cell, x, y) {
     ...(!isNoTask ? [
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
     ] : []),
-    { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(isNoTask ? ADHOC_ID : taskId) },
+    taskMinimiseMenuItem(isNoTask ? ADHOC_ID : taskId),
     ...(extItems.length ? [{ sep: true }, ...extItems] : []),
     ...(!isNoTask ? [
       { sep: true },
@@ -3003,7 +3054,7 @@ function armNewTask(on) {
     grid.addEventListener('contextmenu', (e) => {
       if (e.target.closest('.task-cell')) return;
       e.preventDefault();
-      mountMenu([{ label: 'New task', icon: PLUS_ICON, run: () => createTask() }], e.clientX, e.clientY);
+      openTaskViewMenu(e.clientX, e.clientY);
     });
   }
   btn.addEventListener('dragover', (e) => { e.preventDefault(); btn.classList.add('drop'); });

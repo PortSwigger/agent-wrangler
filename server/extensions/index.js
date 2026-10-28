@@ -143,7 +143,7 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 // Hooks whose RETURN VALUE core uses, declared on the manifest's `hooks` object
 // (the lifecycle hooks above are fire-and-forget and live under `session`).
 //   session.launchContext({ sid, task, agent, runtime, reason, parentId?, ext, host })
-//     -> { env?, addDirs?, refuse? } | Promise of it — see server/launch-context.js.
+//     -> { env?, addDirs?, codexConfig?, refuse?, refuseIfSet? } | Promise of it — see server/launch-context.js.
 //   session.prepare({ sessionId, taskId, cwd, repoRoot, willCreateWorktree, agent, spawnedBy, ext, runtime, ownLaunch, host })
 //     -> void | { abort?, warnings? } | Promise of it — awaited in order before a
 //     NEW session's worktree is created; see server/session-prepare.js.
