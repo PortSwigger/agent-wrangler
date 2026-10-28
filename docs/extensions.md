@@ -1408,6 +1408,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`public/off-board.js`). Nothing else changes: it resumes, archives
   (`sessions.archive`, or the task's Archive) and bills exactly as a board card
   does. A manifest using it declares `^1.41.0`.
+- **`host.sessions.spawn({ remoteControl: { name } })` turns on Claude Code
+  Remote Control for that one session** (1.53.0). The launch passes
+  `--remote-control <name>`, and the name is stored on the entry so every resume
+  (idle-suspend wake, mail wake, a relaunch after an update) passes it again. A
+  fork does not inherit it. Claude only: with any other `agent` the spawn is
+  refused by name (`remoteControl is Claude only`) before anything launches,
+  as is an unknown key or a `name` that is empty, multi-line or starts with `-`
+  (the flag's value is optional, so Claude would read it as the next flag). Ordinary dispatch never
+  sets it, so no board card gets Remote Control unless an extension asked for
+  it. A manifest using it declares `^1.53.0`.
 - **`adversarial-review`'s shape is a SKILL plus a
   TOOL on purpose.** A SKILL.md is static, so it cannot carry the human's
   configured process; Claude's `` !`cmd` `` injection would, but Codex reads

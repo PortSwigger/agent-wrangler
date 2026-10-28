@@ -155,6 +155,14 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   return inner;
 }
 
+// `--remote-control <name>` for a session an extension spawned with
+// `remoteControl: { name }` (host-api/v1.js). Stored on the entry, so launch and
+// every resume pass it; a fork never inherits it, since two sessions under one
+// name would leave the phone driving whichever registered last.
+function remoteControlArgs(remoteControl) {
+  return remoteControl?.name ? ['--remote-control', remoteControl.name] : [];
+}
+
 const MODELS = [
   { value: 'fable', family: 'fable', pillLabel: 'fable', transcriptPrefixes: ['claude-fable-'], contextWindow: 1_000_000 },
   { value: 'opus', family: 'opus', pillLabel: 'opus', transcriptPrefixes: ['claude-opus-'], default: true, contextWindow: 1_000_000 },
@@ -247,7 +255,7 @@ export const claude = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)claude(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, permissionMode, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
+  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, permissionMode, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills, remoteControl }) {
     // The conversation runs under its own live id (distinct from the card id) so the
     // card id is never also a conversation id. Memory/identity stays on the card id.
     // Falls back to the card id when no live id is supplied (legacy callers).
@@ -256,10 +264,11 @@ export const claude = {
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     for (const d of addDirs) args.push('--add-dir', d);
+    args.push(...remoteControlArgs(remoteControl));
     return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildResume({ sessionId, resumeId, addDirs = [], effort, permissionMode, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills }) {
+  buildResume({ sessionId, resumeId, addDirs = [], effort, permissionMode, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills, remoteControl }) {
     // Plain --resume continues the conversation in place under its own id (no
     // --fork-session), so the live id stays equal to resumeId and the transcript
     // grows rather than duplicating. Safe because resume() kills the old tmux first.
@@ -270,6 +279,7 @@ export const claude = {
     for (const d of addDirs) args.push('--add-dir', d);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
+    args.push(...remoteControlArgs(remoteControl));
     return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 

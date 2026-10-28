@@ -103,6 +103,24 @@ function checkAddDirs(addDirs) {
   return { addDirs };
 }
 
+// `{ name }` -> the session's Remote Control name, so its launch and every
+// resume pass `--remote-control <name>`. Claude only: Codex has no Remote
+// Control, and an option it would silently drop reads as phone control that is
+// on when it is not. An unknown key is refused like `worktree`'s.
+function checkRemoteControl(remoteControl, agent) {
+  if (remoteControl === undefined || remoteControl === null) return {};
+  if (!isPlainObject(remoteControl)) spawnError('remoteControl must be an object like { name }');
+  const stray = Object.keys(remoteControl).filter((k) => k !== 'name');
+  if (stray.length) spawnError(`remoteControl has unknown option(s) ${stray.join(', ')} (known: name)`);
+  const { name } = remoteControl;
+  // eslint-disable-next-line no-control-regex
+  if (typeof name !== 'string' || !name.trim() || /[\x00-\x1f\x7f]/.test(name)) spawnError('remoteControl.name must be a non-empty single-line string');
+  // The flag's value is optional, so Claude would read a leading `-` as the next flag.
+  if (name.trim().startsWith('-')) spawnError('remoteControl.name must not start with "-"');
+  if ((agent || 'claude') !== 'claude') spawnError(`remoteControl is Claude only (agent ${JSON.stringify(agent)} has no Remote Control)`);
+  return { remoteControl: { name: name.trim() } };
+}
+
 function isPlainObject(value) {
   if (!value || typeof value !== 'object') return false;
   const proto = Object.getPrototypeOf(value);
@@ -162,9 +180,10 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
     // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
     spawn: async ({
       cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
-      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext, remoteControl,
     } = {}) => {
       const worktreeOpts = spawnWorktree(worktree);
+      const remoteControlOpt = checkRemoteControl(remoteControl, agent);
       const addDirsOpt = checkAddDirs(addDirs);
       const extOpt = checkExt(ext);
       const imageNames = checkImages(id, images);
@@ -183,6 +202,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         ...worktreeOpts,
         ...addDirsOpt,
         ...extOpt,
+        ...remoteControlOpt,
         // Dispatch's own default is off, so `false` is simply no override.
         ...(autoMergeOnPass === undefined ? {} : { autoMergeOnPass }),
         // `taskId` is the WHOLE task binding, and it has to be one option
