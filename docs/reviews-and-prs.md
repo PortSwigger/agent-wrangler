@@ -64,6 +64,13 @@ The `adversarial-pr-review` skill resolves the PR and launches a reviewer on the
 Claude session launches Codex, a Codex session launches Claude. It requires both Claude Code and Codex;
 with one provider, use peer review.
 
+The skill requires an explicit reviewer model and effort: a current, high-capability general-purpose
+model at medium effort or higher. It excludes lightweight, fast/cheap and reduced-capability variants,
+honours your model exclusions, and prefers a standard workhorse over a premium specialist or
+maximum-capability tier. Difficult reviews can use more effort; effort cannot compensate for an
+unsuitable model. If the available model descriptions leave suitability unclear, the session reports
+the uncertainty; if no eligible model is available, it reports a blocker.
+
 The reviewer follows a written-out review process. The built-in process has four steps:
 
 1. **Gather:** the PR body, linked issue, full diff, CI checks, and all existing discussion including
