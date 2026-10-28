@@ -1,7 +1,7 @@
 import { claudePermissionArgs } from './permission-mode.js';
 import path from 'node:path';
 import { INSTALL_ROOT } from '../install-root.js';
-import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
+import { launchAddDirArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { analyze, listResumable, activityInRange, findTranscript } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
@@ -256,7 +256,7 @@ export const claude = {
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     for (const d of addDirs) args.push('--add-dir', d);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
+    return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
   buildResume({ sessionId, resumeId, addDirs = [], effort, permissionMode, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills }) {
@@ -270,7 +270,7 @@ export const claude = {
     for (const d of addDirs) args.push('--add-dir', d);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
+    return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
   buildFork({ sessionId, liveSessionId, sourceId, addDirs = [], model, effort, permissionMode, autoCompactTokens, intent = '', launchContext, disabledSkills }) {
@@ -284,7 +284,7 @@ export const claude = {
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, launchContext, disabledSkills }));
+    return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, launchContext, disabledSkills }));
   },
 
   // Claude is given its id at launch, so the live id is the board id.

@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
-  collectLaunchContext, lastLaunchContext, launchEnvPrefix, launchAddDirArgs, launchEnvOf, launchAddDirsOf,
+  collectLaunchContext, lastLaunchContext, launchEnvPrefix, launchAddDirArgs, launchEnvOf, launchAddDirsOf, launchEnvGuard,
   LAUNCH_REASONS, EMPTY_LAUNCH_CONTEXT, _resetLaunchContextForTests,
 } from './launch-context.js';
 import { BUILTIN, loadExtensions } from './extensions/index.js';
@@ -250,4 +253,90 @@ test('extension data is narrowed on interactive launch reasons too and absent da
     await collectLaunchContext({ sid: 'card', reason }, { ext: registry(['context', (p) => { seen = p; }]) });
     assert.equal(seen.ext, null);
   }
+});
+
+// ── refuseIfSet: the pane-side auth-override check ───────────────────────────
+
+test('refuseIfSet merges valid names across extensions, drops the rest, and is absent when empty', async () => {
+  const { errors, onError } = quiet();
+  const ext = registry(
+    ['a', () => ({ refuseIfSet: ['ANTHROPIC_API_KEY', 'bad name', 7] })],
+    ['b', () => ({ refuseIfSet: ['ANTHROPIC_API_KEY', 'CLAUDE_SECURESTORAGE_CONFIG_DIR'] })],
+  );
+  const out = await collectLaunchContext({ sid: 'guarded' }, { ext, onError });
+  assert.deepEqual(out.refuseIfSet, ['ANTHROPIC_API_KEY', 'CLAUDE_SECURESTORAGE_CONFIG_DIR']);
+  assert.equal(errors.length, 2);
+  assert.deepEqual(await collectLaunchContext({ sid: 'plain' }, { ext: registry(['a', () => ({ refuseIfSet: [] })]), onError }), { env: {}, addDirs: [] });
+  assert.equal(launchEnvGuard({ refuseIfSet: ['$(touch x)', 'a;b'] }, shellQuote), '', 'names are re-validated before they reach shell source');
+});
+
+for (const [name, build] of Object.entries(BUILDERS)) {
+  test(`refuseIfSet: ${name} runs the guard before the agent, and a default launch has none`, async () => {
+    const plain = await build({ env: {}, addDirs: [] });
+    assert.doesNotMatch(plain, /\/bin\/sh -c/);
+    const guarded = await build({ env: {}, addDirs: [], refuseIfSet: ['ANTHROPIC_API_KEY'] });
+    const inner = name.startsWith('devcontainer') ? guarded.slice(guarded.indexOf('sh -lc')) : guarded;
+    assert.ok(inner.includes('/bin/sh -c') && inner.includes('ANTHROPIC_API_KEY+x'), inner.slice(0, 200));
+    if (!name.startsWith('devcontainer')) assert.ok(guarded.startsWith('/bin/sh -c '));
+  });
+}
+
+// Runs a built Claude launch command the way tmux does (`<shell> -c 'cd … && <cmd>'`)
+// with a fake `claude` on PATH that records the environment it got. The env is
+// built from scratch (dummy values only), and zsh reads a fixture ZDOTDIR's
+// .zshenv, standing in for a variable the user's shell startup adds.
+function runPane(launchContext, { shell = '/bin/sh', env = {}, zshenv = '' } = {}) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-pane-env-')));
+  try {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nenv > "$AW_FAKE_OUT"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, '.zshenv'), zshenv);
+    const out = path.join(dir, 'claude.env');
+    const cmd = claude.buildLaunch({ sessionId: 'MX', launchContext });
+    const r = spawnSync(shell, ['-c', `cd ${shellQuote(dir)} && ${cmd}`], {
+      env: { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, ZDOTDIR: dir, AW_FAKE_OUT: out, ...env },
+      encoding: 'utf8',
+    });
+    const seen = fs.existsSync(out) ? Object.fromEntries(fs.readFileSync(out, 'utf8').trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)])) : null;
+    return { status: r.status, stderr: r.stderr, seen };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const HAS_ZSH = fs.existsSync('/bin/zsh');
+
+test('pane-shell finding: today\'s seams let a pane-shell auth override reach the agent', () => {
+  // Server-side `refuse` never sees the pane, and `env -u` strips only names the
+  // server had when it built the command: an override in the pane reaches claude.
+  const viaEnv = runPane({ env: {}, addDirs: [] }, { env: { ANTHROPIC_API_KEY: 'dummy-not-a-secret' } });
+  assert.equal(viaEnv.status, 0);
+  assert.equal(viaEnv.seen.ANTHROPIC_API_KEY, 'dummy-not-a-secret');
+  // An extension can only ASSIGN: '' is still set, and for this name empty selects the default Keychain entry.
+  const assigned = runPane({ env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '' }, addDirs: [] }, { env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/other' } });
+  assert.equal(assigned.seen.CLAUDE_SECURESTORAGE_CONFIG_DIR, '');
+  if (HAS_ZSH) {
+    const viaRc = runPane({ env: {}, addDirs: [] }, { shell: '/bin/zsh', zshenv: 'export ANTHROPIC_AUTH_TOKEN=dummy-from-zshenv\n' });
+    assert.equal(viaRc.seen.ANTHROPIC_AUTH_TOKEN, 'dummy-from-zshenv');
+  }
+});
+
+test('pane-shell finding: refuseIfSet refuses in the pane, names the variable, never prints its value', () => {
+  const lc = { env: {}, addDirs: [], refuseIfSet: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_SECURESTORAGE_CONFIG_DIR'] };
+  const cases = [
+    ['/bin/sh', { env: { ANTHROPIC_API_KEY: 'dummy-not-a-secret' } }, 'ANTHROPIC_API_KEY'],
+    ['/bin/sh', { env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '' } }, 'CLAUDE_SECURESTORAGE_CONFIG_DIR'],
+  ];
+  if (HAS_ZSH) cases.push(['/bin/zsh', { zshenv: 'export ANTHROPIC_AUTH_TOKEN=dummy-from-zshenv\n' }, 'ANTHROPIC_AUTH_TOKEN']);
+  for (const [shell, opts, name] of cases) {
+    const r = runPane(lc, { shell, ...opts });
+    assert.equal(r.status, 1, `${shell} ${name}`);
+    assert.equal(r.seen, null, 'claude never ran');
+    assert.match(r.stderr, new RegExp(`refused this launch: ${name} is set`));
+    assert.doesNotMatch(r.stderr, /dummy/);
+  }
+  const clean = runPane(lc, { shell: HAS_ZSH ? '/bin/zsh' : '/bin/sh' });
+  assert.equal(clean.status, 0);
+  assert.ok(clean.seen && !('ANTHROPIC_API_KEY' in clean.seen));
 });

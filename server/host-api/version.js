@@ -388,7 +388,14 @@ import semver from 'semver';
 // server ignores the options and opens the sidebar pane in every tab, and has no
 // `alive`, so a manifest that needs either declares `^1.50.0`.
 //
-export const HOST_API_VERSION = '1.50.0';
+// 1.51.0 adds `refuseIfSet` to session.launchContext: variable names checked in
+// the pane after the user's shell starts, refusing the launch when any is set.
+// A launch context whose env sets CLAUDE_CONFIG_DIR also gets the default
+// launch's folder trust written into that dir's .claude.json, authorised by the
+// server's own Claude config. An older server ignores `refuseIfSet` and launches,
+// so a manifest that relies on it declares `^1.51.0`.
+//
+export const HOST_API_VERSION = '1.51.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

@@ -49,9 +49,10 @@ function coveredByTrust(projects, dirPath) {
 
 // Returns true if the file now trusts `dirPath`. `file` and `log` are injectable
 // so tests never touch the real config. With `onlyIfTrusted`, nothing is written
-// unless one of those paths (or an ancestor) is already trusted; that check sits
-// in the same synchronous read-modify-write as the write itself.
-export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = console.warn, onlyIfTrusted } = {}) {
+// unless one of those paths (or an ancestor) is already trusted in `authority`
+// (default: `file` itself); that check sits in the same synchronous
+// read-modify-write as the write itself.
+export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = console.warn, onlyIfTrusted, authority = file } = {}) {
   if (!dirPath) return false;
   try {
     const { text, data } = readConfig(file);
@@ -61,7 +62,8 @@ export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = co
     }
     if (onlyIfTrusted) {
       if (coveredByTrust(data.projects, dirPath)) return true;
-      if (!onlyIfTrusted.some((p) => coveredByTrust(data.projects, p))) return false;
+      const granted = authority === file ? data.projects : readConfig(authority).data.projects;
+      if (!onlyIfTrusted.some((p) => coveredByTrust(granted, p))) return false;
     }
 
     data.projects ??= {};
@@ -108,4 +110,35 @@ export async function mirrorWorktreeTrust(cwd, opts = {}) {
   const source = path.basename(commonDir) === '.git' ? path.dirname(commonDir) : commonDir;
   const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
   return ensureClaudeTrust(top, { ...opts, onlyIfTrusted: [...new Set([source, real(source)])] });
+}
+
+const realPath = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+
+// A login's own Claude config dir (the CLAUDE_CONFIG_DIR a launch context sets)
+// gets the same trust a default launch writes, authorised only by the server's
+// config: SESSIONS_DIR, a worktree whose repo the server config trusts, and the
+// launch cwd itself when the server config already covers it. Nothing the
+// login's own file trusts authorises anything. The dir must already exist (it
+// is never created), must not be the server's own or the CLI's default config
+// dir, and a symlinked .claude.json is left alone. Never throws.
+export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, serverFile = claudeConfigFile(), log = console.warn } = {}) {
+  const skip = (why) => { log(`[claude-trust] skipped login config ${JSON.stringify(configDir)}: ${why}`); return false; };
+  if (typeof configDir !== 'string' || !path.isAbsolute(configDir)) return skip('not an absolute path');
+  try {
+    if (!fs.statSync(configDir).isDirectory()) return skip('not a directory');
+  } catch {
+    return skip('does not exist');
+  }
+  const dir = realPath(configDir);
+  const reserved = [path.dirname(serverFile), os.homedir(), path.join(os.homedir(), '.claude')].map(realPath);
+  if (reserved.includes(dir)) return skip('is the server or default Claude config dir');
+  const file = path.join(configDir, '.claude.json');
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return skip('.claude.json is a symlink');
+  } catch { /* no file yet */ }
+  if (sessionsDir) ensureClaudeTrust(sessionsDir, { file, log });
+  if (!cwd) return true;
+  await mirrorWorktreeTrust(cwd, { file, authority: serverFile, log });
+  ensureClaudeTrust(cwd, { file, authority: serverFile, onlyIfTrusted: [...new Set([cwd, realPath(cwd)])], log });
+  return true;
 }

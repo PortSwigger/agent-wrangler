@@ -1428,7 +1428,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 ## Launch context, events and lifecycle
 
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, runtime,
-  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, refuse? }` (or a Promise of it). `server/launch-context.js`
+  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
   collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
   written after, so an extension can never override `AW_SESSION_ID`) and
@@ -1445,6 +1445,20 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `onBeforeDispatch` before collecting launch context so hooks can read its bindings.
   A non-empty string `refuse` (1.47.0) fails the launch with that reason immediately,
   without asking later hooks or caching a partial context.
+  `refuseIfSet` (1.51.0) lists `UPPER_SNAKE` variable names that the pane checks
+  under `/bin/sh` after the user's shell has started (so tmux's global
+  environment and shell startup files count), before the agent runs: if any is
+  set, even to an empty string, the launch exits naming it, and its value is
+  never read. A runtime that builds its own launch cannot run the check, so
+  a dispatch, resume or fork on it is refused instead. Names merge across extensions; headless runs build their
+  environment in the server, where `refuse` already sees it. When the merged
+  `env` sets `CLAUDE_CONFIG_DIR` (1.51.0), a Claude dispatch, resume or fork also writes
+  the default launch's folder trust into that directory's `.claude.json`: the
+  sessions directory, a worktree whose repo the server's own Claude config
+  trusts, and the launch folder when that config already trusts it. Only the
+  server's config authorises a folder. The directory must already exist and
+  must not be the server's or the CLI's default config directory, and a
+  symlinked `.claude.json` is left alone.
   `ext` (1.48.0) is this extension's narrowed dispatch-data slice or `null`, for
   every reason, including `headless` runs on behalf of a card or stored launch.
   Headless requests must leave the card's live session bindings unchanged; hooks

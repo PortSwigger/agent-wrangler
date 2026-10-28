@@ -2255,6 +2255,149 @@ test('launch, resume and fork never call the worktree trust mirror when the sett
   assert.deepEqual(calls.filter(([k]) => k === 'mirror'), []);
 });
 
+// A launch context that points CLAUDE_CONFIG_DIR at a login's own config gets
+// the default launch's trust written there too, authorised only by the server's
+// config (test-setup's throwaway CLAUDE_CONFIG_DIR, snapshotted and restored).
+async function withLoginTrustFixture(fn) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-login-trust-')));
+  const repo = path.join(root, 'proj');
+  fs.mkdirSync(repo);
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'i');
+  const serverFile = path.join(process.env.CLAUDE_CONFIG_DIR, '.claude.json');
+  let saved;
+  try { saved = fs.readFileSync(serverFile, 'utf8'); } catch { saved = null; }
+  const login = (name, seed) => {
+    const dir = path.join(root, name);
+    fs.mkdirSync(dir);
+    if (seed) fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify(seed, null, 2) + '\n');
+    return dir;
+  };
+  const trusted = (dir) => {
+    let data;
+    try { data = JSON.parse(fs.readFileSync(path.join(dir, '.claude.json'), 'utf8')); } catch { return []; }
+    return Object.entries(data.projects || {}).filter(([, v]) => v?.hasTrustDialogAccepted === true).map(([k]) => k).sort();
+  };
+  const serveTrust = (dirs) => fs.writeFileSync(serverFile, JSON.stringify({ projects: Object.fromEntries(dirs.map((d) => [d, { hasTrustDialogAccepted: true }])) }, null, 2) + '\n');
+  try {
+    await withClaudeTrustSetting(true, () => fn({ root, repo, login, trusted, serveTrust, serverDir: process.env.CLAUDE_CONFIG_DIR }));
+  } finally {
+    if (saved === null) fs.rmSync(serverFile, { force: true });
+    else fs.writeFileSync(serverFile, saved);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function smWithLogin(order) {
+  const sm = smForDispatch();
+  sm.killForSession = async () => [];
+  sm.loginDir = null;
+  sm._launchContext = async () => {
+    order?.push('context');
+    return { env: sm.loginDir ? { CLAUDE_CONFIG_DIR: sm.loginDir } : {}, addDirs: [] };
+  };
+  const real = { trust: sm._ensureClaudeTrust, mirror: sm._mirrorWorktreeTrust, login: sm._ensureLoginClaudeTrust };
+  sm._ensureClaudeTrust = (p) => { order?.push(['trust', p]); return real.trust(p); };
+  sm._mirrorWorktreeTrust = (p) => { order?.push(['mirror', p]); return real.mirror(p); };
+  sm._ensureLoginClaudeTrust = (d, o) => { order?.push(['login', d]); return real.login(d, o); };
+  sm.launchedDir = null;
+  sm._newSession = async (_t, d) => { sm.launchedDir = d; };
+  return sm;
+}
+
+test('login trust: dispatch, resume, fork and worktree trust land in a fixture login .claude.json', async () => {
+  await withLoginTrustFixture(async ({ repo, login, trusted, serveTrust, serverDir }) => {
+    serveTrust([repo]);
+    const order = [];
+    const sm = smWithLogin(order);
+
+    sm.loginDir = login('dispatch');
+    await sm.dispatch({ cwd: repo, intent: 'x', worktree: true, worktreeAuto: true });
+    const wt = sm.launchedDir;
+    assert.match(wt, /worktrees\.noindex/);
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, wt].sort());
+    assert.deepEqual(order, ['context', ['trust', SESSIONS_DIR], ['mirror', wt], ['login', sm.loginDir]], 'launch context is collected before any trust');
+
+    sm.loginDir = login('resume');
+    sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
+    await sm._doResume('c1', wt, {});
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, wt].sort());
+
+    sm.loginDir = login('fork');
+    await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: wt }, cwd: wt });
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, wt].sort());
+
+    // A plain checkout the server already trusts: the cwd itself, never a parent.
+    sm.loginDir = login('trusted-cwd');
+    await sm.dispatch({ cwd: repo, intent: 'x' });
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, repo].sort());
+
+    assert.deepEqual(trusted(serverDir), [SESSIONS_DIR, repo, wt].sort(), 'the server config gets only what a default launch writes');
+  });
+});
+
+test('login trust: an untrusted folder is never trusted in the login config', async () => {
+  await withLoginTrustFixture(async ({ root, repo, login, trusted, serveTrust, serverDir }) => {
+    serveTrust([]);
+    const sm = smWithLogin();
+    const elsewhere = path.join(root, 'elsewhere');
+    fs.mkdirSync(elsewhere);
+
+    // The login's own file trusting the repo authorises nothing: only the server config does.
+    sm.loginDir = login('dispatch', { projects: { [repo]: { hasTrustDialogAccepted: true } } });
+    await sm.dispatch({ cwd: repo, intent: 'x', worktree: true, worktreeAuto: true });
+    const wt = sm.launchedDir;
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, repo].sort(), 'no worktree entry');
+
+    sm.loginDir = login('resume');
+    sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
+    await sm._doResume('c1', wt, {});
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR]);
+
+    sm.loginDir = login('fork');
+    await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: elsewhere }, cwd: elsewhere });
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR]);
+
+    // A server config trusting an unrelated folder grants nothing here either.
+    serveTrust([path.join(root, 'other')]);
+    sm.loginDir = login('dispatch-2');
+    await sm.dispatch({ cwd: elsewhere, intent: 'x' });
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR]);
+    assert.ok(!trusted(serverDir).includes(elsewhere) && !trusted(serverDir).includes(wt));
+  });
+});
+
+test('login trust: a refused launch context writes no trust anywhere', async () => {
+  await withLoginTrustFixture(async ({ repo, login, trusted, serveTrust, serverDir }) => {
+    serveTrust([repo]);
+    const sm = smWithLogin();
+    sm.loginDir = login('refused');
+    sm._launchContext = async () => { throw new Error('refused by test'); };
+    await assert.rejects(sm.dispatch({ cwd: repo, intent: 'x' }), /refused by test/);
+    assert.deepEqual(trusted(sm.loginDir), []);
+    assert.deepEqual(trusted(serverDir), [repo]);
+  });
+});
+
+test('login trust: a default launch writes trust exactly as before', async () => {
+  await withLoginTrustFixture(async ({ repo, serveTrust, trusted, serverDir }) => {
+    serveTrust([repo]);
+    const order = [];
+    const sm = smWithLogin(order);
+    await sm.dispatch({ cwd: repo, intent: 'x', worktree: true, worktreeAuto: true });
+    const wt = sm.launchedDir;
+    sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
+    await sm._doResume('c1', wt, {});
+    await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: wt }, cwd: wt });
+    const launch = ['context', ['trust', SESSIONS_DIR], ['mirror', wt]];
+    assert.deepEqual(order, [...launch, ...launch, ...launch], 'the same two calls per launch, and no login write');
+    assert.deepEqual(trusted(serverDir), [SESSIONS_DIR, repo, wt].sort());
+  });
+});
+
 test('dispatch never calls ensureCodexTrust for a claude session', async () => {
   const sm = smForDispatch();
   let called = false;
@@ -3039,6 +3182,39 @@ async function withRuntime(rt, extId, fn) {
   try { return await fn(); } finally { unregisterRuntimesFor(extId); }
 }
 const CLOUDISH = { id: 'cloudt', label: '☁ Cloud', resumable: false };
+
+test('dispatch: a buildLaunch runtime refuses a launch context it cannot guard in the pane', async () => {
+  const sm = smForDispatch();
+  let launched = false;
+  sm._newSession = async () => { launched = true; };
+  sm._launchContext = async () => ({ env: {}, addDirs: [], refuseIfSet: ['ANTHROPIC_API_KEY'] });
+  await withRuntime({ ...CLOUDISH, buildLaunch: async () => 'echo handed-off' }, 'cloud', async () => {
+    await assert.rejects(sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'cloudt' }), /cannot check ANTHROPIC_API_KEY in the pane; launch refused/);
+  });
+  assert.equal(launched, false);
+  assert.equal(sm.map.size, 0);
+});
+
+// The loader already makes a buildLaunch runtime `resumable: false`; registered
+// raw without it, resume and fork reach the same pane-guard refusal as dispatch.
+test('resume and fork: a buildLaunch runtime refuses a launch context it cannot guard in the pane', async () => {
+  const sm = smForDispatch();
+  const calls = [];
+  sm.killForSession = async () => [];
+  sm._newSession = async () => { calls.push('launch'); };
+  sm._ensureClaudeTrust = () => { calls.push('trust'); };
+  sm._mirrorWorktreeTrust = async () => { calls.push('mirror'); };
+  sm._launchContext = async () => ({ env: {}, addDirs: [], refuseIfSet: ['ANTHROPIC_API_KEY'] });
+  const own = { id: 'ownt', label: 'Own', skipsHostResumeGuard: true, buildLaunch: async () => 'echo handed-off' };
+  await withClaudeTrustSetting(true, () => withRuntime(own, 'own', async () => {
+    const entry = { agent: 'claude', runtime: 'ownt', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: os.tmpdir() };
+    sm.map.set('c1', entry);
+    await assert.rejects(sm._doResume('c1', os.tmpdir(), {}), /Runtime ownt builds its own launch, so it cannot check ANTHROPIC_API_KEY in the pane; launch refused/);
+    await assert.rejects(sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: entry, cwd: os.tmpdir() }), /Runtime ownt builds its own launch, so it cannot check ANTHROPIC_API_KEY in the pane; launch refused/);
+  }));
+  assert.deepEqual(calls, [], 'no trust written and nothing launched');
+  assert.deepEqual([...sm.map.keys()], ['c1']);
+});
 
 test('dispatch: a wrapLaunch extension runtime decorates the adapter\'s command', async () => {
   const sm = smForDispatch();

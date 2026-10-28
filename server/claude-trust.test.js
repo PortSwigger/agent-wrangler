@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ensureClaudeTrust, mirrorWorktreeTrust } from './claude-trust.js';
+import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
 
 function withTemp(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-trust-test-'));
@@ -187,5 +187,66 @@ test('mirrorWorktreeTrust: malformed JSON is skipped with a log and never throws
     assert.equal(await mirrorWorktreeTrust(worktree, { file, log: (m) => logs.push(m) }), false);
     assert.equal(fs.readFileSync(file, 'utf8'), '{ nope');
     assert.equal(logs.length, 1);
+  });
+});
+
+// ensureLoginClaudeTrust: <root>/.claude.json is the server config (the authority),
+// <root>/login is the login's CLAUDE_CONFIG_DIR.
+async function withLogin(fn) {
+  await withRepo(async (ctx) => {
+    const login = path.join(ctx.root, 'login');
+    fs.mkdirSync(login);
+    await fn({ ...ctx, login, loginFile: path.join(login, '.claude.json') });
+  });
+}
+
+test('ensureLoginClaudeTrust: writes SESSIONS_DIR, a trusted repo\'s worktree and a trusted cwd, never the server config', async () => {
+  await withLogin(async ({ root, repo, worktree, file, login, loginFile }) => {
+    const server = trusting(repo);
+    fs.writeFileSync(file, server);
+    const sessionsDir = path.join(root, 'sessions');
+    assert.equal(await ensureLoginClaudeTrust(login, { cwd: worktree, sessionsDir, serverFile: file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(loginFile), [sessionsDir, worktree].sort());
+    assert.equal(await ensureLoginClaudeTrust(login, { cwd: path.join(repo), sessionsDir, serverFile: file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(loginFile), [sessionsDir, repo, worktree].sort());
+    assert.equal(fs.readFileSync(file, 'utf8'), server);
+    assert.equal(fs.statSync(loginFile).mode & 0o777, 0o600);
+  });
+});
+
+test('ensureLoginClaudeTrust: only the server config authorises; the login\'s own entries and unreadable server config grant nothing', async () => {
+  await withLogin(async ({ root, repo, worktree, file, login, loginFile }) => {
+    const sessionsDir = path.join(root, 'sessions');
+    fs.writeFileSync(loginFile, trusting(repo));
+    fs.writeFileSync(file, trusting(path.join(root, 'other')));
+    await ensureLoginClaudeTrust(login, { cwd: worktree, sessionsDir, serverFile: file, log: quiet });
+    await ensureLoginClaudeTrust(login, { cwd: path.join(root, 'code'), sessionsDir, serverFile: file, log: quiet });
+    assert.deepEqual(trustedKeys(loginFile), [sessionsDir, repo].sort());
+    fs.writeFileSync(file, '{ nope');
+    await ensureLoginClaudeTrust(login, { cwd: worktree, serverFile: file, log: quiet });
+    assert.deepEqual(trustedKeys(loginFile), [sessionsDir, repo].sort());
+  });
+});
+
+test('ensureLoginClaudeTrust: refuses a relative, missing, server, home or ~/.claude dir and a symlinked .claude.json', async () => {
+  await withLogin(async ({ root, repo, file, login, loginFile }) => {
+    fs.writeFileSync(file, trusting(repo));
+    const server = fs.readFileSync(file, 'utf8');
+    const logs = [];
+    const log = (m) => logs.push(m);
+    const opts = { cwd: repo, sessionsDir: path.join(root, 'sessions'), serverFile: file, log };
+    const missing = path.join(root, 'missing');
+    for (const dir of ['login', missing, root, os.homedir(), path.join(os.homedir(), '.claude'), undefined]) {
+      assert.equal(await ensureLoginClaudeTrust(dir, opts), false, String(dir));
+    }
+    assert.equal(fs.existsSync(missing), false, 'a missing login dir is never created');
+    assert.equal(fs.readFileSync(file, 'utf8'), server);
+    const target = path.join(root, 'elsewhere.json');
+    fs.writeFileSync(target, '{}\n');
+    fs.symlinkSync(target, loginFile);
+    assert.equal(await ensureLoginClaudeTrust(login, opts), false);
+    assert.equal(fs.readFileSync(target, 'utf8'), '{}\n');
+    assert.ok(fs.lstatSync(loginFile).isSymbolicLink());
+    assert.equal(logs.length, 7);
   });
 });
