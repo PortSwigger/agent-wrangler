@@ -189,11 +189,25 @@ placeholders, then load it:
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist
 ```
 
-Restart it after changes with:
+Restart it with:
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler
 ```
+
+launchd reads the plist only when it loads the job, so a restart doesn't pick up edits to the plist
+itself. Reload the job instead, or log out and back in:
+
+```bash
+launchctl bootout gui/$(id -u)/net.portswigger.agent-wrangler
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist
+```
+
+If `bootstrap` fails with `5: Input/output error` straight after the `bootout`, the old job hadn't
+finished stopping; run it again.
+
+The template sets `ProcessType` to `Interactive`, so launchd doesn't throttle the service and its
+sessions as a background daemon. See [Snags](#snags) if your plist predates that.
 
 On Linux, copy `scripts/agent-wrangler.service.example` to
 `~/.config/systemd/user/agent-wrangler.service`, fill in the path placeholder, then load it:
@@ -247,6 +261,29 @@ checks for this and shows a banner on the board. Click **Restart tmux** on the b
 tmux server, then resume your sessions. The next session you start or resume gets a new tmux server
 in your current login session. As above, this stops every live session on that socket, but their
 cards survive.
+
+**Sessions take seconds to open and lag while the machine is busy (macOS only).** Heavy work
+elsewhere, such as containers running test suites, makes the board's sessions slow to open and slow
+to respond, while `claude` started from a terminal keeps up. launchd runs a service whose plist sets
+no `ProcessType` as a background daemon, with a lower CPU priority and throttled disk access, and the
+wrangler, its tmux server and every session inherit that. Check what launchd loaded:
+
+```bash
+launchctl print gui/$(id -u)/net.portswigger.agent-wrangler | grep 'spawn type'
+```
+
+`daemon (3)` is throttled; `interactive (4)` is not. The plist template sets `ProcessType` to
+`Interactive`. For a plist made from an older template, `scripts/wrangler-start.sh` adds it at
+startup and says so in `wrangler.log`. It leaves a plist alone if it already sets a `ProcessType`
+(set `Standard` to keep the old behaviour), belongs to a package manager's install, or can't be
+written; for that last one it logs a warning in `wrangler.err` instead.
+
+launchd applies the change from your next login, and sessions keep their old priority until their
+tmux server restarts. Restarting the Mac does both. After logging out and back in instead, click
+**Restart tmux** on the banner described above. To apply it without logging out, reload the job (see
+[Run as a background service](#run-as-a-background-service)), then stop the tmux server with
+`tmux -L <socket> kill-server`, where `<socket>` is `tmuxSocket` in `~/.agent-wrangler/config.json`.
+Each of these stops every live session, but their cards survive, so resume them.
 
 ## How it works
 
