@@ -7,6 +7,7 @@ import { HOST_API_VERSION } from './version.js';
 import { _resetUsageCache } from '../usage-scan-memo.js';
 import { createEventBus } from '../events.js';
 import { createExtFiles } from '../ext-files.js';
+import { runWithOrigin } from '../request-origin.js';
 
 const ALWAYS = ['id', 'version', 'stores', 'settings', 'log'];
 
@@ -34,7 +35,7 @@ function wiring(overrides = {}) {
     broadcast: () => {},
     archiveSession: () => {},
     archiveTask: async () => ({ archived: false, sessionIds: [], unclean: false }),
-    createTerminal: () => {},
+    extTerminals: { create: () => {}, alive: async () => false },
     interruptSession: async () => true,
     scheduleStore: { snapshot: () => [], create: () => {}, update: () => {}, delete: () => {} },
     mailStore: { unreadInfo: () => null, list: () => [], append: () => {} },
@@ -698,4 +699,35 @@ test('sessions:env rejects malformed agent, sessionId and ext by name before col
   await assert.rejects(host.sessions.launchEnv({ ext: 'bad' }), /ext must be an object keyed by extension id/);
   await assert.rejects(host.sessions.launchEnv({ ext: { context: 7 } }), /ext\.context must be an object or null/);
   assert.equal(calls, 0);
+});
+
+test('terminals.create namespaces key to the extension and reads the origin from the handler context', async () => {
+  const calls = [];
+  const host = buildHostApi({ id: 'logins', requires: ['terminals:create'], ...wiring({ extTerminals: { create: async (opts, ctx) => { calls.push({ opts, ctx }); return { terminalId: 't_1', reused: false }; } } }) });
+  const send = () => {};
+  await runWithOrigin(send, () => host.terminals.create({ cwd: '/a', command: 'echo', presentation: 'dialog', title: 'Log in', key: 'login:a' }));
+  await host.terminals.create({ cwd: '/a' });
+  assert.deepEqual(calls[0].opts, { cwd: '/a', command: 'echo', presentation: 'dialog', title: 'Log in', key: 'logins:login:a' });
+  assert.deepEqual(calls[0].ctx, { origin: send, owner: 'logins' });
+  assert.deepEqual(calls[1].opts, { cwd: '/a' });
+  assert.equal(calls[1].ctx.origin, null);
+});
+
+test('terminals.create refuses malformed presentation, title and key, and a dialog with no key, by name', async () => {
+  let calls = 0;
+  const host = buildHostApi({ id: 'x', requires: ['terminals:create'], ...wiring({ extTerminals: { create: async () => { calls++; } } }) });
+  await assert.rejects(host.terminals.create({ presentation: 'modal' }), /terminals\.create: presentation must be one of sidebar, dialog/);
+  await assert.rejects(host.terminals.create({ title: 7 }), /title must be a string/);
+  await assert.rejects(host.terminals.create({ title: 'x'.repeat(121) }), /title must be a string/);
+  for (const key of ['', 7, 'k'.repeat(201)]) await assert.rejects(host.terminals.create({ key }), /key must be a non-empty string/);
+  await assert.rejects(host.terminals.create({ presentation: 'dialog' }), /a dialog needs a key/);
+  assert.equal(calls, 0);
+});
+
+test('terminals.alive asks only about the calling extension\'s own terminals', async () => {
+  const asked = [];
+  const host = buildHostApi({ id: 'logins', requires: ['terminals:create'], ...wiring({ extTerminals: { create: async () => {}, alive: async (tid, owner) => { asked.push([tid, owner]); return true; } } }) });
+  assert.equal(await host.terminals.alive('t_1'), true);
+  assert.equal(await host.terminals.alive(7), false);
+  assert.deepEqual(asked, [['t_1', 'logins']]);
 });

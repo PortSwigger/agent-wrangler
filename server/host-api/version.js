@@ -380,14 +380,22 @@ import semver from 'semver';
 // and absent when unknown. An older board never sets it, so a manifest that
 // reads it declares `^1.49.0` or treats its absence as unknown.
 //
-// 1.50.0 adds `refuseIfSet` to session.launchContext: variable names checked in
+// 1.50.0 adds `presentation: 'dialog'`, `title` and `key` to terminals.create,
+// and terminals.alive(terminalId). A dialog (which needs a key) opens only in the
+// tab whose control frame the handler is serving, over whatever is open there;
+// closing it detaches and leaves the shell running, and a create with the same
+// live `key` presents that shell again. The result gains `reused`. An older
+// server ignores the options and opens the sidebar pane in every tab, and has no
+// `alive`, so a manifest that needs either declares `^1.50.0`.
+//
+// 1.51.0 adds `refuseIfSet` to session.launchContext: variable names checked in
 // the pane after the user's shell starts, refusing the launch when any is set.
 // A launch context whose env sets CLAUDE_CONFIG_DIR also gets the default
 // launch's folder trust written into that dir's .claude.json, authorised by the
 // server's own Claude config. An older server ignores `refuseIfSet` and launches,
-// so a manifest that relies on it declares `^1.50.0`.
+// so a manifest that relies on it declares `^1.51.0`.
 //
-export const HOST_API_VERSION = '1.50.0';
+export const HOST_API_VERSION = '1.51.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

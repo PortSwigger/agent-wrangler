@@ -1,4 +1,5 @@
 import { activeHandlers } from './handlers/index.js';
+import { runWithOrigin } from '../request-origin.js';
 
 // Built lazily on the first frame rather than at import: the active list
 // includes every enabled extension's handlers, and the loader behind
@@ -49,7 +50,7 @@ export async function routeControlMessage(raw, ctx, { handlers = null } = {}) {
     // {type:'error'} rather than tear down the socket.
     if (entry.extId) {
       const reply = (payload) => ctx.reply({ ...payload, type: `ext:${entry.extId}` });
-      await entry.handler(msg, ctx.hostApiFor?.(entry.extId), reply);
+      await runWithOrigin(ctx.reply, () => entry.handler(msg, ctx.hostApiFor?.(entry.extId), reply));
     } else {
       await entry.handler(msg, ctx);
     }

@@ -161,6 +161,9 @@ test('a tmux server restarted on the same socket is asked again, and its termina
   assert.equal(tmux.calls(socket, 'show').length, 1);
 
   await tmux.run(socket, 'kill-server');
+  // kill-server returns before the old server has exited; a new-session that reaches it
+  // while it shuts down fails with "server exited unexpectedly".
+  await until(() => tmux.run(socket, 'list-sessions').then(() => false, () => true), 'the old server to exit');
   await tmux.startServer(socket);
   assert.doesNotMatch(await tmux.run(socket, 'show', '-s', 'terminal-features'), /hyperlinks/);
   const { ws, done } = tmux.attach(socket);

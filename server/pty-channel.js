@@ -111,7 +111,9 @@ export function ensurePtyHelperExecutable() {
 // so switching/re-attaching is cheap and browser+iTerm2 can co-attach.
 // When `?terminalId=<id>` is present the connection is for a plain-shell terminal
 // (from the terminal registry) rather than an agent session. On disconnect the
-// shell tmux session is killed and removed from the registry.
+// shell tmux session is killed and removed from the registry, unless it is
+// `detachable` (an extension's dialog terminal): that one keeps running and
+// leaves the registry only once its shell has exited.
 export async function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, sessionFromGraph, terminalRegistry }) {
   let term;
   let closed = false;
@@ -160,9 +162,14 @@ export async function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socke
     clearTimeout(refreshTimer);
     try { term?.kill(); } catch { /* already gone */ }
     if (shellTermEntry) {
-      const { terminalId, tmuxName, socket } = shellTermEntry;
+      const { terminalId, tmuxName, socket, detachable } = shellTermEntry;
+      const tmux = (a) => exec(sessionManager.tmuxBin, [...tmuxSocketArgs(socket), ...a]);
+      if (detachable) {
+        tmux(['has-session', '-t', `=${tmuxName}`]).catch(() => terminalRegistry?.remove(terminalId));
+        return;
+      }
       terminalRegistry?.remove(terminalId);
-      gentleKill((a) => exec(sessionManager.tmuxBin, [...tmuxSocketArgs(socket), ...a]), { session: tmuxName }).catch(() => {});
+      gentleKill(tmux, { session: tmuxName }).catch(() => {});
     }
   });
   try {
@@ -177,7 +184,7 @@ export async function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socke
         ws.close();
         return;
       }
-      shellTermEntry = { terminalId, tmuxName: reg.tmuxName, socket: reg.socket };
+      shellTermEntry = { terminalId, tmuxName: reg.tmuxName, socket: reg.socket, detachable: Boolean(reg.detachable) };
       tmuxTarget = reg.tmuxName;
       tmuxSocket = reg.socket;
       cwd = [reg.cwd].find((d) => d && fs.existsSync(d)) || process.cwd();

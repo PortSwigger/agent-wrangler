@@ -1372,6 +1372,22 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   malformed data is refused by name (`ext` or `ext.<id>`) before dispatch.
   The same narrowing reaches `session.prepare`, `onBeforeDispatch` and runtime
   `preflight`/`buildLaunch`, while `spawnedBy` remains core-managed and unpassable.
+- **`host.terminals.create({ cwd, command?, presentation?, title?, key? })`
+  (`terminals:create`)** opens a plain shell with `command` typed but not run,
+  and resolves `{ terminalId, reused }`. The default presentation is a sidebar
+  pane in every board tab, closed (and killed) with its pane. `presentation:
+  'dialog'` (1.50.0) opens it, headed by `title`, only in the tab whose control
+  message the calling handler is serving, over anything open there such as
+  Settings; called from a sweep, hook or tool, or after that tab has gone, the
+  shell starts but nothing is shown. Closing the dialog detaches: the shell keeps
+  running until it exits, and focus returns to where it was. A dialog requires
+  a `key`, and a create whose `key` matches a live shell this extension opened
+  presents that shell again without retyping the command, so the same call
+  doubles as Reopen. `host.terminals.alive(terminalId)` (1.50.0) says whether
+  one of this extension's own terminals is still running, for showing Reopen.
+  The key is namespaced to the calling extension, and the tab is read from the
+  handler's async context, never from an argument. Shell exit is never a success
+  signal; the extension reports its own state.
 - **`host.sessions.launchEnv({ agent = 'claude', sessionId = null, ext = null })`
   (1.48.0, `sessions:env`)** returns `{ env }` from the enabled launch-context hooks
   with `reason: 'headless'`, resolving the task and runtime for a supplied card or
@@ -1429,14 +1445,14 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `onBeforeDispatch` before collecting launch context so hooks can read its bindings.
   A non-empty string `refuse` (1.47.0) fails the launch with that reason immediately,
   without asking later hooks or caching a partial context.
-  `refuseIfSet` (1.50.0) lists `UPPER_SNAKE` variable names that the pane checks
+  `refuseIfSet` (1.51.0) lists `UPPER_SNAKE` variable names that the pane checks
   under `/bin/sh` after the user's shell has started (so tmux's global
   environment and shell startup files count), before the agent runs: if any is
   set, even to an empty string, the launch exits naming it, and its value is
   never read. A runtime that builds its own launch cannot run the check, so
   its dispatch is refused instead. Names merge across extensions; headless runs build their
   environment in the server, where `refuse` already sees it. When the merged
-  `env` sets `CLAUDE_CONFIG_DIR` (1.50.0), a Claude dispatch, resume or fork also writes
+  `env` sets `CLAUDE_CONFIG_DIR` (1.51.0), a Claude dispatch, resume or fork also writes
   the default launch's folder trust into that directory's `.claude.json`: the
   sessions directory, a worktree whose repo the server's own Claude config
   trusts, and the launch folder when that config already trusts it. Only the

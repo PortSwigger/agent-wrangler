@@ -1,8 +1,8 @@
 // Ephemeral in-memory registry of plain-shell tmux sessions opened in the board.
-// Never persisted — terminals die with the server.
+// Never persisted: after a restart no browser can attach to a shell opened before it.
 export class TerminalRegistry {
   constructor() {
-    this._map = new Map(); // terminalId -> { tmuxName, socket, cwd }
+    this._map = new Map(); // terminalId -> { tmuxName, socket, cwd, command?, detachable? }
   }
 
   set(terminalId, entry) {
