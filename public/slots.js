@@ -1038,6 +1038,25 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     return out;
   }
 
+  function trayMenuItem(method, args, baseApi) {
+    const c = slotList('board.tray').find((entry) => entry.mounts.size > 0);
+    if (!c || !c[method]) return null;
+    try {
+      const item = c[method](...args, apiFor(c.extId, baseApi));
+      if (item == null) return null;
+      if (typeof item.label !== 'string' || !item.label || typeof item.run !== 'function') throw Error('expected a label and run()');
+      return {
+        label: item.label, icon: typeof item.icon === 'string' ? item.icon : '',
+        run: (e) => { try { return item.run(e); } catch (err) { onError(`[ext:${c.extId}] ${c.id} ${method} action failed`, err); } },
+      };
+    } catch (err) {
+      onError(`[ext:${c.extId}] ${c.id} ${method} failed — contribution removed`, err);
+      drop('board.tray', c);
+      baseApi.requestBoardRender?.();
+      return null;
+    }
+  }
+
   return {
     register(slotName, extId, contribution) {
       const list = slotList(slotName);
@@ -1053,7 +1072,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // reportBadges would skip it in silence and the author would be left
       // looking at a rail button that never says anything. Same reason
       // slotList refuses an unknown slot name — fail at load, not nowhere.
-      if (slotName === 'board.tray' && contribution.minimiseItem != null && typeof contribution.minimiseItem !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} minimiseItem must be a function`);
+      if (slotName === 'board.tray') for (const field of ['minimiseItem', 'backgroundItem']) {
+        if (contribution[field] != null && typeof contribution[field] !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ${field} must be a function`);
+      }
       if (contribution.badge != null && typeof contribution.badge !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} badge must be a function`);
       if (contribution.weight != null && typeof contribution.weight !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} weight must be a function`);
       if (contribution.ext != null && typeof contribution.ext !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ext must be a function`);
@@ -1436,22 +1457,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     },
 
     trayMinimiseItem(task, graph, baseApi = {}) {
-      const c = slotList('board.tray').find((entry) => entry.mounts.size > 0);
-      if (!c || !c.minimiseItem) return null;
-      try {
-        const item = c.minimiseItem({ ...task }, graph, apiFor(c.extId, baseApi));
-        if (item == null) return null;
-        if (typeof item.label !== 'string' || !item.label || typeof item.run !== 'function') throw Error('expected a label and run()');
-        return {
-          label: item.label, icon: typeof item.icon === 'string' ? item.icon : '',
-          run: (e) => { try { item.run(e); } catch (err) { onError(`[ext:${c.extId}] ${c.id} Minimise replacement failed`, err); } },
-        };
-      } catch (err) {
-        onError(`[ext:${c.extId}] ${c.id} minimiseItem failed — contribution removed`, err);
-        drop('board.tray', c);
-        baseApi.requestBoardRender?.();
-        return null;
-      }
+      return trayMenuItem('minimiseItem', [{ ...task }, graph], baseApi);
+    },
+
+    trayBackgroundItem(graph, baseApi = {}) {
+      return trayMenuItem('backgroundItem', [graph], baseApi);
     },
 
     // The `card.action` items for one card, in registration order, for the

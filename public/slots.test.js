@@ -2027,3 +2027,61 @@ test('setMinimisedTasks validates the complete input before forwarding a snapsho
   assert.deepEqual(applied, [['a']]);
   assert.equal(api.setMinimisedTasks([]), true);
 });
+
+test('only the mounted tray owner adds a background action, without a task target', () => {
+  const { document, slots } = harness();
+  const graph = { tasks: [] }, calls = [];
+  for (const ext of ['first', 'second']) slots.register('board.tray', ext, {
+    id: 'tray', mount() {}, backgroundItem(...args) {
+      calls.push([ext, ...args]);
+      return { label: 'Manage profiles…', run: () => ext };
+    },
+  });
+  assert.equal(slots.trayBackgroundItem(graph, {}), null);
+  const host = document.make();
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, graph);
+  assert.equal(slots.trayBackgroundItem(graph, {}).run(), 'first');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].length, 3);
+  assert.equal(calls[0][1], graph);
+  assert.equal(typeof calls[0][2].setMinimisedTasks, 'function');
+  slots.removeExtension('first');
+  assert.equal(slots.trayBackgroundItem(graph, {}), null);
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, graph);
+  assert.equal(slots.trayBackgroundItem(graph, {}).run(), 'second');
+  slots.removeExtension('second');
+  assert.equal(slots.trayBackgroundItem(graph, {}), null);
+});
+
+for (const failure of ['throw', 'malformed']) test(`tray background ${failure} restores core and cleans up`, () => {
+  const { document, slots, errors } = harness();
+  let cleanup = 0, renders = 0;
+  slots.register('board.tray', 'owner', {
+    id: 'tray', mount() {}, unmount() { cleanup++; }, backgroundItem() {
+      if (failure === 'throw') throw Error('broken');
+      return { label: 'Missing run' };
+    },
+  });
+  const host = document.make();
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.equal(slots.trayBackgroundItem({}, { requestBoardRender() { renders++; } }), null);
+  assert.equal(cleanup, 1);
+  assert.equal(renders, 1);
+  assert.equal(host.children.length, 0);
+  assert.ok(errors.some((x) => x.includes('backgroundItem')));
+});
+
+test('tray background callback is optional, validated and catches action failures', () => {
+  const { document, slots, errors } = harness();
+  assert.throws(() => slots.register('board.tray', 'invalid', { id: 'tray', mount() {}, backgroundItem: true }), /backgroundItem/);
+  slots.register('board.tray', 'owner', { id: 'tray', mount() {} });
+  const host = document.make();
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.equal(slots.trayBackgroundItem({}, {}), null);
+  slots.removeExtension('owner');
+  slots.register('board.tray', 'owner', { id: 'tray', mount() {}, backgroundItem: () => ({ label: 'Manage', run() { throw Error('broken'); } }) });
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.doesNotThrow(() => slots.trayBackgroundItem({}, {}).run());
+  assert.equal(host.children.length, 1);
+  assert.ok(errors.some((x) => x.includes('backgroundItem')));
+});

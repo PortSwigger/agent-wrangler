@@ -1183,7 +1183,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   replaced the request first.
 - **`board.tray` (1.52.0)** is an exclusive mount-style slot for the bottom strip.
   Register `{ id, mount(el, api, ctx), update?(el, ctx, graph), unmount?(el),
-  minimiseItem?(task, graph, api) }`. Its `ctx` is `{ tasks, minimisedIds }`:
+  minimiseItem?(task, graph, api), backgroundItem?(graph, api) }`.
+  Its `ctx` is `{ tasks, minimisedIds }`:
   `tasks` contains `{ id, name, adhoc }` in live board display order, including
   Unassigned (`id: 'adhoc', adhoc: true`) and excluding archived/deleted tasks;
   `minimisedIds` is an array of the browser's current minimised task ids.
@@ -1209,10 +1210,14 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Return `{ label, icon?, run(event) }`, or `null` to keep core's entry. Labels are
   escaped text, icons follow the existing menu markup convention, and `run` errors
   are caught and reported. **Focus** and other menu actions remain available.
-  A throwing callback or malformed item removes the tray contribution, returns
-  core's Minimise for that menu and requests a board render to restore the strip
-  (or promote the next contributor). Ordinary `task.action` contributions cannot
-  replace core's entry or claim tray ownership.
+  The owner's optional `backgroundItem(graph, api)` adds one action beside
+  **New task** in the blank task-view right-click menu. It receives no task target
+  and returns the same item shape, or `null` to leave only core's action.
+  A throwing menu callback or malformed item removes the tray contribution,
+  leaves core's menu actions and requests a board render to restore the strip
+  (or promote the next contributor). These guards apply to both callbacks.
+  Ordinary `task.action` contributions cannot replace core's entry, contribute
+  to the blank task-view menu or claim tray ownership.
 
   **`api.setMinimisedTasks(ids)` (1.52.0)** atomically replaces the whole browser
   minimised set. Pass an array of non-empty task id strings (including `'adhoc'`).

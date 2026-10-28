@@ -46,7 +46,8 @@ focus it, or choose **Restore all**. Core keeps at least one task visible, and n
 join the visible board.
 
 An enabled extension can own this strip and replace **Minimise** in both task menus, including
-Unassigned. Its strip stays visible even when every task is shown; **Focus** remains available.
+Unassigned, and add an action beside **New task** in the blank task-view right-click menu.
+Its strip stays visible even when every task is shown; **Focus** remains available.
 Enabling a tray extension preserves tasks you already minimised. Disabling it returns the core tray
 and **Minimise** entries with the current view intact. If a tray contribution fails, core falls back
 to another registered tray or its own controls.

@@ -119,3 +119,22 @@ test('housekeeping clears stale ids and restores all when the last visible task 
   assert.deepEqual(reconcile(['a']), []);
   assert.deepEqual(writes, [['a'], []]);
 });
+
+test('blank task-view menu keeps New task and adds only the tray owner action', () => {
+  let owner = true, items, created = 0, managed = 0;
+  const scope = {
+    slots: { trayBackgroundItem: () => owner ? { label: 'Manage profiles…', run: () => { managed++; } } : null },
+    latestGraph: {}, extApi: {}, PLUS_ICON: '',
+    mountMenu: (value) => { items = value; }, createTask: () => { created++; },
+  };
+  const open = new Function(...Object.keys(scope), `${declaration('openTaskViewMenu')}; return openTaskViewMenu;`)(...Object.values(scope));
+  open(10, 20);
+  assert.deepEqual(items.map((it) => it.label), ['New task', 'Manage profiles…']);
+  items[0].run();
+  items[1].run();
+  assert.equal(created, 1);
+  assert.equal(managed, 1);
+  owner = false;
+  open(10, 20);
+  assert.deepEqual(items.map((it) => it.label), ['New task']);
+});

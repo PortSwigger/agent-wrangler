@@ -2247,6 +2247,14 @@ function taskMinimiseMenuItem(taskId) {
     || { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(taskId) };
 }
 
+function openTaskViewMenu(x, y) {
+  const item = slots.trayBackgroundItem(latestGraph, extApi);
+  mountMenu([
+    { label: 'New task', icon: PLUS_ICON, run: () => createTask() },
+    ...(item ? [item] : []),
+  ], x, y);
+}
+
 function autoFixMenuItem(s) {
   let on = Boolean(s.autoFixPrChecks);
   return {
@@ -3025,7 +3033,7 @@ function armNewTask(on) {
     grid.addEventListener('contextmenu', (e) => {
       if (e.target.closest('.task-cell')) return;
       e.preventDefault();
-      mountMenu([{ label: 'New task', icon: PLUS_ICON, run: () => createTask() }], e.clientX, e.clientY);
+      openTaskViewMenu(e.clientX, e.clientY);
     });
   }
   btn.addEventListener('dragover', (e) => { e.preventDefault(); btn.classList.add('drop'); });

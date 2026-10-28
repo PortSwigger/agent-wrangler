@@ -395,8 +395,8 @@ import semver from 'semver';
 // server's own Claude config. An older server ignores `refuseIfSet` and launches,
 // so a manifest that relies on it declares `^1.51.0`.
 //
-// 1.52.0 adds board.tray ownership, its Minimise replacement and atomic
-// client setMinimisedTasks. Extensions using them declare `^1.52.0`.
+// 1.52.0 adds board.tray ownership, its task and background menu hooks and
+// atomic client setMinimisedTasks. Extensions using them declare `^1.52.0`.
 //
 export const HOST_API_VERSION = '1.52.0';
 
