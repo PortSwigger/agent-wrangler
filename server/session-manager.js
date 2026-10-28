@@ -17,7 +17,8 @@ import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
 import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault } from './config-store.js';
 import { ensureCodexTrust } from './codex-trust.js';
-import { ensureClaudeTrust, mirrorWorktreeTrust } from './claude-trust.js';
+import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
+import { launchEnvOf } from './launch-context.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
@@ -289,6 +290,15 @@ export function shouldReloadWorkflowSkill(workflow) {
   return Boolean(workflow) && !isLegacyWorkerWorkflow(workflow);
 }
 
+// A runtime that builds its own launch has no pane-side `refuseIfSet` check, so
+// a dispatch, resume or fork that asks for one is refused. Resume and fork are
+// already refused upstream for such a runtime (it must be `resumable: false`);
+// this holds if that ever changes.
+export function ownLaunchRefusal(rt, launchContext) {
+  if (!rt?.buildLaunch || !launchContext?.refuseIfSet?.length) return null;
+  return `Runtime ${rt.id} builds its own launch, so it cannot check ${launchContext.refuseIfSet.join(', ')} in the pane; launch refused.`;
+}
+
 // Pure: the fresh mapping entry resume() rebuilds (without archivedAt, so the card
 // returns to the board) while preserving the durable bits of the prior entry. Split
 // out so the carry-forward set is unit-testable — provenance (forkedFrom, spawnedBy,
@@ -423,6 +433,7 @@ export class SessionManager {
     this._ensureCodexTrust = ensureCodexTrust;
     this._ensureClaudeTrust = ensureClaudeTrust; // same seam, for ~/.claude.json
     this._mirrorWorktreeTrust = mirrorWorktreeTrust; // a worktree inherits its repo's Claude trust
+    this._ensureLoginClaudeTrust = ensureLoginClaudeTrust; // the same trust, in a launch's own CLAUDE_CONFIG_DIR
     // Seam (like _ensureCodexTrust) for archive()'s fire-and-forget "review this
     // transcript into task memory" side effect — a no-op by default so every
     // existing archive-path test stays inert; server/index.js binds the real
@@ -466,6 +477,16 @@ export class SessionManager {
     // nothing, so every existing launch keeps the core sandbox/approval flags.
     this._extCodexPolicy = () => undefined;
     this._load();
+  }
+
+  // Called after the launch context is collected, so a launch whose context
+  // points CLAUDE_CONFIG_DIR at a login's own config gets the same trust there.
+  // A default launch makes exactly the two calls it always has.
+  async _trustClaudeLaunch(dir, launchContext) {
+    this._ensureClaudeTrust(SESSIONS_DIR);
+    await this._mirrorWorktreeTrust(dir);
+    const loginDir = launchEnvOf(launchContext).CLAUDE_CONFIG_DIR;
+    if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, sessionsDir: SESSIONS_DIR });
   }
 
   async _fireExtHooks(name, payload) {
@@ -1181,10 +1202,6 @@ export class SessionManager {
     // a live session running.
     await this.killForSession(sessionId);
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
-    if (agent === 'claude' && trustClaudeLaunchCwd()) {
-      this._ensureClaudeTrust(SESSIONS_DIR);
-      await this._mirrorWorktreeTrust(dir);
-    }
     // Awaited before the command is built: the hook may bind state (task-memory
     // repoints the session's symlink) that the launch reads. A resume's reason is
     // passed through when it is one a hook distinguishes, else plain 'resume'.
@@ -1192,6 +1209,9 @@ export class SessionManager {
       sid: sessionId, task: this._taskFor(sessionId) || null, agent, runtime: prev?.runtime || 'local',
       reason: ['message', 'snooze-wake'].includes(reason) ? reason : 'resume',
     });
+    const ownLaunch = ownLaunchRefusal(runtime, launchContext);
+    if (ownLaunch) throw new Error(ownLaunch);
+    if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
     const addDirs = await withCodexGitDirAddDir(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
@@ -1273,16 +1293,15 @@ export class SessionManager {
     // mints its own, resolved post-launch. Identity + scoped memory inject on the CARD id.
     const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(parentEntry?.worktree?.repoRoot || dir);
-    if (agent === 'claude' && trustClaudeLaunchCwd()) {
-      this._ensureClaudeTrust(SESSIONS_DIR);
-      await this._mirrorWorktreeTrust(dir);
-    }
     // The fork lands in its parent's task, so the launch context is asked with
     // that task before the command is built (an extension that binds per-task
     // state, like task-memory, must see it first).
     const launchContext = await this._launchContext({
       sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork', parentId,
     });
+    const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
+    if (ownLaunch) throw new Error(ownLaunch);
+    if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
     const addDirs = await withCodexGitDirAddDir(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
     // gate is shown the PARENT's — which is what it would inherit anyway, and
@@ -1917,10 +1936,6 @@ export class SessionManager {
     // runs the procedure.
     const loadWorkflowSkill = Boolean(workflowOpt);
     if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(worktreeEntry?.repoRoot || cwd);
-    if (agent === 'claude' && trustClaudeLaunchCwd()) {
-      this._ensureClaudeTrust(SESSIONS_DIR);
-      await this._mirrorWorktreeTrust(cwd);
-    }
     // Keep the grants the dispatch ASKED for, before the codex git-dir is folded
     // in: that one is derived from the cwd on every launch, so storing it would
     // only let resume grant the same path twice.
@@ -1945,6 +1960,9 @@ export class SessionManager {
     const launchContext = await this._launchContext({
       sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
     });
+    const ownLaunch = ownLaunchRefusal(rt, launchContext);
+    if (ownLaunch) throw new Error(ownLaunch);
+    if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(cwd, launchContext);
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
     // the hooks fire either way) — their output just goes unused, since the

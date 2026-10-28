@@ -1181,7 +1181,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   route, so an extension can reopen whatever the reader left. It never fires if
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
-- **`board.tray` (1.51.0)** is an exclusive mount-style slot for the bottom strip.
+- **`board.tray` (1.52.0)** is an exclusive mount-style slot for the bottom strip.
   Register `{ id, mount(el, api, ctx), update?(el, ctx, graph), unmount?(el),
   minimiseItem?(task, graph, api) }`. Its `ctx` is `{ tasks, minimisedIds }`:
   `tasks` contains `{ id, name, adhoc }` in live board display order, including
@@ -1214,7 +1214,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (or promote the next contributor). Ordinary `task.action` contributions cannot
   replace core's entry or claim tray ownership.
 
-  **`api.setMinimisedTasks(ids)` (1.51.0)** atomically replaces the whole browser
+  **`api.setMinimisedTasks(ids)` (1.52.0)** atomically replaces the whole browser
   minimised set. Pass an array of non-empty task id strings (including `'adhoc'`).
   Duplicate and non-live ids are pruned before checking the last-visible-tile guard.
   A request hiding every live tile, or malformed input, returns `false` without
@@ -1222,7 +1222,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   persisted and rendered once, and an unchanged set needs no render. `[]` restores
   every task. This method is available to every client extension, like
   `api.minimiseTask`; only menu replacement is tied to tray ownership. Declare
-  `engines.wranglerApi: '^1.51.0'` in both the runtime manifest and `package.json`'s
+  `engines.wranglerApi: '^1.52.0'` in both the runtime manifest and `package.json`'s
   `wranglerExtension` when using these hooks. Server host access still requires
   the capabilities listed in `requires`.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
@@ -1471,7 +1471,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 ## Launch context, events and lifecycle
 
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, runtime,
-  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, refuse? }` (or a Promise of it). `server/launch-context.js`
+  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
   collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
   written after, so an extension can never override `AW_SESSION_ID`) and
@@ -1488,6 +1488,20 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `onBeforeDispatch` before collecting launch context so hooks can read its bindings.
   A non-empty string `refuse` (1.47.0) fails the launch with that reason immediately,
   without asking later hooks or caching a partial context.
+  `refuseIfSet` (1.51.0) lists `UPPER_SNAKE` variable names that the pane checks
+  under `/bin/sh` after the user's shell has started (so tmux's global
+  environment and shell startup files count), before the agent runs: if any is
+  set, even to an empty string, the launch exits naming it, and its value is
+  never read. A runtime that builds its own launch cannot run the check, so
+  a dispatch, resume or fork on it is refused instead. Names merge across extensions; headless runs build their
+  environment in the server, where `refuse` already sees it. When the merged
+  `env` sets `CLAUDE_CONFIG_DIR` (1.51.0), a Claude dispatch, resume or fork also writes
+  the default launch's folder trust into that directory's `.claude.json`: the
+  sessions directory, a worktree whose repo the server's own Claude config
+  trusts, and the launch folder when that config already trusts it. Only the
+  server's config authorises a folder. The directory must already exist and
+  must not be the server's or the CLI's default config directory, and a
+  symlinked `.claude.json` is left alone.
   `ext` (1.48.0) is this extension's narrowed dispatch-data slice or `null`, for
   every reason, including `headless` runs on behalf of a card or stored launch.
   Headless requests must leave the card's live session bindings unchanged; hooks

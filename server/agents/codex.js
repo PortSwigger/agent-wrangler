@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
+import { launchAddDirArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
 import { shellQuote } from './claude.js';
 import { analyzeCodex, listResumableCodex, activityInRangeCodex, findRollout } from './codex-rollout.js';
@@ -17,14 +17,14 @@ const exec = promisify(execFile);
 
 const HOOK_PATH = installPath(fileURLToPath(new URL('../codex-notify-hook.js', import.meta.url)));
 
-// Env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
+// The pane-side refuseIfSet guard, env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
 // even for a fork (its own fresh board id). The extensions' env comes FIRST and
 // core's after, so an extension adds variables but can never override ours (the
 // last assignment of a name wins in a shell prefix). A path an extension hands
 // Codex (task-memory's) is already the launch-time REAL path: its hook is told
 // `agent: 'codex'`, because Codex 0.149+ rejects a symlinked writable root.
 function envPrefix(sessionId, spawnedBy, launchContext) {
-  let env = launchEnvPrefix(launchContext, shellQuote)
+  let env = launchEnvGuard(launchContext, shellQuote) + launchEnvPrefix(launchContext, shellQuote)
     + `AW_SESSION_ID=${shellQuote(sessionId)} ${MCP_TOKEN_ENV}=${shellQuote(sessionId)} `;
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
