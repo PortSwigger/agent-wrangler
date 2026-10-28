@@ -7,6 +7,7 @@ import {
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
 import { createAdditionalFolders } from './additional-folders.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
+import { focusReturnTarget } from './terminal-dialog.js';
 import {
   MAX_ONSCREEN_ROWS,
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
@@ -4625,6 +4626,96 @@ function syncShellTerminal(sessionId) {
   if (visible) try { currentShellTerm.fit.fit(); } catch {}
 }
 
+// A registered shell tmux attached into `body`: the xterm, its /pty socket and
+// the size sync. `onEnd(ws)` runs when that socket closes.
+function connectShellXterm(body, terminalId, onEnd) {
+  const term = new Terminal({
+    fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    theme: readTerminalTheme(), cursorBlink: true,
+    allowTransparency: true,
+    // Same reason as the agent terminal: tmux runs with `mouse on`, so a plain drag is
+    // reported to the pane instead of selecting — Option-drag is the only local select.
+    macOptionClickForcesSelection: true,
+    // Unicode11Addon's activate() calls the proposed term.unicode API.
+    allowProposedApi: true,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  attachClipboard(term);
+  attachUnicode11(term);
+  term.open(body);
+  fit.fit();
+  term.focus();
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
+  term.onData((d) => ws.readyState === 1 && ws.send(d));
+  ws.onclose = () => onEnd(ws);
+
+  // Assert our true size once the socket is open so tmux's idea of our size can't
+  // drift from what xterm renders (the source of redraw garble); the server
+  // forces a repaint after the resize.
+  const syncSize = () => {
+    try {
+      fit.fit();
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    } catch { /* disposed */ }
+  };
+  ws.onopen = syncSize;
+  const ro = new ResizeObserver(syncSize);
+  ro.observe(body);
+  return { term, fit, ws, ro };
+}
+
+// --- extension terminal dialog ---
+// `terminals.create({ presentation: 'dialog' })` lands here, in the requesting
+// tab only, over whatever is open (usually Settings, which stays as it was).
+// Closing detaches: the server keeps the shell, and the extension's next create
+// with the same key presents it again. Escape belongs to the shell, so only the
+// Close button closes the dialog.
+let terminalDialog = null; // { terminalId, term, ws, ro, opener, scope }
+const terminalModal = document.getElementById('terminal-modal');
+
+function detachTerminalDialog() {
+  if (!terminalDialog) return null;
+  const { term, ws, ro, opener, scope } = terminalDialog;
+  terminalDialog = null;
+  try { ro.disconnect(); } catch {}
+  try { ws.close(); } catch {}
+  try { term.dispose(); } catch {}
+  document.getElementById('terminal-modal-body').replaceChildren();
+  return { opener, scope };
+}
+
+function closeTerminalDialog() {
+  const { opener = null, scope = null } = detachTerminalDialog() ?? {};
+  if (terminalModal.open) terminalModal.close();
+  focusReturnTarget(opener, document, scope)?.focus();
+}
+
+function openTerminalDialog({ terminalId, command, title }) {
+  if (terminalDialog?.terminalId === terminalId) { terminalDialog.term.focus(); return; }
+  const prior = terminalModal.contains(document.activeElement) ? null : document.activeElement;
+  const { opener = prior, scope = prior?.closest?.('[id$="-modal"]') ?? null } = detachTerminalDialog() ?? {};
+  document.getElementById('terminal-modal-title').textContent = title || 'Terminal';
+  const preview = document.getElementById('terminal-modal-preview');
+  preview.querySelector('code').textContent = command || '';
+  preview.classList.toggle('hidden', !command);
+  const ended = document.getElementById('terminal-modal-ended');
+  ended.classList.add('hidden');
+  if (!terminalModal.open) terminalModal.showModal();
+  const body = document.getElementById('terminal-modal-body');
+  const conn = connectShellXterm(body, terminalId, (closed) => {
+    if (terminalDialog?.ws === closed) ended.classList.remove('hidden');
+  });
+  terminalDialog = { terminalId, ...conn, opener, scope };
+}
+
+document.getElementById('terminal-modal-close').addEventListener('click', closeTerminalDialog);
+terminalModal.addEventListener('cancel', (e) => e.preventDefault());
+
 // Open (or replace) the shell terminal pane below #term-wrap in the sidebar.
 // `command` (if non-empty) is already pre-populated server-side; we show it
 // in a DOM preview so it's immune to ANSI tricks inside the xterm canvas.
@@ -4680,23 +4771,11 @@ function openShellTerminal({ terminalId, command, sessionId }) {
   pane.querySelector('.shell-terminal-close').addEventListener('click', closeShellTerminal);
 
   const body = pane.querySelector('.shell-terminal-body');
-  const term = new Terminal({
-    fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    theme: readTerminalTheme(), cursorBlink: true,
-    allowTransparency: true,
-    // Same reason as the agent terminal: tmux runs with `mouse on`, so a plain drag is
-    // reported to the pane instead of selecting — Option-drag is the only local select.
-    macOptionClickForcesSelection: true,
-    // Unicode11Addon's activate() calls the proposed term.unicode API.
-    allowProposedApi: true,
+  // Server-side kill on disconnect removes the registry entry; client-side close
+  // removes the pane from DOM. No reconnect — shell terminals are one-shot.
+  const { term, fit, ws } = connectShellXterm(body, terminalId, (closed) => {
+    if (currentShellTerm && currentShellTerm.ws === closed) closeShellTerminal();
   });
-  const fit = new FitAddon.FitAddon();
-  term.loadAddon(fit);
-  attachClipboard(term);
-  attachUnicode11(term);
-  term.open(body);
-  fit.fit();
-  term.focus();
 
   // Hide immediately if the terminal belongs to a session other than the currently selected one.
   const visible = !sessionId || sessionId === selectedSessionId;
@@ -4704,31 +4783,6 @@ function openShellTerminal({ terminalId, command, sessionId }) {
     pane.style.display = 'none';
     if (handle) handle.style.display = 'none';
   }
-
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
-  ws.binaryType = 'arraybuffer';
-  ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
-  term.onData((d) => ws.readyState === 1 && ws.send(d));
-
-  // Server-side kill on disconnect removes the registry entry; client-side close
-  // removes the pane from DOM. No reconnect — shell terminals are one-shot.
-  ws.onclose = () => {
-    if (currentShellTerm && currentShellTerm.ws === ws) closeShellTerminal();
-  };
-
-  // Assert our true size once the socket is open so tmux's idea of our size can't
-  // drift from what xterm renders (the source of redraw garble); the server
-  // forces a repaint after the resize.
-  const syncSize = () => {
-    try {
-      fit.fit();
-      if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    } catch { /* disposed */ }
-  };
-  ws.onopen = syncSize;
-  const ro = new ResizeObserver(syncSize);
-  ro.observe(body);
 
   currentShellTerm = { pane, handle, term, fit, ws, sessionId: sessionId || null };
 }
@@ -6889,6 +6943,7 @@ function connect() {
         else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true });
       });
     }
+    else if (msg.type === 'open-terminal' && msg.presentation === 'dialog') openTerminalDialog({ terminalId: msg.terminalId, command: msg.command || '', title: msg.title || '' });
     else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
     else if (msg.type === 'styles') { setCustomStyles(msg.styles); refreshThemeRows(); }
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);

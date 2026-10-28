@@ -5,7 +5,6 @@
 import { INSTALL_ENV } from './install-env.js';
 import os from 'node:os';
 import fs from 'node:fs';
-import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import openModule from 'open';
 
@@ -46,7 +45,8 @@ import { resolveMarkdownPath } from './file-preview.js';
 import { createExtFiles } from './ext-files.js';
 import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
 import { TerminalRegistry } from './terminal-registry.js';
-import { createShellSession } from './shell-session.js';
+import { createShellSession, tmuxSessionAlive } from './shell-session.js';
+import { createExtTerminalOpener } from './ext-terminals.js';
 import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
 import { archiveTaskCascade } from './control/handlers/tasks.js';
 import { createTargets } from './control/targets.js';
@@ -261,7 +261,7 @@ const paneDeferral = createPaneDeferral({
 //
 // The wiring bag every builder draws from. Only host-api/v1.js touches these; an
 // extension sees whatever subset its `requires` declared and nothing else.
-// `archiveSession` and `createTerminal` are composed here rather than in a
+// `archiveSession` and `extTerminals` are composed here rather than in a
 // builder so host-api/ stays a thin bind layer and does not pull the control
 // handlers and the shell plumbing in behind it.
 // The paths extensions have registered through `host.files` (`files:view`); the
@@ -307,13 +307,13 @@ const extWiring = {
     await sendKeys(target, ['Escape'], socketFor(sessionId) || '');
     return true;
   },
-  createTerminal: async ({ cwd, command = '' } = {}) => {
-    const terminalId = `t_${crypto.randomBytes(4).toString('hex')}`;
-    const tmuxName = await createShellSession(cwd, sessionManager.socket, sessionManager.tmuxBin, command);
-    terminalRegistry.set(terminalId, { tmuxName, socket: sessionManager.socket, cwd });
-    broadcast({ type: 'open-terminal', terminalId, command, sessionId: null });
-    return { terminalId };
-  },
+  extTerminals: createExtTerminalOpener({
+    createShellSession: (cwd, socket, command) => createShellSession(cwd, socket, sessionManager.tmuxBin, command),
+    socket: () => sessionManager.socket,
+    terminalRegistry,
+    broadcast,
+    isAlive: ({ tmuxName, socket }) => tmuxSessionAlive(sessionManager.tmuxBin, socket, tmuxName),
+  }),
 };
 // What archiveCascade reads off its ctx — the same shape the board handler and
 // the archive_session tool hand it.

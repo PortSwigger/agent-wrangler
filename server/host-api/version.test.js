@@ -53,14 +53,16 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.46.0 `theme` on a toggle setting def,
 // and 1.47.0 prepare context, launch refusal/fork parent, runtime ownLaunch and dispatch validation,
 // and 1.48.0 spawn extension data, hosted dispatch fields and headless launch environments,
+// and 1.49.0 dialog presentation, title and key on terminals.create, and terminals.alive,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.48.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.48.0');
+test('the served version is 1.49.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.49.0');
   assert.equal(servesRange('^1.47.0'), true);
   assert.equal(servesRange('^1.48.0'), true);
-  assert.equal(servesRange('^1.49.0'), false);
+  assert.equal(servesRange('^1.49.0'), true);
+  assert.equal(servesRange('^1.50.0'), false);
   assert.equal(servesRange('^1.46.0'), true);
   assert.equal(servesRange('^1.45.0'), true);
   assert.equal(servesRange('^1.44.0'), true);

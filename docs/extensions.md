@@ -1367,6 +1367,22 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   malformed data is refused by name (`ext` or `ext.<id>`) before dispatch.
   The same narrowing reaches `session.prepare`, `onBeforeDispatch` and runtime
   `preflight`/`buildLaunch`, while `spawnedBy` remains core-managed and unpassable.
+- **`host.terminals.create({ cwd, command?, presentation?, title?, key? })`
+  (`terminals:create`)** opens a plain shell with `command` typed but not run,
+  and resolves `{ terminalId, reused }`. The default presentation is a sidebar
+  pane in every board tab, closed (and killed) with its pane. `presentation:
+  'dialog'` (1.49.0) opens it, headed by `title`, only in the tab whose control
+  message the calling handler is serving, over anything open there such as
+  Settings; called from a sweep, hook or tool, or after that tab has gone, the
+  shell starts but nothing is shown. Closing the dialog detaches: the shell keeps
+  running until it exits, and focus returns to where it was. A dialog requires
+  a `key`, and a create whose `key` matches a live shell this extension opened
+  presents that shell again without retyping the command, so the same call
+  doubles as Reopen. `host.terminals.alive(terminalId)` (1.49.0) says whether
+  one of this extension's own terminals is still running, for showing Reopen.
+  The key is namespaced to the calling extension, and the tab is read from the
+  handler's async context, never from an argument. Shell exit is never a success
+  signal; the extension reports its own state.
 - **`host.sessions.launchEnv({ agent = 'claude', sessionId = null, ext = null })`
   (1.48.0, `sessions:env`)** returns `{ env }` from the enabled launch-context hooks
   with `reason: 'headless'`, resolving the task and runtime for a supplied card or

@@ -435,6 +435,20 @@
     </div>
   </div>
 
+  <!-- An extension's terminal, presented over whatever is open in this tab.
+       Filled by openTerminalDialog in app.js. -->
+  <dialog id="terminal-modal" aria-labelledby="terminal-modal-title">
+    <div class="terminal-dialog-card">
+      <div class="terminal-dialog-head">
+        <h3 id="terminal-modal-title">Terminal</h3>
+        <button id="terminal-modal-close" class="ghost" type="button">Close</button>
+      </div>
+      <div class="terminal-command-preview hidden" id="terminal-modal-preview"><code></code></div>
+      <div class="terminal-dialog-ended hidden" id="terminal-modal-ended" role="status">The shell has exited.</div>
+      <div class="shell-terminal-body" id="terminal-modal-body"></div>
+    </div>
+  </dialog>
+
   <dialog id="ext-file-modal" aria-labelledby="ext-file-title">
     <div class="file-card">
       <div class="file-head">
