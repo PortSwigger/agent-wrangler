@@ -1428,7 +1428,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 ## Launch context, events and lifecycle
 
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, runtime,
-  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
+  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, codexConfig?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
   collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
   written after, so an extension can never override `AW_SESSION_ID`) and
@@ -1459,6 +1459,25 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   server's config authorises a folder. The directory must already exist and
   must not be the server's or the CLI's default config directory, and a
   symlinked `.claude.json` is left alone.
+  `codexConfig` (1.53.0) is `{ 'dotted.key': value }`, passed to a Codex
+  dispatch, resume and fork as `-c key=value`; Claude launches ignore it. It
+  merges across extensions like `env` (later wins, collisions logged) and is
+  absent from the result when empty. Keys are
+  bare dotted segments (`[A-Za-z0-9_-]`); values are strings (no control
+  characters, at most 1024 characters), finite numbers or booleans, and core
+  writes the TOML. Dropped, each with a logged error naming the key and the
+  reason but never the value: keys core or `codexPolicy` own, matched on the
+  first segment (`model`, `model_reasoning_effort`,
+  `model_auto_compact_token_limit`, `developer_instructions`, `notify`,
+  `mcp_servers`, `sandbox_mode`, `approval_policy`, `sandbox_workspace_write`,
+  `projects`, `profile`, `profiles`), so they cannot be overridden whatever the
+  `-c` order; credential-shaped keys (a segment such as `token`, `api_key`,
+  `secret`, `password`, `bearer`, `headers`, `env`, or
+  `shell_environment_policy.set.*`); and credential-shaped values
+  (`sk-`, `ghp_`, a JWT, `Bearer …`). This is not a credential API: overrides are
+  visible in argv, `ps` and the tmux pane, so pass only nonsecret settings such
+  as `cli_auth_credentials_store = "keyring"`. A runtime that builds its own
+  launch gets none of the context, this field included.
   `ext` (1.48.0) is this extension's narrowed dispatch-data slice or `null`, for
   every reason, including `headless` runs on behalf of a card or stored launch.
   Headless requests must leave the card's live session bindings unchanged; hooks
