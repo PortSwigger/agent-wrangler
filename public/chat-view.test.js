@@ -1108,6 +1108,28 @@ test('clearing needs-you re-enables the composer and hides the bar', async () =>
   assert.equal(input.disabled, false);
 });
 
+test('an input gate disables the composer with its reason, refuses a send and lifts cleanly', async () => {
+  const { view, byId, input, sent } = await mountView();
+  view.mount('s1');
+  view.setStatus('idle');
+  input.value = 'hello';
+  input.dispatchEvent({ type: 'input' });
+  view.setInputGate({ reason: 'Prompt cache expired — unlock from the card' });
+  assert.equal(input.disabled, true);
+  assert.equal(byId.get('chat-send').disabled, true);
+  assert.equal(input.placeholder, 'Prompt cache expired — unlock from the card');
+  // The graph's next setStatus keeps it locked.
+  view.setStatus('idle');
+  assert.equal(input.disabled, true);
+  const before = sent.filter((m) => m.type === 'message').length;
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').length, before);
+  view.setInputGate(null);
+  assert.equal(input.disabled, false);
+  assert.equal(byId.get('chat-send').disabled, false);
+  assert.equal(input.placeholder, 'Send a prompt…');
+});
+
 test('the suggested prompt stays hidden while a sent prompt is still echoed locally', async () => {
   const { view, input, sent, byId } = await mountView();
   view.mount('sess-1');

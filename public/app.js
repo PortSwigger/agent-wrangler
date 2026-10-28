@@ -47,6 +47,7 @@ import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
 import { createNotifications } from './notifications.js';
+import { createInputGates } from './input-gate.js';
 import { prCheckToastOptions } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
@@ -245,8 +246,27 @@ const slots = createSlots({
   },
   version: () => hostApiVersion,
   themeButtonHtml,
+  // api.refreshInputGates(), or a gate's extension going away. Deferred like
+  // onChipsChanged so a timer firing for every card lands as one pass.
+  onInputGatesChanged: () => {
+    if (inputGatesQueued) return;
+    inputGatesQueued = true;
+    queueMicrotask(() => { inputGatesQueued = false; refreshInputGates(); });
+  },
 });
 let chipsRenderQueued = false;
+let inputGatesQueued = false;
+// Sessions a `session.inputGate` extension has locked: typed input is dropped
+// at their terminals (pointer reports still pass, so the wheel scrolls) and the
+// chat composer is disabled with the gate's reason. Told once per lock.
+const inputGates = createInputGates({
+  gateFor: (s) => slots.inputGate(s, latestGraph, extApi),
+  notify: (_sid, g) => toast(`Input locked: ${g.reason}`),
+});
+function refreshInputGates() {
+  if (!inputGates.refresh(latestSessions)) return;
+  chatView.setInputGate(inputGates.get(selectedSessionId));
+}
 function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
   selectionBeforeView = null;
   setView('grid');
@@ -848,6 +868,7 @@ function applyGraph(graph) {
   updateExtViews();
   syncSessionEmbed();
   trackJustFinished(latestSessions);
+  refreshInputGates();
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
   // re-render it whenever it's open so toggles/edits/fires reflect at once.
@@ -4193,6 +4214,7 @@ function renderSidebar(s) {
     document.getElementById('term-wrap').hidden = true;
     closeTerminal(); // no-op when nothing is attached
     chatView.mount(s.sessionId);
+    chatView.setInputGate(inputGates.get(s.sessionId));
     // AFTER mount, which resets the view's cached status to null: selectSession calls
     // renderPanel (the only other setStatus caller) BEFORE this function, so without
     // re-seeding here an already-working session shows no "Working — running X" line
@@ -4401,6 +4423,7 @@ function renderPanel(sessionId) {
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
   if (view === 'chat') {
+    chatView.setInputGate(inputGates.get(s.sessionId));
     chatView.setStatus(displayStatus(s), s.waitingFor, s.waitingReason);
     chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
     chatView.setExitNotice(s.exitOutput);
@@ -4628,7 +4651,8 @@ function syncShellTerminal(sessionId) {
 
 // A registered shell tmux attached into `body`: the xterm, its /pty socket and
 // the size sync. `onEnd(ws)` runs when that socket closes.
-function connectShellXterm(body, terminalId, onEnd) {
+// `sessionId` is the session a sidebar shell belongs to, so its lock covers it.
+function connectShellXterm(body, terminalId, onEnd, sessionId = null) {
   const term = new Terminal({
     fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
     theme: readTerminalTheme(), cursorBlink: true,
@@ -4651,7 +4675,7 @@ function connectShellXterm(body, terminalId, onEnd) {
   const ws = new WebSocket(`${proto}://${location.host}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
-  term.onData((d) => ws.readyState === 1 && ws.send(d));
+  term.onData((d) => ws.readyState === 1 && inputGates.allow(sessionId, d) && ws.send(d));
   ws.onclose = () => onEnd(ws);
 
   // Assert our true size once the socket is open so tmux's idea of our size can't
@@ -4775,7 +4799,7 @@ function openShellTerminal({ terminalId, command, sessionId }) {
   // removes the pane from DOM. No reconnect — shell terminals are one-shot.
   const { term, fit, ws } = connectShellXterm(body, terminalId, (closed) => {
     if (currentShellTerm && currentShellTerm.ws === closed) closeShellTerminal();
-  });
+  }, sessionId);
 
   // Hide immediately if the terminal belongs to a session other than the currently selected one.
   const visible = !sessionId || sessionId === selectedSessionId;
@@ -4907,7 +4931,7 @@ function openTerminal(s) {
   const ws = new WebSocket(`${proto}://${location.host}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
-  term.onData((d) => ws.readyState === 1 && ws.send(d));
+  term.onData((d) => ws.readyState === 1 && inputGates.allow(s.sessionId, d) && ws.send(d));
   // The pty socket can drop without us asking — a server restart (launchd), the
   // server-side `tmux attach` exiting, or a network blip. Unlike the control
   // socket it has no re-poll, so a silent drop leaves the terminal dead: the
