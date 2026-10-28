@@ -31,15 +31,14 @@ limit, so the reviewer lands under you whether you are top-level or already nest
 - You're Claude → spawn `agent: "codex"`.
 - You're Codex → spawn `agent: "claude"`.
 
-**Always pass `model` explicitly — don't leave it unset.** `spawn_session`'s "inherit the
+**Always pass `model` and `effort` explicitly — don't leave either unset.** `spawn_session`'s "inherit the
 caller's model" default only applies when the new session runs the *same* agent as you;
 since this skill always spawns the opposite one, that inheritance never fires, and
 leaving it unset lands you on whatever that agent's ambient default happens to be right
-now — not necessarily its strongest option, and for Claude not even a fixed value (its
+now — not necessarily a suitable option, and for Claude not even a fixed value (its
 default can be changed machine-wide by an unrelated `/model` call). Passing a `model`
 that doesn't match your chosen `agent` is now rejected before launch, naming the valid
-options and, for a cross-agent guess, the likely fix (e.g. `model: "opus"` with
-`agent: "codex"` → "opus is a claude model — did you mean agent: claude?") — but an
+options and, for a cross-agent guess, the likely fix — but an
 *unset* `model` isn't caught by that, since it's not wrong, just ambiguous.
 
 `spawn_session`'s own `model` parameter description enumerates the current valid values
@@ -49,6 +48,20 @@ session, don't assume that description is already in front of you the way it wou
 for Claude** — Codex's initial tool catalog doesn't carry full MCP input-schema
 descriptions; you may need to actively look up `spawn_session`'s declared schema to see
 it.
+
+### Reviewer model and effort
+
+Select a current, high-capability general-purpose model suitable for independent code
+review, using **medium effort or higher**. Exclude lightweight, fast/cheap, and
+reduced-capability variants. Among models meeting that capability floor, prefer the
+standard workhorse over a premium specialist or maximum-capability tier. Increase effort
+for difficult reviews; do not use extra effort to compensate for an unsuitable model.
+Honour the user's model exclusions.
+
+Use the available model descriptions to establish suitability. If they do not establish
+that an option meets this floor, report the uncertainty rather than silently choosing a
+weaker option. If no eligible model is available, report the blocker instead of lowering
+the capability or effort floor.
 
 ## 4. Brief the reviewer
 
