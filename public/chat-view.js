@@ -521,6 +521,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // either call site deciding on its own partial view.
   let lastStatus = null;
   let lastWaitingReason = null;
+  let lastWaitingFor = null;
+  // A `session.inputGate` lock on this session (`{ reason }`, app.js), or null.
+  // Unlike a needs-you block it is not cleared by mount: the app re-seeds it
+  // right after, and a session switch must never flash the composer unlocked.
+  let lastGate = null;
   let lastPending = null;
   let lastTs = null;
   // Claude Code's suggested next prompt, scraped off the pane server-side (see
@@ -668,7 +673,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // word on a prompt they did not write.
   function loadComposer(text) {
     input.value = text;
-    input.disabled = false;
+    input.disabled = Boolean(lastGate);
     input.focus();
     // Caret at the end, not a selection over the whole value: the point of
     // restoring a prompt is to amend it, and a full selection means the next
@@ -686,7 +691,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // discard something the human was in the middle of writing — and while
     // blocked, when the composer is disabled and the only useful action is
     // answering the prompt in the pane.
-    const show = Boolean(lastSuggestion) && !input.value.trim() && !blockedByNeedsYou() && !echoList().length;
+    const show = Boolean(lastSuggestion) && !input.value.trim() && !blockedByNeedsYou() && !lastGate && !echoList().length;
     suggestionBtn.hidden = !show;
     if (show) suggestionBtn.textContent = lastSuggestion;
   }
@@ -703,7 +708,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       sendBtn.disabled = true;
       return;
     }
-    if (blockedByNeedsYou()) return; // setStatus owns the button while blocked
+    if (blockedByNeedsYou() || lastGate) return; // setStatus owns the button while blocked
     input.disabled = false;
     if (refocusInput) {
       refocusInput = false;
@@ -715,7 +720,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
 
   function submit() {
     const text = input.value.trim();
-    if (!sessionId || pendingMessages.has(sessionId) || (!text && !attachments.length)) return;
+    if (!sessionId || lastGate || pendingMessages.has(sessionId) || (!text && !attachments.length)) return;
     // The EXISTING human message path: live → paste into the pane, dormant →
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
@@ -1385,6 +1390,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // (driven by this same status) has already disappeared.
       lastStatus = status;
       lastWaitingReason = waitingReason || null;
+      lastWaitingFor = waitingFor || null;
       renderLive();
       renderSuggestion();
       renderHint();
@@ -1392,7 +1398,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       const box = document.querySelector('.chat-box');
       const needsYou = status === 'needs-you';
       const isApiError = needsYou && waitingReason === 'api-error';
-      const blocked = blockedByNeedsYou();
+      const blocked = blockedByNeedsYou() || Boolean(lastGate);
       bar.hidden = !needsYou;
       bar.textContent = ''; // called on every render — rebuild rather than accumulate children.
       if (needsYou) {
@@ -1432,7 +1438,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // stop inviting input until the dialog is answered — and revert cleanly once
       // it isn't, since this runs on every render in both directions.
       box?.setAttribute('data-blocked', blocked ? '1' : '0');
-      input.placeholder = blocked ? 'Answer the prompt in the terminal first…' : 'Send a prompt…';
+      input.placeholder = lastGate ? lastGate.reason : (blocked ? 'Answer the prompt in the terminal first…' : 'Send a prompt…');
       input.disabled = blocked;
       // A disabled input still retains its value, so without this a prompt typed
       // before the block started stays sendable via a click — defeating the guard.
@@ -1442,6 +1448,14 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       sendBtn.disabled = blocked;
       if (!blocked) renderSendability();
       stopBtn.hidden = status !== 'working';
+    },
+
+    // Lock or unlock the composer for a `session.inputGate` (null unlocks).
+    setInputGate(gate) {
+      const next = gate?.reason ? { reason: gate.reason } : null;
+      if ((next?.reason || null) === (lastGate?.reason || null)) return;
+      lastGate = next;
+      if (sessionId) this.setStatus(lastStatus, lastWaitingFor, lastWaitingReason);
     },
   };
 }

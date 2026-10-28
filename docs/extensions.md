@@ -1181,7 +1181,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   route, so an extension can reopen whatever the reader left. It never fires if
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
-- **`board.tray` (1.52.0)** is an exclusive mount-style slot for the bottom strip.
+- **`board.tray` (1.53.0)** is an exclusive mount-style slot for the bottom strip.
   Register `{ id, mount(el, api, ctx), update?(el, ctx, graph), unmount?(el),
   minimiseItem?(task, graph, api), backgroundItem?(graph, api) }`.
   Its `ctx` is `{ tasks, minimisedIds }`:
@@ -1219,7 +1219,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Ordinary `task.action` contributions cannot replace core's entry, contribute
   to the blank task-view menu or claim tray ownership.
 
-  **`api.setMinimisedTasks(ids)` (1.52.0)** atomically replaces the whole browser
+  **`api.setMinimisedTasks(ids)` (1.53.0)** atomically replaces the whole browser
   minimised set. Pass an array of non-empty task id strings (including `'adhoc'`).
   Duplicate and non-live ids are pruned before checking the last-visible-tile guard.
   A request hiding every live tile, or malformed input, returns `false` without
@@ -1227,7 +1227,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   persisted and rendered once, and an unchanged set needs no render. `[]` restores
   every task. This method is available to every client extension, like
   `api.minimiseTask`; only menu replacement is tied to tray ownership. Declare
-  `engines.wranglerApi: '^1.52.0'` in both the runtime manifest and `package.json`'s
+  `engines.wranglerApi: '^1.53.0'` in both the runtime manifest and `package.json`'s
   `wranglerExtension` when using these hooks. Server host access still requires
   the capabilities listed in `requires`.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
@@ -1606,6 +1606,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   removed, and the link falls through. Registering without `files:open` throws. Only the links
   core makes today reach it (`.md` and `.markdown` paths). `api.openFile` is unaffected. A
   manifest using it declares `^1.40.0`.
+- **Locking a session's input: the `session.inputGate` client slot** (1.52.0). A value slot,
+  `{ id, gate(session, graph, api) }`: return `{ reason, label? }` to lock the session or `null`
+  to leave it alone. While locked, typed input to the session's terminal (and to a sidebar
+  shell opened for it) is dropped, while mouse and focus reports still pass, so the wheel
+  scrolls, clicks land, and selecting and copying work. The chat composer is disabled, with
+  `reason` as its placeholder, and the first blocked keystroke of each lock shows a toast with
+  `reason`. Both strings are text. The first contribution that answers wins, in extension load
+  order. A `working` session is never asked and never locked. Gates are re-run on every graph
+  and when the extension calls `api.refreshInputGates()`, so a gate that depends on the clock
+  needs only a timer, and an unlock control calls it after changing its own state. A throwing
+  `gate` is reported and removed, and disabling the extension unlocks at once. Core draws
+  nothing on the card: show the lock with a `card.pill`. A raw `tmux attach` is not gated. A
+  manifest using it declares `^1.52.0`.
 - **Client `api.mountSession(el, sessionId, { onMaximize })`** (1.42.0) shows the board's own
   session panel inside the extension's element: the header and its controls (rename, Actions,
   the session's chips), the `panel.section` strips, Chat, Terminal, and the diff as a third

@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'board.tray']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate', 'board.tray']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -1722,6 +1722,44 @@ test('notification cues reach enabled contributors and stop on removal', async (
   slots.removeExtension('sound');
   slots.notificationCue('finished', api);
   assert.equal(received.length, 2);
+});
+
+test('session.inputGate answers the first gate, skips working sessions and drops a throwing gate', () => {
+  const { slots, errors } = harness();
+  const api = { source: 'board' };
+  assert.throws(() => slots.register('session.inputGate', 'x', { id: 'g' }), /no gate function/);
+  slots.register('session.inputGate', 'quiet', { id: 'none', gate: () => null });
+  slots.register('session.inputGate', 'bad', { id: 'noreason', gate: () => ({ label: 'x' }) });
+  const seen = [];
+  slots.forExtension('lock', api).register('session.inputGate', {
+    id: 'cold', gate: (s, graph, bound) => { seen.push([s.sessionId, graph.n, bound.source]); return s.cold ? { reason: '  Cache expired  ', label: 'Locked' } : null; },
+  });
+  slots.register('session.inputGate', 'later', { id: 'second', gate: () => ({ reason: 'never asked' }) });
+  assert.deepEqual(slots.inputGate({ sessionId: 'a', status: 'idle', cold: true }, { n: 1 }, api), { key: 'lock:cold', reason: 'Cache expired', label: 'Locked' });
+  assert.deepEqual(seen, [['a', 1, 'board']]);
+  assert.match(errors.at(-1), /bad\] noreason returned an input gate without a reason/);
+  // A working session is never locked, whatever an extension says.
+  assert.equal(slots.inputGate({ sessionId: 'a', status: 'working', cold: true }, {}, api), null);
+  assert.equal(seen.length, 1);
+  slots.register('session.inputGate', 'boom', { id: 'throw', gate() { throw Error('boom'); } });
+  slots.removeExtension('lock');
+  slots.removeExtension('later');
+  assert.equal(slots.inputGate({ sessionId: 'a', status: 'idle' }, {}, api), null);
+  assert.match(errors.at(-1), /boom\] throw gate failed — contribution removed/);
+  assert.deepEqual(slots.contributions('session.inputGate').map((c) => c.id), ['none', 'noreason']);
+});
+
+test('api.refreshInputGates and removing a gate both ask the board to re-evaluate', () => {
+  let asked = 0;
+  const { slots } = harness({ onInputGatesChanged: () => { asked++; } });
+  const api = slots.forExtension('lock').api;
+  api.refreshInputGates();
+  assert.equal(asked, 1);
+  slots.removeExtension('lock'); // no gate registered: nothing to unlock
+  assert.equal(asked, 1);
+  slots.forExtension('lock').register('session.inputGate', { id: 'g', gate: () => null });
+  slots.removeExtension('lock');
+  assert.equal(asked, 2);
 });
 
 test('connection listeners refresh extension state on reconnect and disappear on disable', () => {

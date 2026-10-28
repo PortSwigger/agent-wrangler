@@ -72,7 +72,14 @@ import { canOpenPath, fileTypes } from './file-types.js';
 // A contribution may carry `weight(taskId, graph)`: the px of tile height its
 // content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
 // it. It must be cheap and synchronous; a throwing weight counts as 0.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'board.tray'];
+// `session.inputGate` (1.52.0) is a VALUE slot that can stop the human typing
+// into a session: `gate(session, graph, api)` answers `{ reason, label? }` to
+// lock it or null to leave it alone (inputGate()). Core owns the effect — typed
+// input dropped at the session's terminals, the chat composer disabled with
+// `reason` — because both are core input paths no mounted element can reach.
+// It is asked on every graph and whenever an extension calls
+// `api.refreshInputGates()`, so a time-based gate needs only a timer.
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate', 'board.tray'];
 
 
 // The capability a client-only `api.cards` call is gated on (server/extensions
@@ -94,7 +101,7 @@ export const FILES_OPEN_CAPABILITY = 'files:open';
 
 // The value slots and the one function each contribution must carry in place
 // of mount().
-const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue', 'file.open': 'open' };
+const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue', 'file.open': 'open', 'session.inputGate': 'gate' };
 
 // The only icon markup a `link.chip` may carry: one <svg> of <path>s with plain
 // presentation attributes. Anything else (scripts, handlers, urls, foreign
@@ -151,7 +158,7 @@ function canonCombo(str) {
   return [p.mod, p.meta, p.ctrl, p.shift, p.alt, p.key].join('|');
 }
 
-export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], keybindingsFor = () => [], labelFor = (id) => id, keys = null, onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null, themeButtonHtml = () => '' }) {
+export function createSlots({ document, storage, onError = (...a) => console.error(...a), onInputGatesChanged = () => {}, handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], keybindingsFor = () => [], labelFor = (id) => id, keys = null, onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null, themeButtonHtml = () => '' }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
   // extId -> Set<chip key>: each extension's api.cards.hideChips() choice. The
   // board hides the UNION (hiddenChips()); a removed extension's set goes with
@@ -518,6 +525,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           if (!baseApi.earlyAdopterFor?.(extId)?.branch) return undefined;
           if (!earlyAdopterApis.has(extId)) earlyAdopterApis.set(extId, earlyAdopterApi(extId, baseApi));
           return earlyAdopterApis.get(extId);
+        },
+        // Ask the board to re-run every `session.inputGate` now (1.52.0), for a
+        // gate whose answer changed without a graph change: a clock, or a click
+        // on the extension's own unlock control.
+        refreshInputGates: () => {
+          try { onInputGatesChanged(); } catch (err) { onError(`[ext:${extId}] refreshInputGates failed`, err); }
         },
         openSession: (sessionId) => {
           if (typeof sessionId !== 'string' || !sessionId) {
@@ -1126,6 +1139,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
 
     removeExtension(extId) {
       for (const h of [...dispatchHosts]) if (h.owner === extId) h.unmount();
+      // A disabled gate must unlock now, not on the next graph.
+      const hadGate = slotList('session.inputGate').some((c) => c.extId === extId);
       for (const [, list] of bySlot) {
         for (const c of [...list]) if (c.extId === extId) { list.splice(list.indexOf(c), 1); teardown(c); }
       }
@@ -1145,6 +1160,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       for (const unbind of [...(keyUnbinds.get(extId) || [])]) unbind();
       keyUnbinds.delete(extId);
       if (hiddenByExt.delete(extId)) chipsChanged();
+      if (hadGate) { try { onInputGatesChanged(); } catch (err) { onError(`[ext:${extId}] input gate refresh failed`, err); } }
       try { onExtensionRemoved(extId); } catch (err) { onError(`[ext:${extId}] cleanup failed`, err); }
     },
 
@@ -1555,6 +1571,37 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         }
       }
       return false;
+    },
+
+    // The input gate for one session: `{ key, reason, label }` from the first
+    // `session.inputGate` contribution that answers, or null. A working session
+    // is never gated — its keys are how the human steers or interrupts the turn,
+    // and its prompt cache is warm by definition. `reason` and `label` are TEXT.
+    // A throwing gate() is removed, so a broken extension unlocks rather than
+    // locking every session for good; an answer without a reason is skipped.
+    inputGate(session, graph, baseApi) {
+      if (!session || session.status === 'working') return null;
+      for (const c of [...slotList('session.inputGate')]) {
+        let got;
+        try {
+          got = c.gate(session, graph, apiFor(c.extId, baseApi));
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} gate failed — contribution removed`, err);
+          drop('session.inputGate', c);
+          continue;
+        }
+        if (got == null) continue;
+        if (typeof got.reason !== 'string' || !got.reason.trim()) {
+          onError(`[ext:${c.extId}] ${c.id} returned an input gate without a reason`);
+          continue;
+        }
+        return {
+          key: `${c.extId}:${c.id}`,
+          reason: got.reason.trim(),
+          label: typeof got.label === 'string' && got.label.trim() ? got.label.trim() : '',
+        };
+      }
+      return null;
     },
 
     connected() {
