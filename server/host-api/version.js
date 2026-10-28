@@ -400,13 +400,16 @@ import semver from 'semver';
 // session (pointer reports still pass) and disables its chat composer. An older
 // board never asks the slot, so a manifest that relies on it declares `^1.52.0`.
 //
-// 1.53.0 adds `codexConfig` to session.launchContext: nonsecret Codex config
+// 1.53.0 adds board.tray ownership, its task and background menu hooks and
+// atomic client setMinimisedTasks. Extensions using them declare `^1.53.0`.
+//
+// 1.54.0 adds `codexConfig` to session.launchContext: nonsecret Codex config
 // overrides passed as `-c key=value` on a Codex dispatch, resume and fork.
 // Reserved and credential-shaped keys or values are dropped and logged. An older
 // server ignores the field and launches without them, so a manifest that relies
-// on it declares `^1.53.0`.
+// on it declares `^1.54.0`.
 //
-export const HOST_API_VERSION = '1.53.0';
+export const HOST_API_VERSION = '1.54.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

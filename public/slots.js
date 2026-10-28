@@ -79,7 +79,7 @@ import { canOpenPath, fileTypes } from './file-types.js';
 // `reason` — because both are core input paths no mounted element can reach.
 // It is asked on every graph and whenever an extension calls
 // `api.refreshInputGates()`, so a time-based gate needs only a timer.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate'];
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate', 'board.tray'];
 
 
 // The capability a client-only `api.cards` call is gated on (server/extensions
@@ -191,6 +191,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const hideReported = new Set();
   // Colliding `card.cost` pairs already reported by costCeiling().
   const costReported = new Set();
+  const trayCollisions = new Set();
   // `extId:id` of task.body contributions whose weight() already threw.
   const weightReported = new Set();
   // extId -> Set<unregister fn>: each extension's api.keys.bind() bindings,
@@ -587,6 +588,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           }
           return Boolean(baseApi.openTask?.(taskId));
         },
+        setMinimisedTasks: (ids) => {
+          if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id)) {
+            onError(`[ext:${extId}] setMinimisedTasks refused: expected an array of task ids`);
+            return false;
+          }
+          return Boolean(baseApi.setMinimisedTasks?.([...ids]));
+        },
         minimiseTask: (taskId) => {
           if (typeof taskId !== 'string' || !taskId) {
             onError(`[ext:${extId}] minimiseTask refused: expected a task id, got ${JSON.stringify(taskId)}`);
@@ -898,7 +906,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     host.appendChild(el);
     c.mounts.set(host, el);
     try {
-      if (slotName === 'task.body') c.mount(el, apiFor(c.extId, baseApi), subject);
+      if (slotName === 'task.body' || slotName === 'board.tray') c.mount(el, apiFor(c.extId, baseApi), subject);
       else c.mount(el, apiFor(c.extId, baseApi));
     } catch (err) {
       if (sample) { sampleFailed(c, host, 'mount', err); return false; }
@@ -1043,6 +1051,25 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     return out;
   }
 
+  function trayMenuItem(method, args, baseApi) {
+    const c = slotList('board.tray').find((entry) => entry.mounts.size > 0);
+    if (!c || !c[method]) return null;
+    try {
+      const item = c[method](...args, apiFor(c.extId, baseApi));
+      if (item == null) return null;
+      if (typeof item.label !== 'string' || !item.label || typeof item.run !== 'function') throw Error('expected a label and run()');
+      return {
+        label: item.label, icon: typeof item.icon === 'string' ? item.icon : '',
+        run: (e) => { try { return item.run(e); } catch (err) { onError(`[ext:${c.extId}] ${c.id} ${method} action failed`, err); } },
+      };
+    } catch (err) {
+      onError(`[ext:${c.extId}] ${c.id} ${method} failed — contribution removed`, err);
+      drop('board.tray', c);
+      baseApi.requestBoardRender?.();
+      return null;
+    }
+  }
+
   return {
     register(slotName, extId, contribution) {
       const list = slotList(slotName);
@@ -1058,6 +1085,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // reportBadges would skip it in silence and the author would be left
       // looking at a rail button that never says anything. Same reason
       // slotList refuses an unknown slot name — fail at load, not nowhere.
+      if (slotName === 'board.tray') for (const field of ['minimiseItem', 'backgroundItem']) {
+        if (contribution[field] != null && typeof contribution[field] !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ${field} must be a function`);
+      }
       if (contribution.badge != null && typeof contribution.badge !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} badge must be a function`);
       if (contribution.weight != null && typeof contribution.weight !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} weight must be a function`);
       if (contribution.ext != null && typeof contribution.ext !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ext must be a function`);
@@ -1420,6 +1450,34 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         if (Number.isFinite(w) && w > 0) total += w;
       }
       return total;
+    },
+
+    syncTray(host, baseApi, ctx, graph) {
+      const candidates = [...slotList('board.tray')];
+      for (const c of candidates.slice(1)) {
+        const key = `${candidates[0].extId}:${candidates[0].id}/${c.extId}:${c.id}`;
+        if (!trayCollisions.has(key)) {
+          trayCollisions.add(key);
+          onError(`[ext:${c.extId}] ${c.id} board.tray waiting for the first registered contributor`);
+        }
+        teardown(c);
+      }
+      for (const c of candidates) {
+        for (const old of [...c.mounts.keys()]) if (old !== host) teardownAt(c, old);
+        const snapshot = () => ({ tasks: ctx.tasks.map((t) => ({ ...t })), minimisedIds: [...ctx.minimisedIds] });
+        if (!ensure('board.tray', c, host, baseApi, false, snapshot())) continue;
+        if (!updateAt('board.tray', c, host, snapshot(), graph)) continue;
+        return true;
+      }
+      return false;
+    },
+
+    trayMinimiseItem(task, graph, baseApi = {}) {
+      return trayMenuItem('minimiseItem', [{ ...task }, graph], baseApi);
+    },
+
+    trayBackgroundItem(graph, baseApi = {}) {
+      return trayMenuItem('backgroundItem', [graph], baseApi);
     },
 
     // The `card.action` items for one card, in registration order, for the

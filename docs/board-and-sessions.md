@@ -41,6 +41,17 @@ Each task also has:
 Use task memory for durable decisions, the checklist for session progress, and `AGENTS.md` or
 `CLAUDE.md` for repository instructions.
 
+Minimised tasks appear as pills in the bottom tray. Click one to restore it, Shift-click one to
+focus it, or choose **Restore all**. Core keeps at least one task visible, and newly created tasks
+join the visible board.
+
+An enabled extension can own this strip and replace **Minimise** in both task menus, including
+Unassigned, and add an action beside **New task** in the blank task-view right-click menu.
+Its strip stays visible even when every task is shown; **Focus** remains available.
+Enabling a tray extension preserves tasks you already minimised. Disabling it returns the core tray
+and **Minimise** entries with the current view intact. If a tray contribution fails, core falls back
+to another registered tray or its own controls.
+
 ## Read a session card
 
 Cards show status, model, cost, context budget, links, PR/CI state, checklist progress, and native
