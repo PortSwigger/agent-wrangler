@@ -15,7 +15,7 @@ narrow screens. **Intent / first prompt** starts at twelve rows and can be resiz
 **Schedule a session** uses the same layout, with timing and action controls on the task side.
 Choose **Existing session** to show the target session and optional message instead of launch controls.
 
-**Sandbox** (Codex) or **Permissions** (Claude) appears below Branch and above **Advanced options**.
+Open **Advanced options** below Branch to find **Sandbox** (Codex) or **Permissions** (Claude).
 The section is supplied by the selected agent; agents without declared modes show no section.
 
 | Agent | Default | Other choices |
@@ -58,7 +58,8 @@ remembered effort falls back to **Auto**.
 
 Expand **Any model** for the agent/model and effort dropdowns. **Auto** uses the effort reported by
 the agent; without a reported effort or benchmark row, the pick is unscored. Source credit sits under
-the chart. **Advanced options** starts collapsed and holds auto-compaction and runtime controls.
+the chart. **Advanced options** starts collapsed and holds sandbox or permission modes, **Also writable**
+folders, the launch preview, auto-compaction and runtime controls.
 
 Optional launch controls include:
 
