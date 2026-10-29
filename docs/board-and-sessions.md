@@ -10,6 +10,11 @@ scratch session; a new path is created at launch. The folder starts filled in fr
 existing sessions, or from **Settings → Sessions → Default folder for new sessions** when the task
 has none.
 
+The dialog places task controls on the left and the model picker on the right, stacking them on
+narrow screens. **Intent / first prompt** starts at twelve rows and can be resized vertically.
+**Schedule a session** uses the same layout, with timing and action controls on the task side.
+Choose **Existing session** to show the target session and optional message instead of launch controls.
+
 The model section plots measured quality against cost per task on a log scale. Drag the slider or
 use its arrow keys to move through the quality/cost curve, cheapest to best. Click a chart point to
 choose any available front setting, including points that earn their place only by being faster;
