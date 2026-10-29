@@ -155,7 +155,8 @@ test('Updates disables Restart now when another restart path is already in progr
   const { restartPanelEl } = await import('./update-panel.js');
   restartTestDocument(t);
   const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
-  const mount = source.slice(source.indexOf('function mountUpdatePanel(host)'), source.indexOf('// Off means no background check'));
+  const mountStart = source.indexOf('function mountUpdatePanel(host)');
+  const mount = source.slice(mountStart, source.indexOf('\n}\n', mountStart) + 3);
   for (const state of [{ updatePhase: 'restarting', extRestarting: false }, { updatePhase: 'idle', extRestarting: true }]) {
     const host = document.createElement('div');
     const ctx = {
@@ -166,4 +167,40 @@ test('Updates disables Restart now when another restart path is already in progr
     vm.runInNewContext(`${mount}\nmountUpdatePanel(host);`, ctx);
     assert.equal(host.children[0].children[0].children[1].disabled, true, JSON.stringify(state));
   }
+});
+
+test('reconnecting after a restart re-enables the Updates restart button', async (t) => {
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const { restartPanelEl } = await import('./update-panel.js');
+  restartTestDocument(t);
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+  const functionSource = (name) => {
+    const start = source.indexOf(`function ${name}(`);
+    assert.ok(start >= 0);
+    const end = source.indexOf('\n}\n', start);
+    assert.ok(end > start);
+    return source.slice(start, end + 3);
+  };
+  const configStart = source.indexOf("else if (msg.type === 'config') {");
+  const configEnd = source.indexOf('\n    }', configStart);
+  assert.ok(configStart >= 0 && configEnd > configStart);
+  const configBody = source.slice(source.indexOf('{', configStart) + 1, configEnd);
+  const host = document.createElement('div');
+  const ctx = {
+    host, restartPanelEl, extRestarting: true, installDriftRestarting: true,
+    updatePhase: 'idle', installDrift: null, canRestartServer: true,
+    updateStatus: null, updateError: '', updateUnavailable: null,
+    updatePanelEl: () => null, extUpdatesEl: () => null, extBgUpdates: null, autoUpdate: 'off',
+    noteCodeVersion() {}, applyUpdateStatus() {}, applyExtUpdateStatus() {}, noteRolledBack() {},
+    remountExtensions() {}, extPendingRemoval: new Set(),
+    msg: { type: 'config', canRestart: true },
+  };
+  vm.runInNewContext(`${functionSource('mountUpdatePanel')}
+    function remountUpdatePanel() { host.children = []; mountUpdatePanel(host); }
+    ${functionSource('noteConfigUpdate')}
+    remountUpdatePanel();`, ctx);
+  assert.equal(host.children[0].children[0].children[1].disabled, true);
+  vm.runInNewContext(configBody, ctx);
+  assert.equal(host.children[0].children[0].children[1].disabled, false);
 });

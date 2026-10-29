@@ -6873,8 +6873,8 @@ function connect() {
       sessionsDir = msg.sessionsDir || '';
       homeDir = msg.homeDir || '';
       canRestartServer = Boolean(msg.canRestart);
-      noteConfigUpdate(msg);
       extRestarting = false;
+      noteConfigUpdate(msg);
       extPendingRemoval.clear();
       extPendingInstall = '';
       remountExtensions();
