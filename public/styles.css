@@ -71,9 +71,17 @@
   --usage-cat-1:#3987e5; --usage-cat-2:#008300; --usage-cat-3:#d55181;
   --usage-cat-4:#c98500; --usage-cat-5:#199e70; --usage-cat-6:#d95926;
   --usage-cat-other:#768390;
-  /* UI font: themeable so a style can swap it (terminal keeps its own mono font).
+  /* UI font: themeable so a style can swap it (the terminals take --font-mono).
      Custom styles override via the manifest `font` field -> this var. */
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Monospace font for code, paths and the terminals (theme.js readTerminalFont
+     hands it to xterm). */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Chat reading column: the leading of prose and user bubbles, and the widest
+     the conversation and its message box may grow before they centre with
+     margins either side. 100% means no limit. */
+  --prose-leading: 1.62;
+  --chat-measure: 100%;
 }
 body.light {
   --bg:#f6f8fa; --surface:#ffffff; --surface-2:#eaeef2;
@@ -182,6 +190,9 @@ body {
 
 img.icon { width: 1em; height: 1em; object-fit: contain; vertical-align: middle; }
 
+/* Form controls take the browser's own font, not the page's, unless told to
+   inherit. Without this a style's --font missed every button and field. */
+button, input, textarea, select { font-family: inherit; }
 button {
   background: var(--surface-2);
   color: var(--fg);
@@ -526,7 +537,7 @@ main.session-embedded #drag-handle { display: none; }
   padding: 5px 10px; font-size: 12px; color: var(--fg-muted);
 }
 .terminal-command-preview code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--blue-fg);
 }
 
@@ -605,17 +616,22 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .file-body ul, .file-body ol, .chat-prose ul, .chat-prose ol { margin: 0.6em 0; padding-left: 1.5em; }
 .file-body li, .chat-prose li { margin: 0.2em 0; }
 .file-body li > ul, .file-body li > ol, .chat-prose li > ul, .chat-prose li > ol { margin: 0.2em 0; }
-.file-body a, .chat-prose a { color: var(--blue-fg); text-decoration: none; }
+/* --link-fg and --link-decoration are unset unless a style picks them (no
+   :root default, same reason as --code-bg below). */
+.file-body a, .chat-prose a { color: var(--link-fg, var(--blue-fg)); text-decoration: var(--link-decoration, none); text-underline-offset: 2px; }
 .file-body a:hover, .chat-prose a:hover { text-decoration: underline; }
 .file-body strong, .chat-prose strong { color: var(--fg); font-weight: 600; }
 .file-body em, .chat-prose em { font-style: italic; }
 .file-body code, .chat-prose code {
-  background: var(--surface-2); color: var(--blue-fg);
+  /* --code-fg and --code-bg are unset unless a style picks them. They have no
+     :root default because a var() there would resolve against :root and miss
+     body.light's values. */
+  background: var(--code-bg, var(--surface-2)); color: var(--code-fg, var(--blue-fg));
   padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 .file-body pre, .chat-prose pre {
-  background: var(--surface-2); border: 1px solid var(--border-muted); border-radius: 6px;
+  background: var(--code-bg, var(--surface-2)); border: 1px solid var(--code-border, var(--border-muted)); border-radius: 6px;
   padding: 10px 12px; overflow: auto; margin: 0.6em 0;
 }
 /* .chat-prose only, not merged above: a chat message sits inside the scrolling
@@ -661,7 +677,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .file-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
 .file-titles { min-width: 0; }
 .file-head h3 { margin: 0; color: var(--fg); }
-.file-path { font-size: 11px; color: var(--fg-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; margin-top: 3px; }
+.file-path { font-size: 11px; color: var(--fg-subtle); font-family: var(--font-mono); word-break: break-all; margin-top: 3px; }
 .file-head-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 /* Shares the rendered-markdown element rules above. Fills the full-height card,
    flush inside the card's own 20px padding. */
@@ -937,7 +953,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   padding: 3px 0; font-size: 12px;
 }
 .shortcut-keys {
-  flex: 0 0 auto; font-family: ui-monospace, monospace; color: var(--fg);
+  flex: 0 0 auto; font-family: var(--font-mono); color: var(--fg);
   background: var(--surface-2); border-radius: 5px; padding: 1px 6px;
 }
 .shortcut-desc { color: var(--fg-muted); }
@@ -2266,7 +2282,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .diff-file-head.diff-flash { animation: diff-file-flash 900ms ease-out; }
 .diff-file-path {
-  flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 600;
+  flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 600;
   color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .diff-arrow { color: var(--fg-subtle); }
@@ -2280,7 +2296,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .diff-badge-renamed { color: var(--purple); background: color-mix(in srgb, var(--purple) 22%, transparent); border: 1px solid color-mix(in srgb, var(--purple) 40%, transparent); }
 
 .diff-hunk-head {
-  font-family: ui-monospace, monospace; font-size: 11px; color: var(--fg-muted);
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted);
   padding: 3px 14px; background: color-mix(in srgb, var(--blue) 8%, transparent);
   border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted);
   white-space: pre-wrap; word-break: break-word;
@@ -2288,7 +2304,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 
 .diff-line {
   display: flex; align-items: flex-start; cursor: pointer;
-  font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.45;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.45;
 }
 .diff-line-add { background: color-mix(in srgb, var(--term-ansi-green) 14%, transparent); }
 .diff-line-del { background: color-mix(in srgb, var(--term-ansi-red) 14%, transparent); }
@@ -2503,7 +2519,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .search-role--user { color: var(--blue-fg); }
 .search-role--assistant { color: var(--wf); }
 .search-when { font-size: 10.5px; color: var(--fg-subtle); }
-.search-snippet { font-size: 12.5px; line-height: 1.5; color: var(--fg-muted); white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.search-snippet { font-size: 12.5px; line-height: 1.5; color: var(--fg-muted); white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); }
 .search-snippet mark { background: color-mix(in srgb, var(--snooze) 38%, transparent); color: var(--fg); border-radius: 3px; padding: 0 1px; }
 
 /* Browse mode (empty query) + text mode's metadata-only tail. Same .search-group
@@ -2632,7 +2648,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 
 .chat-stream-wrap { position: relative; flex: 1; min-height: 0; background: var(--term-bg); }
 .chat-stream {
-  position: absolute; inset: 0; overflow-y: auto; padding: 20px 22px 26px;
+  position: absolute; inset: 0; overflow-y: auto;
+  /* The side padding grows once the pane is wider than --chat-measure, so the
+     conversation sits in a centred column. A percentage padding is measured
+     against .chat-stream-wrap's width. */
+  padding: 20px max(22px, calc((100% - var(--chat-measure)) / 2)) 26px;
   display: flex; flex-direction: column;
   scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
 }
@@ -2701,16 +2721,18 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    measure won because it is the side you read most. */
 .chat-user {
   align-self: flex-end; width: fit-content; max-width: 84%;
-  background: var(--surface-2); border: 1px solid var(--border-muted); color: var(--fg);
+  /* --bubble-bg and --bubble-border are unset unless a style picks them (no
+     :root default, same reason as --code-bg). */
+  background: var(--bubble-bg, var(--surface-2)); border: 1px solid var(--bubble-border, var(--border-muted)); color: var(--fg);
   /* One squared corner on the sender's side — the standard bubble tail, which
      is what makes an unlabelled right-aligned block read as "you said this". */
   border-radius: 14px 14px 5px 14px;
-  padding: 9px 14px; font-size: 1em; line-height: 1.62;
+  padding: 9px 14px; font-size: 1em; line-height: var(--prose-leading);
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
 /* A prompt echoed locally until the transcript records it: dashed while sending, then queued (delivered to the pane, but the agent has not started on it). */
-.chat-user[data-pending] { border-style: dashed; opacity: 0.75; }
+.chat-user[data-pending] { border-style: dashed; border-color: var(--border-muted); opacity: 0.75; }
 .chat-user[data-pending="1"]::after {
   content: "Sending…"; display: block; margin-top: 4px; font-size: 0.75em; color: var(--fg-subtle);
 }
@@ -2733,7 +2755,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    straight back to inline-block, so a long path that wraps inside the control
    pushes the text after it onto a fresh line. */
 .chat-link, .chat-stream .md-file-link {
-  color: var(--blue-fg); text-decoration: none; text-underline-offset: 2px;
+  color: var(--link-fg, var(--blue-fg)); text-decoration: var(--link-decoration, none); text-underline-offset: 2px;
 }
 .chat-link:hover, .chat-stream .md-file-link:hover { text-decoration: underline; }
 .chat-stream .md-file-link { cursor: pointer; overflow-wrap: anywhere; }
@@ -2746,7 +2768,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    .file-body's, styles.css:~474 — same renderer, same markdown shape.
    The measure and leading are set here, not there: this is body copy in a
    reading column, where .file-body is a compact preview pane. */
-.chat-prose { font-size: 1em; line-height: 1.62; overflow-wrap: anywhere; min-width: 0; }
+.chat-prose { font-size: 1em; line-height: var(--prose-leading); overflow-wrap: anywhere; min-width: 0; }
 /* Held at half opacity at rest and lifted on hover. The model id repeats on
    every prose block in a turn and almost never changes, so at full strength it
    is three identical pills of noise per answer — but it is real provenance, so
@@ -2759,7 +2781,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    prose with nothing distinguishing it, so it read as a dangling fragment of
    the message rather than metadata about it. */
 .chat-model {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  font-family: var(--font-mono); font-size: 0.76em;
   color: var(--fg-subtle); background: var(--surface-2);
   border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
 }
@@ -2805,7 +2827,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* + and − carry the green/red they mean everywhere else in the app, which a
    flat "+14 −3" inside the label text could not. activityTitle keeps the flat
    form for the chip's tooltip. */
-.chat-diffstat { display: inline-flex; gap: 5px; flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em; }
+.chat-diffstat { display: inline-flex; gap: 5px; flex: none; font-family: var(--font-mono); font-size: 0.76em; }
 .chat-adds { color: var(--green-fg); }
 .chat-dels { color: var(--red-fg); }
 
@@ -2828,7 +2850,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   min-width: 0; font-size: 0.83em; color: var(--fg);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.chat-tool-target, .chat-tool-output { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.chat-tool-target, .chat-tool-output { font-family: var(--font-mono); }
 .chat-tool-output {
   margin: 0; padding: 7px 10px; border-top: 1px solid var(--border-muted);
   /* --surface-2, this file's established code-block shade (.chat-prose pre,
@@ -2908,7 +2930,9 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-notice-go:hover { background: color-mix(in srgb, var(--red) 18%, transparent); }
 
 .chat-composer {
-  border-top: 1px solid var(--border); padding: 11px 14px 12px;
+  border-top: 1px solid var(--border);
+  /* Lines up with the stream's --chat-measure column above it, the same way. */
+  padding: 11px max(14px, calc((100% - var(--chat-measure)) / 2)) 12px;
   background: var(--tile-bg);
   backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
 }
@@ -3055,7 +3079,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    one: it is live state, not provenance. */
 .chat-current-model {
   flex: none; max-width: 45%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  font-family: var(--font-mono); font-size: 0.76em;
   color: var(--fg-muted); background: var(--surface-2);
   border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -3084,7 +3108,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    server/control/handlers/chat.js. */
 .chat-context-bar {
   display: flex; align-items: center; gap: 5px; flex: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  font-family: var(--font-mono); font-size: 0.76em;
   color: var(--fg-muted);
 }
 .chat-context-bar[hidden] { display: none; }
@@ -3135,7 +3159,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   background: var(--green); animation: chat-live-pulse 1.4s ease-in-out infinite;
 }
 .chat-live-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  font-family: var(--font-mono); }
 /* Tabular figures so a 1s tick doesn't reflow the row as digits change width. */
 .chat-live-elapsed { flex: none; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
 @keyframes chat-live-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
@@ -3181,7 +3205,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .hint-layer { position: fixed; inset: 0; z-index: 300; pointer-events: none; }
 .hint-marker {
   position: fixed; padding: 0 6px; border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 16px; font-weight: 700; line-height: 24px; letter-spacing: 1.5px;
   text-transform: uppercase; white-space: nowrap;
   background: var(--hint); color: var(--hint-fg);
@@ -3257,7 +3281,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .ext-kv-key { color: var(--fg-muted); }
 .ext-kv-value { min-width: 0; }
 .ext-kv-repo { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
-.ext-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.ext-mono { font-family: var(--font-mono); word-break: break-all; }
 .ext-kv-open { color: var(--blue-fg); white-space: nowrap; }
 .ext-install-form { display: flex; gap: 8px; align-items: center; }
 .ext-install-form .ext-install-url { flex: 1; min-width: 0; }
@@ -3277,7 +3301,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .ext-gh-topic {
   font-size: 11px; padding: 1px 8px; border-radius: 10px; text-decoration: none;
   color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 12%, transparent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 .ext-gh-topic:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .ext-gh-refresh { margin-left: auto; }
@@ -3352,7 +3376,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 /* Consent-modal identity lines. */
 .ext-row-desc { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 3px; }
-.ext-row-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ext-row-sha { font-family: var(--font-mono); }
 .ext-row-origin { color: var(--fg-subtle); word-break: break-all; }
 a.ext-row-origin { color: var(--blue-fg); }
 @media (max-width: 640px) {
@@ -3391,7 +3415,7 @@ a.ext-row-origin { color: var(--blue-fg); }
    here can be stored against a feature that is not running. */
 /* Written-out prose (a process, a prompt): tall enough to read a paragraph,
    and resizable because nobody can guess how long someone's process is. */
-.modal-card .ext-setting-textarea { min-height: 220px; resize: vertical; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.modal-card .ext-setting-textarea { min-height: 220px; resize: vertical; line-height: 1.45; font-family: var(--font-mono); }
 .ext-setting-copybox { position: relative; }
 .ext-setting-copy { position: absolute; top: 14px; right: 8px; display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 0.12s; }
 .ext-setting-copybox:hover .ext-setting-copy, .ext-setting-copy:focus-visible { opacity: 1; pointer-events: auto; }
@@ -3436,7 +3460,7 @@ a.ext-row-origin { color: var(--blue-fg); }
 .ext-chip {
   font-size: 11px; padding: 2px 6px; border-radius: 4px;
   background: var(--surface-2); color: var(--fg-muted); border: 1px solid var(--border-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 .ext-chip-add { color: var(--green-fg); border-color: var(--green); }
 .ext-chip-remove { color: var(--red-fg); border-color: var(--red); }
