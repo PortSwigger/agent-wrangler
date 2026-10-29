@@ -38,8 +38,8 @@ test('boundedPs: resolves stdout on success, null on non-zero exit or spawn erro
 });
 
 test('procInfo: parses ps output; hung ps yields an empty map and warns once', async () => {
-  const map = await procInfo({ spawn: fakeSpawn('  12 ttys003  1.5\n  13 ??  0.0\n') });
-  assert.deepEqual(map.get(12), { tty: 'ttys003', cpu: 1.5 });
+  const map = await procInfo({ spawn: fakeSpawn('  12 ttys003\n  13 ??\n') });
+  assert.deepEqual(map.get(12), { tty: 'ttys003' });
   assert.equal(map.get(13).tty, '??');
 
   const warns = [];

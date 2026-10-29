@@ -60,6 +60,7 @@ import { startFdWatchdog } from './fd-watchdog.js';
 import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
 import { createHistoryGate } from './history-gate.js';
+import { createGraphFrameGate } from './graph-frame-gate.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
@@ -1025,7 +1026,10 @@ function broadcastAgents() {
 }
 
 function broadcast(obj) {
-  const msg = JSON.stringify(obj);
+  broadcastMessage(JSON.stringify(obj));
+}
+
+function broadcastMessage(msg) {
   // readyState alone is not enough: a client that stops reading stays OPEN
   // forever, so every snapshot we send it is queued in our own heap until the
   // process OOMs. sendGuarded drops such a peer instead — see ws-backpressure.js
@@ -1036,6 +1040,7 @@ function broadcast(obj) {
 // Module-scope so its "have I already sent this?" memory spans every rebuild, not
 // one call — the whole saving is across ticks.
 const wireGraph = createHistoryGate();
+const graphFrame = createGraphFrameGate();
 
 // Wrapped below in createRebuildCoalescer — see there for why an overlapping call
 // must trail rather than skip or race.
@@ -1094,7 +1099,10 @@ async function rebuildOnce() {
   // The wire graph, not `lastGraph`: history is omitted while unchanged, which is
   // almost every tick. See history-gate.js — and note the connect path above sends
   // `lastGraph` itself, so a fresh socket is always served the full list.
-  broadcast({ type: 'graph', graph: wireGraph(graph) });
+  // graphFrame then drops the tick altogether when nothing but generatedAt moved
+  // (see graph-frame-gate.js), which on an idle server is every one of them.
+  const frame = graphFrame(wireGraph(graph));
+  if (frame) broadcastMessage(frame);
   broadcastStylesIfChanged();
   return graph;
 }

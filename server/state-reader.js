@@ -16,11 +16,11 @@ import { autoFixPrChecksDefault } from './config-store.js';
 import { boundedPs } from './bounded-ps.js';
 import { logWarn } from './log.js';
 
-// pid -> { tty, cpu } for every process, from one `ps` call. A real `ttysNNN`
+// pid -> { tty } for every process, from one `ps` call. A real `ttysNNN`
 // means the session lives in an open terminal window; `??` means background.
 export async function procInfo(opts) {
   const map = new Map();
-  const stdout = await boundedPs(['-axo', 'pid=,tty=,%cpu='], opts);
+  const stdout = await boundedPs(['-axo', 'pid=,tty='], opts);
   if (stdout === null) {
     // A wedged tty makes ps hang unkillably; boot must not wait on it. Warn once
     // per outage, not on every graph rebuild.
@@ -30,8 +30,8 @@ export async function procInfo(opts) {
   }
   procInfoSkipped = false;
   for (const line of stdout.split('\n')) {
-    const m = line.match(/^\s*(\d+)\s+(\S+)\s+([\d.]+)/);
-    if (m) map.set(Number(m[1]), { tty: m[2], cpu: parseFloat(m[3]) });
+    const m = line.match(/^\s*(\d+)\s+(\S+)/);
+    if (m) map.set(Number(m[1]), { tty: m[2] });
   }
   return map;
 }
@@ -582,7 +582,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       lastActivity: enrichment?.lastActivity ?? null,
       hasTranscript: enrichment?.hasTranscript ?? false,
       tty: proc.get(s.pid)?.tty ?? null,
-      cpu: proc.get(s.pid)?.cpu ?? null,
       managed: Boolean(tmux),
       // A live-restart (or dormant Resume) is mid-flight for this card: the client
       // holds the card in place and shows a "restarting" badge instead of the
@@ -764,7 +763,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       lastActivity: enr?.lastActivity ?? null,
       hasTranscript: enr?.hasTranscript ?? false,
       tty: proc.get(d.claudePid)?.tty ?? null,
-      cpu: proc.get(d.claudePid)?.cpu ?? null,
       managed: true,
       restarting: Boolean(sessionManager?.isResuming?.(realSid)),
       tmux: d.tmuxName,
@@ -860,7 +858,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       updatedAt: null,
       lastActivity: enrichment?.lastActivity ?? null,
       tty: null,
-      cpu: null,
       managed: false, // no live tmux → click takes the Resume path, not attach
       // Set while this dormant card's own Resume/Restart is in flight (the tmux is
       // being relaunched right now). This is the site that actually renders during
