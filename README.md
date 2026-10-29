@@ -439,7 +439,8 @@ forgetting its choice. Jurassic Park is a community extension:
 [psjamesh/agent-wrangler-jurassic-park-theme](https://github.com/psjamesh/agent-wrangler-jurassic-park-theme).
 
 A theme is a folder with a `theme.json` manifest — a name, an icon, a `dark`/`light` base, and
-CSS-variable overrides — plus optional assets like a wallpaper for translucent themes. See
+CSS-variable overrides — plus optional assets like a wallpaper for translucent themes. It inherits
+everything it does not override from its base, so a light theme starts from the built-in Light. See
 `server/extensions/builtin/themes/themes/` for worked examples, and [Themes](docs/extensions.md#themes)
 for shipping one in an extension. The server compiles each manifest to CSS-var overrides and serves
 it through a manifest-gated asset route (raw files are never exposed). All UI colours — including the xterm terminal —

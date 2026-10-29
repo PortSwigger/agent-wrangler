@@ -187,7 +187,7 @@ test('themeSwatch: reads the theme\'s own opaque panel, text and status colours 
 });
 
 test('themeSwatch: a built-in or a theme missing a colour takes its base\'s values', () => {
-  assert.deepEqual(themeSwatch({ base: 'light', vars: {} }), { tile: '#ffffff', ink: '#1f2328', dots: ['#0969da', '#1a7f37', '#cf222e'] });
+  assert.deepEqual(themeSwatch({ base: 'light', vars: {} }), { tile: '#fcfcfb', ink: '#1b1d21', dots: ['#4f46e5', '#3eb489', '#dc2626'] });
   assert.equal(themeSwatch({ base: 'dark', vars: { '--accent': '#abc' } }).tile, '#151b23');
   assert.equal(themeSwatch({ base: 'dark', vars: { '--surface': '#202020' } }).tile, '#202020');
 });

@@ -48,7 +48,7 @@ import {
 } from './util.js';
 import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
-import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
+import { readTerminalTheme, readTerminalFont, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
@@ -4667,6 +4667,25 @@ function setTermFontSize(size) {
     try { current.fit.fit(); } catch {}
   }
 }
+// Give a terminal the theme's monospace font once the browser has it. xterm
+// measures its cell size when the family changes, so a web font that arrives
+// after that would be drawn on the fallback font's grid. When the face was
+// still loading, the family is cycled through a placeholder so xterm sees a
+// change and measures again.
+function syncTermFont(term, fit) {
+  const family = readTerminalFont();
+  const spec = `${termFontSize()}px ${family}`;
+  const loaded = !document.fonts || document.fonts.check(spec);
+  const apply = () => {
+    try {
+      if (!loaded) term.options.fontFamily = 'monospace';
+      term.options.fontFamily = family;
+      fit.fit();
+    } catch {}
+  };
+  if (loaded) { if (term.options.fontFamily !== family) apply(); return; }
+  document.fonts.load(spec).then(apply, apply);
+}
 // Rendered into the settings modal's Appearance section: one segmented button per
 // preset size. Font size is a single global preference (every terminal), not
 // per-session. Pure — no DOM writes; settings.js splices this into the modal body
@@ -4740,7 +4759,7 @@ function syncShellTerminal(sessionId) {
 // `sessionId` is the session a sidebar shell belongs to, so its lock covers it.
 function connectShellXterm(body, terminalId, onEnd, sessionId = null) {
   const term = new Terminal({
-    fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: termFontSize(), fontFamily: readTerminalFont(),
     theme: readTerminalTheme(), cursorBlink: true,
     allowTransparency: true,
     // Same reason as the agent terminal: tmux runs with `mouse on`, so a plain drag is
@@ -4755,6 +4774,7 @@ function connectShellXterm(body, terminalId, onEnd, sessionId = null) {
   attachUnicode11(term);
   term.open(body);
   fit.fit();
+  syncTermFont(term, fit);
   term.focus();
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -4944,7 +4964,7 @@ function openTerminal(s) {
   closeTerminal();
   showSidebar();
   const term = new Terminal({
-    fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: termFontSize(), fontFamily: readTerminalFont(),
     theme: readTerminalTheme(), cursorBlink: true,
     // Honor an rgba --term-bg so a style's wallpaper can show through the canvas;
     // opaque (dark/light) backgrounds render unchanged.
@@ -5006,6 +5026,7 @@ function openTerminal(s) {
   delete el.dataset.restarting; // leaving the spinner state — attaching a real pane
   term.open(el);
   fit.fit();
+  syncTermFont(term, fit);
   // Clicking the terminal puts keyboard focus on the Claude input and marks the
   // session as user-attended so its card stops flashing needs-you.
   const clickHandler = () => { term.focus(); acknowledge(s.sessionId); };
@@ -7261,6 +7282,8 @@ function onPrComments(msg) {
 // stays decoupled from the terminal's `current` handle.
 onThemeChange((theme) => {
   if (current) current.term.options.theme = readTerminalTheme();
+  if (current) syncTermFont(current.term, current.fit);
+  if (currentShellTerm) syncTermFont(currentShellTerm.term, currentShellTerm.fit);
   slots.themeChanged(theme);
 });
 initStyles();
