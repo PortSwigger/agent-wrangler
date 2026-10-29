@@ -20,6 +20,7 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+  '.woff2': 'font/woff2',
 };
 
 // The plain-HTTP server: POST /mcp (CSRF-gated), POST /pr-attach (the launch

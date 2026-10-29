@@ -52,7 +52,8 @@ const SUN_ICON = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12
 const PAPER_ICON = '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>';
 // Paper: Light tuned for long reading. No wallpaper. Off-white and off-black
 // rather than pure white and black, a slightly darker board so the reading pane
-// stands forward, Inter and Roboto Mono (loaded in index.html) and a
+// stands forward, Inter (bundled, see styles.css) and Roboto Mono (loaded in
+// index.html) and a
 // centred chat column.
 const PAPER_VARS = {
   '--bg': '#eceef1', '--surface': '#fcfcfb', '--surface-2': '#e9ebee',
@@ -63,9 +64,16 @@ const PAPER_VARS = {
   '--pill-idle-bg': '#e9ebee',
   '--field-bg': '#ffffff',
   '--term-bg': '#fbfbfa', '--term-fg': '#1b1d21', '--term-cursor': '#1b1d21',
-  '--font': '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  '--font': 'InterVariable, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  // Inter's lower-case l with a tail and capital I with serifs, so paths and
+  // identifiers never mix up I, l and 1.
+  '--font-features': '"cv05", "cv08"',
+  '--numerals': 'tabular-nums',
   '--font-mono': '"Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
   '--prose-leading': '1.6',
+  // More room between paragraphs to go with the taller lines, and Inter's
+  // suggested slight tightening at heading sizes.
+  '--prose-gap': '0.8em', '--heading-tracking': '-0.015em',
   // Pink-red, so inline code never reads as a link.
   '--code-fg': '#b3195a',
   // Indigo links, with a faint underline so a link never relies on colour
@@ -85,16 +93,22 @@ const PAPER_VARS = {
   '--selected-tint': '8%',
   '--blue': '#4f46e5', '--blue-fg': '#4338ca',
   // A light mint fill takes dark ink on its bars, and a deeper mint for text.
-  '--green': '#4cc49a', '--green-fg': '#0f7a55', '--green-bar-on': '#0b3d2a',
+  '--green': '#3eb489', '--green-fg': '#0f7a55', '--green-bar-on': '#0b3d2a',
   '--red': '#dc2626', '--red-fg': '#b91c1c',
+  // Every branch, main included, in the inline-code pink-red: both are names
+  // from the code, and violet or indigo next to indigo links looked clickable.
+  '--branch-fg': 'var(--code-fg)',
   '--purple': '#7c3aed', '--wf': '#7c3aed',
   '--cyan': '#0e7490', '--rt': '#0e7490', '--rt-fg': '#0e7490',
   // The "just finished" ring. Its :root default is dark's bright cyan, which
   // looked off against the deeper palette.
   '--just-finished': '#0891b2',
-  '--snooze': '#b45309', '--snooze-fg': '#92400e',
-  '--mail': '#b45309', '--mail-fg': '#92400e',
-  '--warn': '#b45309', '--warn-fg': '#92400e',
+  // Snooze, mail and warnings share a golden amber, light enough to stay clear
+  // of the red alarm. Text on a solid fill takes dark ink (--snooze-on), and
+  // text on a tint a deep yellow-olive.
+  '--snooze': '#e3a008', '--snooze-fg': '#7a5c00', '--snooze-on': '#3d2c00',
+  '--mail': '#e3a008', '--mail-fg': '#7a5c00',
+  '--warn': '#e3a008', '--warn-fg': '#7a5c00',
   '--pill-needs-bg': '#fdecec', '--pill-working-bg': '#e3f7ef',
   '--danger-bg': '#fdf1f1', '--danger-border': '#f6caca', '--danger-strong': '#dc2626',
   '--shadow': 'rgba(27,29,33,0.12)', '--overlay': 'rgba(27,29,33,0.32)',
