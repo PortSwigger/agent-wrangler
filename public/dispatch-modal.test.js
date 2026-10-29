@@ -22,7 +22,7 @@ test('dispatch modal keeps the primary form compact and puts optional controls i
   assert.ok(worktree >= 0 && worktree < advanced, 'worktree controls should remain before Advanced options');
   assert.match(dispatch, /<details class="advanced-options" id="m-advanced-options">/);
 
-  const advancedMarkup = dispatch.slice(advanced);
+  const advancedMarkup = dispatch.slice(advanced, dispatch.indexOf('</details>', advanced));
   assert.doesNotMatch(advancedMarkup, /id="m-effort"/);
   for (const id of ['m-runtime', 'm-auto-compact-presets', 'm-wf-auto-merge']) {
     assert.match(advancedMarkup, new RegExp(`id="${id}"`));
@@ -81,13 +81,13 @@ test('the `advanced` anchor host is the last thing in the Advanced options body'
   assert.ok(body >= 0 && body < autoMerge && autoMerge < host, 'advanced host belongs inside the body, after the auto-merge row');
 });
 
-test('the effort row follows the `model` anchor host and precedes the worktree box', () => {
-  const model = dispatch.indexOf('id="m-model-row"');
+test('Any model holds both backing selects, with the extension model anchor outside the picker', () => {
+  const any = dispatch.indexOf('id="m-any-model"');
+  const model = dispatch.indexOf('id="m-model"');
+  const effort = dispatch.indexOf('id="m-effort"');
+  const end = dispatch.indexOf('</details>', any);
   const host = dispatch.indexOf('data-at="model"');
-  const effort = dispatch.indexOf('id="m-effort-row"');
-  const worktree = dispatch.indexOf('class="worktree-box"');
-  assert.ok(model >= 0 && model < host && host < effort && effort < worktree,
-    'effort row must sit after #m-model-row and its anchor host so effort-inline\'s sibling selectors still pair the two');
+  assert.ok(any < model && model < effort && effort < end && end < host);
 });
 
 test('every hideable core field is wrapped in its own id\'d .dispatch-field row', () => {
@@ -320,7 +320,7 @@ async function dispatchExtHarness() {
     ['const DISPATCH_FIELD_ROWS = {', 'function dispatchFieldHidden(name) {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function applyDispatchFieldVeto(ctx) {', 'function syncDispatchExtFields() {', 'function openDispatchExtFields(saved) {', 'function scheduleMode() {'],
     ['syncDispatchExtFields', 'openDispatchExtFields', 'setModalMode', 'dispatchFieldHidden', 'setGraph'],
     `let modalMode = 'launch'; const setModalMode = (m) => { modalMode = m; };
-     const availableAgents = [];
+     const availableAgents = []; const dispatchModelPicker = null;
      const readCoreDispatchFields = () => ({ runtime: document.getElementById('m-runtime').value });
      let vetoedDispatchFields = new Set();
      const extApi = {}; let latestGraph = null; let latestHistory = [];

@@ -429,16 +429,6 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    inside lay out exactly as they did unwrapped. */
 .dispatch-field.hidden { display: none; }
 
-/* Effort sits beside Model. The pairing only exists while both rows show: an
-   extension that vetoes either leaves the other full width. The float is on
-   Model only when a visible Effort row follows it, so a vetoed Effort never
-   strands Model at half width. */
-#m-model-row:not(.hidden):has(~ #m-effort-row:not(.hidden)) { float: left; width: calc(50% - 6px); margin-bottom: 12px; }
-#m-model-row:not(.hidden) ~ #m-effort-row:not(.hidden) { float: right; width: calc(50% - 6px); margin-bottom: 12px; }
-/* Clearance replaces the box's own margin-top, so the 12px gap below the floated
-   pair is their margin-bottom, not .worktree-box's. */
-#m-model-row ~ #m-worktree-box-row { clear: both; }
-
 /* A `view` contribution's host, created per view by app.js renderExtViews. The
    ONE exception to the layout-transparent rule above: a top-level view is a
    <main> flex item in its own right (same shape as #search), so it needs a real
@@ -3490,3 +3480,58 @@ a.ext-row-origin { color: var(--blue-fg); }
 .folder-action { width: 34px; height: 34px; padding: 0; flex: 0 0 34px; display: inline-flex; align-items: center; justify-content: center; }
 .folder-action .icon { width: 16px; height: 16px; display: block; }
 .folder-action:disabled, .additional-folder-row input:disabled { opacity: 0.45; cursor: not-allowed; }
+
+#modal:has(#m-dispatch-fields:not(.hidden)) > .modal-card { width: 1240px; box-sizing: border-box; }
+#m-dispatch-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; }
+#m-dispatch-fields.hidden { display: none; }
+.dispatch-task-column, .dispatch-model-column { min-width: 0; }
+.dispatch-model-column { position: relative; }
+.dispatch-model-column::before { content: ''; position: absolute; top: 0; bottom: 0; left: -20px; width: 1px; background: var(--border); }
+#modal label:not(.check-row), #modal summary, #modal .worktree-title { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--fg); }
+#modal .mode-segmented { margin-top: 4px; }
+#modal:has(#m-when:not(.hidden)) > .modal-card { width: 700px; }
+#modal:has(#m-when:not(.hidden)) #m-dispatch-fields { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+#modal:has(#m-when:not(.hidden)) .dispatch-model-column { border-top: 1px solid var(--border); }
+#modal:has(#m-when:not(.hidden)) .dispatch-model-column::before { display: none; }
+.model-front-scale, .model-front-legend { display: flex; justify-content: space-between; color: var(--fg-muted); font-size: 11px; }
+.model-front-scale { margin: 16px 0 0; }
+.model-front-slider { position: relative; height: 32px; margin: 0 8px 8px; cursor: pointer; touch-action: none; }
+.model-front-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.model-front-track { position: absolute; height: 4px; top: 14px; left: 0; right: 0; background: var(--border); border-radius: 4px; }
+.model-front-stop { position: absolute; top: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); transform: translateX(-50%); }
+.model-front-handle { position: absolute; top: 7px; height: 18px; width: 18px; border-radius: 50%; background: var(--accent); border: 3px solid var(--surface); box-shadow: 0 0 0 2px var(--accent); transform: translateX(-50%); }
+.model-front-slider.no-handle .model-front-handle { display: none; }
+.model-front-plot svg { display: block; width: 100%; overflow: visible; }
+.model-front-plot text { font-size: 10px; fill: var(--fg-muted); }
+.model-front-grid { stroke: var(--border); stroke-width: 0.5; }
+.model-front-curve { stroke: var(--accent); fill: none; stroke-width: 1.5; }
+.model-front-point { cursor: pointer; fill: var(--accent); stroke: var(--surface); stroke-width: 1; }
+.model-front-point .point-hit { fill: transparent; stroke: none; }
+.model-front-point.selected, .model-front-point:focus { stroke: var(--fg); stroke-width: 2; outline: none; }
+.model-front-point.unavailable { fill: var(--surface); stroke: var(--red-fg); stroke-width: 1.5; }
+.model-front-ring, .model-front-below { color: var(--red-fg); fill: var(--red-fg); }
+.model-front-credit { color: var(--fg-subtle); font-size: 10px; line-height: 1.5; margin: 8px 0 16px; }
+.model-front-notice { color: var(--red-fg); font-size: 12px; line-height: 1.5; }
+.model-front-notice:empty { display: none; }
+.model-front-readout { border-top: 1px solid var(--border); padding-top: 16px; }
+.model-front-name { font-size: 17px; font-weight: 700; margin-bottom: 12px; }
+.model-front-auto, .model-front-readout p { color: var(--fg-muted); font-size: 12px; }
+.model-front-bar { display: grid; grid-template-columns: 48px minmax(0, 1fr) 92px; align-items: center; gap: 12px; margin: 10px 0; font-size: 12px; }
+.model-front-bar strong { font-weight: 500; text-align: right; }
+.model-front-meter { height: 5px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.model-front-meter i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.model-front-verdict { font-size: 12px; color: var(--green-fg); margin-top: 16px; line-height: 1.5; }
+.model-front-verdict.below { color: var(--red-fg); }
+.model-front-any { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 16px; }
+.model-front-any summary { cursor: pointer; }
+@media (max-width: 850px) {
+  #m-dispatch-fields { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .dispatch-model-column { border-top: 1px solid var(--border); }
+  .dispatch-model-column::before { display: none; }
+}
+.model-front-verdict.unscored { color: var(--fg-muted); }
+#modal:has(#m-model-row.hidden) > .modal-card { width: 700px; }
+#m-dispatch-fields:has(#m-model-row.hidden) { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.dispatch-model-column:has(#m-model-row.hidden) { border: 0; }
+.dispatch-model-column:has(#m-model-row.hidden)::before { display: none; }
+.dispatch-model-column:has(#m-model-row.hidden):not(:has(.ext-slot)) { display: none; }

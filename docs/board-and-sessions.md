@@ -10,6 +10,18 @@ scratch session; a new path is created at launch. The folder starts filled in fr
 existing sessions, or from **Settings → Sessions → Default folder for new sessions** when the task
 has none.
 
+The model section plots measured quality against cost per task on a log scale. Drag the slider or
+use its arrow keys to move through the quality/cost curve, cheapest to best. Click a chart point to
+choose any available front setting, including points that earn their place only by being faster;
+these hide the slider handle. Quality, Cost and Time bars show the selected setting, and the verdict
+compares all three against settings your installed agents offer. Red rings mark unavailable settings;
+click a ring to see what is missing. A red selected dot and **Below the front** verdict name an
+available setting that is at least as good.
+
+Expand **Any model** for the agent/model and effort dropdowns. **Auto** uses the effort reported by
+the agent; without a reported effort or benchmark row, the pick is unscored. Source credit sits under
+the chart. **Advanced options** starts collapsed and holds auto-compaction and runtime controls.
+
 Optional launch controls include:
 
 - **Additional folders:** use the square **+** button beside the main folder to grant a local Claude or Codex session access to more existing folders. Browse or type each path, and remove rows you no longer need. Grants persist across resume and fork and are saved with scheduled launches. The main folder remains the working directory. Devcontainer and extension runtimes disable these extra host folder controls; switching back to Local restores your selections.

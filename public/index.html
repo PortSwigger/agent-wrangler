@@ -293,8 +293,10 @@
         <textarea id="m-sch-message" rows="4" placeholder="Resumes the session if it's dormant (delivering this as its first prompt), or sends it into the terminal if it's live."></textarea>
       </div>
       <div id="m-dispatch-fields">
+      <div class="dispatch-task-column">
       <label>Task</label>
       <select id="m-task"></select>
+      <label>Session type</label>
       <div class="mode-segmented" id="m-mode-cards" role="group" aria-label="Session type">
         <button type="button" class="mode-segment" id="m-mode-standard" data-mode="standard" aria-pressed="true">
           <span class="mode-segment-title">Standard</span>
@@ -323,21 +325,6 @@
       <div id="m-cwd-msg" class="worktree-msg hidden"></div>
       <div id="m-add-dirs"></div>
       <div id="m-add-dirs-note" class="worktree-msg hidden">Additional folders require a Local runtime.</div>
-      <!-- Each hideable core field is wrapped in an id'd row so a
-           `dispatch.field` contribution's `hides` can toggle it (app.js
-           DISPATCH_FIELD_ROWS). A plain block wrapper — the fields inside lay
-           out exactly as they did unwrapped. -->
-      <div class="dispatch-field" id="m-model-row">
-        <label>Model</label>
-        <select id="m-model"></select>
-      </div>
-      <!-- OUTSIDE #m-model-row on purpose: an extension that hides `model` must
-           not hide its own replacement control along with it. -->
-      <div class="ext-dispatch-slot" data-at="model"></div>
-      <div class="dispatch-field" id="m-effort-row">
-        <label>Effort</label>
-        <select id="m-effort"></select>
-      </div>
       <!-- The `worktree` dispatch-field veto toggles this OUTER row only;
            syncWorkflow owns .worktree-box's own hidden for workflow/review mode. -->
       <div class="dispatch-field" id="m-worktree-box-row">
@@ -384,6 +371,31 @@
           <div class="ext-dispatch-slot" data-at="advanced"></div>
         </div>
       </details>
+      </div>
+      <div class="dispatch-model-column">
+        <div class="dispatch-field" id="m-model-row">
+          <label>Model</label>
+          <div id="m-model-picker">
+            <div class="model-front-scale"><span>Cheapest</span><span>Best quality</span></div>
+            <div class="model-front-slider" role="slider" tabindex="0" aria-label="Model quality and cost" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></div>
+            <div class="model-front-plot"></div>
+            <div class="model-front-legend"><span>● Available front</span><span class="model-front-ring">○ Unavailable</span></div>
+            <p class="model-front-credit"></p>
+            <div class="model-front-notice" role="status"></div>
+            <div class="model-front-readout" aria-live="polite"></div>
+          </div>
+          <details class="model-front-any" id="m-any-model">
+            <summary>Any model</summary>
+            <label>Agent / model</label>
+            <select id="m-model"></select>
+            <div class="dispatch-field" id="m-effort-row">
+              <label>Effort</label>
+              <select id="m-effort"></select>
+            </div>
+          </details>
+        </div>
+        <div class="ext-dispatch-slot" data-at="model"></div>
+      </div>
       </div>
       <div id="m-subagent" class="hidden">
         <h4>Prompt</h4><pre id="m-sa-prompt"></pre>
