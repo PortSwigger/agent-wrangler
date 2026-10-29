@@ -37,7 +37,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { updatePanelEl, restartPanelEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
+import { updatePanelEl, restartPanelEl, shouldReloadForVersion, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -180,7 +180,6 @@ let defaultRuntime = 'local'; // server config value; openModal falls back to lo
 // identity fields are fixed at server boot; `enabled` is live.
 let autoUpdate = 'notify';
 let refreshSessionsAfterUpdate = false;
-let graphCodeVersion = null;
 let latestExtensions = [];
 // The latest graph as received, handed whole to extension slot updates
 // (slots.update) so an extension reads its own contribution off it — the core
@@ -558,7 +557,7 @@ function pruneSampleHosts() {
 function renderSampleCard(el, _extId, hidden) {
   if (!el) return;
   pruneSampleHosts();
-  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null, isOnOlderCode: () => true }, { expanded: true });
+  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null }, { expanded: true });
   // Inert: never wired (no wireGridEvents), not focusable, not clickable.
   const card = el.querySelector('.session-card');
   if (card) {
@@ -856,7 +855,6 @@ function applyGraph(graph) {
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
   autoUpdate = graph.autoUpdate || 'notify';
   refreshSessionsAfterUpdate = graph.refreshSessionsAfterUpdate === true;
-  graphCodeVersion = graph.codeVersion || null;
   const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   noteExtClientFacts(latestExtensions);
@@ -1580,7 +1578,6 @@ function cardCtx() {
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
     linkChip: (l) => slots.linkChip(l, latestGraph, extApi),
     hiddenChips: slots.hiddenChips(),
-    isOnOlderCode: (s) => sessionOnOlderCode(s, graphCodeVersion),
   };
 }
 
