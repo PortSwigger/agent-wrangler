@@ -1,3 +1,5 @@
+import { createDispatchModelPicker } from './dispatch-model-picker.js';
+import { effortsOf } from './model-front.js';
 import { createSoundMigration } from './sound-migration.js';
 /* global Terminal, FitAddon, WebLinksAddon, ClipboardAddon, Unicode11Addon */
 import {
@@ -640,6 +642,8 @@ const dispatchWaiter = createDispatchWaiter();
 // Seeded with just the Claude default so a dispatch before that lands still works.
 let availableAgents = [{ id: 'claude', label: 'Claude', models: [{ value: 'opus', label: 'Opus', default: true }], efforts: [] }];
 
+let dispatchModelPicker = null;
+
 function populateModelSelect() {
   const sel = document.getElementById('m-model');
   if (!sel) return;
@@ -690,11 +694,11 @@ function populateEffortSelect() {
   const prev = eff.value;
   const agentId = modelSel.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
   const agent = availableAgents.find((a) => a.id === agentId) || availableAgents[0];
-  const efforts = agent?.efforts || [];
+  const efforts = effortsOf(agent, agent?.models.find((m) => m.value === modelSel.value));
   eff.innerHTML = '';
   const def = document.createElement('option');
   def.value = '';
-  def.textContent = 'Default';
+  def.textContent = 'Auto';
   eff.appendChild(def);
   for (const e of efforts) {
     const opt = document.createElement('option');
@@ -706,6 +710,7 @@ function populateEffortSelect() {
   // fall back to Default rather than stranding a level the agent can't take.
   if (effortEdited && prev && efforts.some((e) => e.value === prev)) eff.value = prev;
   else eff.value = '';
+  dispatchModelPicker?.sync();
 }
 
 // The three models offered as one-click "Launch with X" shortcuts (⌘1–⌘3). Derived
@@ -5705,6 +5710,7 @@ function syncDispatchExtFields() {
   // so hand contributions the cached copy rather than whatever the last tick had.
   slots.syncHosts('dispatch.field', entries, extApi, latestGraph && { ...latestGraph, history: latestHistory });
   applyDispatchFieldVeto(ctx);
+  dispatchModelPicker?.sync();
 }
 
 // The per-open lifecycle call (slots.openDispatchFields): once per openModal,
@@ -5717,6 +5723,7 @@ function openDispatchExtFields(saved) {
   const ctx = { ...dispatchFieldCtx(), editing: modalMode === 'schedule-edit' };
   slots.openDispatchFields(ctx, saved);
   applyDispatchFieldVeto(ctx);
+  dispatchModelPicker?.sync();
 }
 
 // One opener for all three modalModes. `schedule` (when editing) pre-fills every
@@ -5775,6 +5782,13 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   if (rtSel.value !== wantRuntime) rtSel.value = 'local';
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   document.getElementById('m-advanced-options').open = false;
+  document.getElementById('m-any-model').open = false;
+  populateEffortSelect();
+  if (schedule) {
+    const effort = document.getElementById('m-effort');
+    effort.value = [...effort.options].some((o) => o.value === (d.effort || '')) ? (d.effort || '') : '';
+    effortEdited = Boolean(d.effort);
+  }
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
   // A reopened dialog must not inherit the last folder's verdict — the field it
   // belonged to may have been refilled from a different task.
@@ -6659,7 +6673,23 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
   autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
   syncAutoCompactPresets();
 });
-document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
+document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; syncDispatchExtFields(); });
+dispatchModelPicker = createDispatchModelPicker({
+  root: document.getElementById('m-model-picker'),
+  agents: () => availableAgents,
+  read: () => {
+    const model = document.getElementById('m-model');
+    return { agent: model.options[model.selectedIndex]?.dataset.agent || 'claude', model: model.value, effort: document.getElementById('m-effort').value };
+  },
+  select: (pick) => {
+    const model = document.getElementById('m-model');
+    model.selectedIndex = [...model.options].findIndex((o) => o.value === pick.model && o.dataset.agent === pick.agent);
+    model.dispatchEvent(new Event('change', { bubbles: true }));
+    const effort = document.getElementById('m-effort');
+    effort.value = pick.effort;
+    effort.dispatchEvent(new Event('change', { bubbles: true }));
+  },
+});
 enhanceSelects(document.getElementById('modal'));
 // ⌘Enter / ⌘1–⌘3 / Escape are `dispatch.*` registry bindings (see registerCoreBindings).
 (() => {
