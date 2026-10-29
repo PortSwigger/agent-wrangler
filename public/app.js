@@ -36,7 +36,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
+import { updatePanelEl, restartPanelEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -6169,7 +6169,7 @@ function mountUpdatePanel(host) {
   // update, and a Notify or Auto value carried over in config.json is ignored by
   // the server, so the row is hidden rather than left looking live.
   host.parentElement?.querySelector('.setting-row[data-id="autoUpdate"]')?.classList.toggle('hidden', Boolean(updateUnavailable));
-  const drift = installDriftEl({
+  const drift = restartPanelEl({
     drift: installDrift,
     canRestart: canRestartServer,
     restarting: installDriftRestarting,
