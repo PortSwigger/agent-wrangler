@@ -379,9 +379,11 @@
           <label>Model</label>
           <div id="m-model-picker">
             <div class="model-front-scale"><span>Cheapest</span><span>Best quality</span></div>
-            <div class="model-front-slider" role="slider" tabindex="0" aria-label="Model quality and cost" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></div>
+            <div class="model-front-slider" role="group" aria-label="Model curve stops"><div class="model-front-control" role="slider" tabindex="0" aria-label="Model quality and cost" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></div><div class="model-front-stops"></div></div>
             <div class="model-front-plot"></div>
-            <div class="model-front-legend"><span>● Available front</span><span class="model-front-ring">○ Unavailable</span></div>
+            <div class="model-front-legend"><span>● Front</span><span>◎ Selected</span><span class="model-front-ring">○ Unavailable</span><span class="model-front-ring">◆ Below front</span></div>
+            <div class="model-front-key" role="group" aria-label="Provider and model colour key"></div>
+            <div class="model-front-preview" aria-live="polite"></div>
             <p class="model-front-credit"></p>
             <div class="model-front-notice" role="status"></div>
             <div class="model-front-readout" aria-live="polite"></div>

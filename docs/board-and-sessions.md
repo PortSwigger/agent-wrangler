@@ -20,8 +20,20 @@ use its arrow keys to move through the quality/cost curve, cheapest to best. Cli
 choose any available front setting, including points that earn their place only by being faster;
 these hide the slider handle. Quality, Cost and Time bars show the selected setting, and the verdict
 compares all three against settings your installed agents offer. Red rings mark unavailable settings;
-click a ring to see what is missing. A red selected dot and **Below the front** verdict name an
+click a ring to see what is missing. A red selected diamond and **Below the front** verdict name an
 available setting that is at least as good.
+
+Dots and slider stops share stable colours for each provider/model, named in the key below the
+chart. Hover or focus a dot or stop to read its model and effort without selecting it; activate it
+to select. Selection has an outer ring, unavailable settings have hollow rings, and below-front
+picks have a diamond and a written warning, so the states remain distinct without colour.
+
+The dialog remembers your last explicit agent, model and effort in this browser, including
+**Auto**, when you use the slider, chart, **Any model** or a quick-launch button. Cancelling,
+closing and reloading keep that choice. Saved schedules and values supplied by extensions take
+precedence without replacing your preference; forks inherit their source session's settings.
+If a remembered agent or model is unavailable, the dialog uses a live default. Unsupported
+remembered effort falls back to **Auto**.
 
 Expand **Any model** for the agent/model and effort dropdowns. **Auto** uses the effort reported by
 the agent; without a reported effort or benchmark row, the pick is unscored. Source credit sits under

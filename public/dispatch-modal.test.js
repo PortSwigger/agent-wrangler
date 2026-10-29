@@ -454,7 +454,7 @@ test('Codex quick launch restores retained grants when switching from a non-loca
        const autoCompactTokens = undefined; const parentSessionId = null;
        const dispatched = []; const submitDispatch = () => dispatched.push(readCoreDispatchFields());`,
       { document, additionalFolders, modal: { classList: { contains: () => false } },
-        scheduleMode: () => false, cwdField: () => '/repo' },
+        scheduleMode: () => false, cwdField: () => '/repo', populateEffortSelect() {}, rememberDispatchPick() {} },
     );
     rt.value = runtime;
     app.syncRuntimeToggle();
