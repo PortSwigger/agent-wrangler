@@ -49,78 +49,9 @@ export function readTerminalFont() {
 
 const MOON_ICON = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>';
 const SUN_ICON = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>';
-// Light, tuned for long reading, layered over body.light (which stays the
-// base that light-based extension themes inherit). No wallpaper. Off-white and
-// off-black rather than pure white and black, a slightly darker board so the
-// reading pane stands forward, Inter (bundled, see styles.css) and Roboto Mono
-// (loaded in index.html), and a centred chat column.
-const LIGHT_VARS = {
-  '--bg': '#eceef1', '--surface': '#fcfcfb', '--surface-2': '#e9ebee',
-  '--fg': '#1b1d21', '--fg-muted': '#4b535e', '--fg-subtle': '#69717d',
-  '--border': '#d2d6dc', '--border-muted': '#e0e3e7',
-  '--chrome': '#e5e8ec',
-  '--tile-bg': '#f3f4f6', '--card-bg': 'var(--surface)',
-  '--pill-idle-bg': '#e9ebee',
-  '--field-bg': '#ffffff',
-  '--term-bg': '#fbfbfa', '--term-fg': '#1b1d21', '--term-cursor': '#1b1d21',
-  '--font': 'InterVariable, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  // Inter's lower-case l with a tail and capital I with serifs, so paths and
-  // identifiers never mix up I, l and 1.
-  '--font-features': '"cv05", "cv08"',
-  '--numerals': 'tabular-nums',
-  '--font-mono': '"Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
-  '--prose-leading': '1.6',
-  // More room between paragraphs to go with the taller lines, and Inter's
-  // suggested slight tightening at heading sizes.
-  '--prose-gap': '0.8em', '--heading-tracking': '-0.015em',
-  // Pink-red, so inline code never reads as a link.
-  '--code-fg': '#b3195a',
-  // Indigo links, with a faint underline so a link never relies on colour
-  // alone. Hover draws the underline solid.
-  '--link-fg': '#4f46e5',
-  '--link-decoration': 'underline 1px color-mix(in srgb, #4f46e5 35%, transparent)',
-  // Paler than --surface-2, which buttons and chips share.
-  '--code-bg': '#f1f2f4', '--bubble-bg': '#f1f2f4',
-  // Kept at 1px so the blocks don't change size, just invisible.
-  '--code-border': 'transparent', '--bubble-border': 'transparent',
-  '--chat-measure': '68em',
-  // Chrome: indigo for the accent and the selection, matching the links, and
-  // the status hues moved onto the same family of modern tones, with a mint
-  // green. Each foreground keeps at least 4.5:1 on the light surfaces.
-  '--accent': '#4f46e5', '--accent-fg': '#ffffff',
-  // A lighter fill on the selected card: the ring already marks it.
-  '--selected-tint': '8%',
-  '--blue': '#4f46e5', '--blue-fg': '#4338ca',
-  // A light mint fill takes dark ink on its bars, and a deeper mint for text.
-  '--green': '#3eb489', '--green-fg': '#0f7a55', '--green-bar-on': '#0b3d2a',
-  '--red': '#dc2626', '--red-fg': '#b91c1c',
-  // Every branch, main included, in the inline-code pink-red: both are names
-  // from the code, and violet or indigo next to indigo links looked clickable.
-  '--branch-fg': 'var(--code-fg)',
-  '--purple': '#7c3aed', '--wf': '#7c3aed',
-  '--cyan': '#0e7490', '--rt': '#0e7490', '--rt-fg': '#0e7490',
-  // The "just finished" ring. Its :root default is dark's bright cyan, which
-  // looked off against the deeper palette.
-  '--just-finished': '#0891b2',
-  // Snooze, mail and warnings share a golden amber, light enough to stay clear
-  // of the red alarm. Text on a solid fill takes dark ink (--snooze-on), and
-  // text on a tint a deep yellow-olive.
-  '--snooze': '#e3a008', '--snooze-fg': '#7a5c00', '--snooze-on': '#3d2c00',
-  '--mail': '#e3a008', '--mail-fg': '#7a5c00',
-  '--warn': '#e3a008', '--warn-fg': '#7a5c00',
-  '--pill-needs-bg': '#fdecec', '--pill-working-bg': '#e3f7ef',
-  '--danger-bg': '#fdf1f1', '--danger-border': '#f6caca', '--danger-strong': '#dc2626',
-  '--shadow': 'rgba(27,29,33,0.12)', '--overlay': 'rgba(27,29,33,0.32)',
-  '--term-selection': '#dfe1fb',
-  '--term-ansi-red': '#c81e1e', '--term-ansi-green': '#0f7a55', '--term-ansi-yellow': '#92400e',
-  '--term-ansi-blue': '#4338ca', '--term-ansi-magenta': '#7c3aed', '--term-ansi-cyan': '#0e7490',
-  '--term-ansi-bright-red': '#dc2626', '--term-ansi-bright-green': '#0b6e4c',
-  '--term-ansi-bright-blue': '#4f46e5', '--term-ansi-bright-magenta': '#8b5cf6',
-  '--term-ansi-bright-cyan': '#0891b2',
-};
 const BUILT_IN_STYLES = [
   { id: 'dark', name: 'Dark', base: 'dark', iconInner: MOON_ICON, vars: {}, wallpaperUrl: '/dark-bg.png' },
-  { id: 'light', name: 'Light', base: 'light', iconInner: SUN_ICON, vars: LIGHT_VARS },
+  { id: 'light', name: 'Light', base: 'light', iconInner: SUN_ICON, vars: {} },
 ];
 let customStyles = [];
 let currentStyleId = 'dark';
@@ -268,12 +199,12 @@ export function setCustomStyles(styles) {
 // off, which /api/styles leaves out), never the live CSS, so every button shows
 // its theme and not the one on screen.
 // --panel-bg is the opaque one; --bg/--surface are often translucent over a
-// wallpaper. Dark carries no vars and takes its base's values from
-// styles.css; Light's vars cover every swatch colour. A value is a hand-placed theme.json string headed for a style
+// wallpaper. Built-ins carry no vars and take their base's values from
+// styles.css. A value is a hand-placed theme.json string headed for a style
 // attribute, so only plain colour syntax gets through.
 const BASE_SWATCH = {
   dark: { tile: '#151b23', ink: '#f0f6fc', dots: ['#1f6feb', '#3fb950', '#f85149'] },
-  light: { tile: '#ffffff', ink: '#1f2328', dots: ['#0969da', '#1a7f37', '#cf222e'] },
+  light: { tile: '#fcfcfb', ink: '#1b1d21', dots: ['#4f46e5', '#3eb489', '#dc2626'] },
 };
 const COLOUR_RE = /^(#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%/+-]+\))$/i;
 export function safeColour(v) { return typeof v === 'string' && COLOUR_RE.test(v.trim()) ? v.trim() : null; }

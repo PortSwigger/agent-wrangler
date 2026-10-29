@@ -94,42 +94,77 @@
   --prose-leading: 1.62;
   --chat-measure: 100%;
 }
-/* The light BASE: what a light-based extension theme inherits for any role it
-   leaves unset. The built-in Light style layers its own vars over this
-   (theme.js LIGHT_VARS), so this block is not what Light itself looks like. */
+/* Light: tuned for long reading. It is also the base every light-based
+   extension theme inherits for any role it leaves unset, so a change here
+   reaches those themes too. No wallpaper. Off-white and off-black rather than
+   pure white and black, a slightly darker board so the reading pane stands
+   forward, Inter (bundled, above) and Roboto Mono (index.html), and a centred
+   chat column. Text colours keep at least 4.5:1 on the light surfaces. */
 body.light {
-  --bg:#f6f8fa; --surface:#ffffff; --surface-2:#eaeef2;
-  --fg:#1f2328; --fg-muted:#59636e; --fg-subtle:#818b98;
-  --border:#d1d9e0; --border-muted:#e1e6eb;
-  --green:#1a7f37; --green-fg:#1a7f37;
-  --red:#cf222e; --red-fg:#cf222e;
+  --bg:#eceef1; --surface:#fcfcfb; --surface-2:#e9ebee;
+  --fg:#1b1d21; --fg-muted:#4b535e; --fg-subtle:#69717d;
+  --border:#d2d6dc; --border-muted:#e0e3e7;
+  --chrome:#e5e8ec;
+  --card-bg:var(--surface); --tile-bg:#f3f4f6;
+  --font:InterVariable, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Inter's lower-case l with a tail and capital I with serifs, so paths and
+     identifiers never mix up I, l and 1. */
+  --font-features:"cv05", "cv08";
+  --numerals:tabular-nums;
+  --font-mono:"Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* More room between paragraphs to go with the taller lines, and Inter's
+     suggested slight tightening at heading sizes. */
+  --prose-leading:1.6; --prose-gap:0.8em; --heading-tracking:-0.015em;
+  --chat-measure:68em;
+  /* Pink-red inline code, so it never reads as a link. Indigo links with a
+     faint underline, so a link never relies on colour alone; hover draws the
+     underline solid. */
+  --code-fg:#b3195a;
+  --link-fg:#4f46e5;
+  --link-decoration:underline 1px color-mix(in srgb, currentColor 35%, transparent);
+  /* Code blocks, command output and prompt bubbles sit on a grey paler than
+     --surface-2 (which buttons and chips share), with an invisible 1px border
+     so nothing changes size. */
+  --code-bg:#f1f2f4; --bubble-bg:#f1f2f4;
+  --code-border:transparent; --bubble-border:transparent;
+  /* Indigo for the accent and the selection, matching the links. A lighter
+     fill on the selected card: the ring already marks it. */
+  --accent:#4f46e5; --accent-fg:#ffffff;
+  --blue:#4f46e5; --blue-fg:#4338ca;
+  --selected-tint:8%;
+  /* A light mint fill takes dark ink on its bars, and a deeper mint for text. */
+  --green:#3eb489; --green-fg:#0f7a55; --green-bar-on:#0b3d2a;
+  --red:#dc2626; --red-fg:#b91c1c;
+  /* Every branch, main included, in the inline-code pink-red: both are names
+     from the code, and violet or indigo next to indigo links looked clickable. */
+  --branch-fg:var(--code-fg);
+  --purple:#7c3aed; --purple-fg:#ffffff;
+  --wf:#7c3aed;
   --cyan:#0e7490;
-  --purple:#8250df; --purple-fg:#ffffff;
-  --blue:#0969da; --blue-fg:#0969da;
-  --wf:#8250df;
-  --chrome:#f0f3f6;
-  --card-bg:var(--surface); --tile-bg:rgba(246,248,250,0.5);
-  --term-bg:#f6f8fa; --term-fg:#1f2328; --term-cursor:#1f2328; --term-selection:#cce5ff;
-  --term-ansi-black:#24292f; --term-ansi-red:#cf222e; --term-ansi-green:#116329;
-  --term-ansi-yellow:#633c01; --term-ansi-blue:#0969da; --term-ansi-magenta:#8250df;
-  --term-ansi-cyan:#1b7c83; --term-ansi-white:#6e7781;
-  --term-ansi-bright-black:#57606a; --term-ansi-bright-red:#a40e26; --term-ansi-bright-green:#1a7f37;
-  --term-ansi-bright-yellow:#4d2d00; --term-ansi-bright-blue:#218bff; --term-ansi-bright-magenta:#a475f9;
-  --term-ansi-bright-cyan:#3192aa; --term-ansi-bright-white:#8c959f;
-  --accent:#0969da;
-  --accent-fg:#fff;
-  --field-bg:#ffffff;
-  --danger-bg:#fff0ee; --danger-border:#ffc9c2; --danger-strong:#cf222e;
-  --pill-needs-bg:#ffebe9; --pill-working-bg:#dafbe1; --pill-idle-bg:#eaeef2;
-  --snooze:#9a6700; --snooze-fg:#7d4e00;
-  --mail:#9a6700; --mail-fg:#7d4e00;
-  --warn:#9a6700; --warn-fg:#7d4e00;
-  --hint:#f2cc60; --hint-fg:#1c1400; --hint-border:#9a6700;
   /* Container-runtime chip hue — same semantic role as dark's --rt/--rt-fg above. */
   --rt:#0e7490; --rt-fg:#0e7490;
+  /* Set here because :root's var(--cyan) resolves to dark's bright cyan. */
+  --just-finished:#0891b2;
+  /* Snooze, mail and warnings share a golden amber, light enough to stay clear
+     of the red alarm. Text on a solid fill takes dark ink (--snooze-on), and
+     text on a tint a deep yellow-olive. */
+  --snooze:#e3a008; --snooze-fg:#7a5c00; --snooze-on:#3d2c00;
+  --mail:#e3a008; --mail-fg:#7a5c00;
+  --warn:#e3a008; --warn-fg:#7a5c00;
+  --hint:#f2cc60; --hint-fg:#1c1400; --hint-border:#9a6700;
+  --field-bg:#ffffff;
+  --danger-bg:#fdf1f1; --danger-border:#f6caca; --danger-strong:#dc2626;
+  --pill-needs-bg:#fdecec; --pill-working-bg:#e3f7ef; --pill-idle-bg:#e9ebee;
   --bar-on:#ffffff;
-  --overlay:rgba(0,0,0,0.35);
-  --shadow:rgba(0,0,0,0.18);
+  --overlay:rgba(27,29,33,0.32);
+  --shadow:rgba(27,29,33,0.12);
+  --term-bg:#fbfbfa; --term-fg:#1b1d21; --term-cursor:#1b1d21; --term-selection:#dfe1fb;
+  --term-ansi-black:#24292f; --term-ansi-red:#c81e1e; --term-ansi-green:#0f7a55;
+  --term-ansi-yellow:#92400e; --term-ansi-blue:#4338ca; --term-ansi-magenta:#7c3aed;
+  --term-ansi-cyan:#0e7490; --term-ansi-white:#6e7781;
+  --term-ansi-bright-black:#57606a; --term-ansi-bright-red:#dc2626; --term-ansi-bright-green:#0b6e4c;
+  --term-ansi-bright-yellow:#4d2d00; --term-ansi-bright-blue:#4f46e5; --term-ansi-bright-magenta:#8b5cf6;
+  --term-ansi-bright-cyan:#0891b2; --term-ansi-bright-white:#8c959f;
   /* Light steps of the same eight hues, validated against the white chart surface
      (three sit below 3:1 contrast — the always-present legend + values supply the
      required relief). */
