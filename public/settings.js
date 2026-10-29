@@ -148,7 +148,7 @@ export const SETTINGS = [
     type: 'toggle',
     scope: 'server',
     label: 'Restart idle sessions after an update',
-    help: 'Running sessions keep the MCP tools and skills they launched with. When this is on, sessions marked "older version" restart one at a time after 10 idle minutes with no terminal, background job or snooze. Each restart re-reads the conversation, so the next turn pays for a new prompt cache.',
+    help: 'Running sessions keep the MCP tools and skills they launched with. When this is on, sessions launched before the latest update restart one at a time after 10 idle minutes with no terminal, background job or snooze. Each restart re-reads the conversation, so the next turn pays for a new prompt cache.',
     default: false,
   },
 ];

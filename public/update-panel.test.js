@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldReloadForVersion, updateSummary, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, installDriftNotice, outdatedExtensions, changesText, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdateLineText } from './update-panel.js';
+import { shouldReloadForVersion, updateSummary, updateAvailable, rolledBackText, updateToastText, installDriftNotice, outdatedExtensions, changesText, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdateLineText } from './update-panel.js';
 
 test('a page reloads only when a known code version changes', () => {
   assert.equal(shouldReloadForVersion(null, 'abc'), false, 'first connect just records it');
@@ -24,14 +24,6 @@ test('the summary explains why an available update cannot be applied', () => {
 
 test('an error shows the server message', () => {
   assert.equal(updateSummary({ phase: 'error', error: 'fetch failed' }), 'fetch failed');
-});
-
-test('a live session launched on another commit is on older code', () => {
-  assert.equal(sessionOnOlderCode({ managed: true, launchedCodeVersion: 'a' }, 'b'), true);
-  assert.equal(sessionOnOlderCode({ managed: true, launchedCodeVersion: 'b' }, 'b'), false);
-  assert.equal(sessionOnOlderCode({ managed: false, launchedCodeVersion: 'a' }, 'b'), false);
-  assert.equal(sessionOnOlderCode({ managed: true, launchedCodeVersion: null }, 'b'), false);
-  assert.equal(sessionOnOlderCode({ managed: true, launchedCodeVersion: 'a' }, null), false);
 });
 
 test('the settings dot shows only for an update that can be taken', () => {

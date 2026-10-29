@@ -3557,7 +3557,6 @@ a.ext-row-origin { color: var(--blue-fg); }
   content: ''; position: absolute; top: 7px; right: 7px;
   width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
 }
-.card-tag.older-code { color: var(--warn-fg); background: color-mix(in srgb, var(--warn) 18%, var(--surface-2)); }
 
 .folder-picker-row, .additional-folder-row { display: flex; gap: 8px; align-items: flex-start; }
 .additional-folder-row { margin-top: 8px; }
