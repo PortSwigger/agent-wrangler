@@ -8,6 +8,7 @@ import { imageAvailable, claimExtImages, keepStagedPaste, readKeptPaste, removeK
 import { collectLaunchContext } from '../launch-context.js';
 import { deliverFirstPrompt } from '../dispatch-runner.js';
 import { requestOrigin } from '../request-origin.js';
+import { supportsRemoteControl } from '../agents/index.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -107,7 +108,7 @@ function checkAddDirs(addDirs) {
 // resume pass `--remote-control <name>`. Claude only: Codex has no Remote
 // Control, and an option it would silently drop reads as phone control that is
 // on when it is not. An unknown key is refused like `worktree`'s.
-function checkRemoteControl(remoteControl, agent) {
+function checkRemoteControl(remoteControl, agent = 'claude') {
   if (remoteControl === undefined || remoteControl === null) return {};
   if (!isPlainObject(remoteControl)) spawnError('remoteControl must be an object like { name }');
   const stray = Object.keys(remoteControl).filter((k) => k !== 'name');
@@ -117,7 +118,7 @@ function checkRemoteControl(remoteControl, agent) {
   if (typeof name !== 'string' || !name.trim() || /[\x00-\x1f\x7f]/.test(name)) spawnError('remoteControl.name must be a non-empty single-line string');
   // The flag's value is optional, so Claude would read a leading `-` as the next flag.
   if (name.trim().startsWith('-')) spawnError('remoteControl.name must not start with "-"');
-  if ((agent || 'claude') !== 'claude') spawnError(`remoteControl is Claude only (agent ${JSON.stringify(agent)} has no Remote Control)`);
+  if (!supportsRemoteControl(agent)) spawnError(`Agent "${agent}" does not support Remote Control.`);
   return { remoteControl: { name: name.trim() } };
 }
 
