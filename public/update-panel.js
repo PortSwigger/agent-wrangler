@@ -6,10 +6,6 @@ export function shouldReloadForVersion(seen, next) {
   return Boolean(seen && next && seen !== next);
 }
 
-export function sessionOnOlderCode(session, codeVersion) {
-  return Boolean(session?.managed && codeVersion && session.launchedCodeVersion && session.launchedCodeVersion !== codeVersion);
-}
-
 export function updateAvailable(status) {
   return Boolean(status && status.behind > 0 && !status.blocked);
 }
