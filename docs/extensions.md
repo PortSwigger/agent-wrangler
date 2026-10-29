@@ -1548,12 +1548,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Remote Control for that one session** (1.55.0). The launch passes
   `--remote-control <name>`, and the name is stored on the entry so every resume
   (idle-suspend wake, mail wake, a relaunch after an update) passes it again. A
-  fork does not inherit it. Claude only: with any other `agent` the spawn is
-  refused by name (`remoteControl is Claude only`) before anything launches,
-  as is an unknown key or a `name` that is empty, multi-line or starts with `-`
-  (the flag's value is optional, so Claude would read it as the next flag). Ordinary dispatch never
-  sets it, so no board card gets Remote Control unless an extension asked for
-  it. A manifest using it declares `^1.55.0`.
+  fork does not inherit it. Only agents explicitly opting into the adapter's
+  Remote Control capability are accepted; currently that is Claude. The default
+  target is Claude. Unsupported or unknown agents are refused by name before
+  dispatch creates a directory, worktree, card or session. An unknown key or a
+  `name` that is empty, contains control characters or starts with `-` is also
+  refused; accepted names are trimmed. Omission leaves Remote Control off.
+  The core [`spawn_session` MCP tool](agent-tools.md#remote-control-on-spawn_session)
+  also exposes it as `remote_control: "Phone"`. The board dialog, workflows,
+  scheduling and handoff do not offer it. A manifest using the host option
+  declares `^1.55.0`.
 - **`adversarial-review`'s shape is a SKILL plus a
   TOOL on purpose.** A SKILL.md is static, so it cannot carry the human's
   configured process; Claude's `` !`cmd` `` injection would, but Codex reads

@@ -1080,6 +1080,20 @@ test('_doResume: devcontainer skips the host transcript guard and wraps in a dev
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+for (const agent of ['codex', 'future-agent']) {
+  test(`resume Remote Control checks inherited target ${agent} before kill or launch`, async () => {
+    const sm = smForDispatch();
+    const prev = { agent, cwd: os.tmpdir(), remoteControl: { name: 'Phone' } };
+    sm.map.set('rc', prev);
+    const effects = [];
+    sm.killForSession = async () => { effects.push('kill'); return []; };
+    sm._newSession = async () => { effects.push('launch'); };
+    await assert.rejects(() => sm._doResume('rc', os.tmpdir(), {}), new RegExp(`${agent}.*does not support Remote Control`));
+    assert.deepEqual(effects, []);
+    assert.equal(sm.map.get('rc'), prev);
+  });
+}
+
 test('_doResume relaunches a Remote Control session with --remote-control, and a plain one without', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-rc-resume-'));
   const sm = new SessionManager();
@@ -2081,24 +2095,67 @@ test('dispatch stores offBoard when passed, and leaves it undefined otherwise', 
   assert.equal(sm.map.get(plain.sessionId).offBoard, undefined);
 });
 
-test('dispatch with remoteControl launches with --remote-control and stores it; a plain dispatch has neither', async () => {
+test('dispatch with remoteControl launches explicit/default Claude and stores it; a plain dispatch has neither', async () => {
   const sm = smForDispatch();
   const inners = [];
   sm._newSession = async (_tmux, _dir, inner) => { inners.push(inner); };
-  const rc = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', remoteControl: { name: 'Phone' } });
-  assert.match(inners[0], /'--remote-control' 'Phone'/);
-  assert.deepEqual(sm.map.get(rc.sessionId).remoteControl, { name: 'Phone' });
+  for (const agent of [undefined, 'claude']) {
+    const rc = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent, remoteControl: { name: 'Phone' } });
+    assert.match(inners.at(-1), /'--remote-control' 'Phone'/);
+    assert.deepEqual(sm.map.get(rc.sessionId).remoteControl, { name: 'Phone' });
+  }
   const plain = await sm.dispatch({ cwd: os.tmpdir(), intent: 'y' });
-  assert.doesNotMatch(inners[1], /--remote-control/);
+  assert.doesNotMatch(inners.at(-1), /--remote-control/);
   assert.equal(sm.map.get(plain.sessionId).remoteControl, undefined);
 });
 
-test('dispatch refuses remoteControl for a Codex session before launching anything', async () => {
+test('fork Remote Control isolation omits the flag and persisted name from the child', async () => {
   const sm = smForDispatch();
-  let launched = false;
-  sm._newSession = async () => { launched = true; };
-  await assert.rejects(() => sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex', remoteControl: { name: 'Phone' } }), /Remote Control is Claude only \(agent codex\)/);
-  assert.equal(launched, false);
+  let inner;
+  sm._newSession = async (_tmux, _dir, cmd) => { inner = cmd; };
+  const parentEntry = { agent: 'claude', remoteControl: { name: 'Phone' } };
+  const { sessionId } = await sm.fork({ sourceId: 'L0', parentId: 'parent', parentEntry, cwd: os.tmpdir() });
+  assert.doesNotMatch(inner, /--remote-control/);
+  assert.equal('remoteControl' in sm.map.get(sessionId), false);
+  assert.deepEqual(parentEntry.remoteControl, { name: 'Phone' });
+});
+
+for (const agent of ['codex', 'future-agent']) {
+  test(`dispatch Remote Control refuses ${agent} before card, directory, worktree or session creation`, async () => {
+    const sm = smForDispatch();
+    const dir = path.join(os.tmpdir(), `aw-refused-rc-${process.pid}-${agent}`);
+    const effects = [];
+    sm._newSession = async () => { effects.push('launch'); };
+    sm._freshScratchDir = () => { effects.push('scratch'); return dir; };
+    sm._ensureCwd = () => { effects.push('cwd'); return dir; };
+    sm._prepare = async () => { effects.push('prepare'); };
+    sm._launchContext = async () => { effects.push('card context'); return { env: {}, addDirs: [] }; };
+    sm._save = () => { effects.push('save'); };
+    for (const opts of [{}, { cwd: dir }, { cwd: dir, worktree: true, worktreeBranch: 'rc-test' }]) {
+      await assert.rejects(() => sm.dispatch({ ...opts, intent: 'x', agent, remoteControl: { name: 'Phone' } }),
+        new RegExp(`Agent "${agent}" does not support Remote Control`));
+    }
+    assert.deepEqual(effects, []);
+    assert.equal(sm.map.size, 0);
+    assert.equal(fs.existsSync(dir), false);
+  });
+}
+
+test('dispatch Remote Control refuses missing Claude capability before any creation', async () => {
+  const sm = smForDispatch();
+  const adapter = adapterFor('claude');
+  const prev = adapter.supportsRemoteControl;
+  const effects = [];
+  sm._freshScratchDir = () => { effects.push('scratch'); return os.tmpdir(); };
+  sm._newSession = async () => { effects.push('launch'); };
+  delete adapter.supportsRemoteControl;
+  try {
+    await assert.rejects(() => sm.dispatch({ remoteControl: { name: 'Phone' } }), /claude.*does not support Remote Control/);
+    assert.deepEqual(effects, []);
+    assert.equal(sm.map.size, 0);
+  } finally {
+    adapter.supportsRemoteControl = prev;
+  }
 });
 
 test('dispatch leaves parentSession undefined when not passed', async () => {

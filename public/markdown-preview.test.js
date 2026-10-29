@@ -47,10 +47,40 @@ test('escapes raw HTML — neither lower- nor upper-case <script> survives (html
 test('drops a javascript: link target — no live href', () => {
   assert.doesNotMatch(render('[x](javascript:alert(1))'), /href="javascript:/i);
 });
+test('a remote image is shown as a link to it, never fetched on render', () => {
+  const html = render('![chart](https://example.com/c.png?d=secret)');
+  assert.ok(!html.includes('<img'));
+  assert.match(html, /<a href="https:\/\/example\.com\/c\.png\?d=secret" target="_blank" rel="noopener noreferrer">chart<\/a>/);
+});
+test('an image with no alt text links by its URL, and a relative one is a link too', () => {
+  assert.match(render('![](https://example.com/c.png)'), />https:\/\/example\.com\/c\.png<\/a>/);
+  assert.ok(!render('![x](docs/c.png)').includes('<img'));
+});
+test('an image inside a link is reduced to its label, not a nested link', () => {
+  const html = render('[![badge](https://example.com/b.svg)](https://example.com/ci)');
+  assert.ok(!html.includes('<img'));
+  assert.equal((html.match(/<a /g) || []).length, 1);
+  assert.match(html, /<a href="https:\/\/example\.com\/ci"[^>]*>badge<\/a>/);
+});
+test('an image\'s alt text and URL are escaped', () => {
+  const html = render('![<b>x</b>](https://example.com/a.png?q="x")');
+  assert.ok(!html.includes('<b>'));
+  assert.ok(!html.includes('<img'));
+  assert.match(html, /href="https:\/\/example\.com\/a\.png\?q=%22x%22"/);
+});
+test('an inline data: raster image is kept, since it loads nothing', () => {
+  assert.match(render('![dot](data:image/png;base64,iVBORw0KGgo=)'), /<img src="data:image\/png;base64,iVBORw0KGgo=" alt="dot">/);
+});
 
 // ── link handling ──────────────────────────────────────────────────────────────
 test('external http(s) link opens in a new tab with rel guard', () => {
   const html = render('[site](https://example.com)');
+  assert.match(html, /target="_blank"/);
+  assert.match(html, /rel="noopener noreferrer"/);
+});
+test('a protocol-relative link is external: new tab with rel guard', () => {
+  const html = render('[site](//example.com/page)');
+  assert.match(html, /href="\/\/example\.com\/page"/);
   assert.match(html, /target="_blank"/);
   assert.match(html, /rel="noopener noreferrer"/);
 });

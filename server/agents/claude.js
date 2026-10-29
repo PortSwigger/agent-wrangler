@@ -156,9 +156,8 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   return inner;
 }
 
-// `--remote-control <name>` for a session an extension spawned with
-// `remoteControl: { name }` (host-api/v1.js). Stored on the entry, so launch and
-// every resume pass it; a fork never inherits it, since two sessions under one
+// `--remote-control <name>` for a session spawned with `remoteControl: { name }`.
+// Stored on the entry, so launch and every resume pass it; a fork never inherits it, since two sessions under one
 // name would leave the phone driving whichever registered last.
 function remoteControlArgs(remoteControl) {
   return remoteControl?.name ? ['--remote-control', remoteControl.name] : [];
@@ -218,6 +217,7 @@ function claudeModels() {
 export const claude = {
   id: 'claude',
   launchModes: CLAUDE_LAUNCH_MODES,
+  supportsRemoteControl: true,
   label: 'Claude',
   tmuxPrefix: 'cc_',
   presetsSessionId: true,
