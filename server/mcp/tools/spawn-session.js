@@ -1,7 +1,7 @@
+import { CLAUDE_PERMISSION_MODES, permissionModeError, runtimePermissionModeError } from '../../agents/permission-mode.js';
 import { z } from 'zod';
-import { knownAgentIds, modelChoicesText, effortChoicesText } from '../../agents/index.js';
+import { knownAgentIds, modelChoicesText, effortChoicesText, supportsRemoteControl } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
-import { nestedParentError } from '../../dispatch-runner.js';
 import { knownRuntimes, findRuntime, runtimeAgentError, DEFAULT_RUNTIME } from '../../runtimes/index.js';
 
 // e.g. "`local` (default), `devcontainer`, `cloud` (extension)".
@@ -36,7 +36,8 @@ export const spawnSessionTool = {
     + 'For a runtime whose launch can fail after the card is created (e.g. '
     + '`cloud`), the tool waits up to 15 s for the outcome and returns it as `launch` '
     + '(`state`: ok, failed, pending or unknown); a failed launch is returned as an error that '
-    + 'still carries the new session id.',
+    + 'still carries the new session id. `permission_mode` selects Claude permissions (auto by default) '
+    + 'and persists across resume and forks; Codex accepts only auto and keeps its configured policy. Runtimes supplying their own launch command accept only auto.',
   inputSchema: {
     intent: z.string().min(1).describe(
       'The new session\'s launch prompt AND the place to hand off context: what has been done, '
@@ -53,7 +54,9 @@ export const spawnSessionTool = {
       + `launching the SAME agent — a cross-agent spawn falls back to that agent's own default `
       + `unless you pass this. Valid values — ${effortChoicesText()}.`,
     ),
+    permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional().describe('Claude permission mode: auto (default), manual, acceptEdits, plan, dontAsk, bypassPermissions. Codex only accepts auto (its configured approval/sandbox policy). Persisted for resume and forks; not inherited from the spawning caller.'),
     agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
+    remote_control: z.string().optional().describe('Enable Remote Control with this name (Claude only). Trimmed; must be non-empty, single-line with no control characters, and not start with "-". Defaults to off, including for a Codex caller (agent defaults to claude). Persists on resume; forks do not inherit it.'),
     add_dirs: z.array(z.string()).optional().describe(
       'Extra directories to grant the new session (--add-dir). For Codex these are extra WRITABLE '
       + 'sandbox roots — everything the work must write outside cwd (e.g. ~/.gradle). The repo\'s '
@@ -95,13 +98,18 @@ export const spawnSessionTool = {
     const intent = (args.intent ?? '').trim();
     if (!intent) return errorResult('intent is required.');
 
-    // This tool dispatches via deps.dispatch → sessionManager.dispatch directly
-    // (not runDispatch), so it needs its own call to the shared depth guard —
-    // see nestedParentError's comment in dispatch-runner.js.
-    if (args.nest && caller) {
-      const nestErr = nestedParentError(deps.sessionManager, caller);
-      if (nestErr) return errorResult(nestErr);
+    let remoteControl;
+    if (args.remote_control !== undefined) {
+      const name = args.remote_control;
+      if (typeof name !== 'string' || !name.trim() || /[\x00-\x1f\x7f]/.test(name)) return errorResult('remote_control must be a non-empty single-line string with no control characters.');
+      if (name.trim().startsWith('-')) return errorResult('remote_control must not start with "-".');
+      const agent = args.agent || 'claude';
+      if (!supportsRemoteControl(agent)) return errorResult(`Agent "${agent}" does not support Remote Control.`);
+      remoteControl = { name: name.trim() };
     }
+
+    const modeError = permissionModeError(args.permission_mode, args.agent || 'claude');
+    if (modeError) return errorResult(modeError);
 
     // Refused by name rather than left to dispatch's `unknown runtime` throw, so
     // the caller learns what it could have asked for. There is no dialog `ext`
@@ -116,6 +124,9 @@ export const spawnSessionTool = {
       const agentErr = runtimeAgentError(findRuntime(args.runtime), args.agent || 'claude');
       if (agentErr) return errorResult(agentErr);
     }
+
+    const runtimeModeError = runtimePermissionModeError(args.permission_mode, findRuntime(args.runtime || DEFAULT_RUNTIME));
+    if (runtimeModeError) return errorResult(runtimeModeError);
 
     return performSpawn({
       deps,
@@ -132,6 +143,8 @@ export const spawnSessionTool = {
         // nested child. This never sets `workflow` — that field is
         // orchestrator-only.
         intent,
+        ...(remoteControl ? { remoteControl } : {}),
+        permissionMode: args.permission_mode,
         runtime: args.runtime || undefined,
         worktree: Boolean(args.worktree),
         worktreeBranch: args.worktree_branch || '',

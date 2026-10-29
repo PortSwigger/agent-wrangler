@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate', 'board.tray']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -459,6 +459,113 @@ test('openSession is a no-op against a base api that does not supply it', () => 
   h.slots.register('panel.section', 'fake', { id: 'a', mount(el, a) { captured = a; } });
   h.slots.mountInto('panel.section', h.document.make(), { send() {} });
   assert.doesNotThrow(() => captured.openSession('abc123'));
+  assert.deepEqual(h.errors, []);
+});
+
+// ── mountSession (1.42.0): the board's panel inside the extension's element ───
+function mountHarness() {
+  const calls = [];
+  const h = harness();
+  const base = {
+    mountSession: (extId, el, sid, opts) => {
+      const call = { extId, el, sid, opts, shown: [sid], showViews: [], unmounted: 0, current: sid };
+      calls.push(call);
+      return {
+        get sessionId() { return call.current; },
+        show: (id, { view } = {}) => { call.shown.push(id); call.showViews.push(view); call.current = id; return true; },
+        unmount: () => { call.unmounted++; call.current = null; },
+      };
+    },
+  };
+  let captured = null;
+  h.slots.register('view', 'fake', { id: 'v', label: 'Fake', mount(el, a) { captured = a; } });
+  h.slots.mountInto('view', h.document.make(), base);
+  return { ...h, calls, api: captured };
+}
+
+test('mountSession hands the element, the id and the extension to the base api, and returns a handle', () => {
+  const { api, calls, errors } = mountHarness();
+  const el = { nodeType: 1 };
+  const handle = api.mountSession(el, 'abc123');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].extId, 'fake');
+  assert.equal(calls[0].el, el);
+  assert.equal(calls[0].sid, 'abc123');
+  assert.equal(calls[0].opts.onMaximize, null);
+  assert.equal(handle.sessionId, 'abc123');
+  assert.equal(handle.show('def456'), true);
+  assert.equal(handle.sessionId, 'def456');
+  handle.unmount();
+  assert.equal(calls[0].unmounted, 1);
+  assert.equal(handle.sessionId, null);
+  assert.ok(Object.isFrozen(handle));
+  assert.deepEqual(errors, []);
+});
+
+test('mountSession refuses a non-element or a non-id, and the handle refuses a non-id show', () => {
+  const { api, calls, errors } = mountHarness();
+  assert.equal(api.mountSession(null, 'abc123'), null);
+  assert.equal(api.mountSession({}, 'abc123'), null);
+  assert.equal(api.mountSession({ nodeType: 3 }, 'abc123'), null);
+  assert.equal(api.mountSession({ nodeType: 1 }, ''), null);
+  assert.equal(api.mountSession({ nodeType: 1 }, 42), null);
+  assert.equal(calls.length, 0, 'nothing reached the board');
+  assert.equal(errors.length, 5);
+  assert.match(errors[0], /\[ext:fake\] mountSession refused: expected an element/);
+  assert.match(errors[4], /mountSession refused: expected a session id, got 42/);
+  const handle = api.mountSession({ nodeType: 1 }, 'abc123');
+  assert.equal(handle.show(''), false);
+  assert.deepEqual(calls[0].shown, ['abc123']);
+  assert.match(errors[5], /mountSession show refused/);
+});
+
+test('mountSession wraps onMaximize so a throwing one is reported, not thrown into the board', () => {
+  const { api, calls, errors } = mountHarness();
+  const seen = [];
+  api.mountSession({ nodeType: 1 }, 'abc123', { onMaximize: (on) => { seen.push(on); throw new Error('boom'); } });
+  assert.doesNotThrow(() => calls[0].opts.onMaximize(true));
+  assert.deepEqual(seen, [true]);
+  assert.match(errors[0], /\[ext:fake\] mountSession onMaximize threw: boom/);
+});
+
+test('mountSession passes view: \'diff\' through, on mount and on show, and reports any other view', () => {
+  const { api, calls, errors } = mountHarness();
+  calls.length = 0;
+  const base = calls;
+  const handle = api.mountSession({ nodeType: 1 }, 'abc123', { view: 'diff' });
+  assert.equal(base[0].opts.view, 'diff');
+  api.mountSession({ nodeType: 1 }, 'abc123');
+  assert.equal(base[1].opts.view, null, 'no option opens on the session\'s own view');
+  api.mountSession({ nodeType: 1 }, 'abc123', { view: 'terminal' });
+  assert.equal(base[2].opts.view, null);
+  assert.match(errors[0], /\[ext:fake\] mountSession view ignored: expected 'diff', got "terminal"/);
+  assert.deepEqual(errors.length, 1);
+  assert.equal(handle.show('def456', { view: 'diff' }), true);
+  assert.equal(handle.show('ghi789'), true);
+  assert.equal(handle.show('jkl012', { view: 7 }), true);
+  assert.match(errors[1], /mountSession show view ignored: expected 'diff', got 7/);
+  assert.deepEqual(base[0].showViews, ['diff', null, null]);
+});
+
+test('a view that cannot be stringified is still reported and ignored, never thrown', () => {
+  const { api, calls, errors } = mountHarness();
+  const circular = {}; circular.self = circular;
+  const handle = api.mountSession({ nodeType: 1 }, 'abc123', { view: 1n });
+  assert.equal(calls[0].opts.view, null);
+  assert.match(errors[0], /mountSession view ignored: expected 'diff', got bigint/);
+  assert.equal(handle.show('def456', { view: circular }), true);
+  assert.equal(handle.show('ghi789', { view: () => {} }), true);
+  assert.deepEqual(calls[0].showViews, [null, null]);
+  assert.match(errors[1], /mountSession show view ignored: expected 'diff', got object/);
+  assert.match(errors[2], /got \(\) => \{\}/);
+});
+
+test('mountSession is null against a base api that does not supply it', () => {
+  const h = harness();
+  let captured = null;
+  h.slots.register('view', 'fake', { id: 'v', label: 'Fake', mount(el, a) { captured = a; } });
+  h.slots.mountInto('view', h.document.make(), { send() {} });
+  assert.equal(captured.mountSession({ nodeType: 1 }, 'abc123'), null);
   assert.deepEqual(h.errors, []);
 });
 
@@ -1131,6 +1238,18 @@ test('settings.panel mounts only the owning extension\'s contribution; save is a
   assert.equal(host.children.length, 0);
 });
 
+test('hasPanelSave is true only when a panel mounted in the host has a save', () => {
+  const h = harness();
+  h.slots.register('settings.panel', 'a', { id: 'p', mount() {}, save: async () => {} });
+  h.slots.register('settings.panel', 'b', { id: 'p', mount() {} });
+  const withSave = h.document.make();
+  const without = h.document.make();
+  h.slots.mountInto('settings.panel', withSave, {}, { onlyExt: 'a' });
+  assert.equal(h.slots.hasPanelSave(withSave), true);
+  h.slots.mountInto('settings.panel', without, {}, { onlyExt: 'b' });
+  assert.equal(h.slots.hasPanelSave(without), false);
+});
+
 test('savePanels propagates a rejecting save', async () => {
   const h = harness();
   h.slots.register('settings.panel', 'a', { id: 'p', mount() {}, save: () => Promise.reject(new Error('nope')) });
@@ -1370,6 +1489,45 @@ test('api.requestBoardRender calls the base api and tolerates its absence', () =
 });
 
 
+// ── api.openFile / api.files ─────────────────────────────────────────────────
+function filesHarness(requires, base) {
+  const h = harness({ requiresFor: () => requires });
+  let captured = null;
+  h.slots.register('task.action', 'fake', { id: 't', items: (task, g, a) => { captured = a; return []; } });
+  h.slots.taskMenuItems({ id: 't1', name: 'T', adhoc: false }, {}, base);
+  return { ...h, api: captured };
+}
+
+test('api.files is present with files:view: canOpen by extension, types() a fresh list', () => {
+  const { api } = filesHarness(['files:view'], {});
+  assert.equal(api.files.canOpen('/a/b.md'), true);
+  assert.equal(api.files.canOpen('/a/b.txt'), false);
+  assert.ok(api.files.types().some((t) => t.ext === '.md' && t.kind === 'markdown'));
+  assert.notEqual(api.files.types(), api.files.types());
+});
+
+test('api.files is undefined without files:view, and openFile says not-permitted', async () => {
+  const { api } = filesHarness([], { openExtFile: () => assert.fail('must not reach the base api') });
+  assert.equal(api.files, undefined);
+  assert.deepEqual(await api.openFile('/a/b.md'), { ok: false, reason: 'not-permitted' });
+});
+
+test('api.openFile binds the extension id, passes the reply through and never rejects', async () => {
+  const calls = [];
+  const base = { openExtFile: async (id, p) => { calls.push([id, p]); return p.endsWith('.md') ? { ok: true, junk: 1 } : { ok: false, reason: 'not-found' }; } };
+  const { api } = filesHarness(['files:view'], base);
+  assert.deepEqual(await api.openFile('/a/b.md'), { ok: true });
+  assert.deepEqual(await api.openFile('/a/gone.png'), { ok: false, reason: 'not-found' });
+  assert.deepEqual(calls, [['fake', '/a/b.md'], ['fake', '/a/gone.png']]);
+  assert.equal(api.openExtFile, undefined);
+  assert.deepEqual(await api.openFile(''), { ok: false, reason: 'invalid-path' });
+  assert.deepEqual(await api.openFile(7), { ok: false, reason: 'invalid-path' });
+  const boom = filesHarness(['files:view'], { openExtFile: () => { throw new Error('x'); } }).api;
+  assert.deepEqual(await boom.openFile('/a/b.md'), { ok: false, reason: 'error' });
+  const bare = filesHarness(['files:view'], {}).api;
+  assert.deepEqual(await bare.openFile('/a/b.md'), { ok: false, reason: 'unavailable' });
+});
+
 // ── api.ui.markdownPreview ───────────────────────────────────────────────────
 function uiHarness(base) {
   const h = harness();
@@ -1448,6 +1606,25 @@ test('api.claimDrag marks an element [data-ext-drag], unclaims, refuses non-elem
   api.claimDrag(el2);
   slots.removeExtension('x');
   assert.equal(el2.a.has('data-ext-drag'), false, 'a removed extension cannot leave the board frozen');
+});
+
+test('file.open needs files:open, and the first contribution returning true takes the file', () => {
+  const { slots, errors } = harness({ requiresFor: (id) => (id === 'none' ? [] : ['files:open']) });
+  const file = { path: '/r/docs/plan.md', sessionId: 's1', source: 'chat' };
+  assert.equal(slots.fileOpen(file, {}, {}), false, 'nobody registered: the board previews it');
+  assert.throws(() => slots.register('file.open', 'none', { id: 'o', open: () => true }), /needs the files:open capability/);
+  assert.throws(() => slots.register('file.open', 'a', { id: 'o', mount() {} }), /no open function/);
+  const asked = [];
+  slots.register('file.open', 'boom', { id: 'o', open: () => { asked.push('boom'); throw new Error('x'); } });
+  slots.register('file.open', 'pass', { id: 'o', open: (f) => { asked.push(`pass:${f.source}`); return 'yes'; } });
+  slots.register('file.open', 'take', { id: 'o', open: (f) => { asked.push(`take:${f.sessionId}`); return true; } });
+  slots.register('file.open', 'late', { id: 'o', open: () => { asked.push('late'); return true; } });
+  assert.equal(slots.fileOpen(file, {}, {}), true);
+  assert.deepEqual(asked, ['boom', 'pass:chat', 'take:s1'], 'only a literal true claims it, and later ones are not asked');
+  assert.equal(errors.filter((e) => /boom.*open failed/.test(e)).length, 1);
+  asked.length = 0;
+  slots.fileOpen(file, {}, {});
+  assert.deepEqual(asked, ['pass:chat', 'take:s1'], 'a throwing contribution is removed');
 });
 
 test('linkChip returns the first contribution that answers, with its veto key, and a null for a link nobody claims', () => {
@@ -1547,6 +1724,44 @@ test('notification cues reach enabled contributors and stop on removal', async (
   assert.equal(received.length, 2);
 });
 
+test('session.inputGate answers the first gate, skips working sessions and drops a throwing gate', () => {
+  const { slots, errors } = harness();
+  const api = { source: 'board' };
+  assert.throws(() => slots.register('session.inputGate', 'x', { id: 'g' }), /no gate function/);
+  slots.register('session.inputGate', 'quiet', { id: 'none', gate: () => null });
+  slots.register('session.inputGate', 'bad', { id: 'noreason', gate: () => ({ label: 'x' }) });
+  const seen = [];
+  slots.forExtension('lock', api).register('session.inputGate', {
+    id: 'cold', gate: (s, graph, bound) => { seen.push([s.sessionId, graph.n, bound.source]); return s.cold ? { reason: '  Cache expired  ', label: 'Locked' } : null; },
+  });
+  slots.register('session.inputGate', 'later', { id: 'second', gate: () => ({ reason: 'never asked' }) });
+  assert.deepEqual(slots.inputGate({ sessionId: 'a', status: 'idle', cold: true }, { n: 1 }, api), { key: 'lock:cold', reason: 'Cache expired', label: 'Locked' });
+  assert.deepEqual(seen, [['a', 1, 'board']]);
+  assert.match(errors.at(-1), /bad\] noreason returned an input gate without a reason/);
+  // A working session is never locked, whatever an extension says.
+  assert.equal(slots.inputGate({ sessionId: 'a', status: 'working', cold: true }, {}, api), null);
+  assert.equal(seen.length, 1);
+  slots.register('session.inputGate', 'boom', { id: 'throw', gate() { throw Error('boom'); } });
+  slots.removeExtension('lock');
+  slots.removeExtension('later');
+  assert.equal(slots.inputGate({ sessionId: 'a', status: 'idle' }, {}, api), null);
+  assert.match(errors.at(-1), /boom\] throw gate failed — contribution removed/);
+  assert.deepEqual(slots.contributions('session.inputGate').map((c) => c.id), ['none', 'noreason']);
+});
+
+test('api.refreshInputGates and removing a gate both ask the board to re-evaluate', () => {
+  let asked = 0;
+  const { slots } = harness({ onInputGatesChanged: () => { asked++; } });
+  const api = slots.forExtension('lock').api;
+  api.refreshInputGates();
+  assert.equal(asked, 1);
+  slots.removeExtension('lock'); // no gate registered: nothing to unlock
+  assert.equal(asked, 1);
+  slots.forExtension('lock').register('session.inputGate', { id: 'g', gate: () => null });
+  slots.removeExtension('lock');
+  assert.equal(asked, 2);
+});
+
 test('connection listeners refresh extension state on reconnect and disappear on disable', () => {
   const { slots } = harness();
   let refreshed = 0;
@@ -1556,4 +1771,355 @@ test('connection listeners refresh extension state on reconnect and disappear on
   slots.removeExtension('sounds');
   slots.connected();
   assert.equal(refreshed, 2);
+});
+
+test('api.earlyAdopter is absent without a declared branch; branch and enabled() read live, set(on) forces the id', async () => {
+  const h = harness();
+  let facts = null;
+  const sent = [];
+  const base = { earlyAdopterFor: (id) => (id === 'a' ? facts : null), setEarlyAdopter: async (id, on) => { sent.push([id, on]); return on; } };
+  const api = h.slots.forExtension('a', base).api;
+  assert.equal(api.earlyAdopter, undefined);
+  facts = { branch: 'next', enabled: false };
+  const ea = api.earlyAdopter;
+  assert.equal(ea.branch, 'next');
+  assert.equal(ea.enabled(), false);
+  assert.equal(api.earlyAdopter, ea, 'built once, so it compares by identity');
+  facts = { branch: 'next', enabled: true };
+  assert.equal(ea.enabled(), true);
+  assert.equal(await ea.set(true), true);
+  assert.deepEqual(sent, [['a', true]]);
+  await assert.rejects(ea.set('yes'), /needs true or false/);
+  assert.equal(h.slots.forExtension('b', base).api.earlyAdopter, undefined, 'another extension sees only its own');
+});
+
+test('api.themeButtonHtml hands the injected picker button through', () => {
+  const calls = [];
+  const api = harness({ themeButtonHtml: (style, opts) => { calls.push([style, opts]); return '<button>'; } }).slots.forExtension('a', {}).api;
+  assert.equal(api.themeButtonHtml({ id: 'sky' }, { active: true }), '<button>');
+  assert.deepEqual(calls, [[{ id: 'sky' }, { active: true }]]);
+  assert.equal(harness().slots.forExtension('a', {}).api.themeButtonHtml({ id: 'sky' }), '');
+});
+
+test('api.onThemeChange hears themeChanged until unsubscribed or the extension is removed', () => {
+  const h = harness();
+  const api = h.slots.forExtension('a', {}).api;
+  const seen = [];
+  const off = api.onThemeChange((t) => { seen.push(t); throw new Error('listener bug'); });
+  h.slots.themeChanged({ id: 'light', base: 'light' });
+  h.slots.themeChanged({ id: 'sky', base: 'weird' });
+  assert.deepEqual(seen, [{ id: 'light', base: 'light' }, { id: 'sky', base: 'dark' }]);
+  assert.equal(h.errors.filter((e) => /onThemeChange listener failed/.test(e)).length, 2, 'a throwing listener is reported, not fatal');
+  off();
+  h.slots.themeChanged({ id: 'dark', base: 'dark' });
+  assert.equal(seen.length, 2);
+  h.slots.forExtension('b', {}).api.onThemeChange((t) => seen.push(t));
+  h.slots.removeExtension('b');
+  h.slots.themeChanged({ id: 'dark', base: 'dark' });
+  assert.equal(seen.length, 2);
+  assert.equal(typeof api.onThemeChange('nope'), 'function');
+});
+
+
+test('register refuses a dispatch field with a non-function validate', () => {
+  const { slots } = dispatchHarness();
+  assert.throws(() => slots.register('dispatch.field', 'x', { id: 'bad', at: 'top', mount() {}, validate: true }), /validate must be a function/);
+});
+
+test('validateDispatch returns the first meaningful string in registration order with its mounted element and context', () => {
+  const { document, slots } = dispatchHarness();
+  const seen = [];
+  for (const [id, at, answer] of [['blank', 'top', '  '], ['non-string', 'top', 7], ['first', 'model', 'blocked'], ['later', 'top', 'later']]) {
+    slots.register('dispatch.field', id, { id, at, mount() {}, validate(el, ctx) { seen.push([id, el.dataset.ext, ctx]); return answer; } });
+  }
+  slots.syncHosts('dispatch.field', [{ host: document.make(), at: 'top' }, { host: document.make(), at: 'model' }]);
+  const ctx = { draft: { runtime: 'local' } };
+  assert.equal(slots.validateDispatch(ctx), 'blocked');
+  assert.deepEqual(seen, [['blank', 'blank', ctx], ['non-string', 'non-string', ctx], ['first', 'first', ctx]]);
+});
+
+test('validateDispatch ignores unmounted fields and fields without validation', () => {
+  const { document, slots } = dispatchHarness();
+  slots.register('dispatch.field', 'x', { id: 'unmounted', at: 'model', mount() {}, validate() { throw new Error('must not run'); } });
+  slots.register('dispatch.field', 'y', { id: 'plain', at: 'top', mount() {} });
+  slots.register('dispatch.field', 'y', { id: 'allowed', at: 'top', mount() {}, validate: () => null });
+  slots.syncHosts('dispatch.field', [{ host: document.make(), at: 'top' }]);
+  assert.equal(slots.validateDispatch({}), null);
+  assert.equal(slots.contributions('dispatch.field').length, 3);
+});
+
+test('a throwing validator is reported and removed with its field veto, then validation continues', () => {
+  const { document, slots, errors } = dispatchHarness({ a: ['effort'] });
+  slots.register('dispatch.field', 'a', { id: 'broken', at: 'top', hides: ['effort'], mount() {}, validate() { throw new Error('boom'); } });
+  slots.register('dispatch.field', 'b', { id: 'blocker', at: 'model', mount() {}, validate: () => 'blocked after crash' });
+  const top = document.make();
+  slots.syncHosts('dispatch.field', [{ host: top, at: 'top' }, { host: document.make(), at: 'model' }]);
+  assert.deepEqual(slots.hiddenDispatchFields(), ['effort']);
+  assert.equal(slots.validateDispatch({}), 'blocked after crash');
+  assert.match(errors.join('\n'), /validate failed — contribution removed/);
+  assert.deepEqual(slots.contributions('dispatch.field').map((c) => c.id), ['blocker']);
+  assert.deepEqual(slots.hiddenDispatchFields(), []);
+  assert.equal(top.children.length, 0);
+});
+
+test('hosted dispatch fields keep independent state, read, validate, restore saved slices and unmount', () => {
+  const { document, slots, errors } = harness();
+  const opens = [];
+  const unmounted = [];
+  slots.register('dispatch.field', 'context', {
+    id: 'choice', at: 'model',
+    mount(el, api, ctx) { el.value = 'board'; el.ctx = ctx; el.owner = api.storage; },
+    open(el, ctx) { opens.push(ctx); el.value = ctx.saved?.selection || el.value; },
+    ext: (el) => ({ selection: el.value }),
+    fields: (el) => ({ effort: el.value, model: undefined }),
+    validate: (el) => el.value === 'bad' ? 'selection unavailable' : null,
+    update(el, ctx, graph) { el.updated = [ctx, graph]; },
+    hides() { throw new Error('host must ignore hides'); },
+    unmount(el) { unmounted.push(el); },
+  });
+  const board = document.make();
+  slots.syncHosts('dispatch.field', [{ host: board, at: 'model' }]);
+  const root = document.make();
+  const baseApi = { agents: () => [{ id: 'codex' }] };
+  const ctx = { mode: 'job', draft: { agent: 'codex' } };
+  const handle = slots.forExtension('launcher', baseApi).api.dispatchFields.mount(root, ctx, {
+    saved: { context: { selection: 'saved' }, other: { private: true } },
+  });
+  assert.deepEqual(root.children[0].ctx, { ...ctx, agents: [{ id: 'codex' }] });
+  assert.deepEqual(opens[0].saved, { selection: 'saved' });
+  opens[0].saved.selection = 'mutated';
+  assert.deepEqual(handle.read(), { effort: 'saved', ext: { context: { selection: 'saved' } } });
+  assert.deepEqual(slots.dispatchFields(ctx), { effort: 'board', ext: { context: { selection: 'board' } } });
+  assert.equal(handle.validate(), null);
+  root.children[0].value = 'bad';
+  assert.equal(handle.validate(), 'selection unavailable');
+  assert.equal(slots.validateDispatch(ctx), null);
+  const graph = { revision: 2 };
+  handle.update({ ...ctx, draft: { agent: 'claude' } }, graph);
+  assert.deepEqual(root.children[0].updated, [{ mode: 'job', draft: { agent: 'claude' }, agents: [{ id: 'codex' }] }, graph]);
+  slots.syncHosts('dispatch.field', [{ host: board, at: 'model' }]);
+  slots.update('dispatch.field', { mode: 'launch' }, { revision: 3 });
+  assert.equal(root.children.length, 1);
+  assert.equal(root.children[0].updated[0].mode, 'job');
+  handle.unmount();
+  handle.unmount();
+  assert.equal(root.children.length, 0);
+  assert.deepEqual(handle.read(), {});
+  assert.equal(handle.validate(), null);
+  assert.equal(unmounted.length, 1);
+  assert.equal(board.children.length, 1);
+  assert.deepEqual(errors, []);
+});
+
+test('hosted fields mount in anchor order, merge payloads, validate first message and exclude later registrations', () => {
+  const { document, slots, errors } = harness();
+  const order = [];
+  for (const [id, at, answer] of [['last', 'advanced', 'last block'], ['first', 'top', ''], ['middle', 'model', 'first block']]) {
+    slots.register('dispatch.field', 'context', {
+      id, at, mount() { order.push(id); },
+      ext: () => ({ [id]: true }),
+      fields: () => ({ effort: id, model: undefined }),
+      validate: () => answer,
+    });
+  }
+  const h = slots.forExtension('launcher').api.dispatchFields.mount(document.make(), { mode: 'job' });
+  assert.deepEqual(order, ['first', 'middle', 'last']);
+  assert.deepEqual(h.read(), { effort: 'middle', ext: { context: { last: true, first: true, middle: true } } });
+  assert.equal(h.validate(), 'last block');
+  assert.equal(errors.length, 2);
+  slots.register('dispatch.field', 'late', { id: 'late', at: 'top', mount() {}, fields: () => ({ late: true }) });
+  assert.equal(h.read().late, undefined);
+});
+
+for (const phase of ['mount', 'open', 'update', 'fields', 'ext', 'validate']) {
+  test(`a throwing hosted ${phase} removes the contribution from every host`, () => {
+    const { document, slots, errors } = harness();
+    let broken = false;
+    slots.register('dispatch.field', 'context', {
+      id: 'choice', at: 'model', mount() {},
+      [phase]() { if (broken) throw new Error('broken field'); },
+    });
+    const board = document.make();
+    slots.syncHosts('dispatch.field', [{ host: board, at: 'model' }]);
+    const api = slots.forExtension('launcher').api;
+    const one = document.make();
+    const first = api.dispatchFields.mount(one, { mode: 'job' });
+    broken = true;
+    const two = document.make();
+    const second = api.dispatchFields.mount(two, { mode: 'job' });
+    if (phase === 'update') second.update({ mode: 'job' }, {});
+    if (phase === 'fields' || phase === 'ext') second.read();
+    if (phase === 'validate') second.validate();
+    assert.deepEqual(slots.contributions('dispatch.field'), []);
+    assert.equal(board.children.length + one.children.length + two.children.length, 0);
+    assert.deepEqual(first.read(), {});
+    assert.match(errors[0], new RegExp(`${phase} failed`));
+  });
+}
+
+test('removing the hosting extension tears down its dispatch handles', () => {
+  const { document, slots } = harness();
+  slots.register('dispatch.field', 'context', { id: 'choice', at: 'model', mount() {}, ext: () => ({ choice: true }) });
+  const root = document.make();
+  const h = slots.forExtension('launcher').api.dispatchFields.mount(root, { mode: 'job' });
+  slots.removeExtension('launcher');
+  assert.equal(root.children.length, 0);
+  assert.deepEqual(h.read(), {});
+  assert.equal(slots.contributions('dispatch.field').length, 1);
+});
+
+test('hosted payload and validation use the board registration order across anchors', () => {
+  const { document, slots } = harness();
+  for (const [id, at] of [['advanced', 'advanced'], ['top', 'top']]) {
+    slots.register('dispatch.field', id, { id, at, mount() {}, fields: () => ({ effort: id }), validate: () => `${id} block` });
+  }
+  slots.syncHosts('dispatch.field', [{ host: document.make(), at: 'top' }, { host: document.make(), at: 'advanced' }]);
+  const h = slots.forExtension('launcher').api.dispatchFields.mount(document.make(), { mode: 'job' });
+  assert.deepEqual(h.read(), slots.dispatchFields({ mode: 'launch' }));
+  assert.equal(h.validate(), slots.validateDispatch({ mode: 'launch' }));
+});
+
+test('board.tray owns one persistent mount and reports collisions once', () => {
+  const { document, slots, errors } = harness();
+  const log = [];
+  for (const ext of ['first', 'second']) slots.register('board.tray', ext, {
+    id: 'tray', mount: () => log.push(ext), unmount: () => log.push(`off:${ext}`),
+  });
+  const host = document.make();
+  assert.equal(slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {}), true);
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.deepEqual(log, ['first']);
+  assert.equal(host.children.length, 1);
+  assert.equal(errors.length, 1);
+  slots.removeExtension('first');
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.deepEqual(log, ['first', 'off:first', 'second']);
+  slots.removeExtension('second');
+  assert.equal(host.children.length, 0);
+  assert.equal(slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {}), false);
+});
+
+test('board.tray receives ordered task and minimised snapshots on every core view change', () => {
+  const { document, slots } = harness();
+  const seen = [];
+  slots.register('board.tray', 'owner', { id: 'tray', mount() {}, update(el, ctx) {
+    seen.push(structuredClone(ctx));
+    ctx.tasks[0].name = 'changed'; ctx.minimisedIds.push('wrong');
+  } });
+  const host = document.make();
+  const tasks = [{ id: 'b', name: 'Beta', adhoc: false }, { id: '__adhoc__', name: 'Unassigned', adhoc: true }, { id: 'a', name: 'Alpha', adhoc: false }];
+  const ctx = { tasks, minimisedIds: ['a'] };
+  slots.syncTray(host, {}, ctx, {});
+  slots.syncTray(host, {}, { tasks, minimisedIds: ['b', 'a'] }, {});
+  assert.deepEqual(seen.map((x) => x.tasks.map((t) => t.id)), [['b', '__adhoc__', 'a'], ['b', '__adhoc__', 'a']]);
+  assert.deepEqual(seen.map((x) => x.minimisedIds), [['a'], ['b', 'a']]);
+  assert.equal(tasks[0].name, 'Beta');
+  assert.deepEqual(ctx.minimisedIds, ['a']);
+});
+
+for (const phase of ['mount', 'update']) test(`board.tray ${phase} failure cleans up and promotes the next owner`, () => {
+  const { document, slots } = harness();
+  let cleanups = 0;
+  slots.register('board.tray', 'bad', { id: 'tray', mount() {}, [phase]() { throw Error('broken'); }, unmount() { cleanups++; } });
+  slots.register('board.tray', 'good', { id: 'tray', mount() {} });
+  const host = document.make();
+  assert.equal(slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {}), true);
+  assert.equal(cleanups, 1);
+  assert.equal(host.children[0].dataset.ext, 'good');
+  slots.removeExtension('good');
+  assert.equal(slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {}), false);
+});
+
+test('only the mounted tray owner replaces Minimise, including Unassigned; failures restore core', () => {
+  const { document, slots, errors } = harness();
+  const calls = [];
+  for (const ext of ['first', 'second']) slots.register('board.tray', ext, {
+    id: 'tray', mount() {}, minimiseItem(task, graph, api) {
+      return { label: 'Manage profiles…', run: () => calls.push([ext, task.id]) };
+    },
+  });
+  assert.equal(slots.trayMinimiseItem({ id: 'a' }, {}, {}), null);
+  slots.syncTray(document.make(), {}, { tasks: [], minimisedIds: [] }, {});
+  slots.trayMinimiseItem({ id: '__adhoc__', adhoc: true }, {}, {}).run();
+  assert.deepEqual(calls, [['first', '__adhoc__']]);
+  slots.removeExtension('first');
+  assert.equal(slots.trayMinimiseItem({ id: 'a' }, {}, {}), null);
+  slots.removeExtension('second');
+  slots.register('board.tray', 'broken', { id: 'tray', mount() {}, minimiseItem() { throw Error('broken'); } });
+  const host = document.make();
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.equal(slots.trayMinimiseItem({ id: 'a' }, {}, {}), null);
+  assert.equal(host.children.length, 0);
+  assert.ok(errors.some((x) => x.includes('minimiseItem')));
+});
+
+test('setMinimisedTasks validates the complete input before forwarding a snapshot', () => {
+  const { slots } = harness();
+  const applied = [];
+  const api = slots.forExtension('example', { setMinimisedTasks(ids) { applied.push(ids); return ids.length === 0; } }).api;
+  for (const ids of [null, 'a', new Set(['a']), ['a', 2], ['']]) assert.equal(api.setMinimisedTasks(ids), false);
+  assert.deepEqual(applied, []);
+  const ids = ['a'];
+  assert.equal(api.setMinimisedTasks(ids), false);
+  ids.push('b');
+  assert.deepEqual(applied, [['a']]);
+  assert.equal(api.setMinimisedTasks([]), true);
+});
+
+test('only the mounted tray owner adds a background action, without a task target', () => {
+  const { document, slots } = harness();
+  const graph = { tasks: [] }, calls = [];
+  for (const ext of ['first', 'second']) slots.register('board.tray', ext, {
+    id: 'tray', mount() {}, backgroundItem(...args) {
+      calls.push([ext, ...args]);
+      return { label: 'Manage profiles…', run: () => ext };
+    },
+  });
+  assert.equal(slots.trayBackgroundItem(graph, {}), null);
+  const host = document.make();
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, graph);
+  assert.equal(slots.trayBackgroundItem(graph, {}).run(), 'first');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].length, 3);
+  assert.equal(calls[0][1], graph);
+  assert.equal(typeof calls[0][2].setMinimisedTasks, 'function');
+  slots.removeExtension('first');
+  assert.equal(slots.trayBackgroundItem(graph, {}), null);
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, graph);
+  assert.equal(slots.trayBackgroundItem(graph, {}).run(), 'second');
+  slots.removeExtension('second');
+  assert.equal(slots.trayBackgroundItem(graph, {}), null);
+});
+
+for (const failure of ['throw', 'malformed']) test(`tray background ${failure} restores core and cleans up`, () => {
+  const { document, slots, errors } = harness();
+  let cleanup = 0, renders = 0;
+  slots.register('board.tray', 'owner', {
+    id: 'tray', mount() {}, unmount() { cleanup++; }, backgroundItem() {
+      if (failure === 'throw') throw Error('broken');
+      return { label: 'Missing run' };
+    },
+  });
+  const host = document.make();
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.equal(slots.trayBackgroundItem({}, { requestBoardRender() { renders++; } }), null);
+  assert.equal(cleanup, 1);
+  assert.equal(renders, 1);
+  assert.equal(host.children.length, 0);
+  assert.ok(errors.some((x) => x.includes('backgroundItem')));
+});
+
+test('tray background callback is optional, validated and catches action failures', () => {
+  const { document, slots, errors } = harness();
+  assert.throws(() => slots.register('board.tray', 'invalid', { id: 'tray', mount() {}, backgroundItem: true }), /backgroundItem/);
+  slots.register('board.tray', 'owner', { id: 'tray', mount() {} });
+  const host = document.make();
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.equal(slots.trayBackgroundItem({}, {}), null);
+  slots.removeExtension('owner');
+  slots.register('board.tray', 'owner', { id: 'tray', mount() {}, backgroundItem: () => ({ label: 'Manage', run() { throw Error('broken'); } }) });
+  slots.syncTray(host, {}, { tasks: [], minimisedIds: [] }, {});
+  assert.doesNotThrow(() => slots.trayBackgroundItem({}, {}).run());
+  assert.equal(host.children.length, 1);
+  assert.ok(errors.some((x) => x.includes('backgroundItem')));
 });

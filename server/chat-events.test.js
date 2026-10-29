@@ -391,6 +391,25 @@ test('a blank Claude thinking block (content redacted into signature) still emit
   assert.equal(think.durationMs, 5000, 'a duration is still derivable even when the text is redacted');
 });
 
+test("claude: thinking text is marked visible only when the line says thinkingDisplay 'updates'", () => {
+  const line = (display) => claudeLines({
+    type: 'assistant', timestamp: '2026-08-14T10:00:05.000Z', ...(display ? { thinkingDisplay: display } : {}),
+    message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'Visible reasoning.', signature: 'sig' }] },
+  });
+  const think = (display) => scanChatText(line(display), 'claude').events.find((e) => e.kind === 'thinking');
+  assert.equal(think('updates').visible, true);
+  assert.ok(!('visible' in think('omitted')));
+  assert.ok(!('visible' in think(undefined)));
+});
+
+test("claude: blank thinking is never marked visible, even under 'updates'", () => {
+  const text = claudeLines({
+    type: 'assistant', timestamp: '2026-08-14T10:00:05.000Z', thinkingDisplay: 'updates',
+    message: { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'sig' }] },
+  });
+  assert.ok(!('visible' in scanChatText(text, 'claude').events.find((e) => e.kind === 'thinking')));
+});
+
 // --- recap (Claude Code's end-of-turn "※ recap:" line) ---
 
 test('a recap line becomes a recap event, split into summary and next step', () => {

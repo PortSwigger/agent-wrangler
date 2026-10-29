@@ -1,3 +1,14 @@
+/* Inter 4.1, bundled rather than taken from Google Fonts: Google's copy drops
+   Inter's character variants, and the Light style needs cv05/cv08 to tell a
+   capital I from a lower-case l. See vendor/inter/README.md. */
+@font-face {
+  font-family: InterVariable; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url("vendor/inter/InterVariable.woff2") format("woff2");
+}
+@font-face {
+  font-family: InterVariable; font-style: italic; font-weight: 100 900; font-display: swap;
+  src: url("vendor/inter/InterVariable-Italic.woff2") format("woff2");
+}
 :root {
   --bg:#0d1117; --surface:#151b23; --surface-2:#1c2128;
   --fg:#f0f6fc; --fg-muted:#9198a1; --fg-subtle:#656c76;
@@ -71,43 +82,89 @@
   --usage-cat-1:#3987e5; --usage-cat-2:#008300; --usage-cat-3:#d55181;
   --usage-cat-4:#c98500; --usage-cat-5:#199e70; --usage-cat-6:#d95926;
   --usage-cat-other:#768390;
-  /* UI font: themeable so a style can swap it (terminal keeps its own mono font).
+  /* UI font: themeable so a style can swap it (the terminals take --font-mono).
      Custom styles override via the manifest `font` field -> this var. */
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Monospace font for code, paths and the terminals (theme.js readTerminalFont
+     hands it to xterm). */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Chat reading column: the leading of prose and user bubbles, and the widest
+     the conversation and its message box may grow before they centre with
+     margins either side. 100% means no limit. */
+  --prose-leading: 1.62;
+  --chat-measure: 100%;
 }
+/* Light: tuned for long reading. It is also the base every light-based
+   extension theme inherits for any role it leaves unset, so a change here
+   reaches those themes too. No wallpaper. Off-white and off-black rather than
+   pure white and black, a slightly darker board so the reading pane stands
+   forward, Inter (bundled, above) and Roboto Mono (index.html), and a centred
+   chat column. Text colours keep at least 4.5:1 on the light surfaces. */
 body.light {
-  --bg:#f6f8fa; --surface:#ffffff; --surface-2:#eaeef2;
-  --fg:#1f2328; --fg-muted:#59636e; --fg-subtle:#818b98;
-  --border:#d1d9e0; --border-muted:#e1e6eb;
-  --green:#1a7f37; --green-fg:#1a7f37;
-  --red:#cf222e; --red-fg:#cf222e;
+  --bg:#eceef1; --surface:#fcfcfb; --surface-2:#e9ebee;
+  --fg:#1b1d21; --fg-muted:#4b535e; --fg-subtle:#69717d;
+  --border:#d2d6dc; --border-muted:#e0e3e7;
+  --chrome:#e5e8ec;
+  --card-bg:var(--surface); --tile-bg:#f3f4f6;
+  --font:InterVariable, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Inter's lower-case l with a tail and capital I with serifs, so paths and
+     identifiers never mix up I, l and 1. */
+  --font-features:"cv05", "cv08";
+  --numerals:tabular-nums;
+  --font-mono:"Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* More room between paragraphs to go with the taller lines, and Inter's
+     suggested slight tightening at heading sizes. */
+  --prose-leading:1.6; --prose-gap:0.8em; --heading-tracking:-0.015em;
+  --chat-measure:68em;
+  /* Pink-red inline code, so it never reads as a link. Indigo links with a
+     faint underline, so a link never relies on colour alone; hover draws the
+     underline solid. */
+  --code-fg:#b3195a;
+  --link-fg:#4f46e5;
+  --link-decoration:underline 1px color-mix(in srgb, currentColor 35%, transparent);
+  /* Code blocks, command output and prompt bubbles sit on a grey paler than
+     --surface-2 (which buttons and chips share), with an invisible 1px border
+     so nothing changes size. */
+  --code-bg:#f1f2f4; --bubble-bg:#f1f2f4;
+  --code-border:transparent; --bubble-border:transparent;
+  /* Indigo for the accent and the selection, matching the links. A lighter
+     fill on the selected card: the ring already marks it. */
+  --accent:#4f46e5; --accent-fg:#ffffff;
+  --blue:#4f46e5; --blue-fg:#4338ca;
+  --selected-tint:8%;
+  /* A light mint fill takes dark ink on its bars, and a deeper mint for text. */
+  --green:#3eb489; --green-fg:#0f7a55; --green-bar-on:#0b3d2a;
+  --red:#dc2626; --red-fg:#b91c1c;
+  /* Every branch, main included, in the inline-code pink-red: both are names
+     from the code, and violet or indigo next to indigo links looked clickable. */
+  --branch-fg:var(--code-fg);
+  --purple:#7c3aed; --purple-fg:#ffffff;
+  --wf:#7c3aed;
   --cyan:#0e7490;
-  --purple:#8250df; --purple-fg:#ffffff;
-  --blue:#0969da; --blue-fg:#0969da;
-  --wf:#8250df;
-  --chrome:#f0f3f6;
-  --card-bg:var(--surface); --tile-bg:rgba(246,248,250,0.5);
-  --term-bg:#f6f8fa; --term-fg:#1f2328; --term-cursor:#1f2328; --term-selection:#cce5ff;
-  --term-ansi-black:#24292f; --term-ansi-red:#cf222e; --term-ansi-green:#116329;
-  --term-ansi-yellow:#633c01; --term-ansi-blue:#0969da; --term-ansi-magenta:#8250df;
-  --term-ansi-cyan:#1b7c83; --term-ansi-white:#6e7781;
-  --term-ansi-bright-black:#57606a; --term-ansi-bright-red:#a40e26; --term-ansi-bright-green:#1a7f37;
-  --term-ansi-bright-yellow:#4d2d00; --term-ansi-bright-blue:#218bff; --term-ansi-bright-magenta:#a475f9;
-  --term-ansi-bright-cyan:#3192aa; --term-ansi-bright-white:#8c959f;
-  --accent:#0969da;
-  --accent-fg:#fff;
-  --field-bg:#ffffff;
-  --danger-bg:#fff0ee; --danger-border:#ffc9c2; --danger-strong:#cf222e;
-  --pill-needs-bg:#ffebe9; --pill-working-bg:#dafbe1; --pill-idle-bg:#eaeef2;
-  --snooze:#9a6700; --snooze-fg:#7d4e00;
-  --mail:#9a6700; --mail-fg:#7d4e00;
-  --warn:#9a6700; --warn-fg:#7d4e00;
-  --hint:#f2cc60; --hint-fg:#1c1400; --hint-border:#9a6700;
   /* Container-runtime chip hue — same semantic role as dark's --rt/--rt-fg above. */
   --rt:#0e7490; --rt-fg:#0e7490;
+  /* Set here because :root's var(--cyan) resolves to dark's bright cyan. */
+  --just-finished:#0891b2;
+  /* Snooze, mail and warnings share a golden amber, light enough to stay clear
+     of the red alarm. Text on a solid fill takes dark ink (--snooze-on), and
+     text on a tint a deep yellow-olive. */
+  --snooze:#e3a008; --snooze-fg:#7a5c00; --snooze-on:#3d2c00;
+  --mail:#e3a008; --mail-fg:#7a5c00;
+  --warn:#e3a008; --warn-fg:#7a5c00;
+  --hint:#f2cc60; --hint-fg:#1c1400; --hint-border:#9a6700;
+  --field-bg:#ffffff;
+  --danger-bg:#fdf1f1; --danger-border:#f6caca; --danger-strong:#dc2626;
+  --pill-needs-bg:#fdecec; --pill-working-bg:#e3f7ef; --pill-idle-bg:#e9ebee;
   --bar-on:#ffffff;
-  --overlay:rgba(0,0,0,0.35);
-  --shadow:rgba(0,0,0,0.18);
+  --overlay:rgba(27,29,33,0.32);
+  --shadow:rgba(27,29,33,0.12);
+  --term-bg:#fbfbfa; --term-fg:#1b1d21; --term-cursor:#1b1d21; --term-selection:#dfe1fb;
+  --term-ansi-black:#24292f; --term-ansi-red:#c81e1e; --term-ansi-green:#0f7a55;
+  --term-ansi-yellow:#92400e; --term-ansi-blue:#4338ca; --term-ansi-magenta:#7c3aed;
+  --term-ansi-cyan:#0e7490; --term-ansi-white:#6e7781;
+  --term-ansi-bright-black:#57606a; --term-ansi-bright-red:#dc2626; --term-ansi-bright-green:#0b6e4c;
+  --term-ansi-bright-yellow:#4d2d00; --term-ansi-bright-blue:#4f46e5; --term-ansi-bright-magenta:#8b5cf6;
+  --term-ansi-bright-cyan:#0891b2; --term-ansi-bright-white:#8c959f;
   /* Light steps of the same eight hues, validated against the white chart surface
      (three sit below 3:1 contrast — the always-present legend + values supply the
      required relief). */
@@ -119,6 +176,8 @@ body.light {
 html, body { height: 100%; margin: 0; }
 body {
   font-family: var(--font);
+  /* OpenType features for --font, so a style can switch on its alternates. */
+  font-feature-settings: var(--font-features, normal);
   background: var(--bg);
   color: var(--fg);
   display: flex;
@@ -167,7 +226,7 @@ body {
 .ext-view-badge {
   position: absolute; top: 0; right: 0;
   min-width: 13px; padding: 1px 3px; border-radius: 5px;
-  background: var(--snooze); color: var(--bar-on);
+  background: var(--snooze); color: var(--snooze-on, var(--bar-on));
   font-size: 9px; font-weight: 700; line-height: 1.3; text-align: center;
 }
 /* The active view matches the selected-session highlight (--blue), not --accent,
@@ -182,6 +241,9 @@ body {
 
 img.icon { width: 1em; height: 1em; object-fit: contain; vertical-align: middle; }
 
+/* Form controls take the browser's own font, not the page's, unless told to
+   inherit. Without this a style's --font missed every button and field. */
+button, input, textarea, select { font-family: inherit; font-feature-settings: inherit; }
 button {
   background: var(--surface-2);
   color: var(--fg);
@@ -345,10 +407,11 @@ body.dragging { user-select: none; cursor: col-resize; }
 .sess-hdr.job .sess-bar { background: var(--green); }
 .sess-hdr.idle .sess-bar { background: var(--border); }
 .sess-hdr.unknown .sess-bar { background: var(--border-muted); }
-.sess-hdr.working .sess-bar > span,
-.sess-hdr.job .sess-bar > span,
 .sess-hdr.needs-you .sess-bar > span,
 .sess-hdr.just-finished .sess-bar > span { color: var(--bar-on); }
+/* --green-bar-on is unset unless a style's green is too light for --bar-on. */
+.sess-hdr.working .sess-bar > span,
+.sess-hdr.job .sess-bar > span { color: var(--green-bar-on, var(--bar-on)); }
 /* The panel's sub-agent disclosure — expanded under the header, capped + scrollable. */
 .sess-subagents { margin-top: 8px; max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .sess-subagents-empty {
@@ -386,8 +449,9 @@ body.dragging { user-select: none; cursor: col-resize; }
 .sess-path .branch { flex: 0 0 auto; }
 .sess-more { flex: 0 0 auto; color: var(--fg-subtle); }
 /* Branch glyph + name, shared by the detail header and the task-view cards. */
-.branch { display: inline-flex; align-items: center; gap: 3px; color: var(--purple); }
-.branch.main { color: var(--blue-fg); }
+.branch { display: inline-flex; align-items: center; gap: 3px; color: var(--branch-fg, var(--purple)); }
+/* A style that sets --branch-fg colours every branch with it, main included. */
+.branch.main { color: var(--branch-fg, var(--blue-fg)); }
 .branch-icon { width: 11px; height: 11px; flex: 0 0 auto; }
 .sess-meta { font-size: 11px; color: var(--fg-subtle); margin-top: 5px; line-height: 1.5; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sess-meta-links { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
@@ -429,16 +493,6 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    inside lay out exactly as they did unwrapped. */
 .dispatch-field.hidden { display: none; }
 
-/* Effort sits beside Model. The pairing only exists while both rows show: an
-   extension that vetoes either leaves the other full width. The float is on
-   Model only when a visible Effort row follows it, so a vetoed Effort never
-   strands Model at half width. */
-#m-model-row:not(.hidden):has(~ #m-effort-row:not(.hidden)) { float: left; width: calc(50% - 6px); margin-bottom: 12px; }
-#m-model-row:not(.hidden) ~ #m-effort-row:not(.hidden) { float: right; width: calc(50% - 6px); margin-bottom: 12px; }
-/* Clearance replaces the box's own margin-top, so the 12px gap below the floated
-   pair is their margin-bottom, not .worktree-box's. */
-#m-model-row ~ #m-worktree-box-row { clear: both; }
-
 /* A `view` contribution's host, created per view by app.js renderExtViews. The
    ONE exception to the layout-transparent rule above: a top-level view is a
    <main> flex item in its own right (same shape as #search), so it needs a real
@@ -448,6 +502,21 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
 #ext-views { display: contents; }
 .ext-view { flex: 1; min-width: 0; overflow-y: auto; background: transparent; }
 .ext-view.hidden { display: none; }
+/* The board's session panel lent to an extension view (api.mountSession,
+   public/session-embed.js): #sidebar moves into a .session-embed wrapper the
+   size of the extension's element, with #diff-panel inside it under the header,
+   where it takes the chat/terminal's place while open instead of sliding over
+   the board. The extension sizes its element; the panel fills it. */
+.session-embed { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; }
+.session-embed #sidebar { flex: 1 1 auto; width: auto !important; min-width: 0; min-height: 0; border-left: 0; }
+.session-embed #diff-panel { flex: 1 1 0; width: auto !important; min-height: 0; }
+.session-embed #diff-panel:not(.open) { display: none; }
+.session-embed .diff-inner { transform: none; transition: none; border-right: 0; }
+.session-embed #diff-fullscreen { display: none; }
+.session-embed #sidebar:has(> #diff-panel.open) > :is(#term-wrap, #chat-wrap) { display: none !important; }
+/* Restoring a session that is not on the board: only the header's "Restoring…". */
+.session-embed.pending :is(#panel-sections, #term-wrap, #chat-wrap) { display: none !important; }
+main.session-embedded #drag-handle { display: none; }
 
 #term-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 /* An explicit display out-specifies the UA's default [hidden] { display: none },
@@ -521,7 +590,7 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
   padding: 5px 10px; font-size: 12px; color: var(--fg-muted);
 }
 .terminal-command-preview code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--blue-fg);
 }
 
@@ -537,10 +606,48 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
   display: flex; align-items: center; justify-content: center; z-index: 20;
 }
 #modal.hidden, #confirm-modal.hidden, #snooze-modal.hidden, #file-modal.hidden, #settings-modal.hidden, #ext-consent-modal.hidden { display: none; }
+/* The extension file viewer is a <dialog> opened with showModal(), so it sits in
+   the browser top layer and paints above any modal <dialog> an extension opened
+   it from (z-index cannot reach above the top layer). The UA dialog box is reset
+   so the element itself is the full-viewport dim overlay, as the div modals
+   above are: a click on it outside the card is a backdrop click. */
+/* An extension's terminal dialog: a <dialog> in the top layer, like the file
+   viewer below, so it paints over Settings without closing it. */
+#terminal-modal {
+  position: fixed; inset: 0; width: auto; height: auto; max-width: none; max-height: none;
+  margin: 0; padding: 0; border: 0; color: inherit; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center;
+}
+#terminal-modal:not([open]) { display: none; }
+#terminal-modal::backdrop { background: transparent; }
+.terminal-dialog-card {
+  background: var(--surface);
+  box-shadow: 0 12px 32px var(--shadow);
+  border: 1px solid var(--border); border-radius: 10px;
+  width: min(92vw, 900px); height: min(80vh, 600px);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.terminal-dialog-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border-muted);
+}
+.terminal-dialog-head h3 { margin: 0; font-size: 14px; }
+.terminal-dialog-ended {
+  padding: 5px 10px; font-size: 12px; color: var(--fg-muted);
+  background: var(--surface-2); border-bottom: 1px solid var(--border-muted);
+}
+.terminal-command-preview.hidden, .terminal-dialog-ended.hidden { display: none; }
+#ext-file-modal {
+  position: fixed; inset: 0; width: auto; height: auto; max-width: none; max-height: none;
+  margin: 0; padding: 0; border: 0; color: inherit; background: var(--overlay);
+  display: flex; align-items: center; justify-content: center;
+}
+#ext-file-modal:not([open]) { display: none; }
+#ext-file-modal::backdrop { background: transparent; }
 /* The confirm modal's optional third button — shown only when a caller passes
    extraLabel (see confirmDialog in app.js). Without this, the button had no
    CSS hiding it at all and rendered on every confirm dialog. */
-#confirm-extra.hidden { display: none; }
+#confirm-extra.hidden, #ext-consent-later.hidden { display: none; }
 /* The native datetime picker chrome (calendar/spinners) follows color-scheme;
    pin it per-theme so it isn't a stark white popup on the dark board. */
 #sn-when, #m-sch-at, #m-sch-time { color-scheme: dark; }
@@ -554,25 +661,32 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .file-body h1, .file-body h2, .file-body h3,
 .file-body h4, .file-body h5, .file-body h6,
 .chat-prose h1, .chat-prose h2, .chat-prose h3,
-.chat-prose h4, .chat-prose h5, .chat-prose h6 { color: var(--fg); font-weight: 600; line-height: 1.3; margin: 1em 0 0.4em; }
+.chat-prose h4, .chat-prose h5, .chat-prose h6 { color: var(--fg); font-weight: 600; line-height: 1.3; margin: 1em 0 0.4em; letter-spacing: var(--heading-tracking, normal); }
 .file-body h1, .chat-prose h1 { font-size: 1.5em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
 .file-body h2, .chat-prose h2 { font-size: 1.3em; border-bottom: 1px solid var(--border-muted); padding-bottom: 0.2em; }
 .file-body h3, .chat-prose h3 { font-size: 1.15em; }
-.file-body p, .chat-prose p { margin: 0.6em 0; }
-.file-body ul, .file-body ol, .chat-prose ul, .chat-prose ol { margin: 0.6em 0; padding-left: 1.5em; }
+/* --prose-gap is unset unless a style wants more room between paragraphs and
+   lists (no :root default, same reason as --code-bg below). */
+.file-body p, .chat-prose p { margin: var(--prose-gap, 0.6em) 0; }
+.file-body ul, .file-body ol, .chat-prose ul, .chat-prose ol { margin: var(--prose-gap, 0.6em) 0; padding-left: 1.5em; }
 .file-body li, .chat-prose li { margin: 0.2em 0; }
 .file-body li > ul, .file-body li > ol, .chat-prose li > ul, .chat-prose li > ol { margin: 0.2em 0; }
-.file-body a, .chat-prose a { color: var(--blue-fg); text-decoration: none; }
+/* --link-fg and --link-decoration are unset unless a style picks them (no
+   :root default, same reason as --code-bg below). */
+.file-body a, .chat-prose a { color: var(--link-fg, var(--blue-fg)); text-decoration: var(--link-decoration, none); text-underline-offset: 2px; }
 .file-body a:hover, .chat-prose a:hover { text-decoration: underline; }
 .file-body strong, .chat-prose strong { color: var(--fg); font-weight: 600; }
 .file-body em, .chat-prose em { font-style: italic; }
 .file-body code, .chat-prose code {
-  background: var(--surface-2); color: var(--blue-fg);
+  /* --code-fg and --code-bg are unset unless a style picks them. They have no
+     :root default because a var() there would resolve against :root and miss
+     body.light's values. */
+  background: var(--code-bg, var(--surface-2)); color: var(--code-fg, var(--blue-fg));
   padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 .file-body pre, .chat-prose pre {
-  background: var(--surface-2); border: 1px solid var(--border-muted); border-radius: 6px;
+  background: var(--code-bg, var(--surface-2)); border: 1px solid var(--code-border, var(--border-muted)); border-radius: 6px;
   padding: 10px 12px; overflow: auto; margin: 0.6em 0;
 }
 /* .chat-prose only, not merged above: a chat message sits inside the scrolling
@@ -618,7 +732,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .file-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
 .file-titles { min-width: 0; }
 .file-head h3 { margin: 0; color: var(--fg); }
-.file-path { font-size: 11px; color: var(--fg-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; margin-top: 3px; }
+.file-path { font-size: 11px; color: var(--fg-subtle); font-family: var(--font-mono); word-break: break-all; margin-top: 3px; }
 .file-head-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 /* Shares the rendered-markdown element rules above. Fills the full-height card,
    flush inside the card's own 20px padding. */
@@ -754,14 +868,20 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   display: flex; flex-direction: column;
 }
 .settings-body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+/* The divider is an inset shadow, not a border: it paints under the tabs, so the
+   active underline covers it without a negative margin overflowing the scroll box. */
 .settings-tabs {
-  display: flex; flex: 0 0 auto; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 14px;
-  overflow-x: auto;
+  display: flex; flex: 0 0 auto; gap: 4px; box-shadow: inset 0 -1px 0 var(--border); margin: 0 0 14px;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
 }
+.settings-tabs::-webkit-scrollbar { height: 6px; }
+.settings-tabs::-webkit-scrollbar-track { background: transparent; }
+.settings-tabs::-webkit-scrollbar-thumb { background: var(--border-muted); border-radius: 6px; }
 .settings-tab {
   appearance: none; background: transparent; border: 0; border-bottom: 2px solid transparent;
   border-radius: 0; color: var(--fg-muted); font: inherit; font-size: 13px; font-weight: 500;
-  margin-bottom: -1px; padding: 8px 12px; cursor: pointer;
+  flex: 0 0 auto; padding: 8px 12px; cursor: pointer;
 }
 .settings-tab:hover { color: var(--fg); background: var(--surface-2); }
 .settings-tab.active { background: transparent; color: var(--fg); border-bottom-color: var(--accent); }
@@ -815,19 +935,52 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .appearance-item { margin-bottom: 14px; }
 .appearance-item:last-child { margin-bottom: 0; }
 .appearance-item .setting-label, .appearance-item .setting-help { margin-bottom: 6px; }
-.theme-rows { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Theme picker buttons (theme.js themeButtonHtml). Each icon sits on a tile in
+   its own theme's panel/text colours, so a filled 512-grid silhouette and a
+   24-grid outline read at one size: every icon is drawn in the same box, fills
+   inset a little to match an outline's padding, and outlines get one screen
+   stroke width whatever their viewBox. Selected = accent border + check;
+   keyboard focus = an outer --fg ring, so the two never look alike. */
+.theme-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(164px, 1fr)); gap: 8px; }
 .theme-row {
-  display: flex; align-items: center; gap: 7px;
-  padding: 6px 10px; border-radius: 7px; cursor: pointer;
+  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 7px 28px 7px 7px; border-radius: 10px; cursor: pointer; text-align: left;
   background: transparent; border: 1px solid var(--border); color: var(--fg-muted);
   font: inherit; font-size: 13px;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
-.theme-row:hover { background: var(--surface-2); color: var(--fg); }
+.theme-row:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); border-color: var(--fg-subtle); color: var(--fg); }
+.theme-row:focus { outline: none; }
+.theme-row:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .theme-row.active {
   color: var(--fg); border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.theme-row .icon { width: 16px; height: 16px; flex: 0 0 auto; }
+.theme-tile {
+  flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px;
+  display: grid; place-items: center;
+  box-shadow: inset 0 0 0 1px rgba(127,127,127,0.28);
+}
+.theme-tile .icon { width: 18px; height: 18px; display: block; }
+.theme-tile .icon-fill { width: 17px; height: 17px; }
+.theme-tile .icon-stroke { stroke-width: 1.6px; }
+.theme-tile .icon-stroke * { vector-effect: non-scaling-stroke; }
+.theme-tile img.icon { object-fit: contain; }
+.theme-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.theme-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+.theme-dots { display: flex; gap: 3px; }
+.theme-dots i {
+  width: 14px; height: 6px; border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(127,127,127,0.22);
+}
+.theme-check {
+  position: absolute; top: 50%; right: 8px; width: 14px; height: 14px; margin-top: -7px;
+  padding: 2px; border-radius: 50%; box-sizing: content-box;
+  background: var(--accent); color: var(--accent-fg); opacity: 0; transform: scale(0.6);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.theme-row.active .theme-check { opacity: 1; transform: none; }
 /* A Behavior row's `segmented` control (settings.js) shares these three rules
    rather than forking a fourth pill style — same idiom as the .subagent-pill
    family. It differs only in sitting in a space-between .setting-row, so
@@ -855,7 +1008,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   padding: 3px 0; font-size: 12px;
 }
 .shortcut-keys {
-  flex: 0 0 auto; font-family: ui-monospace, monospace; color: var(--fg);
+  flex: 0 0 auto; font-family: var(--font-mono); color: var(--fg);
   background: var(--surface-2); border-radius: 5px; padding: 1px 6px;
 }
 .shortcut-desc { color: var(--fg-muted); }
@@ -987,7 +1140,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .sched-action-btn.on, .sched-action-btn.on:hover {
   background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
 }
-#m-session-fields.hidden, #m-dispatch-fields.hidden, #m-subagent.hidden, #m-go.hidden { display: none; }
+#m-session-fields.hidden, #m-task-fields.hidden, #m-dispatch-fields.hidden, #m-subagent.hidden, #m-go.hidden { display: none; }
 
 /* Persistent server-wide alert bar (currently: fd-watchdog leak warning). Fixed
    at the very top so it can't be missed; body.system-banner-open pushes both
@@ -1002,8 +1155,9 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
      14%-tint usage elsewhere), not a text color meant to sit on a solid --snooze
      fill — that pairing measures ~1.3:1 contrast, illegible. --bar-on is the
      existing "ink for text on a filled status bar" role and does the job right
-     (~7.5:1 dark, ~4.9:1 light). */
-  background: var(--snooze); color: var(--bar-on);
+     (~7.5:1 dark, ~4.9:1 light). A style whose --snooze is too light for
+     --bar-on sets --snooze-on, used everywhere on this banner. */
+  background: var(--snooze); color: var(--snooze-on, var(--bar-on));
   font-size: 12px; font-weight: 600; gap: 14px;
 }
 #system-banner.hidden { display: none; }
@@ -1011,16 +1165,16 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
    a long message wraps; 30px is the one-line height before it is measured. */
 body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
 .system-banner-dismiss {
-  padding: 2px 8px; border: 1px solid var(--bar-on); border-radius: 5px;
-  background: transparent; color: var(--bar-on); font: inherit; font-weight: 600;
+  padding: 2px 8px; border: 1px solid var(--snooze-on, var(--bar-on)); border-radius: 5px;
+  background: transparent; color: var(--snooze-on, var(--bar-on)); font: inherit; font-weight: 600;
   cursor: pointer; opacity: 0.85;
 }
-.system-banner-dismiss:hover { opacity: 1; background: color-mix(in srgb, var(--bar-on) 15%, transparent); }
+.system-banner-dismiss:hover { opacity: 1; background: color-mix(in srgb, var(--snooze-on, var(--bar-on)) 15%, transparent); }
 /* A banner's fix-it button: the same outline as dismiss, filled so it reads as
    the main thing to do. */
 .system-banner-action {
-  padding: 2px 8px; border: 1px solid var(--bar-on); border-radius: 5px;
-  background: var(--bar-on); color: var(--snooze); font: inherit; font-weight: 600;
+  padding: 2px 8px; border: 1px solid var(--snooze-on, var(--bar-on)); border-radius: 5px;
+  background: var(--snooze-on, var(--bar-on)); color: var(--snooze); font: inherit; font-weight: 600;
   cursor: pointer;
 }
 .system-banner-action:hover { opacity: 0.9; }
@@ -1087,7 +1241,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 #grid.scrolling { overflow-y: auto; }
 #grid.single-column { align-content: start; }
 #grid.single-column .task-body { flex: 0 0 auto; overflow-y: visible; }
-#grid.hidden { display: none; }
+/* !important: hidden must beat every #grid display rule, e.g. focus mode's flex. */
+#grid.hidden { display: none !important; }
 
 #new-task.armed { border: 1px dashed var(--blue); color: var(--blue-fg); }
 #new-task.drop { background: var(--surface-2); border: 1px dashed var(--blue); color: var(--blue-fg); box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 30%, transparent); }
@@ -1296,10 +1451,10 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .session-card.needs-you .card-bar { background: var(--red); }
 /* Filled live bars carry near-black/white ink (per theme) for contrast; idle,
    unknown and dormant keep muted text on their grey/hollow ground. */
-.session-card.working .card-bar > span,
-.session-card.job .card-bar > span,
 .session-card.needs-you .card-bar > span,
 .session-card.just-finished .card-bar > span { color: var(--bar-on); }
+.session-card.working .card-bar > span,
+.session-card.job .card-bar > span { color: var(--green-bar-on, var(--bar-on)); }
 /* Dormant: no live tmux. A hollow bar reads "nothing running here, click to
    resume"; the name dims to match. Wins over the frozen `idle` status class. */
 .session-card.dormant .card-bar { background: transparent; border: 1px solid var(--border); }
@@ -1345,6 +1500,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    flat rail, so the line reads as genuinely attached to each child. */
 .workflow-spine {
   --line-color: var(--wf);
+  --spine-step: 28px;
   display: flex; flex-direction: column; gap: 6px;
   margin-left: 13px; padding-left: 14px;
 }
@@ -1358,8 +1514,30 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    (still far more muted than --wf) while actually being visible. */
 .child-spine {
   --line-color: var(--border);
+  --spine-step: 28px;
   display: flex; flex-direction: column; gap: 6px;
   margin-left: 13px; padding-left: 14px;
+}
+/* Deeper levels of a spine: nesting has no depth limit, so one spine holds a
+   whole subtree as flat rows (cards.js, workflow.js spineRows). A row steps right
+   by --indent levels (clamped in JS), keeping its own elbow, and `.spine-more`
+   marks a later sibling at its level so that level's trunk keeps running — a
+   structural :last-child can't say so, since the next DOM row may be a descendant
+   or an ancestor's sibling. `.spine-guide` draws the trunk of an ancestor level
+   still running beside a deep row, --up indent steps to the left of the row's own
+   trunk; same -6px reach as the inter-row gap, so consecutive rows join up. The
+   28px step puts a child's trunk (-14px from the child) exactly under its parent's
+   status dot (centre 15px in: 1px border + 10px padding + half the 8px dot), the
+   way a top-level child's trunk sits under its parent card's bar. */
+.worker-row, .spine-full-row { margin-left: calc(var(--indent, 0) * var(--spine-step, 28px)); }
+.spine-guide {
+  position: absolute;
+  left: calc(-14px - var(--up) * var(--spine-step, 28px));
+  top: -6px;
+  bottom: -6px;
+  width: 2px;
+  background: var(--line-color);
+  pointer-events: none;
 }
 /* A "Full view" child (cards.js childRowHtml) draws a real .session-card in the
    spine instead of a compact .worker-row — this bare wrapper carries the exact
@@ -1385,7 +1563,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   top: -9px;
   height: calc(50% + 9px);
 }
-.spine-full-row:not(:last-child)::after {
+.spine-full-row.spine-more::after {
   content: '';
   position: absolute;
   left: -14px;
@@ -1563,7 +1741,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    continuous line between elbows. Starts at exactly 50% — the same point
    ::before's border-bottom ends at — not 50%+6px, else a gap opens up between
    the elbow and this segment. The last row's line stops at its own turn. */
-.worker-row:not(:last-child)::after {
+.worker-row.spine-more::after {
   content: '';
   position: absolute;
   left: -14px;
@@ -1825,7 +2003,9 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    corner radii, and the mismatch feathers the rounded corners. */
 .session-card.selected {
   border-color: transparent;
-  background: color-mix(in srgb, var(--blue) 18%, var(--surface));
+  /* --selected-tint is unset unless a style picks how strongly the fill takes
+     the selection hue. */
+  background: color-mix(in srgb, var(--blue) var(--selected-tint, 18%), var(--surface));
   box-shadow: 0 0 0 2px var(--blue), 0 4px 14px color-mix(in srgb, var(--blue) 22%, transparent);
 }
 /* The child row's twin — same ring, so a focused worker/child row reads exactly
@@ -1898,6 +2078,9 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .card-loc .branch { flex: 1 1 0; min-width: 8em; }
 .card-loc .branch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-meta { display: flex; align-items: center; gap: 4px; row-gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+/* The live counters (age, cost, tokens, context): --numerals tabular-nums keeps
+   every digit one width, so a chip doesn't twitch as its number updates. */
+.card-meta, .sess-meta, .chat-foot, .usage-card { font-variant-numeric: var(--numerals, normal); }
 .card-tag svg { width: 10px; height: 10px; }
 /* Right-aligned chip on the meta line (worktree marker). Purple ties it to the
    branch colour so a worktree session reads as a branch-side concept. */
@@ -2160,7 +2343,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .diff-file-head.diff-flash { animation: diff-file-flash 900ms ease-out; }
 .diff-file-path {
-  flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 600;
+  flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 600;
   color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .diff-arrow { color: var(--fg-subtle); }
@@ -2174,7 +2357,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .diff-badge-renamed { color: var(--purple); background: color-mix(in srgb, var(--purple) 22%, transparent); border: 1px solid color-mix(in srgb, var(--purple) 40%, transparent); }
 
 .diff-hunk-head {
-  font-family: ui-monospace, monospace; font-size: 11px; color: var(--fg-muted);
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted);
   padding: 3px 14px; background: color-mix(in srgb, var(--blue) 8%, transparent);
   border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted);
   white-space: pre-wrap; word-break: break-word;
@@ -2182,7 +2365,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 
 .diff-line {
   display: flex; align-items: flex-start; cursor: pointer;
-  font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.45;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.45;
 }
 .diff-line-add { background: color-mix(in srgb, var(--term-ansi-green) 14%, transparent); }
 .diff-line-del { background: color-mix(in srgb, var(--term-ansi-red) 14%, transparent); }
@@ -2204,6 +2387,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .diff-sign { flex: 0 0 12px; text-align: center; user-select: none; color: var(--fg-subtle); }
 .diff-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; padding-right: 12px; color: var(--fg); }
+/* Only fixed safe-DOM syntax roles; plain punctuation/literals inherit --fg. */
+.diff-text .diff-syntax-comment { color: var(--diff-syntax-comment, var(--fg)); }
+.diff-text .diff-syntax-keyword { color: var(--diff-syntax-keyword, var(--fg)); }
+.diff-text .diff-syntax-string { color: var(--diff-syntax-string, var(--fg)); }
+.diff-text .diff-syntax-function { color: var(--diff-syntax-function, var(--fg)); }
 /* Side-by-side layout. One grid row per pair, so both cells stretch to the taller
    of the two — a long line wrapping on one side can't let the columns drift out of
    step, which is the whole reason the pair is wrapped rather than laid out flat.
@@ -2392,7 +2580,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .search-role--user { color: var(--blue-fg); }
 .search-role--assistant { color: var(--wf); }
 .search-when { font-size: 10.5px; color: var(--fg-subtle); }
-.search-snippet { font-size: 12.5px; line-height: 1.5; color: var(--fg-muted); white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.search-snippet { font-size: 12.5px; line-height: 1.5; color: var(--fg-muted); white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); }
 .search-snippet mark { background: color-mix(in srgb, var(--snooze) 38%, transparent); color: var(--fg); border-radius: 3px; padding: 0 1px; }
 
 /* Browse mode (empty query) + text mode's metadata-only tail. Same .search-group
@@ -2521,7 +2709,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 
 .chat-stream-wrap { position: relative; flex: 1; min-height: 0; background: var(--term-bg); }
 .chat-stream {
-  position: absolute; inset: 0; overflow-y: auto; padding: 20px 22px 26px;
+  position: absolute; inset: 0; overflow-y: auto;
+  /* The side padding grows once the pane is wider than --chat-measure, so the
+     conversation sits in a centred column. A percentage padding is measured
+     against .chat-stream-wrap's width. */
+  padding: 20px max(22px, calc((100% - var(--chat-measure)) / 2)) 26px;
   display: flex; flex-direction: column;
   scrollbar-width: thin; scrollbar-color: var(--border-muted) transparent;
 }
@@ -2590,16 +2782,18 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    measure won because it is the side you read most. */
 .chat-user {
   align-self: flex-end; width: fit-content; max-width: 84%;
-  background: var(--surface-2); border: 1px solid var(--border-muted); color: var(--fg);
+  /* --bubble-bg and --bubble-border are unset unless a style picks them (no
+     :root default, same reason as --code-bg). */
+  background: var(--bubble-bg, var(--surface-2)); border: 1px solid var(--bubble-border, var(--border-muted)); color: var(--fg);
   /* One squared corner on the sender's side — the standard bubble tail, which
      is what makes an unlabelled right-aligned block read as "you said this". */
   border-radius: 14px 14px 5px 14px;
-  padding: 9px 14px; font-size: 1em; line-height: 1.62;
+  padding: 9px 14px; font-size: 1em; line-height: var(--prose-leading);
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
 /* A prompt echoed locally until the transcript records it: dashed while sending, then queued (delivered to the pane, but the agent has not started on it). */
-.chat-user[data-pending] { border-style: dashed; opacity: 0.75; }
+.chat-user[data-pending] { border-style: dashed; border-color: var(--border-muted); opacity: 0.75; }
 .chat-user[data-pending="1"]::after {
   content: "Sending…"; display: block; margin-top: 4px; font-size: 0.75em; color: var(--fg-subtle);
 }
@@ -2622,7 +2816,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    straight back to inline-block, so a long path that wraps inside the control
    pushes the text after it onto a fresh line. */
 .chat-link, .chat-stream .md-file-link {
-  color: var(--blue-fg); text-decoration: none; text-underline-offset: 2px;
+  color: var(--link-fg, var(--blue-fg)); text-decoration: var(--link-decoration, none); text-underline-offset: 2px;
 }
 .chat-link:hover, .chat-stream .md-file-link:hover { text-decoration: underline; }
 .chat-stream .md-file-link { cursor: pointer; overflow-wrap: anywhere; }
@@ -2635,7 +2829,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    .file-body's, styles.css:~474 — same renderer, same markdown shape.
    The measure and leading are set here, not there: this is body copy in a
    reading column, where .file-body is a compact preview pane. */
-.chat-prose { font-size: 1em; line-height: 1.62; overflow-wrap: anywhere; min-width: 0; }
+.chat-prose { font-size: 1em; line-height: var(--prose-leading); overflow-wrap: anywhere; min-width: 0; }
 /* Held at half opacity at rest and lifted on hover. The model id repeats on
    every prose block in a turn and almost never changes, so at full strength it
    is three identical pills of noise per answer — but it is real provenance, so
@@ -2648,7 +2842,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    prose with nothing distinguishing it, so it read as a dangling fragment of
    the message rather than metadata about it. */
 .chat-model {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  font-family: var(--font-mono); font-size: 0.76em;
   color: var(--fg-subtle); background: var(--surface-2);
   border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
 }
@@ -2694,7 +2888,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 /* + and − carry the green/red they mean everywhere else in the app, which a
    flat "+14 −3" inside the label text could not. activityTitle keeps the flat
    form for the chip's tooltip. */
-.chat-diffstat { display: inline-flex; gap: 5px; flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em; }
+.chat-diffstat { display: inline-flex; gap: 5px; flex: none; font-family: var(--font-mono); font-size: 0.76em; }
 .chat-adds { color: var(--green-fg); }
 .chat-dels { color: var(--red-fg); }
 
@@ -2717,14 +2911,15 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   min-width: 0; font-size: 0.83em; color: var(--fg);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.chat-tool-target, .chat-tool-output { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.chat-tool-target, .chat-tool-output { font-family: var(--font-mono); }
 .chat-tool-output {
   margin: 0; padding: 7px 10px; border-top: 1px solid var(--border-muted);
   /* --surface-2, this file's established code-block shade (.chat-prose pre,
      .file-body pre use it with the same border): --field-bg is #0d1117 in
      dark but #ffffff in light, so it would have made the output block vanish
-     into the row on the light theme. */
-  background: var(--surface-2); color: var(--fg-muted);
+     into the row on the light theme. --code-bg, when a style sets one, keeps it
+     matching the code blocks. */
+  background: var(--code-bg, var(--surface-2)); color: var(--fg-muted);
   font-size: 0.79em; line-height: 1.5;
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 200px; overflow: auto;
@@ -2735,7 +2930,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    while scrolling past an expanded run. */
 .chat-tool-row[data-failed="1"] { border-color: color-mix(in srgb, var(--red) 45%, transparent); }
 .chat-tool-row[data-failed="1"] .chat-tool-name { color: var(--red-fg); }
-.chat-tool-row[data-failed="1"] .chat-tool-output { background: color-mix(in srgb, var(--red) 9%, var(--surface-2)); }
+.chat-tool-row[data-failed="1"] .chat-tool-output { background: color-mix(in srgb, var(--red) 9%, var(--code-bg, var(--surface-2))); }
 
 /* Neutral, not violet — violet (--wf) is this codebase's workflow-nested-child
    colour (see .workflow-box), a deliberately distinct concept from a sub-agent.
@@ -2797,7 +2992,9 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-notice-go:hover { background: color-mix(in srgb, var(--red) 18%, transparent); }
 
 .chat-composer {
-  border-top: 1px solid var(--border); padding: 11px 14px 12px;
+  border-top: 1px solid var(--border);
+  /* Lines up with the stream's --chat-measure column above it, the same way. */
+  padding: 11px max(14px, calc((100% - var(--chat-measure)) / 2)) 12px;
   background: var(--tile-bg);
   backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
 }
@@ -2944,7 +3141,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    one: it is live state, not provenance. */
 .chat-current-model {
   flex: none; max-width: 45%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  font-family: var(--font-mono); font-size: 0.76em;
   color: var(--fg-muted); background: var(--surface-2);
   border: 1px solid var(--border-muted); border-radius: 999px; padding: 1px 8px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2973,7 +3170,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    server/control/handlers/chat.js. */
 .chat-context-bar {
   display: flex; align-items: center; gap: 5px; flex: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76em;
+  font-family: var(--font-mono); font-size: 0.76em;
   color: var(--fg-muted);
 }
 .chat-context-bar[hidden] { display: none; }
@@ -3024,7 +3221,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   background: var(--green); animation: chat-live-pulse 1.4s ease-in-out infinite;
 }
 .chat-live-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  font-family: var(--font-mono); }
 /* Tabular figures so a 1s tick doesn't reflow the row as digits change width. */
 .chat-live-elapsed { flex: none; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
 @keyframes chat-live-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
@@ -3070,7 +3267,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .hint-layer { position: fixed; inset: 0; z-index: 300; pointer-events: none; }
 .hint-marker {
   position: fixed; padding: 0 6px; border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 16px; font-weight: 700; line-height: 24px; letter-spacing: 1.5px;
   text-transform: uppercase; white-space: nowrap;
   background: var(--hint); color: var(--hint-fg);
@@ -3146,14 +3343,16 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .ext-kv-key { color: var(--fg-muted); }
 .ext-kv-value { min-width: 0; }
 .ext-kv-repo { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
-.ext-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.ext-mono { font-family: var(--font-mono); word-break: break-all; }
 .ext-kv-open { color: var(--blue-fg); white-space: nowrap; }
 .ext-install-form { display: flex; gap: 8px; align-items: center; }
 .ext-install-form .ext-install-url { flex: 1; min-width: 0; }
+.ext-mode-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.ext-url-pane { display: flex; flex-direction: column; gap: 8px; }
+.ext-url-pane .setting-help { margin-top: 0; }
 .ext-settings-save { margin-top: 10px; }
-/* The GitHub browser under the add form: a heading row, the unvetted notice,
-   then one card per tagged repository. */
-.ext-gh { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border-muted); }
+/* The GitHub browser under the Browse | Git URL switch: a heading row, the
+   unvetted notice, the search box, then one card per tagged repository. */
 .ext-gh-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .ext-gh-heading { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; }
 .ext-gh-heading .icon { width: 16px; height: 16px; }
@@ -3164,7 +3363,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .ext-gh-topic {
   font-size: 11px; padding: 1px 8px; border-radius: 10px; text-decoration: none;
   color: var(--blue-fg); background: color-mix(in srgb, var(--accent) 12%, transparent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 .ext-gh-topic:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .ext-gh-refresh { margin-left: auto; }
@@ -3176,6 +3375,11 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   border-left: 3px solid var(--warn);
 }
 .ext-gh-notice-lead { font-weight: 600; color: var(--warn-fg); }
+.ext-gh-search { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ext-gh-search-field { position: relative; flex: 1; min-width: 0; display: flex; }
+.ext-gh-search-field .icon { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); width: 13px; height: 13px; color: var(--fg-subtle); pointer-events: none; }
+.modal-card .ext-gh-search-input { flex: 1; min-width: 0; padding-left: 28px; }
+.ext-gh-search-meta { flex: 0 0 auto; font-size: 11px; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
 .ext-gh-list { display: flex; flex-direction: column; gap: 8px; }
 .ext-gh-card {
   display: flex; align-items: center; gap: 12px; padding: 12px 14px;
@@ -3184,6 +3388,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 .ext-gh-card:hover { border-color: var(--fg-subtle); box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12); }
 .ext-gh-card.installed { background: var(--surface-2); }
+.ext-gh-card[hidden] { display: none; }
 .ext-gh-avatar {
   position: relative; flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
@@ -3233,7 +3438,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 }
 /* Consent-modal identity lines. */
 .ext-row-desc { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 3px; }
-.ext-row-sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ext-row-sha { font-family: var(--font-mono); }
 .ext-row-origin { color: var(--fg-subtle); word-break: break-all; }
 a.ext-row-origin { color: var(--blue-fg); }
 @media (max-width: 640px) {
@@ -3272,7 +3477,7 @@ a.ext-row-origin { color: var(--blue-fg); }
    here can be stored against a feature that is not running. */
 /* Written-out prose (a process, a prompt): tall enough to read a paragraph,
    and resizable because nobody can guess how long someone's process is. */
-.modal-card .ext-setting-textarea { min-height: 220px; resize: vertical; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.modal-card .ext-setting-textarea { min-height: 220px; resize: vertical; line-height: 1.45; font-family: var(--font-mono); }
 .ext-setting-copybox { position: relative; }
 .ext-setting-copy { position: absolute; top: 14px; right: 8px; display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 0.12s; }
 .ext-setting-copybox:hover .ext-setting-copy, .ext-setting-copy:focus-visible { opacity: 1; pointer-events: auto; }
@@ -3317,7 +3522,7 @@ a.ext-row-origin { color: var(--blue-fg); }
 .ext-chip {
   font-size: 11px; padding: 2px 6px; border-radius: 4px;
   background: var(--surface-2); color: var(--fg-muted); border: 1px solid var(--border-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 .ext-chip-add { color: var(--green-fg); border-color: var(--green); }
 .ext-chip-remove { color: var(--red-fg); border-color: var(--red); }
@@ -3352,7 +3557,6 @@ a.ext-row-origin { color: var(--blue-fg); }
   content: ''; position: absolute; top: 7px; right: 7px;
   width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
 }
-.card-tag.older-code { color: var(--warn-fg); background: color-mix(in srgb, var(--warn) 18%, var(--surface-2)); }
 
 .folder-picker-row, .additional-folder-row { display: flex; gap: 8px; align-items: flex-start; }
 .additional-folder-row { margin-top: 8px; }
@@ -3361,3 +3565,72 @@ a.ext-row-origin { color: var(--blue-fg); }
 .folder-action { width: 34px; height: 34px; padding: 0; flex: 0 0 34px; display: inline-flex; align-items: center; justify-content: center; }
 .folder-action .icon { width: 16px; height: 16px; display: block; }
 .folder-action:disabled, .additional-folder-row input:disabled { opacity: 0.45; cursor: not-allowed; }
+
+#modal:has(#m-dispatch-fields:not(.hidden)) > .modal-card { width: 1240px; box-sizing: border-box; }
+#m-dispatch-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; }
+#m-dispatch-fields.hidden { display: none; }
+.dispatch-task-column, .dispatch-model-column { min-width: 0; }
+.dispatch-model-column { position: relative; }
+.dispatch-model-column::before { content: ''; position: absolute; top: 0; bottom: 0; left: -20px; width: 1px; background: var(--border); }
+#modal label:not(.check-row), #modal summary, #modal .worktree-title { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--fg); }
+#modal .mode-segmented { margin-top: 4px; }
+#modal:has(#m-dispatch-fields:not(.hidden) #m-task-fields.hidden) > .modal-card { width: 700px; }
+#m-dispatch-fields:has(#m-task-fields.hidden) { grid-template-columns: minmax(0, 1fr); gap: 0; }
+#m-dispatch-fields:has(#m-task-fields.hidden) .dispatch-model-column { display: none; }
+@media (min-width: 851px) {
+  #modal:has(#m-when:not(.hidden)):has(#m-task-fields:not(.hidden)):not(:has(#m-model-row.hidden)) .modal-actions { width: calc((100% - 40px) / 2); }
+}
+.model-front-scale, .model-front-legend { display: flex; justify-content: space-between; color: var(--fg-muted); font-size: 11px; }
+.model-front-scale { margin: 16px 0 0; }
+.model-front-slider { position: relative; height: 32px; margin: 0 8px 8px; cursor: pointer; touch-action: none; }
+.model-front-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.model-front-track { position: absolute; height: 4px; top: 14px; left: 0; right: 0; background: var(--border); border-radius: 4px; }
+.model-front-control { position: absolute; inset: 0; }
+.model-front-stop { position: absolute; top: 6px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: transparent; transform: translateX(-50%); cursor: pointer; }
+.model-front-stop::after { content: ''; display: block; width: 8px; height: 8px; margin: auto; background: var(--pick-colour); border: 1px solid var(--fg-muted); border-radius: 50%; }
+.model-front-stop:focus-visible { outline: 2px dashed var(--fg); outline-offset: 2px; }
+.model-front-key { display: flex; flex-wrap: wrap; gap: 5px 14px; margin-top: 10px; font-size: 10px; color: var(--fg-muted); }
+.model-front-key span { display: inline-flex; align-items: center; gap: 5px; }
+.model-front-key i { width: 8px; height: 8px; border-radius: 50%; background: var(--pick-colour); border: 1px solid var(--fg-muted); }
+.model-front-preview { min-height: 18px; margin-top: 6px; font-size: 11px; color: var(--fg); }
+.model-front-handle { pointer-events: none; z-index: 2; position: absolute; top: 7px; height: 18px; width: 18px; border-radius: 50%; background: var(--surface); border: 3px solid var(--fg); box-shadow: 0 0 0 2px var(--surface); transform: translateX(-50%); }
+.model-front-slider.no-handle .model-front-handle { display: none; }
+.model-front-plot svg { display: block; width: 100%; overflow: visible; }
+.model-front-plot text { font-size: 10px; fill: var(--fg-muted); }
+.model-front-grid { stroke: var(--border); stroke-width: 0.5; }
+.model-front-curve { stroke: var(--accent); fill: none; stroke-width: 1.5; }
+.model-front-point { cursor: pointer; fill: var(--pick-colour); stroke: var(--surface); stroke-width: 1; }
+.model-front-point .point-hit { fill: transparent; stroke: none; }
+.model-front-point:focus { outline: none; }
+.model-front-point:focus .point-mark { stroke: var(--fg); stroke-width: 2; stroke-dasharray: 2 1; }
+.model-front-point .point-selection { fill: none; stroke: var(--fg); stroke-width: 2; }
+.model-front-point.unavailable { fill: var(--surface); stroke: var(--red-fg); stroke-width: 1.5; }
+.model-front-point .point-provider { fill: var(--pick-colour); stroke: none; }
+.model-front-point.unavailable:focus .point-mark { stroke: var(--red-fg); stroke-width: 3; }
+.model-front-below { stroke: var(--fg); stroke-width: 1; }
+.model-front-ring, .model-front-below { color: var(--red-fg); fill: var(--red-fg); }
+.model-front-credit { color: var(--fg-subtle); font-size: 10px; line-height: 1.5; margin: 8px 0 16px; }
+.model-front-notice { color: var(--red-fg); font-size: 12px; line-height: 1.5; }
+.model-front-notice:empty { display: none; }
+.model-front-readout { border-top: 1px solid var(--border); padding-top: 16px; }
+.model-front-name { font-size: 17px; font-weight: 700; margin-bottom: 12px; }
+.model-front-auto, .model-front-readout p { color: var(--fg-muted); font-size: 12px; }
+.model-front-bar { display: grid; grid-template-columns: 48px minmax(0, 1fr) 92px; align-items: center; gap: 12px; margin: 10px 0; font-size: 12px; }
+.model-front-bar strong { font-weight: 500; text-align: right; }
+.model-front-meter { height: 5px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.model-front-meter i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.model-front-verdict { font-size: 12px; color: var(--green-fg); margin-top: 16px; line-height: 1.5; }
+.model-front-verdict.below { color: var(--red-fg); }
+.model-front-any { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 16px; }
+.model-front-any summary { cursor: pointer; }
+@media (max-width: 850px) {
+  #m-dispatch-fields { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .dispatch-model-column { border-top: 1px solid var(--border); }
+  .dispatch-model-column::before { display: none; }
+}
+.model-front-verdict.unscored { color: var(--fg-muted); }
+#modal:has(#m-model-row.hidden) > .modal-card { width: 700px; }
+#m-dispatch-fields:has(#m-model-row.hidden) { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.dispatch-model-column:has(#m-model-row.hidden) { border: 0; }
+.dispatch-model-column:has(#m-model-row.hidden)::before { display: none; }
+.dispatch-model-column:has(#m-model-row.hidden):not(:has(.ext-slot)) { display: none; }

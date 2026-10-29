@@ -44,18 +44,26 @@ export function isHumanTypedUserItem(item) {
 
 const LEADING_IMAGE_MARKER = /^\[Image #\d+\]\s*/;
 
+// The TUI records a pasted prompt with its tabs expanded to spaces (a leading
+// tab came back as four spaces in two independent Claude Code sessions), so an
+// echo and its transcript line can differ only in horizontal whitespace. Runs of
+// spaces and tabs collapse to one on both sides before comparing; newlines stay
+// significant so distinct multi-line prompts cannot be confused.
+const flatten = (text) => String(text || '').replace(/[ \t]+/g, ' ').trim();
+
 // Whether a transcript user event is the recording of a locally echoed prompt.
 export function echoMatchesEvent(echo, event) {
   // Mounting reads a window of history, which may hold an older prompt with the
   // same words ("yes", "continue") — only one recorded after the send is ours.
   if (Number.isFinite(event.ts) && event.ts < echo.sentAt - 2000) return false;
-  let text = String(event.text || '').trim();
-  if (text === echo.text) return Boolean(text) || echo.images.length === 0 || (Array.isArray(event.images) && event.images.length > 0);
+  let text = flatten(event.text);
+  const sent = flatten(echo.text);
+  if (text === sent) return Boolean(text) || echo.images.length === 0 || (Array.isArray(event.images) && event.images.length > 0);
   // The TUI prepends one `[Image #N]` marker per attachment, so at most that many
   // leading markers are dropped; any the human typed themselves stay in the prose.
   for (let i = 0; i < echo.images.length && LEADING_IMAGE_MARKER.test(text); i += 1) {
     text = text.replace(LEADING_IMAGE_MARKER, '').trim();
-    if (text === echo.text) return true;
+    if (text === sent) return true;
   }
   return false;
 }
@@ -67,7 +75,7 @@ export function echoMatchesEvent(echo, event) {
 export function echoRunMatchingEvent(echoes, event) {
   const recordedAfter = (echo) => !Number.isFinite(event.ts) || event.ts >= echo.sentAt - 2000;
   for (let start = 0; start < echoes.length - 1; start += 1) {
-    let rest = String(event.text || '').trim();
+    let rest = flatten(event.text);
     const run = [];
     for (let i = start; i < echoes.length; i += 1) {
       const echo = echoes[i];
@@ -77,9 +85,10 @@ export function echoRunMatchingEvent(echoes, event) {
         rest = rest.replace(LEADING_IMAGE_MARKER, '');
         markers += 1;
       }
-      if (!echo.text && !markers) break;
-      if (!rest.startsWith(echo.text)) break;
-      rest = rest.slice(echo.text.length).trimStart();
+      const sent = flatten(echo.text);
+      if (!sent && !markers) break;
+      if (!rest.startsWith(sent)) break;
+      rest = rest.slice(sent.length).trimStart();
       run.push(echo);
       if (!rest) return run.length >= 2 ? run : [];
     }
@@ -144,7 +153,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     const hit = e.target?.closest?.('[data-md-path]');
     if (!hit) return;
     e.preventDefault();
-    onOpenFile?.(hit.dataset.mdPath);
+    onOpenFile?.(hit.dataset.mdPath, sessionId);
   };
   stream.addEventListener('click', openMdPath);
   stream.addEventListener('keydown', (e) => {
@@ -512,6 +521,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // either call site deciding on its own partial view.
   let lastStatus = null;
   let lastWaitingReason = null;
+  let lastWaitingFor = null;
+  // A `session.inputGate` lock on this session (`{ reason }`, app.js), or null.
+  // Unlike a needs-you block it is not cleared by mount: the app re-seeds it
+  // right after, and a session switch must never flash the composer unlocked.
+  let lastGate = null;
   let lastPending = null;
   let lastTs = null;
   // Claude Code's suggested next prompt, scraped off the pane server-side (see
@@ -659,7 +673,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // word on a prompt they did not write.
   function loadComposer(text) {
     input.value = text;
-    input.disabled = false;
+    input.disabled = Boolean(lastGate);
     input.focus();
     // Caret at the end, not a selection over the whole value: the point of
     // restoring a prompt is to amend it, and a full selection means the next
@@ -677,7 +691,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // discard something the human was in the middle of writing — and while
     // blocked, when the composer is disabled and the only useful action is
     // answering the prompt in the pane.
-    const show = Boolean(lastSuggestion) && !input.value.trim() && !blockedByNeedsYou() && !echoList().length;
+    const show = Boolean(lastSuggestion) && !input.value.trim() && !blockedByNeedsYou() && !lastGate && !echoList().length;
     suggestionBtn.hidden = !show;
     if (show) suggestionBtn.textContent = lastSuggestion;
   }
@@ -694,7 +708,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       sendBtn.disabled = true;
       return;
     }
-    if (blockedByNeedsYou()) return; // setStatus owns the button while blocked
+    if (blockedByNeedsYou() || lastGate) return; // setStatus owns the button while blocked
     input.disabled = false;
     if (refocusInput) {
       refocusInput = false;
@@ -706,7 +720,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
 
   function submit() {
     const text = input.value.trim();
-    if (!sessionId || pendingMessages.has(sessionId) || (!text && !attachments.length)) return;
+    if (!sessionId || lastGate || pendingMessages.has(sessionId) || (!text && !attachments.length)) return;
     // The EXISTING human message path: live → paste into the pane, dormant →
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
@@ -1376,6 +1390,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // (driven by this same status) has already disappeared.
       lastStatus = status;
       lastWaitingReason = waitingReason || null;
+      lastWaitingFor = waitingFor || null;
       renderLive();
       renderSuggestion();
       renderHint();
@@ -1383,7 +1398,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       const box = document.querySelector('.chat-box');
       const needsYou = status === 'needs-you';
       const isApiError = needsYou && waitingReason === 'api-error';
-      const blocked = blockedByNeedsYou();
+      const blocked = blockedByNeedsYou() || Boolean(lastGate);
       bar.hidden = !needsYou;
       bar.textContent = ''; // called on every render — rebuild rather than accumulate children.
       if (needsYou) {
@@ -1423,7 +1438,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // stop inviting input until the dialog is answered — and revert cleanly once
       // it isn't, since this runs on every render in both directions.
       box?.setAttribute('data-blocked', blocked ? '1' : '0');
-      input.placeholder = blocked ? 'Answer the prompt in the terminal first…' : 'Send a prompt…';
+      input.placeholder = lastGate ? lastGate.reason : (blocked ? 'Answer the prompt in the terminal first…' : 'Send a prompt…');
       input.disabled = blocked;
       // A disabled input still retains its value, so without this a prompt typed
       // before the block started stays sendable via a click — defeating the guard.
@@ -1433,6 +1448,14 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       sendBtn.disabled = blocked;
       if (!blocked) renderSendability();
       stopBtn.hidden = status !== 'working';
+    },
+
+    // Lock or unlock the composer for a `session.inputGate` (null unlocks).
+    setInputGate(gate) {
+      const next = gate?.reason ? { reason: gate.reason } : null;
+      if ((next?.reason || null) === (lastGate?.reason || null)) return;
+      lastGate = next;
+      if (sessionId) this.setStatus(lastStatus, lastWaitingFor, lastWaitingReason);
     },
   };
 }

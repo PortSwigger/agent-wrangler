@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SETTINGS_TABS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, extensionFlipNote, getSetting, EXT_SETTING_PREFIX } from './settings.js';
+import { SETTINGS_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, extensionFlipNote, getSetting, EXT_SETTING_PREFIX } from './settings.js';
 
 test('settings are grouped into six ordered tabs', () => {
   assert.deepEqual(SETTINGS_TABS.map(({ id, label }) => ({ id, label })), [
@@ -24,6 +24,7 @@ test('each registered setting appears in exactly one tab', () => {
     'childFullViewByDefault',
     'chatViewDefault',
     'defaultSessionCwd',
+    'defaultRuntime',
     'autoFixPrChecksDefault',
     'trustCodexLaunchCwd',
     'trustClaudeLaunchCwd',
@@ -94,6 +95,16 @@ test('settings card keeps its chrome fixed around a scrolling pane', () => {
   assert.match(css, /\.settings-tab\.active \{[^}]*background: transparent;[^}]*border-bottom-color: var\(--accent\);/s);
 });
 
+test('settings tab row scrolls sideways only, with the divider drawn under the tabs', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+  const tabs = css.match(/^\.settings-tabs \{([^}]*)\}/m)[1];
+  assert.match(tabs, /overflow-x: auto;/);
+  assert.match(tabs, /overflow-y: hidden;/);
+  assert.match(tabs, /box-shadow: inset 0 -1px 0 var\(--border\);/);
+  assert.doesNotMatch(tabs, /border-bottom/);
+  assert.doesNotMatch(css.match(/^\.settings-tab \{([^}]*)\}/m)[1], /margin-bottom: -/);
+});
+
 // The two outcomes of flipping an extension toggle. Neither asks for an action
 // any more — the registry is live in both directions — but both still need
 // saying: without them "the panel went but my agent still has the tools" and
@@ -115,4 +126,19 @@ test('extensionFlipNote never throws on a missing pair', () => {
   // it promises nothing.
   assert.equal(typeof extensionFlipNote(), 'string');
   assert.equal(typeof extensionFlipNote({}), 'string');
+});
+
+// The Default runtime row offers whatever the dispatch dialog's Runtime select
+// does, so an extension's runtimes come and go with it; an empty or bad list
+// (no select yet) keeps the last one rather than leaving the row blank.
+test('setRuntimeOptions replaces the Default runtime row\'s options', () => {
+  const def = SETTINGS.find((d) => d.id === 'defaultRuntime');
+  assert.equal(def.scope, 'server');
+  assert.equal(def.default, 'local');
+  const list = [{ value: 'local', label: 'Local (host)' }, { value: 'devcontainer', label: 'Devcontainer' }, { value: 'sandbox', label: 'Sandbox' }];
+  setRuntimeOptions(list);
+  assert.deepEqual(def.options, list);
+  setRuntimeOptions([]);
+  setRuntimeOptions(null);
+  assert.deepEqual(def.options, list);
 });

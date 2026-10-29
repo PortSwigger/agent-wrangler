@@ -24,7 +24,8 @@ const watchers = new WeakMap();
 // so a later reassignment is followed without a relaunch); Codex 0.149+ rejects a
 // symlinked writable root, so it gets the resolved real target instead and picks
 // a reassignment up on its next relaunch.
-export function launchContext({ sid, task, agent, host }) {
+export function launchContext({ sid, task, agent, reason, host }) {
+  if (reason === 'headless') return {};
   const store = host.stores.taskMemory;
   const binding = store.bindSession(sid, task?.id || null);
   if (!binding) return {}; // an unsafe session id: nothing to bind

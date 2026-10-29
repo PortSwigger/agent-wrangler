@@ -10,6 +10,35 @@ scratch session; a new path is created at launch. The folder starts filled in fr
 existing sessions, or from **Settings → Sessions → Default folder for new sessions** when the task
 has none.
 
+The dialog places task controls on the left and the model picker on the right, stacking them on
+narrow screens. **Intent / first prompt** starts at twelve rows and can be resized vertically.
+**Schedule a session** uses the same layout, with timing and action controls on the task side.
+Choose **Existing session** to show the target session and optional message instead of launch controls.
+
+The model section plots measured quality against cost per task on a log scale. Drag the slider or
+use its arrow keys to move through the quality/cost curve, cheapest to best. Click a chart point to
+choose any available front setting, including points that earn their place only by being faster;
+these hide the slider handle. Quality, Cost and Time bars show the selected setting, and the verdict
+compares all three against settings your installed agents offer. Red rings mark unavailable settings;
+click a ring to see what is missing. A red selected diamond and **Below the front** verdict name an
+available setting that is at least as good.
+
+Dots and slider stops share stable colours for each provider/model, named in the key below the
+chart. Hover or focus a dot or stop to read its model and effort without selecting it; activate it
+to select. Selection has an outer ring, unavailable settings have hollow rings, and below-front
+picks have a diamond and a written warning, so the states remain distinct without colour.
+
+The dialog remembers your last explicit agent, model and effort in this browser, including
+**Auto**, when you use the slider, chart, **Any model** or a quick-launch button. Cancelling,
+closing and reloading keep that choice. Saved schedules and values supplied by extensions take
+precedence without replacing your preference; forks inherit their source session's settings.
+If a remembered agent or model is unavailable, the dialog uses a live default. Unsupported
+remembered effort falls back to **Auto**.
+
+Expand **Any model** for the agent/model and effort dropdowns. **Auto** uses the effort reported by
+the agent; without a reported effort or benchmark row, the pick is unscored. Source credit sits under
+the chart. **Advanced options** starts collapsed and holds auto-compaction and runtime controls.
+
 Optional launch controls include:
 
 - **Additional folders:** use the square **+** button beside the main folder to grant a local Claude or Codex session access to more existing folders. Browse or type each path, and remove rows you no longer need. Grants persist across resume and fork and are saved with scheduled launches. The main folder remains the working directory. Devcontainer and extension runtimes disable these extra host folder controls; switching back to Local restores your selections.
@@ -17,7 +46,8 @@ Optional launch controls include:
 - **Effort:** select a provider-supported reasoning level.
 - **Auto-compaction threshold:** set the working-context budget.
 - **Runtime:** launch Claude locally, inside the project's devcontainer, or on a runtime an enabled extension adds. Codex currently runs on the
-  host.
+  host. **Settings → Sessions → Default runtime for new sessions** picks which one is pre-selected; a runtime that is
+  no longer offered or can't run the chosen agent falls back to Local.
 - **Workflow:** run the issue-to-PR autopilot in a fresh worktree.
 - **Quick launch:** use a model button or `Command+1` through `Command+3`. An extension can replace these with its own quick launches (see [extensions](extensions.md)); its buttons and shortcuts then take their place.
 
@@ -40,10 +70,28 @@ Each task also has:
 Use task memory for durable decisions, the checklist for session progress, and `AGENTS.md` or
 `CLAUDE.md` for repository instructions.
 
+Minimised tasks appear as pills in the bottom tray. Click one to restore it, Shift-click one to
+focus it, or choose **Restore all**. Core keeps at least one task visible, and newly created tasks
+join the visible board.
+
+An enabled extension can own this strip and replace **Minimise** in both task menus, including
+Unassigned, and add an action beside **New task** in the blank task-view right-click menu.
+Its strip stays visible even when every task is shown; **Focus** remains available.
+Enabling a tray extension preserves tasks you already minimised. Disabling it returns the core tray
+and **Minimise** entries with the current view intact. If a tray contribution fails, core falls back
+to another registered tray or its own controls.
+
 ## Read a session card
 
 Cards show status, model, cost, context budget, links, PR/CI state, checklist progress, and native
-sub-agents. Nested children are compact rows unless **Full view** is enabled.
+sub-agents. Nested children are compact rows unless **Full view** is enabled. Nesting has no depth
+limit: a child's own children sit indented beneath it on the same spine, stepping in a level each
+until the indent stops growing after four. Attaching a session moves its children with it.
+
+A Codex card's working or idle status comes from Codex's own turn-end notification plus its session log,
+with the terminal screen as a tie-breaker. Wrangler sets `notify` when it launches Codex and forwards the
+event to any `notify` command already in `~/.codex/config.toml`. The latest turn end for each thread is
+kept under `~/.agent-wrangler/codex-turns/`.
 
 The **parent** controls board nesting and can change; the **spawner** records who launched the session
 and cannot. **Attach to…** and **Promote to full session** change nesting, not launch lineage.
@@ -114,6 +162,10 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 - Theme, terminal side, terminal font size, and chat font size.
 - Child-card and Chat defaults, and the default folder for new sessions.
 - PR auto-fix, Codex and Claude folder trust, and optional extraction of archive learnings into task memory.
+  Claude folder trust covers scratch sessions and worktrees of a repo you already trust in Claude: the
+  worktree inherits the repo's trust (just that worktree, never its parent folder), so a job or
+  auto-session in a worktree doesn't stall on "Do you trust this folder?". A worktree of an untrusted
+  repo still asks.
 - Extension installation, enablement, updates, and extension-specific settings. Sounds offers
   shared audio cues, uploaded audio files, and previews. The per-session checklist is a builtin
   extension, so its on/off switch lives here (an older `checklistEnabled: false` is carried over

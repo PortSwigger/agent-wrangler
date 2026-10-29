@@ -67,9 +67,9 @@ running process can't outlive it. Unset, every path is the real app directory's,
 Between an upgrade repointing the path and the server restarting, the old server hands new
 sessions the new version's hook and skills, and sessions already running pick them up too. The
 hook only POSTs a PR URL and swallows every error, so the risk is a new skill naming an MCP tool
-the old server doesn't have yet. Those sessions carry the old server's identity, so after the
-restart they show as an older version (see [App identity](#app-identity)). A package wrapper keeps
-the gap short by restarting the service as soon as it repoints the path.
+the old server doesn't have yet. Those sessions carry the old server's identity and are eligible
+for the optional idle-session restart after the server restarts (see [App identity](#app-identity)).
+A package wrapper keeps the gap short by restarting the service as soon as it repoints the path.
 
 When that restart doesn't happen, the board notices. At every session launch and once a minute, the
 server checks whether `AW_INSTALL_ROOT` still resolves to the running app. The first time it
@@ -83,9 +83,8 @@ version's directory may already be gone.
 
 ## App identity
 
-The board reloads open tabs when the app's identity changes, and it tags sessions launched under
-a different identity as "older version". **Restart idle sessions after an update** uses the same
-identity.
+The board reloads open tabs when the app's identity changes. **Restart idle sessions after an
+update** compares each session's launch identity with the current app identity.
 
 - A checkout is identified by its `HEAD` commit. The startup banner shows `Agent Wrangler 0.1.0 (abc1234)`.
 - Anything else is identified by the `version` in its `package.json`. A package upgrade therefore
@@ -118,6 +117,12 @@ A new install-scoped signal must be added to `INSTALL_SCOPED_ENV` in `server/ins
 - Make the service restart the process after any exit, including a clean one. **Restart the
   wrangler** exits with status 0, so a service that restarts only after a crash (Homebrew's
   `keep_alive crashed: true`) would leave the board stopped. Use `keep_alive true`.
+- On macOS, give the service an interactive process type (`process_type :interactive` in a Homebrew
+  `service` block, `ProcessType` `Interactive` in a launchd plist). Without one, launchd runs it as
+  a background daemon with a lower CPU priority and throttled disk access, and every session
+  inherits that, so sessions lag whenever something else keeps the CPU busy.
+  `scripts/wrangler-start.sh` adds the key to a checkout's own plist, but never touches a package
+  manager's (`AW_INSTALL_MANAGER` set), because the package manager writes that plist.
 - Never set `AW_GIT_UPDATES`. A package's start path has no checkout rollback or dependency sync.
 - Point `AW_NODE` and `AW_INSTALL_ROOT` at upgrade-stable paths (`opt/`, never a versioned `Cellar/` path).
 - Restart the service straight after an upgrade repoints `AW_INSTALL_ROOT`, so the running server

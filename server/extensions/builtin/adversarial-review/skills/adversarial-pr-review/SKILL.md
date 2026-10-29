@@ -1,6 +1,6 @@
 ---
 name: adversarial-pr-review
-description: Use when you want a second, adversarial opinion on a pull request before merging it — spawns a child (or sibling, if you're already nested) session running the OPPOSITE agent provider (Claude <-> Codex) to review it, and has it raise concerns back to you via mail.
+description: Use when you want a second, adversarial opinion on a pull request before merging it — spawns a child session running the OPPOSITE agent provider (Claude <-> Codex) to review it, and has it raise concerns back to you via mail.
 ---
 
 # Adversarial PR review
@@ -20,35 +20,25 @@ current branch. Do not guess a PR — if neither source gives you one, ask the u
 PR to review. Either way, hold onto the **repo** (`owner/repo`) as well as the number —
 you'll need to pass it explicitly to the reviewer (see step 4).
 
-## 2. Decide child vs sibling
+## 2. Spawn it as a child
 
-Call `get_session_info`. Nesting is capped at one level deep (see the
-`session-hierarchy` skill), so:
-
-- **`parent` is null** — you're top-level. Spawn a plain **child**: `spawn_session` with
-  `nest: true`.
-- **`parent` is already set** — you're nested, and `spawn_session`'s `nest: true` would be
-  refused (you'd be asking to nest under yourself, and you already have a parent). Spawn
-  a **sibling** instead: call `spawn_session` with `nest` left unset (a plain top-level
-  session), then `attach_session({ session_id: <new id>, parent_session_id: <your own
-  parent> })` to land it next to you, under the same parent.
-
-Either way, leave `into` unset so the reviewer lands on your current task.
+Call `spawn_session` with `nest: true`, however deep you are yourself: nesting has no depth
+limit, so the reviewer lands under you whether you are top-level or already nested. Leave
+`into` unset so it lands on your current task.
 
 ## 3. Choose the opposite agent
 
 - You're Claude → spawn `agent: "codex"`.
 - You're Codex → spawn `agent: "claude"`.
 
-**Always pass `model` explicitly — don't leave it unset.** `spawn_session`'s "inherit the
+**Always pass `model` and `effort` explicitly — don't leave either unset.** `spawn_session`'s "inherit the
 caller's model" default only applies when the new session runs the *same* agent as you;
 since this skill always spawns the opposite one, that inheritance never fires, and
 leaving it unset lands you on whatever that agent's ambient default happens to be right
-now — not necessarily its strongest option, and for Claude not even a fixed value (its
+now — not necessarily a suitable option, and for Claude not even a fixed value (its
 default can be changed machine-wide by an unrelated `/model` call). Passing a `model`
 that doesn't match your chosen `agent` is now rejected before launch, naming the valid
-options and, for a cross-agent guess, the likely fix (e.g. `model: "opus"` with
-`agent: "codex"` → "opus is a claude model — did you mean agent: claude?") — but an
+options and, for a cross-agent guess, the likely fix — but an
 *unset* `model` isn't caught by that, since it's not wrong, just ambiguous.
 
 `spawn_session`'s own `model` parameter description enumerates the current valid values
@@ -58,6 +48,26 @@ session, don't assume that description is already in front of you the way it wou
 for Claude** — Codex's initial tool catalog doesn't carry full MCP input-schema
 descriptions; you may need to actively look up `spawn_session`'s declared schema to see
 it.
+
+### Reviewer model and effort
+
+Select a current, high-capability general-purpose model suitable for independent code
+review, using **medium effort or higher**. Exclude lightweight, fast/cheap, and
+reduced-capability variants. Among models meeting that capability floor, prefer the
+standard workhorse over a premium specialist or maximum-capability tier. Increase effort
+for difficult reviews; do not use extra effort to compensate for an unsuitable model.
+Honour the user's model exclusions.
+
+Use the available model descriptions to establish suitability. If they do not establish
+that an option meets this floor, report the uncertainty rather than silently choosing a
+weaker option. If no eligible model is available, report the blocker instead of lowering
+the capability or effort floor.
+
+Call `get_model_front` to help pick a reviewer that's strong for its price from
+the opposite agent's eligible models, while respecting the capability and effort
+floor above and the user's exclusions. Its numbers measure doing a coding task,
+not review quality. Filtering the front never restricts how it judges a `pick`;
+an unscored pick has no benchmark verdict.
 
 ## 4. Brief the reviewer
 
@@ -81,7 +91,7 @@ of your context. Keep it short; the review method is not yours to write:
 ## 5. Don't wait
 
 The reviewer doesn't need your session id: `AW_SPAWNER_SESSION_ID` already names you,
-even in the sibling case (see the `session-hierarchy` skill), and the tool tells it to
+(see the `session-hierarchy` skill), and the tool tells it to
 mail you there. Carry on with your own work once it is briefed, and read its findings when
 the mail arrives.
 

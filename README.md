@@ -15,6 +15,9 @@ otherwise it behaves exactly as a Claude-only board.
 - **A control plane for agents, not just for you** — sessions can spawn other agents and orchestrate
   whole multi-agent workflows, hand tasks off to each other, and send one another messages directly —
   real agent-to-agent coordination, not a one-way dashboard.
+- **Remote Control for a Claude session** — ask an agent to launch a session with
+  `spawn_session` and `remote_control: "Phone"`. Claude supports it; Codex does not.
+  See [Remote Control usage and lifecycle](docs/agent-tools.md#remote-control-on-spawn_session).
 - **Visualize your whole fleet, your way** — every agent and its sub-agents rendered on the board,
   grouped under the tasks you assign them to, nested under parent sessions, or collapsed into workflow
   boxes — organize it however makes sense to you.
@@ -67,13 +70,14 @@ otherwise it behaves exactly as a Claude-only board.
   through the restart, and open tabs reload onto the new code. It checks hourly and can install on
   its own (Off / Notify / Auto). Notify and Auto also check installed extensions and say how many
   are out of date and how many changes they're missing; an extension is updated automatically only
-  if you turned on its own Auto-update in Settings › Extensions. If an update can't start, the next restart rolls back to the commit
+  if you turned on its own Auto-update in Settings › Extensions, and the wrangler restarts to load it
+  once idle. If an update can't start, the next restart rolls back to the commit
   it came from. Installing needs the background service below (which also installs changed
   dependencies), a clean checkout on `main` and no local commits. An install that isn't its own Git
   checkout, such as one managed by a package manager, shows updates as unavailable and never runs
   Git, but asks for a restart if a package upgrade lands while the wrangler is still running. See
-  [Install signals](docs/install-signals.md). Running sessions get an "older version" tag
-  until they restart, and an opt-in setting restarts idle ones for you.
+  [Install signals](docs/install-signals.md). An opt-in setting restarts idle sessions after an
+  update so they pick up new tools and skills.
 
 ![Agent Wrangler board with several tasks, nested and workflow-grouped sessions, and live cost figures](docs/images/board-overview.png)
 
@@ -100,7 +104,8 @@ includes example prompts for every built-in Wrangler skill.
 - `tmux` (sessions launched through the app run inside named tmux sessions) — `brew install tmux`
   on macOS, `apt-get install tmux` (or your distro's equivalent) on Linux
 - `gh` (optional — PR auto-attach, check-watching, and auto-merge shell out to it; run
-  `gh auth login` once so it's authenticated)
+  `gh auth login` once so it's authenticated, and `gh auth setup-git` too if you install
+  extensions from private GitHub repositories)
 
 **Windows** isn't supported natively, but works via WSL2 — WSL2 runs a real Linux kernel, so the
 Linux path above applies unmodified once you're inside it. Keep your checkout on the WSL2 side of
@@ -187,11 +192,25 @@ placeholders, then load it:
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist
 ```
 
-Restart it after changes with:
+Restart it with:
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler
 ```
+
+launchd reads the plist only when it loads the job, so a restart doesn't pick up edits to the plist
+itself. Reload the job instead, or log out and back in:
+
+```bash
+launchctl bootout gui/$(id -u)/net.portswigger.agent-wrangler
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist
+```
+
+If `bootstrap` fails with `5: Input/output error` straight after the `bootout`, the old job hadn't
+finished stopping; run it again.
+
+The template sets `ProcessType` to `Interactive`, so launchd doesn't throttle the service and its
+sessions as a background daemon. See [Snags](#snags) if your plist predates that.
 
 On Linux, copy `scripts/agent-wrangler.service.example` to
 `~/.config/systemd/user/agent-wrangler.service`, fill in the path placeholder, then load it:
@@ -246,6 +265,29 @@ tmux server, then resume your sessions. The next session you start or resume get
 in your current login session. As above, this stops every live session on that socket, but their
 cards survive.
 
+**Sessions take seconds to open and lag while the machine is busy (macOS only).** Heavy work
+elsewhere, such as containers running test suites, makes the board's sessions slow to open and slow
+to respond, while `claude` started from a terminal keeps up. launchd runs a service whose plist sets
+no `ProcessType` as a background daemon, with a lower CPU priority and throttled disk access, and the
+wrangler, its tmux server and every session inherit that. Check what launchd loaded:
+
+```bash
+launchctl print gui/$(id -u)/net.portswigger.agent-wrangler | grep 'spawn type'
+```
+
+`daemon (3)` is throttled; `interactive (4)` is not. The plist template sets `ProcessType` to
+`Interactive`. For a plist made from an older template, `scripts/wrangler-start.sh` adds it at
+startup and says so in `wrangler.log`. It leaves a plist alone if it already sets a `ProcessType`
+(set `Standard` to keep the old behaviour), belongs to a package manager's install, or can't be
+written; for that last one it logs a warning in `wrangler.err` instead.
+
+launchd applies the change from your next login, and sessions keep their old priority until their
+tmux server restarts. Restarting the Mac does both. After logging out and back in instead, click
+**Restart tmux** on the banner described above. To apply it without logging out, reload the job (see
+[Run as a background service](#run-as-a-background-service)), then stop the tmux server with
+`tmux -L <socket> kill-server`, where `<socket>` is `tmuxSocket` in `~/.agent-wrangler/config.json`.
+Each of these stops every live session, but their cards survive, so resume them.
+
 ## How it works
 
 - **State** is read through an adapter for each supported agent. Claude state and transcripts come
@@ -266,7 +308,9 @@ Optional features are packaged as extensions — one manifest each, switched on 
 `agent-wrangler-extension`. An extension can add MCP tools,
 control handlers, board state, settings, session hooks, skills and a browser-side half. See
 [docs/extensions.md](docs/extensions.md) for installation, a minimal authoring example, and the
-complete implementation constraints.
+complete implementation constraints. Client extensions can build model pickers with
+core’s frozen benchmark data and pure quality/cost/time maths through
+`api.modelFront` (host API 1.56.0), using their own UI and presets.
 
 An extension runs inside the wrangler with full access to the machine: its capability list is
 disclosure, not a sandbox. Install one only if you trust whoever wrote it.
@@ -390,15 +434,22 @@ brought (back) onto the board from the same place you found it.
 ## Themes
 
 The **settings button** (the gear icon on the nav rail) opens **Settings**, whose **Appearance**
-section switches between built-in **dark** and **light** and any drop-in custom styles. A custom style
-is a folder under `styles/<id>/` with a `theme.json` manifest — a name,
-an icon, a `dark`/`light` base, and CSS-variable overrides — plus optional assets like a wallpaper for
-translucent themes. The server compiles each manifest to CSS-var overrides and serves it through a
-manifest-gated asset route (raw files are never exposed). See `styles/jurassic-park/` for a worked
-example. All UI colours — including the xterm terminal — flow through these variables, so both
-built-in and custom styles re-theme the whole app live.
+section switches between built-in **dark** and **light** and the themes extensions contribute, each shown with its icon and a swatch of its own colours. The core
+**Themes** extension, on by default, adds Cyberpunk, Dolphin, Pink, Pixel Cats and Wrangler, and
+**Settings › Extensions › Themes** switches each one off or on. A browser whose chosen theme is
+switched off, or whose extension is off or not installed, shows Dark until the theme is back, without
+forgetting its choice. Jurassic Park is a community extension:
+[psjamesh/agent-wrangler-jurassic-park-theme](https://github.com/psjamesh/agent-wrangler-jurassic-park-theme).
 
-![The Appearance section's theme picker, showing the built-in and drop-in custom styles](docs/images/theme-picker.png)
+A theme is a folder with a `theme.json` manifest — a name, an icon, a `dark`/`light` base, and
+CSS-variable overrides — plus optional assets like a wallpaper for translucent themes. It inherits
+everything it does not override from its base, so a light theme starts from the built-in Light. See
+`server/extensions/builtin/themes/themes/` for worked examples, and [Themes](docs/extensions.md#themes)
+for shipping one in an extension. The server compiles each manifest to CSS-var overrides and serves
+it through a manifest-gated asset route (raw files are never exposed). All UI colours — including the xterm terminal —
+flow through these variables, so both built-in and custom styles re-theme the whole app live.
+
+![The Appearance section's theme picker, showing the built-in and extension themes](docs/images/theme-picker.png)
 
 ## License
 

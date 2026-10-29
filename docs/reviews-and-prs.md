@@ -19,6 +19,31 @@ pull request.
 Switch between inline and side-by-side layouts, comment on lines, then choose **Send to agent**. Drafts
 are sent together with code snapshots and locations. Dormant sessions resume before delivery.
 
+Diff source is syntax coloured in both inline and split layouts. Language is chosen
+only from the filename extension: JavaScript/TypeScript (including JSX/TSX), JSON,
+HTML/XML/SVG, CSS, Bash, Python, YAML, Markdown, Java, C# and Go. Unknown extensions and
+extensionless files stay literal plain text. Highlighting never changes source,
+line numbers, copy text or comment ranges, and works in all three diff modes.
+
+Colours follow live style changes, including bundled and custom styles. Keywords,
+strings, functions/types and comments use quiet theme-derived ink over the existing
+addition, deletion and selection backgrounds. Style authors can set
+`syntax-comment`, `syntax-keyword`, `syntax-string` and `syntax-function` in manifest
+`colors`; these candidates are adjusted toward `fg` when necessary for contrast.
+If a custom theme's foreground itself lacks contrast, source inherits that
+foreground; correct the theme's `fg`/surface colours.
+
+Highlighting runs locally in one lazily loaded worker using bundled Prism 1.30.0
+(MIT); no source is sent to a highlighting service. Each hunk is tokenized as
+separate old/new source, resetting at hunk boundaries. Syntax starting before the
+available context may be ambiguous. Oversized or failed jobs stay plain: limits
+are 64 KiB per side, 8 KiB per line, 512 KiB and 128 side jobs per render (UTF-16
+bytes), 2 seconds to load and 200 ms to tokenize. The worker is terminated on
+timeout. Token depth/segment limits, a 32,000-segment render budget and a 2 MiB
+LRU cache also bound costs. Hunks in view receive highlighting first.
+Text is visible before colour arrives; late decoration waits for the next render
+when a comment gesture, editor or text selection is active.
+
 ## Launch a peer-review session
 
 Choose **Peer review session…** from **Actions**, or press `Control+Command+P`.
@@ -38,6 +63,13 @@ Ask the working session directly:
 The `adversarial-pr-review` skill resolves the PR and launches a reviewer on the opposite provider: a
 Claude session launches Codex, a Codex session launches Claude. It requires both Claude Code and Codex;
 with one provider, use peer review.
+
+The skill requires an explicit reviewer model and effort: a current, high-capability general-purpose
+model at medium effort or higher. It excludes lightweight, fast/cheap and reduced-capability variants,
+honours your model exclusions, and prefers a standard workhorse over a premium specialist or
+maximum-capability tier. Difficult reviews can use more effort; effort cannot compensate for an
+unsuitable model. If the available model descriptions leave suitability unclear, the session reports
+the uncertainty; if no eligible model is available, it reports a blocker.
 
 The reviewer follows a written-out review process. The built-in process has four steps:
 
@@ -91,7 +123,45 @@ auto-merge results. Notices wait while the terminal holds a draft, shows a dialo
 or cannot be read; once the input clears they arrive together. Board toasts and
 auto-merge actions do not wait for the session's input to clear.
 
+### Waiting without agent polling
+
+Agents receive brief always-on guidance through the mail skill sidecar on both
+providers, with details in the [links skill](../agent-skills/skills/links/SKILL.md).
+After attaching a session PR, they should finish independent work, end their turn
+and yield to notices, avoiding `gh pr checks --watch`, `gh run watch`, sleep
+loops and repeated status queries. One-off diagnostics remain available. This guides agents; it does not
+intercept commands or guarantee model compliance.
+
+| Notice | Meaning |
+| --- | --- |
+| required checks are now failing | A failure is visible; other checks may still be running. |
+| all checks passing, mergeable | GitHub reports the PR mergeable (`passing`); the user's merge workflow still applies. |
+| all checks passing, awaiting review | Checks are green but a required review blocks merging (`awaiting-review`). |
+| changes requested on review | Review action is needed, possibly while checks still run. |
+
+Pane notices require a **session-scope** PR link and effective **Auto-fix PR
+checks** enabled. An explicit session setting overrides the installation default.
+Task links only toast on the board; arbitrary standalone Actions runs are not
+watched. Auto-merge remains a separate setting: if enabled, it can still merge and report
+its outcome with Auto-fix off; do not rely on that as a check-status wake-up.
+
+Notices are deduplicated by status and head commit, not sent after every check
+finishes. An unchanged failure after a same-head rerun may produce no new notice.
+Pending states do not wake the agent, and watcher startup seeds existing state
+without replaying it. Terminal input or dialogs can delay delivery. Silence is
+not success: agents should check current state once when resuming or before a
+consequential decision.
+
+With **Auto-fix PR checks disabled**, no PR pane wake-up is available, including
+for success, failure, review, conflicts, merge or close; board toasts remain.
+Agents should not enable it without authorization. When no reliable wake-up is
+available (also task-only links, standalone Actions or same-head reruns), agents
+should report the URL and pending work, then hand back to the user or an
+already-authorized orchestrator after finishing independent work. They should
+not wait indefinitely or replace the handoff with polling.
+
 ## Auto-merge
 
 **Auto-merge when checks pass** is an off-by-default session option and Workflow launch setting. It
-uses authenticated `gh` to merge the attached PR when required checks become green.
+uses authenticated `gh` to merge the attached session PR when it becomes mergeable
+(`passing`), including the required checks and review gates.

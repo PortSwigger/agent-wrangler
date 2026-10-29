@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import chokidar from 'chokidar';
 import { discoverClaudeSessions, capturePane, classify, claudeTitle, hasBackgroundShell as detectBackgroundShell } from './tmux-scraper.js';
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
+import { codexStatus as realCodexStatus } from './agents/codex-status.js';
 import { adapterFor, modelPillFor, maxContextWindowFor, discoveryFloor } from './agents/index.js';
 import { runtimeFor, findRuntime } from './runtimes/index.js';
 import { worktreeStatus } from './worktree.js';
@@ -15,11 +16,11 @@ import { autoFixPrChecksDefault } from './config-store.js';
 import { boundedPs } from './bounded-ps.js';
 import { logWarn } from './log.js';
 
-// pid -> { tty, cpu } for every process, from one `ps` call. A real `ttysNNN`
+// pid -> { tty } for every process, from one `ps` call. A real `ttysNNN`
 // means the session lives in an open terminal window; `??` means background.
 export async function procInfo(opts) {
   const map = new Map();
-  const stdout = await boundedPs(['-axo', 'pid=,tty=,%cpu='], opts);
+  const stdout = await boundedPs(['-axo', 'pid=,tty='], opts);
   if (stdout === null) {
     // A wedged tty makes ps hang unkillably; boot must not wait on it. Warn once
     // per outage, not on every graph rebuild.
@@ -29,8 +30,8 @@ export async function procInfo(opts) {
   }
   procInfoSkipped = false;
   for (const line of stdout.split('\n')) {
-    const m = line.match(/^\s*(\d+)\s+(\S+)\s+([\d.]+)/);
-    if (m) map.set(Number(m[1]), { tty: m[2], cpu: parseFloat(m[3]) });
+    const m = line.match(/^\s*(\d+)\s+(\S+)/);
+    if (m) map.set(Number(m[1]), { tty: m[2] });
   }
   return map;
 }
@@ -263,9 +264,33 @@ function withForkMark(label, entry) {
 // waitingFor text, and exported so it's unit-testable directly: readSessions()
 // reads a real ~/.claude/sessions file with no injection seam, so this can't be
 // reached via buildGraph without a live process on the test machine.
-export function apiErrorPromotion(status, apiError) {
+//
+// waitingReason splits the errors by whether waiting can fix them: 'api-error'
+// for a dropped or stalled connection (Claude Code's own wording, listed below)
+// that the same prompt can simply be retried after, and 'api-error-blocking'
+// for everything else — login, auth, credit, usage limit, prompt too long, a
+// 400 over the conversation's own history, and any error not recognised here.
+const TRANSIENT_API_ERRORS = [
+  /The response stopped arriving\./,
+  /Server error mid-response\./,
+  /Part of the response never arrived/,
+  /The response stream was malformed/,
+  /Your computer went to sleep (mid-response|before a response was produced)/,
+  /Connection (lost|closed) (mid-response|before a response was produced)/,
+  /The response stalled before a response was produced/,
+  /Can.t reach the API server|ENOTFOUND/,
+  /Request timed out/,
+  /Repeated 529 Overloaded errors/,
+  /Connection error\./,
+];
+
+export function apiErrorReason(text) {
+  return text && TRANSIENT_API_ERRORS.some((re) => re.test(text)) ? 'api-error' : 'api-error-blocking';
+}
+
+export function apiErrorPromotion(status, apiError, apiErrorText) {
   if (!apiError || status === 'working' || status === 'needs-you') return null;
-  return { status: 'needs-you', waitingFor: 'API error — connection closed mid-response', waitingReason: 'api-error' };
+  return { status: 'needs-you', waitingFor: apiErrorText || 'API error', waitingReason: apiErrorReason(apiErrorText) };
 }
 
 // Build the folder + session graph from the raw state, enriched by the
@@ -291,7 +316,7 @@ export async function applyRuntimeCost(runtime, args, enr) {
 
 export const resolveRuntimeForGraph = (id) => findRuntime(id) || runtimeFor(undefined);
 
-export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, mailStore, mailDraftBlocked } = {}) {
+export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, codexStatus = realCodexStatus, mailStore, mailDraftBlocked } = {}) {
   const now = Date.now();
   // The mail pill's data, keyed on card id like every other per-session field —
   // omitted entirely (undefined) when no mailStore is injected, so a caller that
@@ -481,8 +506,17 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // text regardless — captured once here and reused for both checks rather
     // than scraping twice.
     let status = liveStatusDecision(s.status);
-    const paneText = tmux ? await capture(tmux, 60, sessionManager?.socketOf?.(tmux) ?? '') : '';
-    if (status === 'scrape') status = tmux ? classify(paneText).status : 'unknown';
+    const paneTarget = sessionManager?.paneTargetFor?.(s.sessionId) ?? tmux;
+    const paneText = paneTarget ? await capture(paneTarget, 60, sessionManager?.socketOf?.(tmux) ?? '') : '';
+    let scrapeWaitingFor = null;
+    if (status === 'scrape') {
+      if (!tmux) status = 'unknown';
+      else if (agentId === 'codex') {
+        const c = await codexStatus({ liveSid: mapEntry?.liveSessionId, paneText });
+        status = c.status;
+        scrapeWaitingFor = c.waitingFor;
+      } else status = paneText === '' ? 'unknown' : classify(paneText).status;
+    }
     // Claude's own 'shell' status (→ working) means "a Bash tool is tracked as
     // live" — it covers both a still-blocking foreground command AND a detached
     // run_in_background job the turn has already ended on; the file can't tell
@@ -496,7 +530,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // status file reports idle/unknown even though the response is incomplete —
     // surface it as needs-you instead of a silent "done" (see transcript-reader's
     // apiError tracking). Skipped when the file already says working/needs-you.
-    const apiError = apiErrorPromotion(status, enrichment?.apiError);
+    const apiError = apiErrorPromotion(status, enrichment?.apiError, enrichment?.apiErrorText);
     if (apiError) status = apiError.status;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
@@ -514,7 +548,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       status,
       hasBackgroundShell,
       rawStatus: s.status || null,
-      waitingFor: apiError ? apiError.waitingFor : (s.waitingFor || null),
+      waitingFor: apiError ? apiError.waitingFor : (s.waitingFor || scrapeWaitingFor || null),
       waitingReason: apiError ? apiError.waitingReason : null,
       kind: s.kind || worker?.dispatch?.source || 'unknown',
       cwd,
@@ -525,6 +559,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       createdAt: mapEntry?.createdAt || null,
       model: mapEntry?.model || null,
       effort: mapEntry?.effort || null,
+      permissionMode: mapEntry?.permissionMode || null,
       currentModel: enrichment?.currentModel ?? null,
       modelPill: modelPillFor(agentId, enrichment?.currentModel, mapEntry?.model),
       autoCompactTokens: mapEntry?.autoCompactTokens || null,
@@ -537,6 +572,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoFixPrChecks: mapEntry?.autoFixPrChecks ?? fixPrDefault,
       autoMergeOnPass: mapEntry?.autoMergeOnPass ?? false,
       childFullView: mapEntry?.childFullView ?? null,
+      offBoard: mapEntry?.offBoard || null,
       launchedCodeVersion: mapEntry?.launchedCodeVersion || null,
       links: mapEntry?.links || [],
       worktree: await worktreeStatus(mapEntry?.worktree),
@@ -546,7 +582,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       lastActivity: enrichment?.lastActivity ?? null,
       hasTranscript: enrichment?.hasTranscript ?? false,
       tty: proc.get(s.pid)?.tty ?? null,
-      cpu: proc.get(s.pid)?.cpu ?? null,
       managed: Boolean(tmux),
       // A live-restart (or dormant Resume) is mid-flight for this card: the client
       // holds the card in place and shows a "restarting" badge instead of the
@@ -638,12 +673,18 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // surface a reported-but-unrecognized status as 'unknown', and only scrape when
     // nothing was reported (Codex has no status file → live.rawStatus is absent).
     let status = live && live.status !== 'unknown' ? live.status : liveStatusDecision(live?.rawStatus);
-    const paneText = await capture(d.tmuxName, 60, d.socket || '');
+    const paneText = await capture(d.paneId || d.tmuxName, 60, d.socket || '');
     // classify() may also carry a hint (e.g. devcontainer bring-up/failure) alongside
     // the status — only meaningful on the scrape branch, since a recognized live
     // status above already has its own waitingFor (needs-you) or none (working/idle).
     let scrapeWaitingFor = null;
-    if (status === 'scrape') { const c = classify(paneText); status = c.status; scrapeWaitingFor = c.waitingFor || null; }
+    if (status === 'scrape') {
+      const c = agentId === 'codex'
+        ? await codexStatus({ liveSid: live?.liveSid || appEntry.liveSessionId, paneText })
+        : paneText === '' ? { status: 'unknown' } : classify(paneText);
+      status = c.status;
+      scrapeWaitingFor = c.waitingFor || null;
+    }
     // Same override as the managed-session pass above: Claude's 'shell' status
     // can go stale for as long as a detached background job runs, well past the
     // pane's own idle prompt — trust the pane over it. `live.status` above is
@@ -651,7 +692,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     if (live?.rawStatus === 'shell' && classify(paneText).status === 'idle') status = 'idle';
     // See the managed-session pass above: a dropped API connection ends the turn
     // without a permission request, so surface it as needs-you rather than idle.
-    const apiError = apiErrorPromotion(status, enr?.apiError);
+    const apiError = apiErrorPromotion(status, enr?.apiError, enr?.apiErrorText);
     if (apiError) status = apiError.status;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
@@ -695,6 +736,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       createdAt: appEntry?.createdAt || null,
       model: appEntry?.model || null,
       effort: appEntry?.effort || null,
+      permissionMode: appEntry?.permissionMode || null,
       currentModel: enr?.currentModel ?? null,
       modelPill: modelPillFor(agentId, enr?.currentModel, appEntry?.model),
       autoCompactTokens: appEntry?.autoCompactTokens || null,
@@ -707,6 +749,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoFixPrChecks: appEntry?.autoFixPrChecks ?? fixPrDefault,
       autoMergeOnPass: appEntry?.autoMergeOnPass ?? false,
       childFullView: appEntry?.childFullView ?? null,
+      offBoard: appEntry?.offBoard || null,
       launchedCodeVersion: appEntry?.launchedCodeVersion || null,
       links: appEntry?.links || [],
       worktree: await worktreeStatus(appEntry?.worktree),
@@ -720,7 +763,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       lastActivity: enr?.lastActivity ?? null,
       hasTranscript: enr?.hasTranscript ?? false,
       tty: proc.get(d.claudePid)?.tty ?? null,
-      cpu: proc.get(d.claudePid)?.cpu ?? null,
       managed: true,
       restarting: Boolean(sessionManager?.isResuming?.(realSid)),
       tmux: d.tmuxName,
@@ -794,6 +836,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       createdAt: entry.createdAt || null,
       model: entry.model || null,
       effort: entry.effort || null,
+      permissionMode: entry.permissionMode || null,
       currentModel: enrichment?.currentModel ?? null,
       modelPill: modelPillFor(agentId, enrichment?.currentModel, entry.model),
       autoCompactTokens: entry.autoCompactTokens || null,
@@ -806,6 +849,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoFixPrChecks: entry.autoFixPrChecks ?? fixPrDefault,
       autoMergeOnPass: entry.autoMergeOnPass ?? false,
       childFullView: entry.childFullView ?? null,
+      offBoard: entry.offBoard || null,
       links: entry.links || [],
       suspendedAt: entry.suspendedAt || null,
       worktree: await worktreeStatus(entry.worktree),
@@ -814,7 +858,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       updatedAt: null,
       lastActivity: enrichment?.lastActivity ?? null,
       tty: null,
-      cpu: null,
       managed: false, // no live tmux → click takes the Resume path, not attach
       // Set while this dormant card's own Resume/Restart is in flight (the tmux is
       // being relaunched right now). This is the site that actually renders during

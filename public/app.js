@@ -1,3 +1,6 @@
+import { dispatchPick, readDispatchPick, saveDispatchPick } from './dispatch-preferences.js';
+import { createDispatchModelPicker } from './dispatch-model-picker.js';
+import { effortsOf } from './model-front.js';
 import { createSoundMigration } from './sound-migration.js';
 /* global Terminal, FitAddon, WebLinksAddon, ClipboardAddon, Unicode11Addon */
 import {
@@ -7,6 +10,7 @@ import {
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
 import { createAdditionalFolders } from './additional-folders.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
+import { focusReturnTarget } from './terminal-dialog.js';
 import {
   MAX_ONSCREEN_ROWS,
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
@@ -31,33 +35,37 @@ import {
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
+import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
-import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { updatePanelEl, restartPanelEl, shouldReloadForVersion, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
-
+  anyModalOpen as anyModalOpenIn,
 } from './util.js';
 import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
-import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
+import { readTerminalTheme, readTerminalFont, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
 import { createNotifications } from './notifications.js';
+import { createInputGates } from './input-gate.js';
 import { prCheckToastOptions } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
+import { createExtFileViewer } from './ext-file-viewer.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
 import { createBoardOpen } from './board-open.js';
+import { onBoard } from './off-board.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
-import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -70,6 +78,7 @@ import { enhanceSelects } from './select-dd.js';
 import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } from './auto-compact-presets.js';
 import { keybindings } from './keybindings.js';
 import { registerCoreBindings } from './core-keybindings.js';
+import { createSessionEmbed } from './session-embed.js';
 
 let currentView = 'grid';
 
@@ -122,6 +131,18 @@ function minimise(id) {
   renderGrid();
 }
 
+function setMinimisedTasks(ids) {
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id)) return false;
+  const order = currentOrder();
+  const next = pruneMinimised(new Set(ids), new Set(order));
+  if (order.length && next.size === order.length) return false;
+  if (next.size === minimisedIds.size && [...next].every((id) => minimisedIds.has(id))) return true;
+  minimisedIds = next;
+  persistMinimised();
+  renderGrid();
+  return true;
+}
+
 function focusOnly(id) {
   minimisedIds = new Set(currentOrder().filter((x) => x !== id));
   persistMinimised();
@@ -152,13 +173,13 @@ let mailWakesDormant = false;
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
+let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
 // The server's loaded extensions [{id, enabled, label, help, defaultEnabled}],
 // carried on every graph push — what the generic `ext:<id>` settings toggles
 // read back, and what mounts/unmounts each one's slot contributions. The
 // identity fields are fixed at server boot; `enabled` is live.
 let autoUpdate = 'notify';
 let refreshSessionsAfterUpdate = false;
-let graphCodeVersion = null;
 let latestExtensions = [];
 // The latest graph as received, handed whole to extension slot updates
 // (slots.update) so an extension reads its own contribution off it — the core
@@ -194,6 +215,9 @@ const extRequires = new Map();
 const extKeybindings = new Map();
 // Extension labels, for the Shortcuts tab's group titles.
 const extLabels = new Map();
+// Each extension's `{ branch, enabled }` early-adopter facts, for api.earlyAdopter.
+// Absent when its manifest declares no branch.
+const extEarlyAdopter = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
@@ -206,6 +230,10 @@ function noteExtClientFacts(list) {
     if (Array.isArray(e.requires)) extRequires.set(e.id, e.requires);
     if (Array.isArray(e.keybindings)) extKeybindings.set(e.id, e.keybindings);
     if (typeof e.label === 'string' && e.label) extLabels.set(e.id, e.label);
+    if ('earlyAdopter' in e) {
+      if (typeof e.earlyAdopter?.branch === 'string' && e.earlyAdopter.branch) extEarlyAdopter.set(e.id, { branch: e.earlyAdopter.branch, enabled: e.earlyAdopter.enabled === true });
+      else extEarlyAdopter.delete(e.id);
+    }
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -213,7 +241,7 @@ function noteExtClientFacts(list) {
 const notifications = createNotifications({ document });
 const slots = createSlots({
   document,
-  onExtensionRemoved: (id) => notifications.clear(id),
+  onExtensionRemoved: (id) => { notifications.clear(id); sessionEmbed.dropExtension(id); },
   storage: (() => { try { return localStorage; } catch { return null; } })(),
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
@@ -232,9 +260,30 @@ const slots = createSlots({
     queueMicrotask(() => { chipsRenderQueued = false; if (latestGraph) renderGrid(); });
   },
   version: () => hostApiVersion,
+  themeButtonHtml,
+  // api.refreshInputGates(), or a gate's extension going away. Deferred like
+  // onChipsChanged so a timer firing for every card lands as one pass.
+  onInputGatesChanged: () => {
+    if (inputGatesQueued) return;
+    inputGatesQueued = true;
+    queueMicrotask(() => { inputGatesQueued = false; refreshInputGates(); });
+  },
 });
 let chipsRenderQueued = false;
+let inputGatesQueued = false;
+// Sessions a `session.inputGate` extension has locked: typed input is dropped
+// at their terminals (pointer reports still pass, so the wheel scrolls) and the
+// chat composer is disabled with the gate's reason. Told once per lock.
+const inputGates = createInputGates({
+  gateFor: (s) => slots.inputGate(s, latestGraph, extApi),
+  notify: (_sid, g) => toast(`Input locked: ${g.reason}`),
+});
+function refreshInputGates() {
+  if (!inputGates.refresh(latestSessions)) return;
+  chatView.setInputGate(inputGates.get(selectedSessionId));
+}
 function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
+  selectionBeforeView = null;
   setView('grid');
   if (latestSessions.some((x) => x.sessionId === sessionId)) {
     const dropped = boardOpen.drop();
@@ -243,7 +292,7 @@ function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
     return;
   }
   boardOpen.request(sessionId, { diff, onClose });
-  pendingSelect = sessionId;
+  setPendingSelect(sessionId);
   send({ type: 'resume', sessionId });
   toast('Restoring…');
 }
@@ -267,7 +316,11 @@ function landOnCard(sessionId, { diff, onClose }, select) {
   openDiffPanel(sessionId);
 }
 const boardOpen = createBoardOpen();
-onDiffPanelClosed((sid) => boardOpen.diffClosed(sid));
+onDiffPanelClosed((sid) => {
+  boardOpen.diffClosed(sid);
+  // An embedded panel's Diff button goes back to Chat/Terminal (api.mountSession).
+  if (sessionEmbed.active() && selectedSessionId === sid) renderPanel(sid);
+});
 
 function scrollTaskIntoView(taskId) {
   const sel = taskId === ADHOC_ID ? '.task-cell[data-entity="no-task"]' : `.task-cell[data-taskid="${CSS.escape(taskId)}"]`;
@@ -298,6 +351,7 @@ function openTaskInBoard(taskId) {
 // Lazy + memoised so <script> load order can't break module init: window.markdownit
 // is only read on first render, by which point the classic vendor <script> has run.
 let renderMarkdown;
+let extFileViewer;
 const migrateSoundPreference = createSoundMigration();
 
 const extApi = {
@@ -318,15 +372,22 @@ const extApi = {
   // on the live board counts (an archived or unknown id would sit in the
   // minimised set until the next prune), and minimise() itself refuses the last
   // visible tile — so report whether the tile really went.
+  setMinimisedTasks,
   minimiseTask: (taskId) => {
     if (!currentOrder().includes(taskId) || minimisedIds.has(taskId)) return false;
     minimise(taskId);
     return minimisedIds.has(taskId);
   },
+  // Backs `api.openFile`; slots has checked the capability and bound the id.
+  openExtFile: (extId, p) => (extFileViewer ||= createExtFileViewer({ document, renderMarkdown: (md) => extApi.markdownPreview(md) })).open(extId, p),
   // Backs `api.images.stage`.
   stageImage: (file) => extImageStaging.stage(file),
+  // Back `api.earlyAdopter`; slots binds the id.
+  earlyAdopterFor: (extId) => extEarlyAdopter.get(extId),
+  setEarlyAdopter: setEarlyAdopterAcked,
   // Backs `api.agents()`; slots hands each caller a deep copy.
   agents: () => availableAgents,
+  modelFront: MODEL_FRONT,
   // Backs slots' per-extension `api.settings()`, which binds the id.
   settingsFor: (extId) => latestExtensions.find((e) => e.id === extId)?.settingValues,
   // Backs `api.settings.set` (slots binds the id). Sent through the RAW send
@@ -348,7 +409,72 @@ const extApi = {
   // Backs `api.requestBoardRender`: the task.body counterpart of
   // requestPanelRender, for content that changes a tile's size.
   requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },
+  // Backs `api.mountSession`; slots has checked the element and the id and
+  // bound the extension. Lent at once if the element's view is on screen
+  // (or not in the document yet), otherwise parked until it is.
+  mountSession: (extId, el, sessionId, { onMaximize = null, view = null } = {}) => {
+    const host = extViewHosts.get(currentView);
+    const active = el.isConnected ? Boolean(host?.contains(el)) : isExtView(currentView);
+    return sessionEmbed.mount(el, sessionId, { extId, onMaximize, view, active });
+  },
 };
+
+// ── api.mountSession: the board's session panel inside an extension view ────
+// session-embed.js moves the nodes; these say what showing and letting go mean.
+// While lent, main.session-embedded keeps the board's resize handle out of it.
+const sessionEmbed = createSessionEmbed({
+  document,
+  parts: () => ({
+    sidebar: document.getElementById('sidebar'),
+    diffPanel: document.getElementById('diff-panel'),
+    diffAnchor: document.getElementById('term-wrap'),
+  }),
+  show: showEmbeddedSession,
+  release: (o) => {
+    if (isDiffPanelOpen()) closeDiffPanel();
+    if (pendingSelect === o.sessionId) pendingSelect = null;
+    if (selectedSessionId) deselectSession(); else hideSidebar();
+    document.querySelector('main').classList.remove('session-embedded');
+  },
+});
+
+// A live session is selected as a card click would; a dormant one is resumed
+// first, as its card does; one that is not on the board at all (archived) is
+// restored and selected when the next graph brings it back (tryFulfillPending).
+function showEmbeddedSession(sessionId, o) {
+  document.querySelector('main').classList.add('session-embedded');
+  o.wrap?.classList.remove('pending');
+  const s = latestSessions.find((x) => x.sessionId === sessionId);
+  if (s && !s.managed) { resumeDormant(sessionId); applyEmbedView(o); return; }
+  if (s) { selectSession(sessionId); applyEmbedView(o); return; }
+  if (selectedSessionId) deselectSession();
+  if (isDiffPanelOpen()) closeDiffPanel();
+  o.wrap?.classList.add('pending');
+  showSidebar();
+  document.getElementById('panel').innerHTML = '<div class="panel-empty">Restoring…</div>';
+  setPendingSelect(sessionId);
+  send({ type: 'resume', sessionId });
+}
+
+// The view a mount or show asked for (`{ view: 'diff' }`), applied once the
+// session is selected and then forgotten, as the panel's own Diff button does.
+function applyEmbedView(o) {
+  if (o.view !== 'diff') return;
+  o.view = null;
+  openDiffPanel(o.sessionId);
+  renderPanel(o.sessionId);
+}
+
+// Lend the panel to the current view if it holds the embed's element, take it
+// back otherwise. Called on every view switch and graph tick, so an element
+// dropped without unmount (its view re-drew over it) never strands the panel.
+function syncSessionEmbed() {
+  sessionEmbed.reclaimOrphan();
+  const o = sessionEmbed.owner();
+  if (!o) return;
+  if (extViewHosts.get(currentView)?.contains(o.el)) sessionEmbed.unpark();
+  else sessionEmbed.park();
+}
 
 // api.openDispatch({ taskId, intent, lockTask, cwd, images }): open the dispatch
 // modal as openDispatch does; resolves with the `dispatched` ack once the human
@@ -384,6 +510,34 @@ function setExtSettingAcked(extId, key, value) {
     send({ type: 'ext-setting-set', id: extId, key, value, reqId });
   });
 }
+// api.earlyAdopter.set, the same way: settled by `ext-early-adopter-result`.
+const extEarlyAdopterPending = new Map();
+function setEarlyAdopterAcked(extId, on) {
+  const reqId = `e${++extSettingSeq}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      extEarlyAdopterPending.delete(reqId);
+      reject(new Error('Saving the early-adopter choice timed out'));
+    }, 10000);
+    extEarlyAdopterPending.set(reqId, {
+      resolve: (stored) => {
+        const facts = extEarlyAdopter.get(extId);
+        if (facts) extEarlyAdopter.set(extId, { ...facts, enabled: stored });
+        resolve(stored);
+      },
+      reject,
+      timer,
+    });
+    send({ type: 'ext-set-early-adopter', id: extId, on, reqId });
+  });
+}
+function settleEarlyAdopter(msg) {
+  const p = extEarlyAdopterPending.get(msg.reqId);
+  if (!p) return;
+  extEarlyAdopterPending.delete(msg.reqId);
+  clearTimeout(p.timer);
+  if (msg.ok) p.resolve(msg.on === true); else p.reject(new Error(String(msg.error || 'Early-adopter choice refused')));
+}
 function settleExtSetting(msg) {
   const p = extSettingPending.get(msg.reqId);
   if (!p) return;
@@ -403,7 +557,7 @@ function pruneSampleHosts() {
 function renderSampleCard(el, _extId, hidden) {
   if (!el) return;
   pruneSampleHosts();
-  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null, isOnOlderCode: () => true }, { expanded: true });
+  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null }, { expanded: true });
   // Inert: never wired (no wireGridEvents), not focusable, not clickable.
   const card = el.querySelector('.session-card');
   if (card) {
@@ -452,9 +606,9 @@ function syncClientExtensions() {
   }
   // A panel re-render is what draws the gap the unmount left, and what gives a
   // freshly-loaded contribution its host to mount into.
-  if (unmounted) { extApi.requestPanelRender(); renderExtViews(); syncDispatchExtFields(); }
+  if (unmounted) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); }
   clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
-    .then((changed) => { if (changed) { extApi.requestPanelRender(); renderExtViews(); syncDispatchExtFields(); } });
+    .then((changed) => { if (changed) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); } });
 }
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
@@ -488,10 +642,36 @@ const dispatchWaiter = createDispatchWaiter();
 // Seeded with just the Claude default so a dispatch before that lands still works.
 let availableAgents = [{ id: 'claude', label: 'Claude', models: [{ value: 'opus', label: 'Opus', default: true }], efforts: [] }];
 
+let dispatchModelPicker = null;
+
+function currentDispatchPick() {
+  const model = document.getElementById('m-model');
+  return { agent: model.options[model.selectedIndex]?.dataset.agent, model: model.value, effort: document.getElementById('m-effort').value };
+}
+
+function rememberedDispatchPick() {
+  try { return readDispatchPick(localStorage); } catch { return null; }
+}
+
+function rememberDispatchPick() {
+  try { saveDispatchPick(localStorage, currentDispatchPick()); } catch {}
+}
+
+function applyDispatchPick(explicit) {
+  const pick = dispatchPick(availableAgents, rememberedDispatchPick(), explicit);
+  if (!pick) return;
+  const model = document.getElementById('m-model');
+  model.selectedIndex = [...model.options].findIndex((o) => o.value === pick.model && o.dataset.agent === pick.agent);
+  modelEdited = true;
+  populateEffortSelect();
+  document.getElementById('m-effort').value = pick.effort;
+  effortEdited = true;
+}
+
 function populateModelSelect() {
   const sel = document.getElementById('m-model');
   if (!sel) return;
-  const prev = sel.value;
+  const prev = modelEdited ? currentDispatchPick() : undefined;
   sel.innerHTML = '';
   const single = availableAgents.length === 1;
   for (const a of availableAgents) {
@@ -508,7 +688,8 @@ function populateModelSelect() {
   }
   // Preserve only a user's explicit choice across a repopulate; otherwise let the
   // server-marked default win (the seed's default must not clobber it on first load).
-  if (modelEdited && prev) sel.value = prev;
+  applyDispatchPick(prev);
+  modelEdited = Boolean(prev);
   syncQuickLaunch();
   populateEffortSelect();
   syncAutoCompactPresets();
@@ -538,11 +719,11 @@ function populateEffortSelect() {
   const prev = eff.value;
   const agentId = modelSel.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
   const agent = availableAgents.find((a) => a.id === agentId) || availableAgents[0];
-  const efforts = agent?.efforts || [];
+  const efforts = effortsOf(agent, agent?.models.find((m) => m.value === modelSel.value));
   eff.innerHTML = '';
   const def = document.createElement('option');
   def.value = '';
-  def.textContent = 'Default';
+  def.textContent = 'Auto';
   eff.appendChild(def);
   for (const e of efforts) {
     const opt = document.createElement('option');
@@ -554,6 +735,7 @@ function populateEffortSelect() {
   // fall back to Default rather than stranding a level the agent can't take.
   if (effortEdited && prev && efforts.some((e) => e.value === prev)) eff.value = prev;
   else eff.value = '';
+  dispatchModelPicker?.sync();
 }
 
 // The three models offered as one-click "Launch with X" shortcuts (⌘1–⌘3). Derived
@@ -619,6 +801,8 @@ function quickLaunch(value) {
   if (!opt) return;
   sel.value = value;
   modelEdited = true;
+  populateEffortSelect();
+  rememberDispatchPick();
   syncRuntimeToggle();
   submitDispatch();
 }
@@ -668,9 +852,9 @@ function applyGraph(graph) {
   mailWakesDormant = graph.mailWakesDormant === true;
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
+  defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
   autoUpdate = graph.autoUpdate || 'notify';
   refreshSessionsAfterUpdate = graph.refreshSessionsAfterUpdate === true;
-  graphCodeVersion = graph.codeVersion || null;
   const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   noteExtClientFacts(latestExtensions);
@@ -721,12 +905,16 @@ function applyGraph(graph) {
   // panel is drawn against the contributions that survive this tick.
   if (latestExtensions.some((e) => e.id === 'sounds')) migrateSoundPreference(send);
   syncClientExtensions();
+  // After the sync above, so the Settings row offers exactly what #m-runtime does.
+  setRuntimeOptions([...document.getElementById('m-runtime').options].map((o) => ({ value: o.value, label: o.textContent })));
   // Every `view` contribution gets this graph. AFTER syncClientExtensions, so a
   // view that has only just registered is updated in the same tick it appears
   // rather than staying blank until the next one — and unconditionally, because
   // a view is a whole pane with no other render path of its own.
   updateExtViews();
+  syncSessionEmbed();
   trackJustFinished(latestSessions);
+  refreshInputGates();
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
   // re-render it whenever it's open so toggles/edits/fires reflect at once.
@@ -785,15 +973,13 @@ function applyGraph(graph) {
 function setView(view) {
   if (currentView === 'search' && view === 'grid') clearSearch();
   currentView = view;
-  // The diff panel overlays the board, so leaving grid must dismiss it.
-  if (view !== 'grid' && isDiffPanelOpen()) closeDiffPanel();
+  // The diff panel overlays the board, so leaving grid must dismiss it. An
+  // embedded one is the embed's to keep (syncSessionEmbed below).
+  if (view !== 'grid' && isDiffPanelOpen() && !sessionEmbed.active()) closeDiffPanel();
   document.querySelectorAll('.layouts button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   const gridEl = document.getElementById('grid');
   gridEl.classList.toggle('hidden', view !== 'grid');
-  // #grid.focus-mode carries its own `display: flex`, which ties in CSS
-  // specificity with #grid.hidden — leaving it set while grid is hidden lets
-  // the focused tile win the tie and render alongside Search. renderGrid()
-  // re-adds it whenever focus mode is actually active.
+  // renderGrid() re-adds focus-mode when grid is shown again.
   if (view !== 'grid') gridEl.classList.remove('focus-mode');
   const searchEl = document.getElementById('search');
   if (searchEl) searchEl.classList.toggle('hidden', view !== 'search');
@@ -801,18 +987,18 @@ function setView(view) {
   // ALL of them on every setView rather than just the pair being swapped, so a
   // host created while another view was current starts hidden.
   for (const [key, host] of extViewHosts) host.classList.toggle('hidden', key !== view);
-  if (view === 'grid') renderGrid();
-  else if (view === 'search') {
-    // Search is a no-session view: drop any open terminal so it doesn't dangle
-    // behind the results.
-    if (selectedSessionId) deselectSession();
-    onEnterSearchView();
-  } else if (isExtView(view) && selectedSessionId) {
-    // Same rule as Search, for the same reason: an extension view owns the
-    // whole board area, so a terminal left attached behind it is invisible and
-    // still 80 columns wide when you come back.
+  syncSessionEmbed();
+  if (selectedSessionId && (view === 'search' || (isExtView(view) && !sessionEmbed.active()))) {
+    const previous = selectedSessionId;
     deselectSession();
+    selectionBeforeView = previous;
   }
+  if (view === 'grid') {
+    const previous = selectionBeforeView;
+    selectionBeforeView = null;
+    if (previous && latestSessions.some((s) => s.sessionId === previous)) selectSession(previous);
+    else renderGrid();
+  } else if (view === 'search') onEnterSearchView();
   // Mirror the view into the URL hash so a refresh re-lands here (Search is a
   // deep link, like a selected session). syncHash prefers the view over selection.
   syncHash();
@@ -1256,9 +1442,8 @@ function sortBucketSessions(sessions, bucketId) {
 
 // Feeds tileSpan (layout.js) the secondary-weight counts it needs, all derived from
 // exactly what renderTileCards (cards.js) draws: computeAbsorption decides which
-// sessions fold into a parent's spine (an orphan, or a chained grandchild whose
-// parent is itself absorbed, renders as its own top-level card instead and must
-// NOT be counted in either number). Takes the same non-asleep subset tileHtml
+// sessions fold into a parent's spine (an orphan renders as its own top-level
+// card instead and must NOT be counted in either number). Takes the same non-asleep subset tileHtml
 // uses (an asleep session is shown as its own flat snoozed row, never nested,
 // regardless of parentSession).
 //
@@ -1282,7 +1467,7 @@ function sortBucketSessions(sessions, bucketId) {
 // they're split out rather than folded into `visible`. Same collapse exemption:
 // a collapsed workflow box's workers draw nothing, full-view or not.
 function childRowCounts(activeSessions) {
-  const { absorbed, childrenByParent } = computeAbsorption(activeSessions);
+  const { absorbed } = computeAbsorption(activeSessions);
   let visible = 0;
   let fullView = 0;
   // Full-view children that are actually drawn (so, same collapse exemption as
@@ -1291,10 +1476,11 @@ function childRowCounts(activeSessions) {
   // this set is what tells that loop such a child isn't zone-less like a plain
   // compact `.worker-row`.
   const drawnFullView = new Set();
-  for (const [parentId, children] of childrenByParent) {
-    const parent = activeSessions.find((s) => s.sessionId === parentId);
-    if (isWorkflowRun(parent) && collapsedWorkflows.has(parentId)) continue;
-    for (const c of children) {
+  // A collapsed workflow box hides its WHOLE subtree, however deep, so the walk
+  // goes per top-level group rather than per parent.
+  for (const { session, descendants } of sessionGroups(activeSessions)) {
+    if (isWorkflowRun(session) && collapsedWorkflows.has(session.sessionId)) continue;
+    for (const c of descendants) {
       if (isChildFullView(c)) { fullView += 1; drawnFullView.add(c.sessionId); }
       else visible += 1;
     }
@@ -1392,7 +1578,6 @@ function cardCtx() {
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
     linkChip: (l) => slots.linkChip(l, latestGraph, extApi),
     hiddenChips: slots.hiddenChips(),
-    isOnOlderCode: (s) => sessionOnOlderCode(s, graphCodeVersion),
   };
 }
 
@@ -1456,12 +1641,7 @@ function restoreScrollState(el, { grid, bodies, tray }) {
   if (trayPills) trayPills.scrollTop = tray;
 }
 
-function renderGrid() {
-  const el = document.getElementById('grid');
-  // Migrate a legacy single-value focus once the task list is known, then prune
-  // stale ids. minimisedIds drives everything below: the board shows every tile
-  // NOT in the set; the tray (trayHtml) shows those that are.
-  const orderIds = currentOrder();
+function reconcileMinimised(orderIds) {
   const validIds = new Set(orderIds);
   if (legacyFocusedId != null) {
     minimisedIds = expandFocusToMinimised(orderIds, legacyFocusedId);
@@ -1469,9 +1649,38 @@ function renderGrid() {
     localStorage.removeItem(LEGACY_FOCUS_KEY);
     persistMinimised();
   }
-  const pruned = pruneMinimised(minimisedIds, validIds);
+  let pruned = pruneMinimised(minimisedIds, validIds);
+  if (orderIds.length && pruned.size === orderIds.length) pruned = new Set();
   if (pruned.size !== minimisedIds.size) { minimisedIds = pruned; persistMinimised(); }
+}
 
+function trayContext() {
+  return {
+    tasks: currentOrder().map((id) => ({
+      id, name: id === ADHOC_ID ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === id).name,
+      adhoc: id === ADHOC_ID,
+    })),
+    minimisedIds: [...minimisedIds],
+  };
+}
+
+const trayHost = document.createElement('div');
+trayHost.className = 'tray-pills';
+let extensionTrayActive = false;
+
+function renderGrid() {
+  // Only the grid view lays the board out: focus mode's `display: flex` would
+  // otherwise bring a hidden board back beside Search or an extension view.
+  // setView('grid') renders it again on the way back.
+  if (currentView !== 'grid') return;
+  const el = document.getElementById('grid');
+  // Migrate a legacy single-value focus once the task list is known, then prune
+  // stale ids. minimisedIds drives everything below: the board shows every tile
+  // NOT in the set; the tray (trayHtml) shows those that are.
+  const orderIds = currentOrder();
+  reconcileMinimised(orderIds);
+
+  extensionTrayActive = slots.syncTray(trayHost, extApi, trayContext(), latestGraph);
   const visible = visibleTileIds(orderIds, minimisedIds);
   // Exactly one visible tile → the big expanded focus view (unchanged look). More
   // than one → the normal packed grid. The tray is appended by both paths.
@@ -1479,7 +1688,7 @@ function renderGrid() {
   el.classList.remove('focus-mode');
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
-  for (const s of latestSessions) {
+  for (const s of onBoard(latestSessions)) {
     const tid = assignedTaskId(s.sessionId);
     if (tid) byTask.get(tid).push(s);
     else noTask.push(s);
@@ -1542,7 +1751,7 @@ function renderGrid() {
   // tiles — a content-sized `auto` track so it never steals height from the tiles.
   // Without its own track it would auto-place into a tile cell, cramped to one
   // column (the bug this fixes).
-  const hasTray = minimisedIds.size > 0;
+  const hasTray = extensionTrayActive || minimisedIds.size > 0;
   const trayRow = hasTray ? ' auto' : '';
   const singleColumn = cols === 1;
   el.classList.toggle('single-column', singleColumn);
@@ -1599,7 +1808,7 @@ function renderFocusedTile(el, id) {
   const isAdhoc = id === ADHOC_ID;
   const sessions = sortAsleepLast(
     sortBucketSessions(
-      latestSessions.filter((s) => isAdhoc ? !assignedTaskId(s.sessionId) : assignedTaskId(s.sessionId) === id),
+      onBoard(latestSessions).filter((s) => isAdhoc ? !assignedTaskId(s.sessionId) : assignedTaskId(s.sessionId) === id),
       id
     ),
     phaseOf
@@ -1636,6 +1845,7 @@ function sessionDotStatus(s) {
 // The bottom tray: the tiles NOT in `visible` (so grid and tray can never show the
 // same tile), one pill each. Reuses the .focus-switcher strip styling.
 function trayHtml(visible) {
+  if (extensionTrayActive) return '<div class="focus-switcher"><div data-tray-host></div></div>';
   const visibleSet = new Set(visible);
   const mins = currentOrder()
     .filter((id) => !visibleSet.has(id))
@@ -1643,10 +1853,13 @@ function trayHtml(visible) {
     .filter(Boolean);
   if (!mins.length) return '';
   const pills = mins.map((t) => {
-    const sessions = latestSessions.filter((s) => {
-      const tid = assignedTaskId(s.sessionId);
-      return (t.id === ADHOC_ID ? !tid : tid === t.id) && !isAsleep(s);
-    });
+    const sessions = sortBucketSessions(
+      onBoard(latestSessions).filter((s) => {
+        const tid = assignedTaskId(s.sessionId);
+        return (t.id === ADHOC_ID ? !tid : tid === t.id) && !isAsleep(s);
+      }),
+      t.id
+    );
     const dots = sessions.map((s) => `<span class="switcher-dot ${esc(sessionDotStatus(s))}"></span>`).join('');
     return `<button class="switcher-pill" data-taskid="${esc(t.id)}" title="Restore ${esc(t.name)}">
       <span class="switcher-name">${esc(t.name)}</span><span class="switcher-dots">${dots}</span>
@@ -1657,6 +1870,8 @@ function trayHtml(visible) {
 }
 
 function wireTray(el) {
+  const placeholder = el.querySelector('[data-tray-host]');
+  if (placeholder) { placeholder.replaceWith(trayHost); return; }
   // Shift+click a pill to focus on just that task (everything else minimises),
   // same as the kebab menu's Focus action — a plain click only restores this one
   // alongside whatever's already visible.
@@ -2038,6 +2253,13 @@ function mountMenu(items, x, y) {
 // `on`) rather than dismissing the menu; the server round-trip + next graph poll
 // reconcile the persisted state. run gets the click event — its currentTarget is
 // the row button, whose trailing slot holds the tick.
+// Every file link clicked in a session's chat or terminal: a `file.open`
+// extension may take it, otherwise the board's own preview opens.
+function openFile(path, { sessionId, source }) {
+  if (slots.fileOpen({ path, sessionId, source }, latestGraph, extApi)) return;
+  openFilePreview(path);
+}
+
 // `card.action` extension items for one card, in the menu's own item shape.
 // Sits with the per-session settings (auto-fix, auto-merge) in both the card
 // right-click menu and the pane's Actions menu. `hint` is extension TEXT, so it
@@ -2069,6 +2291,21 @@ function extTaskMenuItems(taskId, isNoTask) {
       run: it.run,
       ...(it.hint ? { trailing: `<span class="context-menu-hint">${esc(it.hint)}</span>` } : {}),
     }));
+}
+
+function taskMinimiseMenuItem(taskId) {
+  const adhoc = taskId === ADHOC_ID;
+  const task = { id: taskId, name: adhoc ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === taskId)?.name, adhoc };
+  return slots.trayMinimiseItem(task, latestGraph, extApi)
+    || { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(taskId) };
+}
+
+function openTaskViewMenu(x, y) {
+  const item = slots.trayBackgroundItem(latestGraph, extApi);
+  mountMenu([
+    { label: 'New task', icon: PLUS_ICON, run: () => createTask() },
+    ...(item ? [item] : []),
+  ], x, y);
 }
 
 function autoFixMenuItem(s) {
@@ -2182,7 +2419,7 @@ function attachMenuItems(sessionId) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!s) return [];
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
-  const candidates = orderAttachCandidates(attachCandidates(sessionId, latestSessions, assignedTaskId), s.spawnedBy);
+  const candidates = orderAttachCandidates(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId), s.spawnedBy);
   return candidates.map((c) => {
     const depth = nestingDepth(c, byId);
     const prefix = depth ? '— '.repeat(depth) : '';
@@ -2231,7 +2468,7 @@ function openCardMenu(sessionId, x, y) {
     // "Full view" only makes sense for a genuine CHILD (parentSession set) — a
     // top-level session already renders full, whether or not it's `spawnedBy`.
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, latestSessions, assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(items, x, y);
@@ -2257,7 +2494,8 @@ function openActionsMenu(sessionId, x, y) {
   const items = [
     { label: 'Fork session', icon: FORK_ICON, trailing: KBD_FORK, run: () => openFork(sessionId) },
     { label: 'Peer review session…', icon: PLUS_ICON, trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
-    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
+    // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
+    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => { openDiffPanel(sessionId); if (sessionEmbed.active()) renderPanel(sessionId); } },
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
@@ -2274,7 +2512,7 @@ function openActionsMenu(sessionId, x, y) {
     ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, run: () => promoteSession(sessionId) }] : []),
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, latestSessions, assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Stop & archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(items, x, y);
@@ -2345,7 +2583,7 @@ function openTaskActionsMenu(taskId, x, y) {
   const sortOn = activitySortedTasks.has(taskId);
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
-    { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(taskId) },
+    taskMinimiseMenuItem(taskId),
     { label: 'Sort by activity', icon: SORT_ICON, keepOpen: true, trailing: sortOn ? CHECK_ICON : '',
       run: (e) => {
         toggleActivitySort(taskId);
@@ -2451,7 +2689,7 @@ function openTaskMenu(cell, x, y) {
     ...(!isNoTask ? [
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
     ] : []),
-    { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(isNoTask ? ADHOC_ID : taskId) },
+    taskMinimiseMenuItem(isNoTask ? ADHOC_ID : taskId),
     ...(extItems.length ? [{ sep: true }, ...extItems] : []),
     ...(!isNoTask ? [
       { sep: true },
@@ -2848,7 +3086,7 @@ function armNewTask(on) {
     grid.addEventListener('contextmenu', (e) => {
       if (e.target.closest('.task-cell')) return;
       e.preventDefault();
-      mountMenu([{ label: 'New task', icon: PLUS_ICON, run: () => createTask() }], e.clientX, e.clientY);
+      openTaskViewMenu(e.clientX, e.clientY);
     });
   }
   btn.addEventListener('dragover', (e) => { e.preventDefault(); btn.classList.add('drop'); });
@@ -2929,7 +3167,7 @@ function trackJustFinished(sessions) {
 // descendant must be excluded from the "still in use" check too.
 function archivedToast(sessionId, text, worktree, archivedIds = [sessionId]) {
   if (selectedSessionId === sessionId) selectAfterArchive(sessionId);
-  const actions = [{ label: 'Resume', onClick: () => { pendingSelect = sessionId; send({ type: 'resume', sessionId }); } }];
+  const actions = [{ label: 'Resume', onClick: () => { setPendingSelect(sessionId); send({ type: 'resume', sessionId }); } }];
   const cleanup = worktreeCleanupAction(sessionId, worktree, archivedIds);
   if (cleanup) actions.push(cleanup);
   const stopContainer = containerStopAction(sessionId, archivedIds);
@@ -3139,6 +3377,7 @@ function showRestartingPlaceholder() {
 // --- selection / panel ---
 
 export let selectedSessionId = null;
+let selectionBeforeView = null;
 // Keyboard nav can also land on a tile's "new session" slot rather than a session
 // card: this holds that tile's id (a task id, or ADHOC_ID for Unassigned), and is
 // mutually exclusive with selectedSessionId. Enter on it opens the dispatch dialog.
@@ -3151,7 +3390,7 @@ let pendingSelect = null;
 let pendingScheduledFocus = null;
 // Setter so split-out views (search.js) can arm a post-resume jump without
 // owning the binding (ES live bindings are read-only to importers).
-export function setPendingSelect(id) { pendingSelect = id; }
+export function setPendingSelect(id) { selectionBeforeView = null; pendingSelect = id; }
 
 // In-app "maximize the agent window" view state: a transient toggle (no
 // persistence) that expands #sidebar to fill the content area, hiding the task
@@ -3200,6 +3439,7 @@ function toggleMaximize() {
 // acknowledgement — persist it so the needs-you alarm stays quiet across a
 // refresh, not just while this card happens to be the selected one.
 function selectSession(sessionId) {
+  selectionBeforeView = null;
   // Moving the selection to a DIFFERENT session dismisses a diff panel still
   // showing the previous one — the diff is coupled to a single session's terminal,
   // so it shouldn't linger over another. Re-selecting the same session keeps it.
@@ -3240,7 +3480,7 @@ const resuming = new Set();
 let resumeFailTimer = null;
 function resumeDormant(sessionId) {
   resuming.add(sessionId);
-  pendingSelect = sessionId;
+  setPendingSelect(sessionId);
   send({ type: 'resume', sessionId });
   toast('Resuming…');
   selectSession(sessionId);
@@ -3279,6 +3519,7 @@ function wakeSession(sessionId) {
 // Drop the current selection: close its terminal and hide the sidebar. Used by
 // the Search view (no-session state) and when the selected session is archived.
 export function deselectSession() {
+  selectionBeforeView = null;
   selectedSessionId = null;
   selectedNewSlot = null;
   closeTerminal();
@@ -3338,9 +3579,14 @@ function syncHash() {
 function tryFulfillPending() {
   if (!pendingSelect) return;
   if (!latestSessions.some((x) => x.sessionId === pendingSelect)) return;
-  if (currentView !== 'grid') setView('grid');
   const target = pendingSelect;
+  selectionBeforeView = null;
+  // An embed's restore lands in the embed, not on the board.
+  const embed = sessionEmbed.active();
+  const embedded = embed?.sessionId === target;
+  if (currentView !== 'grid' && !embedded) setView('grid');
   pendingSelect = null;
+  if (embedded) { embed.wrap?.classList.remove('pending'); selectSession(target); applyEmbedView(embed); return; }
   const req = boardOpen.claim(target);
   if (req) landOnCard(target, req, selectSession);
   else selectSession(target);
@@ -3352,10 +3598,15 @@ window.addEventListener('hashchange', () => {
   // (#view=history) is normalized to what syncHash would write.
   if (view) { if (currentView !== view) setView(view); else syncHash(); return; }
   const id = hashSessionId();
-  if (id === selectedSessionId) return;
-  if (id) { pendingSelect = id; tryFulfillPending(); }
-  else if (currentView !== 'grid') setView('grid');
-  else deselectSession();
+  if (id) {
+    if (id === selectedSessionId) return;
+    setPendingSelect(id);
+    tryFulfillPending();
+  } else {
+    selectionBeforeView = null;
+    if (currentView !== 'grid') setView('grid');
+    else deselectSession();
+  }
 });
 
 // True when the board is collapsed onto a single visible tile (renderGrid's same
@@ -3381,7 +3632,7 @@ function focusModeActive() {
 function navTargets() {
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
-  for (const s of latestSessions) {
+  for (const s of onBoard(latestSessions)) {
     const tid = assignedTaskId(s.sessionId);
     if (tid && byTask.has(tid)) byTask.get(tid).push(s);
     else noTask.push(s);
@@ -3390,10 +3641,10 @@ function navTargets() {
   for (const id of currentOrder()) {
     const arr = id === ADHOC_ID ? noTask : (byTask.get(id) || []);
     const active = sortBucketSessions(arr.filter((s) => phaseOf(s) !== 'asleep'), id);
-    for (const { session, children } of sessionGroups(active)) {
+    for (const { session, descendants } of sessionGroups(active)) {
       targets.push({ tileId: id, sid: session.sessionId });
       if (isWorkflowRun(session) && collapsedWorkflows.has(session.sessionId)) continue;
-      for (const c of children) targets.push({ tileId: id, sid: c.sessionId });
+      for (const c of descendants) targets.push({ tileId: id, sid: c.sessionId });
     }
     targets.push({ tileId: id, sid: null }); // the tile's "new session" slot
   }
@@ -3472,6 +3723,7 @@ function moveSessionFocus(dir) {
 // appended after the last card and can sit just below the tile's fold, which is
 // what made it feel like an invisible element got selected "at the end".
 function selectNewSlot(tileId) {
+  selectionBeforeView = null;
   selectedNewSlot = tileId;
   // Keep the terminal open but blur it: while focused, xterm would ALSO emit a stray
   // \r for the Enter that's meant to launch (the leak openTerminal documents), and
@@ -3820,7 +4072,7 @@ function onHintKey(e) {
 // definitions in core-keybindings.js). The gating each one had as a bare
 // window listener lives on in its `when`, unchanged: the registry's scopes
 // pick which bindings are candidates, `when` keeps the exact old conditions.
-const anyModalOpen = () => Boolean(document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)'));
+const anyModalOpen = () => anyModalOpenIn(document);
 // The nav / Enter gate: grid view, no card menu, no modal, and not typing in a
 // real text field (the xterm helper textarea doesn't count — see isTypingTarget).
 const boardIdle = () => currentView === 'grid' && !cardMenuEl && !isTypingTarget(document.activeElement) && !anyModalOpen();
@@ -4045,6 +4297,7 @@ function renderSidebar(s) {
     document.getElementById('term-wrap').hidden = true;
     closeTerminal(); // no-op when nothing is attached
     chatView.mount(s.sessionId);
+    chatView.setInputGate(inputGates.get(s.sessionId));
     // AFTER mount, which resets the view's cached status to null: selectSession calls
     // renderPanel (the only other setStatus caller) BEFORE this function, so without
     // re-seeding here an already-working session shows no "Working — running X" line
@@ -4242,9 +4495,18 @@ function renderPanel(sessionId) {
   const panelSubagentShown = isPanelSubagentShown(sessionId);
   const panelSubagentShowFinished = panelSubagentShowFinishedIds.has(sessionId);
   const view = viewForSession(sessionId);
+  // Lent to an extension view (api.mountSession): the diff is a third view in
+  // place rather than a panel over the board, the extension owns leaving (no
+  // Close), and Fullscreen is offered only when it said what that means.
+  const embed = sessionEmbed.active();
+  const diffing = Boolean(embed) && isDiffPanelOpen() && diffPanelSessionId() === sessionId;
+  const segOn = (v) => (diffing ? v === 'diff' : v === view);
+  const showMax = !embed || Boolean(embed.onMaximize);
+  const maxOn = embed ? embed.maximized : maximized;
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
   if (view === 'chat') {
+    chatView.setInputGate(inputGates.get(s.sessionId));
     chatView.setStatus(displayStatus(s), s.waitingFor, s.waitingReason);
     chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
     chatView.setExitNotice(s.exitOutput);
@@ -4257,6 +4519,7 @@ function renderPanel(sessionId) {
   const costChip = costTagHtml(s, slots.costCeiling(s, latestGraph), { showZero: true });
   if (costChip) chips.push(costChip);
   if (s.modelPill) chips.push(modelPillHtml(s.modelPill));
+  if (s.permissionMode && s.agent === 'claude') chips.push(`<span class="card-tag" title="Launch permission mode">${esc(s.permissionMode)}</span>`);
   // The panel is never "collapsed" like a small board tile, so it always shows
   // the token breakdown.
   if (s.tokens) chips.push(tokenChipHtml(s, { expanded: true }));
@@ -4289,13 +4552,14 @@ function renderPanel(sessionId) {
           <span class="sess-name" id="session-name" title="Click to rename">${esc(s.label)}</span>
           <span class="sess-acts">
             <span class="chat-seg" role="group" aria-label="Session view">
-              <button type="button" class="chat-seg-btn${view === 'chat' ? ' on' : ''}" data-view="chat" aria-pressed="${view === 'chat'}">Chat</button>
-              <button type="button" class="chat-seg-btn${view === 'terminal' ? ' on' : ''}" data-view="terminal" aria-pressed="${view === 'terminal'}">Terminal</button>
+              <button type="button" class="chat-seg-btn${segOn('chat') ? ' on' : ''}" data-view="chat" aria-pressed="${segOn('chat')}">Chat</button>
+              <button type="button" class="chat-seg-btn${segOn('terminal') ? ' on' : ''}" data-view="terminal" aria-pressed="${segOn('terminal')}">Terminal</button>
+              ${embed ? `<button type="button" class="chat-seg-btn${diffing ? ' on' : ''}" data-view="diff" aria-pressed="${diffing}">Diff</button>` : ''}
             </span>
             <button id="actions-btn" class="sess-actions-btn" title="Session actions">${KEBAB_ICON}Actions</button>
-            <span class="sess-acts-divider"></span>
-            <button id="panel-maximize" class="icon-ghost${maximized ? ' active' : ''}" title="${maximized ? 'Restore' : 'Fullscreen'} (${KBD_MAXIMIZE})">${maximized ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>
-            <button id="panel-close" class="icon-ghost" title="Close">${X_ICON}</button>
+            ${showMax || !embed ? '<span class="sess-acts-divider"></span>' : ''}
+            ${showMax ? `<button id="panel-maximize" class="icon-ghost${maxOn ? ' active' : ''}" title="${maxOn ? 'Restore' : 'Fullscreen'}${embed ? '' : ` (${KBD_MAXIMIZE})`}">${maxOn ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>` : ''}
+            ${embed ? '' : `<button id="panel-close" class="icon-ghost" title="Close">${X_ICON}</button>`}
           </span>
         </div>
         <div class="sess-path">
@@ -4330,7 +4594,12 @@ function renderPanel(sessionId) {
   const closeBtn = panel.querySelector('#panel-close');
   if (closeBtn) closeBtn.addEventListener('click', closePanel);
   const maxBtn = panel.querySelector('#panel-maximize');
-  if (maxBtn) maxBtn.addEventListener('click', toggleMaximize);
+  if (maxBtn) maxBtn.addEventListener('click', () => {
+    if (!embed) { toggleMaximize(); return; }
+    embed.maximized = !embed.maximized;
+    embed.onMaximize(embed.maximized);
+    renderPanel(sessionId);
+  });
   const nameEl = panel.querySelector('#session-name');
   if (nameEl) nameEl.addEventListener('click', () => beginRename(sessionId));
   const saPill = panel.querySelector('#panel-sa-pill');
@@ -4365,7 +4634,9 @@ function renderPanel(sessionId) {
       // all. Clearing after the return would ignore the one gesture that most
       // needs to be honoured.
       disarmChatHandoff();
-      if (next === viewForSession(sessionId)) return;
+      if (next === 'diff') { openDiffPanel(sessionId); renderPanel(sessionId); return; }
+      if (diffing) closeDiffPanel();
+      if (next === viewForSession(sessionId)) { if (diffing) renderPanel(sessionId); return; }
       setSessionView(sessionId, next);
       applySessionView(sessionId);
       renderPanel(sessionId);
@@ -4392,6 +4663,25 @@ function setTermFontSize(size) {
     current.term.options.fontSize = n;
     try { current.fit.fit(); } catch {}
   }
+}
+// Give a terminal the theme's monospace font once the browser has it. xterm
+// measures its cell size when the family changes, so a web font that arrives
+// after that would be drawn on the fallback font's grid. When the face was
+// still loading, the family is cycled through a placeholder so xterm sees a
+// change and measures again.
+function syncTermFont(term, fit) {
+  const family = readTerminalFont();
+  const spec = `${termFontSize()}px ${family}`;
+  const loaded = !document.fonts || document.fonts.check(spec);
+  const apply = () => {
+    try {
+      if (!loaded) term.options.fontFamily = 'monospace';
+      term.options.fontFamily = family;
+      fit.fit();
+    } catch {}
+  };
+  if (loaded) { if (term.options.fontFamily !== family) apply(); return; }
+  document.fonts.load(spec).then(apply, apply);
 }
 // Rendered into the settings modal's Appearance section: one segmented button per
 // preset size. Font size is a single global preference (every terminal), not
@@ -4461,6 +4751,98 @@ function syncShellTerminal(sessionId) {
   if (visible) try { currentShellTerm.fit.fit(); } catch {}
 }
 
+// A registered shell tmux attached into `body`: the xterm, its /pty socket and
+// the size sync. `onEnd(ws)` runs when that socket closes.
+// `sessionId` is the session a sidebar shell belongs to, so its lock covers it.
+function connectShellXterm(body, terminalId, onEnd, sessionId = null) {
+  const term = new Terminal({
+    fontSize: termFontSize(), fontFamily: readTerminalFont(),
+    theme: readTerminalTheme(), cursorBlink: true,
+    allowTransparency: true,
+    // Same reason as the agent terminal: tmux runs with `mouse on`, so a plain drag is
+    // reported to the pane instead of selecting — Option-drag is the only local select.
+    macOptionClickForcesSelection: true,
+    // Unicode11Addon's activate() calls the proposed term.unicode API.
+    allowProposedApi: true,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  attachClipboard(term);
+  attachUnicode11(term);
+  term.open(body);
+  fit.fit();
+  syncTermFont(term, fit);
+  term.focus();
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
+  term.onData((d) => ws.readyState === 1 && inputGates.allow(sessionId, d) && ws.send(d));
+  ws.onclose = () => onEnd(ws);
+
+  // Assert our true size once the socket is open so tmux's idea of our size can't
+  // drift from what xterm renders (the source of redraw garble); the server
+  // forces a repaint after the resize.
+  const syncSize = () => {
+    try {
+      fit.fit();
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    } catch { /* disposed */ }
+  };
+  ws.onopen = syncSize;
+  const ro = new ResizeObserver(syncSize);
+  ro.observe(body);
+  return { term, fit, ws, ro };
+}
+
+// --- extension terminal dialog ---
+// `terminals.create({ presentation: 'dialog' })` lands here, in the requesting
+// tab only, over whatever is open (usually Settings, which stays as it was).
+// Closing detaches: the server keeps the shell, and the extension's next create
+// with the same key presents it again. Escape belongs to the shell, so only the
+// Close button closes the dialog.
+let terminalDialog = null; // { terminalId, term, ws, ro, opener, scope }
+const terminalModal = document.getElementById('terminal-modal');
+
+function detachTerminalDialog() {
+  if (!terminalDialog) return null;
+  const { term, ws, ro, opener, scope } = terminalDialog;
+  terminalDialog = null;
+  try { ro.disconnect(); } catch {}
+  try { ws.close(); } catch {}
+  try { term.dispose(); } catch {}
+  document.getElementById('terminal-modal-body').replaceChildren();
+  return { opener, scope };
+}
+
+function closeTerminalDialog() {
+  const { opener = null, scope = null } = detachTerminalDialog() ?? {};
+  if (terminalModal.open) terminalModal.close();
+  focusReturnTarget(opener, document, scope)?.focus();
+}
+
+function openTerminalDialog({ terminalId, command, title }) {
+  if (terminalDialog?.terminalId === terminalId) { terminalDialog.term.focus(); return; }
+  const prior = terminalModal.contains(document.activeElement) ? null : document.activeElement;
+  const { opener = prior, scope = prior?.closest?.('[id$="-modal"]') ?? null } = detachTerminalDialog() ?? {};
+  document.getElementById('terminal-modal-title').textContent = title || 'Terminal';
+  const preview = document.getElementById('terminal-modal-preview');
+  preview.querySelector('code').textContent = command || '';
+  preview.classList.toggle('hidden', !command);
+  const ended = document.getElementById('terminal-modal-ended');
+  ended.classList.add('hidden');
+  if (!terminalModal.open) terminalModal.showModal();
+  const body = document.getElementById('terminal-modal-body');
+  const conn = connectShellXterm(body, terminalId, (closed) => {
+    if (terminalDialog?.ws === closed) ended.classList.remove('hidden');
+  });
+  terminalDialog = { terminalId, ...conn, opener, scope };
+}
+
+document.getElementById('terminal-modal-close').addEventListener('click', closeTerminalDialog);
+terminalModal.addEventListener('cancel', (e) => e.preventDefault());
+
 // Open (or replace) the shell terminal pane below #term-wrap in the sidebar.
 // `command` (if non-empty) is already pre-populated server-side; we show it
 // in a DOM preview so it's immune to ANSI tricks inside the xterm canvas.
@@ -4516,23 +4898,11 @@ function openShellTerminal({ terminalId, command, sessionId }) {
   pane.querySelector('.shell-terminal-close').addEventListener('click', closeShellTerminal);
 
   const body = pane.querySelector('.shell-terminal-body');
-  const term = new Terminal({
-    fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    theme: readTerminalTheme(), cursorBlink: true,
-    allowTransparency: true,
-    // Same reason as the agent terminal: tmux runs with `mouse on`, so a plain drag is
-    // reported to the pane instead of selecting — Option-drag is the only local select.
-    macOptionClickForcesSelection: true,
-    // Unicode11Addon's activate() calls the proposed term.unicode API.
-    allowProposedApi: true,
-  });
-  const fit = new FitAddon.FitAddon();
-  term.loadAddon(fit);
-  attachClipboard(term);
-  attachUnicode11(term);
-  term.open(body);
-  fit.fit();
-  term.focus();
+  // Server-side kill on disconnect removes the registry entry; client-side close
+  // removes the pane from DOM. No reconnect — shell terminals are one-shot.
+  const { term, fit, ws } = connectShellXterm(body, terminalId, (closed) => {
+    if (currentShellTerm && currentShellTerm.ws === closed) closeShellTerminal();
+  }, sessionId);
 
   // Hide immediately if the terminal belongs to a session other than the currently selected one.
   const visible = !sessionId || sessionId === selectedSessionId;
@@ -4540,31 +4910,6 @@ function openShellTerminal({ terminalId, command, sessionId }) {
     pane.style.display = 'none';
     if (handle) handle.style.display = 'none';
   }
-
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
-  ws.binaryType = 'arraybuffer';
-  ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
-  term.onData((d) => ws.readyState === 1 && ws.send(d));
-
-  // Server-side kill on disconnect removes the registry entry; client-side close
-  // removes the pane from DOM. No reconnect — shell terminals are one-shot.
-  ws.onclose = () => {
-    if (currentShellTerm && currentShellTerm.ws === ws) closeShellTerminal();
-  };
-
-  // Assert our true size once the socket is open so tmux's idea of our size can't
-  // drift from what xterm renders (the source of redraw garble); the server
-  // forces a repaint after the resize.
-  const syncSize = () => {
-    try {
-      fit.fit();
-      if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    } catch { /* disposed */ }
-  };
-  ws.onopen = syncSize;
-  const ro = new ResizeObserver(syncSize);
-  ro.observe(body);
 
   currentShellTerm = { pane, handle, term, fit, ws, sessionId: sessionId || null };
 }
@@ -4592,6 +4937,7 @@ function attachClipboard(term) {
   term.loadAddon(new globalThis.ClipboardAddon.ClipboardAddon(undefined, {
     readText: () => Promise.resolve(''),
     writeText: (_sel, text) => {
+      if (!text) return;
       const p = navigator.clipboard?.writeText(text);
       if (!p) return;
       return p.then(() => { if (text && text.trim()) toast('Copied to clipboard', false, { duration: 1500 }); }, () => {});
@@ -4615,7 +4961,7 @@ function openTerminal(s) {
   closeTerminal();
   showSidebar();
   const term = new Terminal({
-    fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: termFontSize(), fontFamily: readTerminalFont(),
     theme: readTerminalTheme(), cursorBlink: true,
     // Honor an rgba --term-bg so a style's wallpaper can show through the canvas;
     // opaque (dark/light) backgrounds render unchanged.
@@ -4654,7 +5000,7 @@ function openTerminal(s) {
   // looks like an http(s) URL, and vice-versa. s.cwd is the base a relative
   // path (docs/x.md) resolves against.
   try {
-    term.registerLinkProvider(createMarkdownLinkProvider(term, openFilePreview, s.cwd));
+    term.registerLinkProvider(createMarkdownLinkProvider(term, (p) => openFile(p, { sessionId: s.sessionId, source: 'terminal' }), s.cwd));
   } catch (err) {
     console.error('[term-links]', err);
   }
@@ -4677,6 +5023,7 @@ function openTerminal(s) {
   delete el.dataset.restarting; // leaving the spinner state — attaching a real pane
   term.open(el);
   fit.fit();
+  syncTermFont(term, fit);
   // Clicking the terminal puts keyboard focus on the Claude input and marks the
   // session as user-attended so its card stops flashing needs-you.
   const clickHandler = () => { term.focus(); acknowledge(s.sessionId); };
@@ -4689,7 +5036,7 @@ function openTerminal(s) {
   const ws = new WebSocket(`${proto}://${location.host}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
-  term.onData((d) => ws.readyState === 1 && ws.send(d));
+  term.onData((d) => ws.readyState === 1 && inputGates.allow(s.sessionId, d) && ws.send(d));
   // The pty socket can drop without us asking — a server restart (launchd), the
   // server-side `tmux attach` exiting, or a network blip. Unlike the control
   // socket it has no re-poll, so a silent drop leaves the terminal dead: the
@@ -4773,6 +5120,7 @@ function openTerminal(s) {
 // Close the detail panel + terminal and clear the selection, so the periodic
 // graph refresh doesn't silently re-open the sidebar for the still-selected card.
 function closePanel() {
+  selectionBeforeView = null;
   selectedSessionId = null;
   closeTerminal();
   hideSidebar();
@@ -5187,6 +5535,7 @@ function syncModalChrome() {
   // Launch mode is always a dispatch (no action selector, dispatch fields visible).
   if (!sched) {
     document.getElementById('m-dispatch-fields').classList.remove('hidden');
+    document.getElementById('m-task-fields').classList.remove('hidden');
     document.getElementById('m-session-fields').classList.add('hidden');
     return;
   }
@@ -5200,7 +5549,7 @@ function syncModalChrome() {
 // Schedule mode only.
 function syncScheduleAction() {
   const isDispatch = scheduleAction === 'dispatch';
-  document.getElementById('m-dispatch-fields').classList.toggle('hidden', !isDispatch);
+  document.getElementById('m-task-fields').classList.toggle('hidden', !isDispatch);
   document.getElementById('m-session-fields').classList.toggle('hidden', isDispatch);
   document.querySelectorAll('#m-sch-action .sched-action-btn').forEach((b) => {
     const on = b.dataset.action === scheduleAction;
@@ -5409,6 +5758,7 @@ function syncDispatchExtFields() {
   // so hand contributions the cached copy rather than whatever the last tick had.
   slots.syncHosts('dispatch.field', entries, extApi, latestGraph && { ...latestGraph, history: latestHistory });
   applyDispatchFieldVeto(ctx);
+  dispatchModelPicker?.sync();
 }
 
 // The per-open lifecycle call (slots.openDispatchFields): once per openModal,
@@ -5421,6 +5771,7 @@ function openDispatchExtFields(saved) {
   const ctx = { ...dispatchFieldCtx(), editing: modalMode === 'schedule-edit' };
   slots.openDispatchFields(ctx, saved);
   applyDispatchFieldVeto(ctx);
+  dispatchModelPicker?.sync();
 }
 
 // One opener for all three modalModes. `schedule` (when editing) pre-fills every
@@ -5464,20 +5815,28 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   // Images an openDispatch is about to adopt keep their previews through the reset.
   intentImages.reset({ keep: keepImages });
   autoCompactTokens = d.autoCompactTokens;
-  if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
+  applyDispatchPick(schedule ? d : undefined);
   autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
-  // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
-  // The extension options go in first so a saved extension runtime can be
-  // selected; one whose extension is now off or gone matches no option (the
-  // select reads back '') and falls back to local.
+  // Restore the saved runtime, or for a new session the Default runtime setting;
+  // syncWorkflow→syncRuntimeToggle re-gates by agent. The extension options go
+  // in first so an extension runtime can be selected; one whose extension is now
+  // off or gone matches no option (the select reads back '') and falls back to local.
   syncExtRuntimeOptions();
   const rtSel = document.getElementById('m-runtime');
-  rtSel.value = d.runtime || 'local';
-  if (rtSel.value !== (d.runtime || 'local')) rtSel.value = 'local';
+  const wantRuntime = (schedule ? d.runtime : defaultRuntime) || 'local';
+  rtSel.value = wantRuntime;
+  if (rtSel.value !== wantRuntime) rtSel.value = 'local';
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   document.getElementById('m-advanced-options').open = false;
+  document.getElementById('m-any-model').open = false;
+  populateEffortSelect();
+  if (schedule) {
+    const effort = document.getElementById('m-effort');
+    effort.value = [...effort.options].some((o) => o.value === (d.effort || '')) ? (d.effort || '') : '';
+    effortEdited = Boolean(d.effort);
+  }
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
   // A reopened dialog must not inherit the last folder's verdict — the field it
   // belonged to may have been refilled from a different task.
@@ -5607,6 +5966,8 @@ function submitDispatch(over) {
   const imageNames = intentImages.names();
   if (imageNames.length && fields.runtime && fields.runtime !== 'local') { toast('Images in the first prompt need a local launch.'); return false; }
   if (imageNames.length) fields.imageNames = imageNames;
+  const blocked = slots.validateDispatch(dispatchFieldCtx(fields));
+  if (blocked) { toast(blocked); return false; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return false; // can't create a worktree here — let the user untick or fix the folder
@@ -5673,7 +6034,7 @@ function submitDispatchFromExt({ model, effort, runtime } = {}) {
   return true;
 }
 
-// [{ id, label, ownsModel, agents }] for every #m-runtime option, whatever the
+// [{ id, label, ownsModel, ownLaunch, agents }] for every #m-runtime option, whatever the
 // current model's agent disables (a quick launch picks its own model). `agents`
 // is the agent ids it offers, from the known ones; null for local (every agent).
 function listDispatchRuntimes() {
@@ -5682,8 +6043,14 @@ function listDispatchRuntimes() {
     id: o.value,
     label: o.textContent,
     ownsModel: Boolean(o.dataset.ext) && runtimeOwnsModel(o.dataset.ext, o.value),
+    ownLaunch: Boolean(o.dataset.ext) && runtimeOwnLaunch(o.dataset.ext, o.value),
     agents: o.value === 'local' ? null : agentIds.filter((a) => runtimeAllowsAgent(o, a)),
   }));
+}
+
+function runtimeOwnLaunch(extId, runtimeId) {
+  const e = latestExtensions.find((x) => x.id === extId);
+  return Boolean(e?.runtimes?.find((r) => r?.id === runtimeId)?.ownLaunch);
 }
 
 function runtimeOwnsModel(extId, runtimeId) {
@@ -5848,13 +6215,13 @@ function mountUpdatePanel(host) {
   // update, and a Notify or Auto value carried over in config.json is ignored by
   // the server, so the row is hidden rather than left looking live.
   host.parentElement?.querySelector('.setting-row[data-id="autoUpdate"]')?.classList.toggle('hidden', Boolean(updateUnavailable));
-  const drift = installDriftEl({
+  const restart = restartPanelEl({
     drift: installDrift,
     canRestart: canRestartServer,
-    restarting: installDriftRestarting,
+    restarting: installDriftRestarting || updatePhase === 'restarting' || extRestarting,
     onRestart: () => { installDriftRestarting = true; send({ type: 'restart-server' }); remountUpdatePanel(); },
   });
-  if (drift) host.append(drift);
+  if (restart) host.append(restart);
   host.append(updatePanelEl({
     phase: updatePhase,
     status: updateStatus,
@@ -6007,12 +6374,20 @@ function clearExtTransientLater() {
   }, EXT_TRANSIENT_MS);
 }
 
-// The selected extension, the filter text, the add form and the "Update all"
-// queue — kept here so a remount on the next graph keeps them.
+// The selected extension, the filter text, the add pane's mode and search
+// text, and the "Update all" queue — kept here so a remount on the next graph
+// keeps them.
 let extSelectedId = '';
 let extFilter = '';
 let extAdding = false;
+let extAddMode = 'browse';
+let extBrowseQuery = '';
 let extUpdateQueue = [];
+// "Update & restart": set on approval of the update in flight, then promoted to
+// the queue-wide flag only once that update's install reports `done`, so a
+// failed or cancelled one never restarts. The restart waits for the queue.
+let extRestartOnDone = false;
+let extRestartAfterUpdates = false;
 // The GitHub browser in the add pane: searched when the pane is opened and on
 // Refresh, then kept for the life of the page so reopening it costs nothing.
 let extBrowse = null;
@@ -6022,17 +6397,21 @@ let extSettingsPanelHost = null;
 
 const startExtUpdate = (entry) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); remountExtensions(); };
 
+const restartForExtensions = () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); remountUpdatePanel(); };
+
 // One update at a time: each goes through its own consent modal, so the next
 // starts only once the last has settled.
 function runNextExtUpdate() {
   if (extInstallBusy) return;
   const next = extUpdateQueue.shift();
   if (next) startExtUpdate(next);
+  else if (extRestartAfterUpdates) { extRestartAfterUpdates = false; restartForExtensions(); }
 }
 
 // The selected extension's Settings section: its own `settings.panel`
 // contributions above the manifest rows, and a Save button for those panels
-// (the manifest rows commit on change). Null when it has neither.
+// when any has a `save` (the manifest rows commit on change). Null when it has
+// neither.
 function extSettingsEl(entry) {
   const content = document.createElement('div');
   const panelHost = document.createElement('div');
@@ -6055,7 +6434,7 @@ function extSettingsEl(entry) {
       },
     }));
   }
-  if (panels) {
+  if (panels && slots.hasPanelSave(panelHost)) {
     const save = document.createElement('button');
     save.type = 'button';
     save.className = 'ext-btn ext-btn-primary ext-settings-save';
@@ -6078,6 +6457,7 @@ function extSettingsEl(entry) {
 // the first thing it shows; remounts after that keep whatever was picked since.
 function openExtensionsPanel(host) {
   extAdding = true;
+  extAddMode = 'browse';
   if (!extBrowse) searchExtBrowse();
   mountExtensionsPanel(host);
 }
@@ -6085,6 +6465,7 @@ function openExtensionsPanel(host) {
 function mountExtensionsPanel(host) {
   extPanelHost = host;
   if (!host) return;
+  const refocus = focusedFieldState(host);
   commitFocusedField(host);
   if (extSettingsPanelHost) {
     slots.unmountHost('settings.panel', extSettingsPanelHost);
@@ -6107,15 +6488,23 @@ function mountExtensionsPanel(host) {
     filter: extFilter,
     adding: extAdding,
     browse: extBrowse,
+    addMode: extAddMode,
+    browseQuery: extBrowseQuery,
     onSelect: (id) => { extSelectedId = id; extAdding = false; remountExtensions(); },
     onFilter: (text) => { extFilter = text; },
+    onBrowseQuery: (text) => { extBrowseQuery = text; },
+    onAddMode: (mode) => {
+      extAddMode = mode;
+      remountExtensions();
+      restoreFocusedField(host, { key: mode === 'url' ? 'url' : 'gh-search' });
+    },
     onAdd: () => { extAdding = true; if (!extBrowse) searchExtBrowse(); remountExtensions(); },
     onBrowse: () => { searchExtBrowse(); remountExtensions(); },
     onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
     // An update IS an install against the recorded origin — same frame, same
     // consent modal, same handler. There is deliberately no separate path.
-    onUpdate: (entry) => { extUpdateQueue = []; startExtUpdate(entry); },
-    onUpdateAll: (entries) => { extUpdateQueue = [...entries]; runNextExtUpdate(); },
+    onUpdate: (entry) => { extUpdateQueue = []; extRestartAfterUpdates = false; startExtUpdate(entry); },
+    onUpdateAll: (entries) => { extUpdateQueue = [...entries]; extRestartAfterUpdates = false; runNextExtUpdate(); },
     onUninstall: async (entry) => {
       const answer = await confirmDialog({
         title: `Uninstall ${entry.label || entry.id}?`,
@@ -6139,9 +6528,10 @@ function mountExtensionsPanel(host) {
       }
       send({ type: 'ext-set-auto-update', id: entry.id, on });
     },
-    onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
+    onRestart: restartForExtensions,
     settingsEl: extSettingsEl,
   }));
+  restoreFocusedField(host, refocus);
 }
 
 // The consent step. The modal is opened by the server's DISCLOSURE reply, never
@@ -6154,28 +6544,36 @@ function openExtConsent(payload) {
   body.textContent = '';
   body.append(consentBodyEl(payload));
   const ok = document.getElementById('ext-consent-ok');
+  const later = document.getElementById('ext-consent-later');
   const cancel = document.getElementById('ext-consent-cancel');
   // An update that widens `requires` needs a fresh yes; one that does not is
   // still shown, because a human asked for it and the dependency diff is worth
   // reading — but the button says which of the two this is.
-  ok.textContent = payload.reconsentNeeded ? (payload.update ? 'Approve & update' : 'Approve & install') : (payload.update ? 'Update' : 'Install');
+  const labels = consentButtonLabels(payload, canRestartServer);
+  ok.textContent = labels.ok;
+  later.classList.toggle('hidden', !labels.later);
+  if (labels.later) later.textContent = labels.later;
   modal.classList.remove('hidden');
   cancel.focus();
-  const done = (approve) => {
+  const done = (approve, restart = false) => {
     modal.classList.add('hidden');
     ok.removeEventListener('click', onOk);
+    later.removeEventListener('click', onLater);
     cancel.removeEventListener('click', onCancel);
     modal.removeEventListener('keydown', onKey);
     modal.removeEventListener('mousedown', onBackdrop);
+    extRestartOnDone = restart;
     send({ type: 'ext-consent', tempId: payload.tempId, approve });
   };
-  const onOk = () => done(true);
+  const onOk = () => done(true, Boolean(labels.later));
+  const onLater = () => done(true);
   const onCancel = () => done(false);
   // No Enter-to-approve, unlike confirmDialog: this dialog grants a process
   // full access to the machine, so approving must be a deliberate click.
   const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(false); } };
   const onBackdrop = (e) => { if (e.target === modal) done(false); };
   ok.addEventListener('click', onOk);
+  later.addEventListener('click', onLater);
   cancel.addEventListener('click', onCancel);
   modal.addEventListener('keydown', onKey);
   modal.addEventListener('mousedown', onBackdrop);
@@ -6193,6 +6591,7 @@ initSettings({
       if (id === 'mailWakesDormant') return mailWakesDormant;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
+      if (id === 'defaultRuntime') return defaultRuntime;
       if (id === 'autoUpdate') return autoUpdate;
       if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
       // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
@@ -6232,6 +6631,9 @@ initSettings({
       } else if (id === 'defaultSessionCwd') {
         defaultSessionCwd = String(value || '').trim();
         send({ type: 'set-default-session-cwd', cwd: defaultSessionCwd });
+      } else if (id === 'defaultRuntime') {
+        defaultRuntime = String(value || 'local');
+        send({ type: 'set-default-runtime', runtime: defaultRuntime });
       } else if (id === 'autoUpdate') {
         autoUpdate = value;
         send({ type: 'set-auto-update-mode', mode: autoUpdate });
@@ -6304,6 +6706,7 @@ document.getElementById('m-model').addEventListener('change', () => {
   populateEffortSelect();
   syncRuntimeToggle();
   syncAutoCompactPresets();
+  rememberDispatchPick();
   // A contribution drawing a per-agent control needs the agent swap.
   syncDispatchExtFields();
 });
@@ -6319,7 +6722,23 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
   autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
   syncAutoCompactPresets();
 });
-document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
+document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; rememberDispatchPick(); syncDispatchExtFields(); });
+dispatchModelPicker = createDispatchModelPicker({
+  root: document.getElementById('m-model-picker'),
+  agents: () => availableAgents,
+  read: () => {
+    const model = document.getElementById('m-model');
+    return { agent: model.options[model.selectedIndex]?.dataset.agent || 'claude', model: model.value, effort: document.getElementById('m-effort').value };
+  },
+  select: (pick) => {
+    const model = document.getElementById('m-model');
+    model.selectedIndex = [...model.options].findIndex((o) => o.value === pick.model && o.dataset.agent === pick.agent);
+    model.dispatchEvent(new Event('change', { bubbles: true }));
+    const effort = document.getElementById('m-effort');
+    effort.value = pick.effort;
+    effort.dispatchEvent(new Event('change', { bubbles: true }));
+  },
+});
 enhanceSelects(document.getElementById('modal'));
 // ⌘Enter / ⌘1–⌘3 / Escape are `dispatch.*` registry bindings (see registerCoreBindings).
 (() => {
@@ -6430,11 +6849,14 @@ schedulesModal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.
 schedulesModal.addEventListener('mousedown', (e) => { if (e.target === schedulesModal) closeSchedulesPanel(); });
 
 function onScheduleFired(msg) {
-  toast(`Scheduled "${msg.name}" started`);
-  if (msg.focus === true && msg.sessionId) {
+  const viewSession = () => {
     pendingScheduledFocus = { sessionId: msg.sessionId, expiresAt: Date.now() + 8000 };
     tryFulfillScheduledFocus();
-  }
+  };
+  toast(`Scheduled "${msg.name}" started`, false, msg.sessionId ? {
+    label: 'View session', onClick: viewSession,
+  } : undefined);
+  if (msg.focus === true && msg.sessionId) viewSession();
 }
 
 function tryFulfillScheduledFocus() {
@@ -6449,6 +6871,7 @@ function tryFulfillScheduledFocus() {
   if (isDiffPanelOpen()) closeDiffPanel();
   disarmChatHandoff();
   setSessionView(target, 'terminal');
+  selectionBeforeView = null;
   if (currentView !== 'grid') setView('grid');
   if (maximized) setMaximized(false);
   boardOpen.drop();
@@ -6458,6 +6881,21 @@ function tryFulfillScheduledFocus() {
 
 // --- websocket control ---
 let ws;
+// The server only sends a graph when something in it changed (graph-frame-gate.js),
+// so an idle board can go minutes without one. What the board draws still moves
+// with the clock — "5m ago" tags, a comment-less snooze waking, a finished
+// sub-agent leaving the recent window — so after this long without a frame the
+// last graph is re-applied as-is, which is exactly what an unchanged server tick
+// used to do.
+const IDLE_REAPPLY_MS = 30000;
+let idleReapply = null;
+function armIdleReapply() {
+  clearTimeout(idleReapply);
+  idleReapply = setTimeout(() => {
+    if (latestGraph) applyGraph(latestGraph);
+    armIdleReapply();
+  }, IDLE_REAPPLY_MS);
+}
 export function send(obj) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify(obj));
@@ -6473,7 +6911,7 @@ function connect() {
   ws.onclose = () => { chatView.onConnectionClosed(); setTimeout(connect, 1500); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === 'graph') applyGraph(msg.graph);
+    if (msg.type === 'graph') { applyGraph(msg.graph); armIdleReapply(); }
     // A `config` is the first frame of every connect, so it is also how the board
     // learns a restart finished: the pending install/removal notes describe a
     // boot snapshot that has just been replaced, and the process holding them is
@@ -6482,8 +6920,8 @@ function connect() {
       sessionsDir = msg.sessionsDir || '';
       homeDir = msg.homeDir || '';
       canRestartServer = Boolean(msg.canRestart);
-      noteConfigUpdate(msg);
       extRestarting = false;
+      noteConfigUpdate(msg);
       extPendingRemoval.clear();
       extPendingInstall = '';
       remountExtensions();
@@ -6512,6 +6950,10 @@ function connect() {
       extInstallProgress = progressText(msg.phase, msg);
       extInstallPhase = msg.phase;
       if (msg.phase === 'failed' || msg.phase === 'cancelled' || msg.phase === 'done') extInstallBusy = false;
+      if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) {
+        if (msg.phase === 'done' && extRestartOnDone) extRestartAfterUpdates = true;
+        extRestartOnDone = false;
+      }
       if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) clearExtTransientLater();
       remountExtensions();
       if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) runNextExtUpdate();
@@ -6551,7 +6993,7 @@ function connect() {
         // `automatic`: the update tick applied it for an extension that opted
         // in, and every tab is told, so the restart button is up wherever the
         // human looks next.
-        if (msg.automatic) toast(`Auto-updated ${msg.id}. ${EXT_RESTART_NOTE}`);
+        if (msg.automatic) toast(`Auto-updated ${msg.id}. ${canRestartServer ? EXT_AUTO_RESTART_NOTE : EXT_RESTART_NOTE}`);
         else if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
         else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
         else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
@@ -6575,12 +7017,13 @@ function connect() {
     }
     else if (msg.type === 'ext-update-status') applyExtUpdateStatus(msg);
     else if (msg.type === 'update-status') { applyUpdateStatus(msg); updatePhase = 'status'; remountUpdatePanel(); }
-    else if (msg.type === 'update-applied') { updatePhase = 'restarting'; remountUpdatePanel(); }
+    // `extensions`: the restart loads auto-applied extension updates only.
+    else if (msg.type === 'update-applied') { updatePhase = 'restarting'; if (msg.extensions) extRestarting = true; remountUpdatePanel(); remountExtensions(); }
     else if (msg.type === 'install-drift') { installDrift = msg.drift || null; remountUpdatePanel(); }
     else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
     // The board is about to lose this socket; ws.onclose already retries every
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
-    else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); }
+    else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
     else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
@@ -6655,11 +7098,11 @@ function connect() {
         okLabel: 'Force delete',
       }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true }); });
     }
-    else if (msg.type === 'forked') { pendingSelect = msg.sessionId; tryFulfillPending(); }
+    else if (msg.type === 'forked') { setPendingSelect(msg.sessionId); tryFulfillPending(); }
     // Search adopted an off-board conversation onto the board (or found it already
     // had a card). The card id is minted server-side, so this reply is the first
     // moment the view knows what to jump to — same deferred select as a fork.
-    else if (msg.type === 'adopted') { pendingSelect = msg.sessionId; tryFulfillPending(); onAdopted(msg); }
+    else if (msg.type === 'adopted') { setPendingSelect(msg.sessionId); tryFulfillPending(); onAdopted(msg); }
     else if (msg.type === 'adopt-failed') { toast(msg.message); onAdoptFailed(msg); }
     else if (msg.type === 'resume-needs-dir') {
       const forking = msg.action === 'fork';
@@ -6674,8 +7117,9 @@ function connect() {
         else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true });
       });
     }
+    else if (msg.type === 'open-terminal' && msg.presentation === 'dialog') openTerminalDialog({ terminalId: msg.terminalId, command: msg.command || '', title: msg.title || '' });
     else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
-    else if (msg.type === 'styles') setCustomStyles(msg.styles);
+    else if (msg.type === 'styles') { setCustomStyles(msg.styles); refreshThemeRows(); }
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
     else if (msg.type === 'chat') chatView.onChatReply(msg);
     else if (msg.type === 'message-result') chatView.onMessageResult(msg);
@@ -6695,6 +7139,7 @@ function connect() {
       dispatchWaiter.ack(msg);
     }
     else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
+    else if (msg.type === 'ext-early-adopter-result') settleEarlyAdopter(msg);
     else if (msg.type === 'restart-tmux-done') {
       tmuxRestarting = false;
       toast('tmux restarted. Resume your sessions to bring them back.');
@@ -6832,7 +7277,12 @@ function onPrComments(msg) {
 }
 // Re-theme a live terminal when the style changes — registered here so theme.js
 // stays decoupled from the terminal's `current` handle.
-onThemeChange(() => { if (current) current.term.options.theme = readTerminalTheme(); });
+onThemeChange((theme) => {
+  if (current) current.term.options.theme = readTerminalTheme();
+  if (current) syncTermFont(current.term, current.fit);
+  if (currentShellTerm) syncTermFont(currentShellTerm.term, currentShellTerm.fit);
+  slots.themeChanged(theme);
+});
 initStyles();
 
 // Constructed once; openTerminal attaches it to each agent terminal it opens.
@@ -6874,7 +7324,7 @@ const chatView = initChatView({
   },
   // The same destination the terminal's .md link provider uses, so a path opens
   // the same preview whichever view it was clicked in.
-  onOpenFile: (path) => openFilePreview(path),
+  onOpenFile: (path, sessionId) => openFile(path, { sessionId, source: 'chat' }),
   // Looked up per click/render rather than pushed in on mount: the chat view only
   // ever needs the cwd of the session it is showing, and latestSessions is already
   // the live answer.
@@ -6887,6 +7337,6 @@ if (window.Notification && Notification.permission === 'default') Notification.r
 // a #session link is fulfilled once the first graph contains it.
 initSearchView();
 if (hashView()) setView(hashView());
-else pendingSelect = hashSessionId();
+else setPendingSelect(hashSessionId());
 populateModelSelect();
 connect();

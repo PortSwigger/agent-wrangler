@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldReloadForVersion, updateSummary, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, installDriftNotice, outdatedExtensions, changesText, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdateLineText } from './update-panel.js';
+import { shouldReloadForVersion, updateSummary, updateAvailable, rolledBackText, updateToastText, installDriftNotice, outdatedExtensions, changesText, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdateLineText } from './update-panel.js';
 
 test('a page reloads only when a known code version changes', () => {
   assert.equal(shouldReloadForVersion(null, 'abc'), false, 'first connect just records it');
@@ -24,14 +24,6 @@ test('the summary explains why an available update cannot be applied', () => {
 
 test('an error shows the server message', () => {
   assert.equal(updateSummary({ phase: 'error', error: 'fetch failed' }), 'fetch failed');
-});
-
-test('a live session launched on another commit is on older code', () => {
-  assert.equal(sessionOnOlderCode({ managed: true, launchedCodeVersion: 'a' }, 'b'), true);
-  assert.equal(sessionOnOlderCode({ managed: true, launchedCodeVersion: 'b' }, 'b'), false);
-  assert.equal(sessionOnOlderCode({ managed: false, launchedCodeVersion: 'a' }, 'b'), false);
-  assert.equal(sessionOnOlderCode({ managed: true, launchedCodeVersion: null }, 'b'), false);
-  assert.equal(sessionOnOlderCode({ managed: true, launchedCodeVersion: 'a' }, null), false);
 });
 
 test('the settings dot shows only for an update that can be taken', () => {
@@ -116,4 +108,91 @@ test('the extension toast fires only when something newly falls behind', () => {
   assert.equal(extUpdateIsNew({ extensions: [ext('jira', 'Jira links', 7)] }, keys), false);
   // A remote that moved again is.
   assert.equal(extUpdateIsNew({ extensions: [{ ...ext('jira', 'Jira links', 9), remoteSha: 'jira2' }] }, keys), true);
+});
+
+function restartTestDocument(t) {
+  const previous = globalThis.document;
+  t.after(() => { globalThis.document = previous; });
+  globalThis.document = { createElement: (tag) => ({
+    tag, children: [],
+    append(...nodes) { this.children.push(...nodes); },
+    addEventListener(event, fn) { this[event] = fn; },
+  }) };
+}
+
+test('restart panel gates the action, dispatches clicks, and disables it during restart', async (t) => {
+  const { restartPanelEl } = await import('./update-panel.js');
+  restartTestDocument(t);
+  assert.equal(restartPanelEl(), null);
+  let restarts = 0;
+  const panel = restartPanelEl({ canRestart: true, onRestart: () => restarts++ });
+  const button = panel.children[0].children[1];
+  assert.equal(button.textContent, 'Restart now');
+  assert.equal(button.disabled, false);
+  button.click();
+  assert.equal(restarts, 1);
+  const busy = restartPanelEl({ canRestart: true, restarting: true }).children[0].children[1];
+  assert.equal(busy.disabled, true);
+  assert.equal(busy.textContent, 'Restarting…');
+  const drift = { target: '/versions/new', restartHint: 'Restart manually.' };
+  const unsupported = restartPanelEl({ drift });
+  assert.equal(unsupported.children[0].children.length, 1);
+  assert.equal(unsupported.children[2].textContent, 'Restart manually.');
+  assert.equal(restartPanelEl({ drift, canRestart: true }).children[0].children[1].textContent, 'Restart now');
+});
+
+test('Updates disables Restart now when another restart path is already in progress', async (t) => {
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const { restartPanelEl } = await import('./update-panel.js');
+  restartTestDocument(t);
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+  const mountStart = source.indexOf('function mountUpdatePanel(host)');
+  const mount = source.slice(mountStart, source.indexOf('\n}\n', mountStart) + 3);
+  for (const state of [{ updatePhase: 'restarting', extRestarting: false }, { updatePhase: 'idle', extRestarting: true }]) {
+    const host = document.createElement('div');
+    const ctx = {
+      ...state, host, restartPanelEl, installDrift: null, canRestartServer: true,
+      installDriftRestarting: false, updateStatus: null, updateError: '', updateUnavailable: null,
+      updatePanelEl: () => null, extUpdatesEl: () => null, extBgUpdates: null, autoUpdate: 'off',
+    };
+    vm.runInNewContext(`${mount}\nmountUpdatePanel(host);`, ctx);
+    assert.equal(host.children[0].children[0].children[1].disabled, true, JSON.stringify(state));
+  }
+});
+
+test('reconnecting after a restart re-enables the Updates restart button', async (t) => {
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const { restartPanelEl } = await import('./update-panel.js');
+  restartTestDocument(t);
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+  const functionSource = (name) => {
+    const start = source.indexOf(`function ${name}(`);
+    assert.ok(start >= 0);
+    const end = source.indexOf('\n}\n', start);
+    assert.ok(end > start);
+    return source.slice(start, end + 3);
+  };
+  const configStart = source.indexOf("else if (msg.type === 'config') {");
+  const configEnd = source.indexOf('\n    }', configStart);
+  assert.ok(configStart >= 0 && configEnd > configStart);
+  const configBody = source.slice(source.indexOf('{', configStart) + 1, configEnd);
+  const host = document.createElement('div');
+  const ctx = {
+    host, restartPanelEl, extRestarting: true, installDriftRestarting: true,
+    updatePhase: 'idle', installDrift: null, canRestartServer: true,
+    updateStatus: null, updateError: '', updateUnavailable: null,
+    updatePanelEl: () => null, extUpdatesEl: () => null, extBgUpdates: null, autoUpdate: 'off',
+    noteCodeVersion() {}, applyUpdateStatus() {}, applyExtUpdateStatus() {}, noteRolledBack() {},
+    remountExtensions() {}, extPendingRemoval: new Set(),
+    msg: { type: 'config', canRestart: true },
+  };
+  vm.runInNewContext(`${functionSource('mountUpdatePanel')}
+    function remountUpdatePanel() { host.children = []; mountUpdatePanel(host); }
+    ${functionSource('noteConfigUpdate')}
+    remountUpdatePanel();`, ctx);
+  assert.equal(host.children[0].children[0].children[1].disabled, true);
+  vm.runInNewContext(configBody, ctx);
+  assert.equal(host.children[0].children[0].children[1].disabled, false);
 });

@@ -8,9 +8,13 @@ only trusted code and dependencies.
 
 ## Install and manage an extension
 
-Open **Settings → Extensions**, choose **+ Add extension**, paste a git URL, and review the identity, dependencies, and
+Open **Settings → Extensions**, choose **+ Add extension**, switch to **Git URL**, paste a git URL, and review the identity, dependencies, and
 capabilities. `https://`, `ssh://`, and `git@host:path` remotes are accepted; local paths, `file://`,
 and `ext::` are refused.
+
+Git runs without a prompt, so a private GitHub repository needs a credential helper. Run
+`gh auth login`, then `gh auth setup-git`, and install from its `https://` URL. When a clone or
+update check fails that way, the Extensions tab says so.
 
 The tab is a list beside a detail pane, and opens on the **+ Add extension** pane. The list groups **Core** extensions (they ship with the
 wrangler) and **Installed** ones (from git URLs), each with a dot that is filled when it is enabled;
@@ -21,6 +25,11 @@ checks installed extensions: an outdated one shows its update button and how man
 missing without pressing Check all, the Extensions tab and the Settings button are badged, and a
 toast says so once per new commit. Extensions are not updated automatically, even on Auto, unless you
 turn on **Auto-update** for that extension (see below).
+Updated code loads only when the wrangler restarts. Where the wrangler can restart itself, the update's
+consent dialog offers **Update & restart** (**Approve, update & restart** when the update asks for new
+capabilities), which restarts once the update has installed; after **Update all**, it restarts once,
+after the last update. **Update without restarting** applies the update and leaves **Restart now** in
+the panel for later. Elsewhere the dialog offers just **Update**.
 Select an extension to see its **Enabled** switch, **Uninstall…** (installed
 only), its **Auto-update** switch (installed from a git URL only), its **Source** (type, repository and
 commit) and its **Settings**.
@@ -37,13 +46,28 @@ An extension with Auto-update on is updated by the hourly update check, so only 
 Updates is on Notify or Auto. An update is applied only when it asks for no new capabilities and passes
 the same lockfile and host API checks as an update you start yourself. Otherwise it stays an update
 button for you to review, and its detail pane says why it was not applied. The updated code loads at
-the next restart: the panel offers **Restart now** where the wrangler can restart itself.
+a restart. Where the wrangler can restart itself (it runs as a background service), it restarts on its
+own once it is idle: no headless runs or session launches in flight and no scheduled session due in the
+next two minutes. While it is busy it looks again every minute, and several updates, or an update of
+Agent Wrangler itself in the same check, share one restart. Where it cannot restart itself, the
+updated code loads the next time you restart it.
 
-**+ Add extension** also lists public GitHub repositories tagged with the
+### Early-adopter builds
+
+An extension can publish early builds on a branch of its own repository and declare it as
+`earlyAdopter: { branch }` (see below). Agent Wrangler draws no switch for it: the extension offers
+its own way to opt in. While an install is opted in, reinstalling it, checking it for updates and
+updating it all follow that branch instead of the repository's default branch, and fall back to the
+default branch while the remote has no such branch. Opting out takes effect at the next update,
+which returns to the default branch. Updates from the branch still go through the same review,
+lockfile and host API checks, and through Auto-update only if that is on as well.
+
+**+ Add extension** opens on **Browse GitHub**, which lists public GitHub repositories tagged with the
 [`agent-wrangler-extension`](https://github.com/topics/agent-wrangler-extension) topic, as cards with
 the owner's avatar, description, stars, language and last update. **Install…** on a card goes through
 the same review as a pasted URL; repositories you already have are marked **Installed**. The list is
-searched the first time the tab opens and on **Refresh**. Anyone can tag a repository, so a listing is not a
+searched the first time the tab opens and on **Refresh**; the search box above the cards narrows that list by
+name, owner or description without asking GitHub again. Anyone can tag a repository, so a listing is not a
 review or an endorsement; check the code and its author before installing.
 
 The panel also enables, configures, updates, and uninstalls extensions. New installs become live when
@@ -68,6 +92,7 @@ update from and cannot be uninstalled.
 | **TODOs** | Board TODOs for each task and the Unassigned tile, their MCP tools and the `archive-to-todo` skill. See [Board and sessions](board-and-sessions.md#organise-work-with-tasks). | None. |
 | **Jira** | The `jira` link type and its board chip: agents attach a Jira issue to a session or task with `set_links`, and the chip links to the issue. See [Board and sessions](board-and-sessions.md#organise-work-with-tasks). Off, stored Jira links are kept (and survive `set_links`) but draw no chip and no new ones can be set. | **Jira base URL**: what a bare issue key is appended to, e.g. `https://yourcompany.atlassian.net/browse/`. Empty uses `AW_JIRA_BASE_URL` if set; a bare key otherwise renders without a link. The old `jiraBaseUrl` config value, or `AW_JIRA_BASE_URL`, is copied into it at boot. |
 | **Sounds** | Browser audio cues when sessions finish or need attention. Focus mode silences other tasks. | Extension enablement controls playback. Audio-file uploads for each cue (up to 1 MB each), preview and reset to built-in tones are shared across browsers. |
+| **Themes** | The Cyberpunk, Dolphin, Pink, Pixel Cats and Wrangler themes in Settings › Appearance. On by default. Off, a browser that had one of them chosen shows Dark until it is back on. | One switch per theme, drawn as the theme picker's buttons: a highlighted theme is offered in the picker, and clicking it turns it off or on. Every theme is on until switched off. |
 | **Adversarial PR review** | The `adversarial-pr-review` skill and its reviewer's `adversarial_review_process` tool. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | **Review process**: what the reviewer checks and how. Empty uses the built-in process; anything written replaces it. |
 
 ### Sound cues
@@ -98,7 +123,8 @@ An installable repository needs `package.json` and an `index.js` with a default 
     "description": "Adds an example capability to Agent Wrangler.",
     "author": "Your team",
     "requires": [],
-    "engines": { "wranglerApi": "^1.31.0" }
+    "engines": { "wranglerApi": "^1.31.0" },
+    "earlyAdopter": { "branch": "next" }
   }
 }
 ```
@@ -111,9 +137,13 @@ export default {
   author: 'Your team',
   requires: [],
   engines: { wranglerApi: '^1.31.0' },
+  earlyAdopter: { branch: 'next' },
   defaultEnabled: true,
 };
 ```
+
+`earlyAdopter` is optional (1.39.0). Its `branch` must be a branch name `git check-ref-format
+--branch` accepts and not start with `-`, and the two copies must match.
 
 To list a public extension under **+ Add extension**, add the `agent-wrangler-extension` topic to its
 GitHub repository.
@@ -137,7 +167,71 @@ Supported manifest contributions are:
 | Agent skills | `skills/<name>/SKILL.md` plus the manifest's `skills` list |
 | Extension settings | `settings` (`text`, `textarea`, `number`, `toggle`, `select`, `list`), read through `host.settings` |
 | Browser UI | `client`, optional `styles`, and slots from `public/slots.js` |
+| Themes | `themes`: a directory of `<id>/theme.json` + assets, offered in Settings › Appearance. See [Themes](#themes) |
 | Core access | `requires`, served through the versioned host API in `server/host-api/` |
+
+### Themes
+
+`themes` (1.43.0) names a directory inside the extension, such as `themes: 'themes'`. Each
+subdirectory is one theme: `<id>/theme.json` with
+`name`, `icon` and `base` (`dark` or `light`), optional `colors`, `font` and `background`, and
+`assets` (`wallpaper`, `iconImage`) naming files beside it. The folder name is the theme's id, which
+is what a browser saves as its choice, so keep it stable across releases.
+
+A theme starts from its base and overrides only what it sets. The `light` base is the built-in Light
+theme and the `dark` base is the built-in Dark theme, so a light-based theme inherits Light's fonts,
+reading column and colours unless it sets its own. Each key in `colors` becomes the CSS variable of
+the same name with `--` in front, and `font` sets `--font`. Besides the core colours (`bg`, `surface`,
+`surface-2`, `fg`, `accent`, `blue`, `green`, `red` and so on, which the worked examples show), a theme
+can set these reading and detail variables:
+
+| Key | What it controls | Default when unset |
+| --- | --- | --- |
+| `font-mono` | Monospace font for code, the terminal and command output | The system monospace font |
+| `font-features` | `font-feature-settings` for the UI font, such as `"cv05", "cv08"` | `normal` |
+| `numerals` | `font-variant-numeric` for card, chat footer and usage numbers, such as `tabular-nums` | `normal` |
+| `prose-leading` | Line height of chat messages | `1.62` |
+| `prose-gap` | Space between paragraphs and lists in chat and file views | `0.6em` |
+| `heading-tracking` | Letter spacing of chat headings | `normal` |
+| `chat-measure` | Maximum width of the chat column and message box, such as `68em` | `100%` (full width) |
+| `code-fg`, `code-bg`, `code-border` | Inline code and code blocks. `code-bg` also colours command output | `blue-fg`, `surface-2`, `border-muted` |
+| `bubble-bg`, `bubble-border` | Your own messages in the chat view | `surface-2`, `border-muted` |
+| `link-fg`, `link-decoration` | Links in chat and file views. `link-decoration` is a `text-decoration` value | `blue-fg`, `none` |
+| `branch-fg` | Branch names on cards, including `main` | `purple`, and `blue-fg` for `main` |
+| `selected-tint` | How strongly the selected card is tinted with `blue` | `18%` |
+| `green-bar-on`, `snooze-on` | Text on the green working bar and on the snooze or warning fills | `bar-on` |
+
+The defaults in this table are the Dark base's. Light sets most of them, so read the `body.light`
+block in `public/styles.css` for the values a light-based theme inherits. A light theme with
+translucent surfaces will usually want to set `code-bg` and `bubble-bg` to one of its own tints, as
+Pink and Pixel Cats do.
+
+While the extension is on, its themes appear in Settings › Appearance and in `/api/styles`, and
+their declared assets are served from `/styles/<id>/<file>`. `theme.json` itself and any file the
+manifest does not declare are never served. Turning the extension off removes its themes from
+every open board within a tick. A browser that had one selected shows Dark but keeps its saved
+choice, so turning the extension back on brings the theme back.
+
+When two sources offer the same theme id, the first in this order wins and the others are hidden:
+
+1. Extension themes, in extension load order: core extensions first, then installed ones.
+2. Hand-placed themes in `~/.agent-wrangler/custom-styles/`.
+
+A theme with an invalid `theme.json` is skipped and logged, and the next source's theme with that id
+is used instead.
+
+To let people switch single themes off, give each one a `toggle` setting whose `theme` (1.46.0) is
+that theme's id. Unset counts as on. Set to false, the theme leaves the picker and `/api/styles`, its
+assets stop being served, and the next source's theme with that id is used instead, as for an
+invalid one. Each theme id can be named by one setting only, and only on a manifest with `themes`.
+The core Themes extension marks its toggles `hidden` and draws them in a `settings.panel` with
+`api.themeButtonHtml`.
+
+An extension that lists themes in its own UI can draw each one as the picker does with
+`api.themeButtonHtml(style, { active })` (1.44.0): `style` is an `/api/styles` entry, or a theme's
+`theme.json` with its `id` added (for a theme that is switched off and so not listed), and the result
+is a `<button class="theme-row" data-id="…">` with the theme's icon on a tile in its own colours, its
+name and a strip of its accent, green and red. The button handles no clicks itself.
 
 For development, place it under `<AW_DATA_DIR>/extensions/<id>/` and restart. Hand-placed extensions
 have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
@@ -152,8 +246,17 @@ have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 - Declare `engines.wranglerApi` (optional) in both places: the `package.json` copy lets install and update
   refuse an incompatible version before asking for consent, and the manifest's copy is checked again
   after consent and at every boot.
+- Declare `earlyAdopter.branch` (optional) in both places too: the `package.json` copy is what is
+  consented to and recorded, so a reinstall can clone that branch before any manifest is imported.
 - Put browser assets under `public/`. Third-party strings render as text; homepages must use `https://`.
 - Handle cleanup explicitly: uninstall removes the extension and provenance, not files it wrote elsewhere.
+
+### Session launch capabilities
+
+| Capability | Host surface |
+| --- | --- |
+| `sessions:spawn` | `host.sessions.spawn(options)` launches a session with the supplied dispatch fields. |
+| `sessions:env` (1.48.0) | `host.sessions.launchEnv({ agent?, sessionId?, ext? })` collects a headless environment for any card, including credentials from other extensions, rejecting a deliberate hook refusal. |
 
 The remainder is the maintainer reference. Read it before changing `server/extensions/**`,
 `server/host-api/**`, `public/slots.js`, or `public/extensions*.js`.
@@ -360,6 +463,30 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   only a finished update's `ext-install-done` (`automatic: true`,
   `restartRequired`) is broadcast, so every tab gets the restart affordance. The
   restart semantics below are unchanged: updated code loads at the next start.
+  The check returns what it applied as `autoApplied`, and `update-service.js`
+  keeps those ids pending and restarts through the same `onApplied` →
+  `exitForRestart` path as a wrangler update, on the same terms: only with
+  `canRestart` (`restartSupported()`) and only while `isQuiet()`, retrying
+  every `restartRetryMs` while busy. It is called at most once per process, so
+  several extensions, or a wrangler auto-apply in the same tick, mean one
+  restart. Without `canRestart` nothing restarts, as before. A human install
+  or update never schedules it.
+- **Early adopter is a PER-INSTALL opt-in on the provenance record too**
+  (`earlyAdopter`, strictly `true`), next to the branch the consented version
+  declared (`earlyAdopterBranch`, from `readDeclaration`; `ext-consent` refuses a
+  manifest whose `earlyAdopter.branch` differs from it). `setEarlyAdopter`
+  refuses a record with no `originUrl` or no branch, and `trackedBranch(record)`
+  is the one reader: the branch while opted in, else null. Every git path takes
+  it as `{ branch }` (`install.js`): `cloneTo` adds `--branch`, `lsRemoteHead`
+  asks for `HEAD` and `refs/heads/<branch>` in one call and prefers the branch,
+  `countCommitsBehind` fetches `refs/heads/<branch>`, and each falls back to
+  `HEAD` when the remote lacks the branch (`remoteHasBranch`). `ext-install`
+  looks the branch up from the record whose `originUrl` is the frame's URL, never
+  from the frame. `isValidBranchName` (`server/worktree.js`) is checked at the
+  manifest, the declaration, the record and again before git sees the name, which
+  only ever reaches git as one argv element or `refs/heads/<name>`. With no
+  branch every argv is exactly what it was before. The host draws no UI for it;
+  `ext-set-early-adopter` is sent only by the client `api.earlyAdopter.set`.
 - **One install at a time per instance, REFUSED not queued, behind an in-memory
   lock.** The staging dir (`<DATA_DIR>/extensions/.tmp/<tempId>/`) is the only
   durable artefact an interrupted install leaves, and boot sweeps it
@@ -406,7 +533,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   pending extensions must not each draw their own), in
   the amber `--warn`/`--warn-fg` role rather than Uninstall's danger red; the detail
   pane and the notice above it still say what is waiting on it. The button exists ONLY
-  under a supervisor.** `AW_SUPERVISED=1` is set by whatever brings the process
+  under a supervisor.** Under one, an update's consent modal makes **Update & restart**
+  its primary button (`consentButtonLabels`), so the restart is not a second thing to
+  notice; **Update without restarting** leaves the panel button as the fallback. The
+  client sends `restart-server` only after that update's `done` progress frame, never
+  on the click, so a failed or cancelled update restarts nothing, and an Update all
+  queue restarts once, when it drains, if any update approved with restart landed. `AW_SUPERVISED=1` is set by whatever brings the process
   straight back: `scripts/wrangler-start.sh` (which both the launchd plist and the
   systemd unit exec) and a Homebrew service. So the flag means "something will
   restart me", never "I am on macOS" and never "I may apply a Git update" (that is
@@ -515,7 +647,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   and deliberately NOT `ctx.ext.changed()`, since nothing about the registry
   moved. On the client the rows are drawn inline in the selected extension's detail
   pane under **Settings** (omitted when it declares none), with its own
-  `settings.panel` contributions above them and a **Save** button for those. The
+  `settings.panel` contributions above them and a **Save** button for those that have a `save`. The
   remount signature excludes `settingValues`, so a value landing never rebuilds
   a field someone is typing in. A QUARANTINED extension keeps its Settings section with its rows
   DISABLED, which says "this is what it would want" where a hidden section would
@@ -568,7 +700,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   object is a LIVE REGISTRY, not a boot snapshot.** A manifest
   (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
   default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
-  skillsFor, codexPolicy, hideTool, graph, session, sweeps, client, styles}`) is validated at boot (`validateManifest`,
+  skillsFor, codexPolicy, hideTool, graph, session, sweeps, client, styles, themes}`) is validated at boot (`validateManifest`,
   every throw names the id) and `index.js` exits 1 on a bad one — a manifest
   colliding with a core tool name or handler type is a config error a human must
   see, not something to limp past. Enabled is `extensions.<id>` in config.json
@@ -925,6 +1057,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   runtime's preflight validates it. Without `runtime` the modal's current
   selection is used, which may be a runtime the dialog restored from the last
   launch — pass `runtime: 'local'` to be sure.
+- **`api.dispatchFields.mount(el, ctx, { saved = null } = {})` (1.48.0)** hosts the
+  live `dispatch.field` contributions in an extension's own dialog, in anchor order,
+  with independent element state and no `hides` veto; `ctx` carries the host's own
+  `mode` (for example `job`), `draft: { agent?, model?, runtime?, cwd? }` and optional
+  `agents` (defaulting to the board's current list).
+  The returned `{ read(), validate(), update(ctx, graph), unmount() }` uses the board's
+  registration-order payload merge and first validation message, passes each `open`
+  only its own cloned slice of `saved`, and tears down on `unmount` (`read()` then
+  returns `{}`); later registrations wait for a re-mount, and a throwing contribution
+  is reported and removed from every host.
 - **Graph `effort` (1.28.0).** Board session nodes and `graph.history` nodes
   carry `effort`, the effort the session was launched with (`null` when none
   was recorded, e.g. the agent's default or an adopted session). Resume and
@@ -947,6 +1089,13 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   to the runtime choice), `syncWorkflow` and `syncClientExtensions`, and in
   `subagent` modalMode it is called with an **EMPTY host list** so contributions
   tear down by omission rather than sitting invisible inside a hidden block.
+  Optional `validate(el, ctx)` (1.47.0) returns a non-empty message to toast and block
+  immediate dispatch, including `api.dispatch.submit`, which rejects with
+  `dispatch blocked by validation`. Blank or non-string answers allow submission;
+  unmounted fields are skipped, and a throwing validator is reported and its
+  contribution removed, as with `fields()`.
+  A contribution can be mounted once per host (1.48.0), including the board's dialog
+  and extension-owned dialogs; keep all field state on the supplied element.
   **The veto is TWO keys and fails CLOSED on authority, OPEN on health.** The
   manifest's `hideDispatchField` is the DISCLOSURE — a static array (never a
   function: the board must know what an extension may suppress before any of its
@@ -1034,10 +1183,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 - **`task.action` is `card.action` for a TILE, and its subject is `{ id, name,
   adhoc }`, never the DOM cell.** `slots.taskMenuItems(task, graph, api)` shares
   `menuItems`'s whole body (`valueMenuItems`), so the item shape, escaping and
-  guards cannot drift between the two. It feeds ONLY the tile's right-click menu
-  (`app.js openTaskMenu`, between the task's own actions and Archive task) — NOT
-  the header kebab (`openTaskActionsMenu`), which already carries core's
-  Minimise/Focus and would show an extension's duplicate beside it. The right-click
+  guards cannot drift between the two. It feeds the tile's right-click menu
+  (`app.js openTaskMenu`) and the header menu (`openTaskActionsMenu`) for named
+  tasks; Unassigned receives these extra actions in its right-click menu. The right-click
   menu carries core's Minimise too; `extTaskMenuItems` drops the `Minimise` item
   contributed by the `minimise-task` extension (matched on extension id and label,
   in both menus) so that extension still loads without a duplicate. The no-task
@@ -1061,21 +1209,126 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   route, so an extension can reopen whatever the reader left. It never fires if
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
+- **`board.tray` (1.53.0)** is an exclusive mount-style slot for the bottom strip.
+  Register `{ id, mount(el, api, ctx), update?(el, ctx, graph), unmount?(el),
+  minimiseItem?(task, graph, api), backgroundItem?(graph, api) }`.
+  Its `ctx` is `{ tasks, minimisedIds }`:
+  `tasks` contains `{ id, name, adhoc }` in live board display order, including
+  Unassigned (`id: 'adhoc', adhoc: true`) and excluding archived/deleted tasks;
+  `minimisedIds` is an array of the browser's current minimised task ids.
+  Both are fresh snapshots. Core owns that set; enabling a tray does not change it.
+  `mount` receives the initial context, then `update` runs on every board render,
+  including graph changes, reorder, Focus, keyboard focus navigation, task/session
+  opening and bulk minimisation. New tasks are visible until explicitly minimised.
+  If housekeeping removes the last visible task, core clears the minimised set.
+
+  The first registered contribution wins; collisions are reported once per pair.
+  Later contributors remain unmounted until an earlier one is removed or fails.
+  The winner keeps its element across board renders and owns the entire strip,
+  which is visible even with no minimised tasks. Core's pills and Restore all are
+  absent while it owns the strip. Mount runs before the strip is placed on the board;
+  layout-dependent work belongs after placement (for example in an animation frame).
+  Disable, uninstall or failed module loading unmounts and removes its contribution.
+  A throwing `mount` or `update` does the same, then tries the next contributor in
+  registration order; with none left, core's strip returns in that render. Unmount
+  errors are reported but do not prevent cleanup. Re-enabling registers afresh.
+
+  Only the mounted tray owner's `minimiseItem` can replace core's **Minimise**,
+  in both the header menu and the tile right-click menu, including Unassigned.
+  Return `{ label, icon?, run(event) }`, or `null` to keep core's entry. Labels are
+  escaped text, icons follow the existing menu markup convention, and `run` errors
+  are caught and reported. **Focus** and other menu actions remain available.
+  The owner's optional `backgroundItem(graph, api)` adds one action beside
+  **New task** in the blank task-view right-click menu. It receives no task target
+  and returns the same item shape, or `null` to leave only core's action.
+  A throwing menu callback or malformed item removes the tray contribution,
+  leaves core's menu actions and requests a board render to restore the strip
+  (or promote the next contributor). These guards apply to both callbacks.
+  Ordinary `task.action` contributions cannot replace core's entry, contribute
+  to the blank task-view menu or claim tray ownership.
+
+  **`api.setMinimisedTasks(ids)` (1.53.0)** atomically replaces the whole browser
+  minimised set. Pass an array of non-empty task id strings (including `'adhoc'`).
+  Duplicate and non-live ids are pruned before checking the last-visible-tile guard.
+  A request hiding every live tile, or malformed input, returns `false` without
+  changing storage or rendering. Accepted requests return `true`; a changed set is
+  persisted and rendered once, and an unchanged set needs no render. `[]` restores
+  every task. This method is available to every client extension, like
+  `api.minimiseTask`; only menu replacement is tied to tray ownership. Declare
+  `engines.wranglerApi: '^1.53.0'` in both the runtime manifest and `package.json`'s
+  `wranglerExtension` when using these hooks. Server host access still requires
+  the capabilities listed in `requires`.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
-  `[{ id, label, models: [{ value, label, default }], efforts: [{ value, label }] }]`,
+  `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
-  price catalogs — as a fresh deep copy per call. **`api.agents.onChange(fn)`**
+  price catalogs — as a fresh deep copy per call. A model's `autoEffort`
+  (1.49.0) is the level the agent runs it at when a launch passes no effort
+  ("Auto"), read from the user's and organization's settings (Claude: managed
+  settings, a settings `env` block's `CLAUDE_CODE_EFFORT_LEVEL`, user settings,
+  then the model's documented default; Codex: `config.toml`, then the model's
+  catalog default), and is absent when unknown. **`api.agents.onChange(fn)`**
   fires (with its own copy) whenever the server re-sends the `agents` frame: on
-  connect, and when a catalog refresh changes it. It returns the unsubscribe
+  connect, and when a catalog refresh or one of those settings files changes it. It returns the unsubscribe
   function; subscriptions die with the extension, and a throwing listener is
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
+- **`api.modelFront`** (1.56.0) shares core's committed benchmark data and pure
+  model-front maths. Declare `engines.wranglerApi: '^1.56.0'` in both the runtime
+  manifest and `package.json`'s `wranglerExtension`, retaining any other engine
+  requirements. The object and its `data` are frozen, including nested rows.
+  Data is bundled with the app; no extension installation or external request
+  is needed to load it. Every data-reading method is bound to these rows;
+  callers cannot substitute a dataset.
+
+  `data` is `{ read, credit, benchmarks, models }`: `read` is the reading date,
+  `credit` cites the benchmark sources and bundled LiteLLM price catalog,
+  `benchmarks` records benchmark names, versions and weights, and
+  `models[agent][model][effort]` is `[quality, usd, minutes]` per coding task.
+  Quality is Terminal-Bench points (higher is better); dollars and wall-clock
+  minutes are lower-is-better. These are coding-task measurements, not review
+  quality scores. A **pick** is `{ agent, model, effort }`; a scored **point**
+  adds `{ quality, usd, minutes, cost, time }`. `cost` and `time` are chart
+  coordinates from 0–100 across all measured rows: logarithmic dollars and
+  linear minutes. Returned arrays and points are independent of core's data;
+  changing them cannot affect subsequent calls.
+
+  | Function | Result |
+  | --- | --- |
+  | `scoreOf(pick)` | Score fields, or `null` for an unmeasured setting, including unresolved Auto. |
+  | `dominates(a, b)` | Whether scored point `a` is at least as good on quality, dollars and minutes, and strictly better on one. Equal scores do not dominate each other. |
+  | `frontOf(agents)` | Non-dominated measured settings offered by an `api.agents()` catalog, cheapest first (quality descending on a price tie). Honors both agent and model effort lists; unknown models and efforts are omitted. |
+  | `fullFrontOf()` | The front over every measured row, installed or not, in the same order. |
+  | `unavailableOf(front)` | Full-front points absent from the supplied front, matched by agent/model/effort. |
+  | `curveOf(front)` | Points non-dominated on quality and dollars alone, cheapest first. Faster points below this curve still belong to the three-dimensional front. Equal quality/price ties are retained. |
+  | `beatenBy(front, pick)` | The highest-quality point dominating the scored pick (cheapest on a quality tie), or `null` when none does or the pick is unscored. |
+  | `nearestOf(front, point)` | Nearest point by Euclidean distance in plotted `cost` and `quality`, or `null` on an empty front. Ties take the first point. |
+  | `autoEffortOf(agents, pick)` | A model's reported `autoEffort` when the pick omits effort or uses `''`; otherwise `''`, also when unknown. |
+  | `resolvedPick(agents, pick)` | A pick with known Auto replaced by its actual effort; explicit efforts and unknown Auto are preserved. Call this before scoring or judging an Auto pick. |
+  | `programmesOf(agents, front, programmes)` | Caller-named slots fitted to distinct points of strictly rising quality; each result is `{ name, ...point }`. |
+
+  `programmes` is the caller's `{ both: [[name, pick], …], claude: […], codex: […] }`.
+  The installed agent set chooses the slot names. Each slot prefers its own
+  set's pick, then the same-named pick of an installed agent's set, then those
+  models at nearby efforts, then the point nearest its target quality. Fitting
+  fills as many slots as the front's distinct qualities allow before optimizing
+  those preferences. Missing sets produce no slots. Core supplies no presets,
+  default, naming or picker UI; those belong to the extension.
+
+  ```js
+  const agents = api.agents();
+  const front = api.modelFront.frontOf(agents);
+  const curve = api.modelFront.curveOf(front);
+  const actual = api.modelFront.resolvedPick(agents, { agent: 'claude', model: 'opus', effort: '' });
+  const score = api.modelFront.scoreOf(actual); // null when Auto is unknown
+  const presets = api.modelFront.programmesOf(agents, front, MY_PROGRAMMES);
+  ```
 - **`api.runtimes()`** (1.33.0) returns the dispatch dialog's Runtime options,
-  `[{ id, label, ownsModel, agents }]` (`local` and the built-ins first, then enabled
+  `[{ id, label, ownsModel, ownLaunch, agents }]` (`local` and the built-ins first, then enabled
   extensions' runtimes), as a fresh copy per call. `ownsModel` marks a runtime
   that defines `validateModel`, whose model `api.dispatch.submit` sends as
   `ext.<extId>.model`. `agents` (1.37.0) lists the agent ids the runtime takes
-  (`null` for `local`, which takes every agent).
+  (`null` for `local`, which takes every agent). `ownLaunch` (1.47.0) marks a
+  runtime that builds its own command; it is `false` for `local` and `devcontainer`.
 - **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
   adds a keyboard shortcut through the board's keybinding registry
   (`public/keybindings.js`) and returns an unbind function. The manifest must
@@ -1114,6 +1367,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   own their playback. A thrown or rejected callback is reported without interrupting
   the board or other contributors. Removing an extension removes its callbacks immediately.
   A manifest using this slot declares `^1.35.0`.
+- **`api.earlyAdopter`** (1.39.0) is present only when the manifest declares
+  `earlyAdopter.branch`: `branch` (that name), `enabled()` (this install's opt-in,
+  read live from the announcement and the graph's `extensions[].earlyAdopter`) and
+  `set(on)`, which takes a boolean and resolves with the stored value or rejects
+  with the server's reason (for example a hand-placed install, which has no
+  origin to follow). The board draws nothing for it, so the extension owns its
+  own, typically hidden, switch. Turning it off changes nothing until the next
+  update, which comes from the default branch.
+- **`api.onThemeChange(fn)`** (1.39.0) calls `fn({ id, base })` whenever the
+  board applies a different theme palette (`id` the style, `base` `'dark'` or
+  `'light'`). Returns an unsubscribe function; listeners go with the extension. A
+  manifest using either declares `^1.39.0`.
 - **`api.onConnect(fn)`** (1.35.0) subscribes to subsequent control-socket connections,
   so a client can refresh shared state after reconnecting. Returns an unsubscribe function;
   disabling or removing the extension drops its listeners. It does not fire immediately on
@@ -1148,10 +1413,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   section**, above the manifest rows (`app.js extSettingsEl`). Single-host, via
   `mountInto(…, { onlyExt })`, so ONLY the owning extension's contributions
   mount there. Contract `{ id, mount(el, api), update?, unmount?, save?(el) }`.
-  **Save writes panel contributions only**: when an extension has a panel a
-  **Save** button follows it. `slots.savePanels` awaits each `save` in turn (a
+  **Save writes panel contributions only**: when an extension has a panel with a
+  `save`, a **Save** button follows it. `slots.savePanels` awaits each `save` in turn (a
   rejection leaves the panel as it is; the extension shows its own error), and
-  `unmountHost` runs every `unmount` before the pane is rebuilt. Manifest rows
+  `unmountHost` runs every `unmount` before the pane is rebuilt. A panel with no
+  `save` commits as it changes (the Themes switches call `api.settings.set`), and
+  with no such panel mounted there is no Save button (`slots.hasPanelSave`). Manifest rows
   commit on change and flash "Saved" (`flashSettingsSaved`). An extension should
   use manifest rows or a panel, not both: the section would carry two save models
   at once.
@@ -1166,7 +1433,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 - **The chip veto (1.14.0) is presentation-only, and scoped to the board
   CARD.** Every core chip `sessionCardHtml` draws in `.card-meta` carries
   `data-chip` — `core:age`, `core:cost`, `core:model`, `core:tokens`,
-  `core:compact`, `core:subagents`, `core:restarting`, `core:older-code`, `core:automerge`,
+  `core:compact`, `core:subagents`, `core:restarting`, `core:automerge`,
   `core:runtime`, `core:worktree`, `core:pr` (cards.js
   `CORE_CHIPS`, meta-row order). A `link.chip` contribution's chip is keyed
   `<extId>:<id>` (the Jira chip is `jira:jira`) and listed by `chips()` like a pill. A
@@ -1226,6 +1493,61 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   inside `worktree` included: dispatch is forgiving, so a mistyped option
   silently launches something subtly different (no grants, no worktree, the
   wrong base commit) and the extension author has no stack into core to read.
+- **`host.sessions.spawn({ ext })` (1.48.0)** forwards a whole dispatch data bag,
+  a plain object keyed by extension id whose slices are plain objects or `null`;
+  malformed data is refused by name (`ext` or `ext.<id>`) before dispatch.
+  The same narrowing reaches `session.prepare`, `onBeforeDispatch` and runtime
+  `preflight`/`buildLaunch`, while `spawnedBy` remains core-managed and unpassable.
+- **`host.terminals.create({ cwd, command?, presentation?, title?, key? })`
+  (`terminals:create`)** opens a plain shell with `command` typed but not run,
+  and resolves `{ terminalId, reused }`. The default presentation is a sidebar
+  pane in every board tab, closed (and killed) with its pane. `presentation:
+  'dialog'` (1.50.0) opens it, headed by `title`, only in the tab whose control
+  message the calling handler is serving, over anything open there such as
+  Settings; called from a sweep, hook or tool, or after that tab has gone, the
+  shell starts but nothing is shown. Closing the dialog detaches: the shell keeps
+  running until it exits, and focus returns to where it was. A dialog requires
+  a `key`, and a create whose `key` matches a live shell this extension opened
+  presents that shell again without retyping the command, so the same call
+  doubles as Reopen. `host.terminals.alive(terminalId)` (1.50.0) says whether
+  one of this extension's own terminals is still running, for showing Reopen.
+  The key is namespaced to the calling extension, and the tab is read from the
+  handler's async context, never from an argument. Shell exit is never a success
+  signal; the extension reports its own state.
+- **`host.sessions.launchEnv({ agent = 'claude', sessionId = null, ext = null })`
+  (1.48.0, `sessions:env`)** returns `{ env }` from the enabled launch-context hooks
+  with `reason: 'headless'`, resolving the task and runtime for a supplied card or
+  using the supplied `ext` bag for a run with no card.
+  `agent` must be `claude` or `codex`, `sessionId` a string or `null`, and a non-null
+  `ext` follows spawn's validation; a deliberate refusal rejects with its reason,
+  so the caller must skip the run rather than fall back to another environment.
+  This capability permits reading the merged environment for any card, including
+  credentials contributed by other extensions; it is not restricted to cards the
+  caller created. Keep the returned environment in the subprocess only: never
+  expose it in logs, graph data, settings or other persisted launch metadata.
+- **`host.sessions.spawn({ offBoard: true })` keeps the card off the board** (1.41.0).
+  The entry is stamped with the CALLING extension's id (forced, never
+  caller-named) and the stamp survives resume. The card stays in the graph with
+  `offBoard: '<extId>'`, and `sessions:read` reports the same field, so the
+  extension can show and drive it in its own view; the board's grid, task tiles,
+  minimised-task dots, keyboard nav and Attach picker filter it out
+  (`public/off-board.js`). Nothing else changes: it resumes, archives
+  (`sessions.archive`, or the task's Archive) and bills exactly as a board card
+  does. A manifest using it declares `^1.41.0`.
+- **`host.sessions.spawn({ remoteControl: { name } })` turns on Claude Code
+  Remote Control for that one session** (1.55.0). The launch passes
+  `--remote-control <name>`, and the name is stored on the entry so every resume
+  (idle-suspend wake, mail wake, a relaunch after an update) passes it again. A
+  fork does not inherit it. Only agents explicitly opting into the adapter's
+  Remote Control capability are accepted; currently that is Claude. The default
+  target is Claude. Unsupported or unknown agents are refused by name before
+  dispatch creates a directory, worktree, card or session. An unknown key or a
+  `name` that is empty, contains control characters or starts with `-` is also
+  refused; accepted names are trimmed. Omission leaves Remote Control off.
+  The core [`spawn_session` MCP tool](agent-tools.md#remote-control-on-spawn_session)
+  also exposes it as `remote_control: "Phone"`. The board dialog, workflows,
+  scheduling and handoff do not offer it. A manifest using the host option
+  declares `^1.55.0`.
 - **`adversarial-review`'s shape is a SKILL plus a
   TOOL on purpose.** A SKILL.md is static, so it cannot carry the human's
   configured process; Claude's `` !`cmd` `` injection would, but Codex reads
@@ -1246,7 +1568,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 ## Launch context, events and lifecycle
 
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, runtime,
-  reason, host }`, returns `{ env?, addDirs? }` (or a Promise of it). `server/launch-context.js`
+  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, codexConfig?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
   collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
   written after, so an extension can never override `AW_SESSION_ID`) and
@@ -1255,17 +1577,67 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   command; the Claude and Codex adapters and the devcontainer runtime (which
   copies each granted dir into the container) read the result through the same
   helpers. `reason` is one of `dispatch | resume | fork | message | snooze-wake |
-  spawn | assign | adopt`; `assign` (a running session moved to another task) and
+  spawn | assign | adopt | headless`; `assign` (a running session moved to another task) and
   `adopt` (server boot) are not launches: the hook still runs and the result is
   discarded. Turning an extension on or off applies to new launches; running
-  sessions keep their env until relaunched.
+  sessions keep their env until relaunched. `parentId` (1.47.0) is the parent
+  card id on fork, before the child's inherited state is saved; dispatch awaits
+  `onBeforeDispatch` before collecting launch context so hooks can read its bindings.
+  A non-empty string `refuse` (1.47.0) fails the launch with that reason immediately,
+  without asking later hooks or caching a partial context.
+  `refuseIfSet` (1.51.0) lists `UPPER_SNAKE` variable names that the pane checks
+  under `/bin/sh` after the user's shell has started (so tmux's global
+  environment and shell startup files count), before the agent runs: if any is
+  set, even to an empty string, the launch exits naming it, and its value is
+  never read. A runtime that builds its own launch cannot run the check, so
+  a dispatch, resume or fork on it is refused instead. Names merge across extensions; headless runs build their
+  environment in the server, where `refuse` already sees it. When the merged
+  `env` sets `CLAUDE_CONFIG_DIR` (1.51.0), a Claude dispatch, resume or fork also writes
+  the default launch's folder trust into that directory's `.claude.json`: the
+  sessions directory, a worktree whose repo the server's own Claude config
+  trusts, and the launch folder when that config already trusts it. Only the
+  server's config authorises a folder. The directory must already exist and
+  must not be the server's or the CLI's default config directory, and a
+  symlinked `.claude.json` is left alone.
+  `codexConfig` (1.54.0) is `{ 'dotted.key': value }`, passed to a Codex
+  dispatch, resume and fork as `-c key=value`; Claude launches ignore it. It
+  merges across extensions like `env` (later wins, collisions logged) and is
+  absent from the result when empty. Keys are
+  bare dotted segments (`[A-Za-z0-9_-]`); values are strings (no control
+  characters, at most 1024 characters), finite numbers or booleans, and core
+  writes the TOML. Dropped, each with a logged error naming the key and the
+  reason but never the value: keys core or `codexPolicy` own, matched on the
+  first segment (`model`, `model_reasoning_effort`,
+  `model_auto_compact_token_limit`, `developer_instructions`, `notify`,
+  `mcp_servers`, `sandbox_mode`, `approval_policy`, `sandbox_workspace_write`,
+  `projects`, `profile`, `profiles`), so they cannot be overridden whatever the
+  `-c` order; credential-shaped keys (a segment such as `token`, `api_key`,
+  `secret`, `password`, `bearer`, `headers`, `env`, or
+  `shell_environment_policy.set.*`); and credential-shaped values
+  (`sk-`, `ghp_`, a JWT, `Bearer …`). This is not a credential API: overrides are
+  visible in argv, `ps` and the tmux pane, so pass only nonsecret settings such
+  as `cli_auth_credentials_store = "keyring"`. A runtime that builds its own
+  launch gets none of the context, this field included.
+  `ext` (1.48.0) is this extension's narrowed dispatch-data slice or `null`, for
+  every reason, including `headless` runs on behalf of a card or stored launch.
+  Headless requests must leave the card's live session bindings unchanged; hooks
+  should only resolve the requested environment, and core does not cache their
+  directory grants. Task memory contributes nothing to a headless run.
+  Core's `runHeadlessClaude` merges an `env` option over the process environment,
+  then strips nested-Claude markers, preserving an explicitly supplied
+  `CLAUDE_CODE_OAUTH_TOKEN` for the selected login;
+  archive memory review collects the card's headless context before running and logs
+  a refusal as a skipped review, without stamping or publishing a result.
 - **`hooks['session.prepare']`** (1.32.0), called with `{ sessionId, taskId,
-  cwd, repoRoot, willCreateWorktree, agent, host }`, returns `void | { abort?:
+  cwd, repoRoot, willCreateWorktree, agent, spawnedBy, ext, runtime, ownLaunch, host }`, returns `void | { abort?:
   string, warnings?: string[] }` (or a Promise). It runs for a NEW dispatch
   (manual, scheduled, `spawn_session`) after the cwd is resolved and BEFORE the
   worktree is created, so a hook can bring the repo up to date (`git pull
   --ff-only`) and the worktree then branches from it. `repoRoot` is `git
-  rev-parse --show-toplevel` of `cwd`, or `null` outside a repository. Enabled
+  rev-parse --show-toplevel` of `cwd`, or `null` outside a repository. Since 1.47.0,
+  `spawnedBy` is the spawning card id or `null`, and `ext` is this extension's own
+  dispatch-field slice or `null`. `runtime` is the resolved runtime id (`local`
+  by default), and `ownLaunch` says whether it builds its own command. Enabled
   extensions are awaited in order. `abort` fails the dispatch with that message
   through the usual dispatch error path, with no worktree or pane created
   (later extensions are not asked); `warnings` toast on the board and the
@@ -1316,6 +1688,98 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   same name can go into any number of spawns. Kept images are never pruned; the
   extension removes them. Images need a local launch. A manifest using any of
   these declares `^1.31.0`.
+- **Opening local files** (1.38.0). Capability **`files:view`**, listed with the other
+  capabilities when the extension is installed, lets an extension show the local files its
+  data points at. Server side, `host.files.allow(pathOrPaths)` registers paths (absolute,
+  already normalised, of a viewable type) and returns how many it accepted;
+  `host.files.forget(pathOrPaths)` drops them. The set is per extension, in memory, and
+  capped (oldest dropped first), so an extension re-registers what it reports. Client side,
+  `api.openFile(path)` opens the viewer panel and resolves `{ ok: true }` or
+  `{ ok: false, reason }`; it never rejects. `api.files.canOpen(path)` and `api.files.types()`
+  (`[{ ext, kind, mime }]`) are synchronous and decide by extension alone, with no disk
+  access. `api.files` is undefined on a board older than 1.38.0 and when the manifest does not
+  require `files:view`, so guard with `api.files?.canOpen(path)` and fall back to Copy only.
+  Viewable today: markdown (`.md`, `.markdown`, rendered) and images (`.png`, `.jpg`,
+  `.jpeg`, `.gif`, `.webp`). One table maps extension to kind and mime (`public/file-types.js`);
+  the mime is derived, never sniffed. A read needs the path to be registered by that
+  extension, and the file to be a regular file opened without following symlinks, whose path
+  still resolves to itself, under 2 MB (markdown) or 8 MB (images). `reason` is one of
+  `invalid-path`, `unsupported-type`, `not-permitted` (not registered, or no capability),
+  `not-found`, `changed` (a symlink now sits in the path), `not-a-file`, `too-large`,
+  `unavailable` (not connected) or `error`. A manifest using it declares `^1.38.0`.
+- **Opening file links: the `file.open` client slot** (1.40.0). Capability **`files:open`**
+  (browser-only, disclosed at install) lets an extension take the file links a human clicks in
+  a session's chat or terminal, instead of the board's preview. It is a value slot:
+  `open(file, graph, api)` with `file` = `{ path, sessionId, source }`, where `path` is the
+  resolved absolute path, `sessionId` the session it was clicked in and `source` `'chat'` or
+  `'terminal'`. Returning `true` takes it; anything else leaves it to the next contribution,
+  in extension load order, and then to the board's preview. A throwing `open` is reported and
+  removed, and the link falls through. Registering without `files:open` throws. Only the links
+  core makes today reach it (`.md` and `.markdown` paths). `api.openFile` is unaffected. A
+  manifest using it declares `^1.40.0`.
+- **Locking a session's input: the `session.inputGate` client slot** (1.52.0). A value slot,
+  `{ id, gate(session, graph, api) }`: return `{ reason, label? }` to lock the session or `null`
+  to leave it alone. While locked, typed input to the session's terminal (and to a sidebar
+  shell opened for it) is dropped, while mouse and focus reports still pass, so the wheel
+  scrolls, clicks land, and selecting and copying work. The chat composer is disabled, with
+  `reason` as its placeholder, and the first blocked keystroke of each lock shows a toast with
+  `reason`. Both strings are text. The first contribution that answers wins, in extension load
+  order. A `working` session is never asked and never locked. Gates are re-run on every graph
+  and when the extension calls `api.refreshInputGates()`, so a gate that depends on the clock
+  needs only a timer, and an unlock control calls it after changing its own state. A throwing
+  `gate` is reported and removed, and disabling the extension unlocks at once. Core draws
+  nothing on the card: show the lock with a `card.pill`. A raw `tmux attach` is not gated. A
+  manifest using it declares `^1.52.0`.
+- **Client `api.mountSession(el, sessionId, { onMaximize })`** (1.42.0) shows the board's own
+  session panel inside the extension's element: the header and its controls (rename, Actions,
+  the session's chips), the `panel.section` strips, Chat, Terminal, and the diff as a third
+  **Diff** view in place of the panel over the grid. It is the same panel the board uses, moved
+  rather than copied, so one element holds it at a time. A dormant session is resumed and one
+  that is not on the board (archived) is restored first, showing "Restoring…" until it is back;
+  either way the selection stays in the extension's view. It returns a handle, or `null` when
+  `el` is not an element or `sessionId` not an id (reported, like a refused `openSession`):
+  `show(id)` swaps the session shown (mounting the same element again does too), `unmount()`
+  gives the panel back to the board (call it when the element goes), and `sessionId` reads
+  `null` once it has. A mount into another element takes the panel over and the older handle
+  goes inert. While the element's view is not on screen the panel is home and the board uses it
+  as usual, and it returns when the view does; an element dropped from the document without
+  `unmount()` is reclaimed on the next graph tick, so the board never loses its panel. The
+  element sets the size and the panel fills it. Embedded, the header has no Close (leaving is the
+  extension's) and shows Fullscreen only when `onMaximize(on)` is given, which is called with
+  the new state on each click so the extension can give the element more room. A manifest using
+  it declares `^1.42.0`.
+- **`view: 'diff'` on `api.mountSession`** (1.45.0): `mountSession(el, sessionId, { view: 'diff' })`
+  and `handle.show(id, { view: 'diff' })` open the panel on that session's **Diff** instead of
+  Chat or Terminal, for a "review this" button that should land on the changes. It applies to
+  that one show: the view coming back on screen later reopens wherever the human left it. Any
+  other `view` is reported and ignored. An older board ignores the option and opens on Chat or
+  Terminal as before, so a manifest that needs it declares `^1.45.0`; one that only prefers it
+  can keep its range and let older boards open as they always have.
+- **Manifest `themes`** (1.43.0) contributes themes to the Settings theme picker. The loader
+  validates that the path resolves inside the manifest's `dir` and stages `{ id, dir }` on
+  `themeDirs` for an ENABLED extension only, kept in list order so a re-enable does not change
+  which extension wins an id tie. `server/styles.js` `listStyles`/`assetPath` read it with the
+  precedence in [Themes](#themes), so a theme's assets always come from the source that won its
+  id. A toggle's rebuild re-broadcasts the `styles` frame. The client's `setCustomStyles` then
+  shows Dark for a saved theme that has gone, without writing `cm-style`, and redraws the
+  picker's rows if Settings is open. An older server ignores the key, so a manifest using it
+  declares `^1.43.0`.
+- **Setting def `theme`** (1.46.0) is legal only on a `toggle`, only on a manifest
+  with `themes`, and names each theme id once (`validateManifest`). The loader
+  stages `{ themeId: settingKey }` as the `themeDirs` entry's `toggles`, and
+  `themeSources(themeDirs)` adds `off` from the extension's setting values at call
+  time. `server/index.js` passes it to the `styles` broadcast and, as
+  `extensionThemes`, to `/api/styles` and the asset route, so an
+  `ext-setting-set` rebuild re-broadcasts the theme list with no re-staging.
+  `server/styles.js` skips an `off` id in that source, so a lower source can
+  answer it. An older server ignores the field, so a manifest relying on it
+  declares `^1.46.0`.
+- **Client `api.themeButtonHtml(style, { active })`** (1.44.0) returns `public/theme.js`
+  `themeButtonHtml` (app.js injects it into `createSlots`), the markup Settings › Appearance draws per theme: `aria-pressed` and the
+  `active` class follow `active`, colours are read from the entry's `vars` or a raw `theme.json`'s
+  `colors` (falling back to its `base`'s Dark or Light values) and only plain hex, `rgb[a]()` or `hsl[a]()` values reach the
+  inline style. The board's stylesheet styles `.theme-row`, so the extension adds no CSS. A
+  manifest using it declares `^1.44.0`.
 - **`link.chip` client slot** (1.18.0) is a value slot: `chip(link, graph, api)` returns
   `{ label, href?, icon? }` for the extension's own link type and `null` otherwise.
   Core draws the markup, so `label` and `href` stay text (`href` must be http(s)) and
@@ -1403,6 +1867,9 @@ Maintainer notes:
   transcript figure. The cost chip, `get_session_cost` and anything reading graph `usd`
   see the override; `host.usage.byCard()` and the `cost-report` skill recompute from
   transcripts and do not.
+- **`ownLaunch` (1.47.0)** on the runtimes announcement and `graph.extensions[].runtimes`
+  is `true` for `buildLaunch` and `false` for `wrapLaunch`; the client exposes it
+  through `api.runtimes()` so dispatch fields can validate runtime combinations.
 - **`buildLaunch` ⇒ `resumable: false`** in 1.19.0 (validation quarantines otherwise).
   It is called at dispatch only (`phase: 'dispatch'`; other phases are reserved), and
   that path skips the preset live id, the adapter's command, `wrapLaunch` and live-id
@@ -1476,3 +1943,17 @@ it lacks one. At boot the old `jiraBaseUrl` config value, or failing that
 `AW_JIRA_BASE_URL`, is copied into `extensionSettings.jira.baseUrl` when none is set
 (`RETIRED_SETTINGS` in `config-store.js`). Disabling it keeps stored Jira links and
 hides their chips.
+
+## Builtin: themes
+
+`server/extensions/builtin/themes/` (default on) ships the bundled themes beyond
+Dark and Light as its manifest `themes` (`themes/<id>/`), under the ids a browser
+already saves in `cm-style`. Each theme folder gets a hidden `toggle` named for it
+in camelCase (`pixel-cats` → `pixelCats`) with `theme` set, so adding a folder adds
+its switch. The `themes-list` handler replies with every theme's `theme.json`, the
+switched-off ones included, for the `settings.panel` to draw with
+`api.themeButtonHtml`: pressed is on, a click calls `api.settings.set`. Core never
+rewrites `cm-style` for a theme that has gone, so a browser shows Dark until it
+returns. The client also raises a one-time `api.ui.notify` card for a browser
+whose saved theme is `jurassic-park` while nothing offers it, linking the
+community extension that theme moved to.

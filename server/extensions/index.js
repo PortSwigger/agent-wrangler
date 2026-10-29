@@ -4,6 +4,7 @@ import { readConfig, extensionEnabled, extensionSettings } from '../config-store
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
+import { isValidBranchName } from '../worktree.js';
 import { parseCombo, SCOPES as KEY_SCOPES } from '../../public/keybindings.js';
 import checklist from './builtin/checklist/index.js';
 import todos from './builtin/todos/index.js';
@@ -11,6 +12,7 @@ import adversarialReview from './builtin/adversarial-review/index.js';
 import taskMemory from './builtin/task-memory/index.js';
 import jira from './builtin/jira/index.js';
 import sounds from './builtin/sounds/index.js';
+import themes from './builtin/themes/index.js';
 
 // The extensions API: one manifest per optional feature, gated as a unit by
 // `extensions.<id>` in config.json (config-store's extensionEnabled, defaulting
@@ -45,7 +47,7 @@ import sounds from './builtin/sounds/index.js';
 // client/styles, an optional `skills/<name>/SKILL.md`). Registering one is a
 // single import plus a row in this array — everything below already routes
 // through the loader's lists, and the invariants over the real set (index.test.js)
-// pick the new entry up without edits. `checklist`, `todos`, `adversarial-review`, `task-memory`, `jira` and `sounds` are the shipped set. The directory name MUST equal the
+// pick the new entry up without edits. `checklist`, `todos`, `adversarial-review`, `task-memory`, `jira`, `sounds` and `themes` are the shipped set. The directory name MUST equal the
 // manifest id, the same rule an installed extension is held to (external.js).
 export const BUILTIN = [
   checklist,
@@ -54,6 +56,7 @@ export const BUILTIN = [
   taskMemory,
   jira,
   sounds,
+  themes,
 ];
 
 // Every graph key rebuildOnce (server/index.js) sets itself. A contributor
@@ -63,7 +66,7 @@ export const BUILTIN = [
 export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
   'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'childFullViewByDefault',
-  'autoFixPrChecksDefault', 'archiveReviewEnabled', 'mailWakesDormant', 'chatViewDefault', 'defaultSessionCwd',
+  'autoFixPrChecksDefault', 'archiveReviewEnabled', 'mailWakesDormant', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
   'quarantinedBuiltins',
 ]);
 
@@ -74,7 +77,7 @@ export const RESERVED_GRAPH_KEYS = new Set([
 // directions — that test is what keeps the two in step without an import, so a
 // new capability is a two-file change by design.
 export const CAPABILITIES = new Set([
-  'sessions:read', 'sessions:wake', 'sessions:archive', 'sessions:spawn', 'sessions:kill',
+  'sessions:read', 'sessions:wake', 'sessions:archive', 'sessions:spawn', 'sessions:env', 'sessions:kill',
   'tasks:read', 'tasks:write', 'tasks:archive',
   'memory:read', 'memory:append',
   'events',
@@ -88,6 +91,7 @@ export const CAPABILITIES = new Set([
   'sessions:interrupt',
   'links:write',
   'images:keep',
+  'files:view',
 ]);
 
 // Capabilities with NO server façade: grants the BROWSER half checks (slots.js
@@ -96,7 +100,8 @@ export const CAPABILITIES = new Set([
 // buildHostApi skips them and V1_BUILDERS has no key for them — which is why
 // they are a separate set, disjoint from CAPABILITIES (host-api/index.test.js).
 //   cards:hideChips — hide chips in the board cards' meta row (api.cards).
-export const CLIENT_CAPABILITIES = new Set(['cards:hideChips']);
+//   files:open — open the file links clicked in chat and the terminal (file.open).
+export const CLIENT_CAPABILITIES = new Set(['cards:hideChips', 'files:open']);
 
 // The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
 // core dispatch-modal fields an extension may take over by drawing its own
@@ -137,9 +142,9 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 
 // Hooks whose RETURN VALUE core uses, declared on the manifest's `hooks` object
 // (the lifecycle hooks above are fire-and-forget and live under `session`).
-//   session.launchContext({ sid, task, agent, runtime, reason, host })
-//     -> { env?, addDirs? } | Promise of it — see server/launch-context.js.
-//   session.prepare({ sessionId, taskId, cwd, repoRoot, willCreateWorktree, agent, host })
+//   session.launchContext({ sid, task, agent, runtime, reason, parentId?, ext, host })
+//     -> { env?, addDirs?, codexConfig?, refuse?, refuseIfSet? } | Promise of it — see server/launch-context.js.
+//   session.prepare({ sessionId, taskId, cwd, repoRoot, willCreateWorktree, agent, spawnedBy, ext, runtime, ownLaunch, host })
 //     -> void | { abort?, warnings? } | Promise of it — awaited in order before a
 //     NEW session's worktree is created; see server/session-prepare.js.
 //   links.normalise({ link, host })
@@ -264,6 +269,13 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       fail(ext, 'engines.wranglerApi must be a valid semver range');
     }
   }
+  // The branch an opted-in install follows instead of the default (1.39.0),
+  // mirrored in package.json's wranglerExtension block so it is consented to.
+  if (ext.earlyAdopter != null) {
+    if (typeof ext.earlyAdopter !== 'object' || Array.isArray(ext.earlyAdopter) || !isValidBranchName(ext.earlyAdopter.branch)) {
+      fail(ext, 'earlyAdopter must be { branch } with a plain git branch name');
+    }
+  }
   if (ext.stores != null) {
     if (typeof ext.stores !== 'object') fail(ext, 'stores must be an object of factories');
     for (const [name, factory] of Object.entries(ext.stores)) {
@@ -273,6 +285,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   if (ext.settings != null) {
     if (!Array.isArray(ext.settings)) fail(ext, 'settings must be an array of setting definitions');
     const keys = new Set();
+    const themeToggles = new Set();
     for (const [i, s] of ext.settings.entries()) {
       if (!s || typeof s !== 'object') fail(ext, `settings[${i}] is not an object`);
       if (typeof s.key !== 'string' || !SETTING_KEY_RE.test(s.key)) fail(ext, `settings[${i}].key must match ${SETTING_KEY_RE} (got ${JSON.stringify(s.key)})`);
@@ -289,6 +302,15 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       // extension manages itself (a settings.panel, api.settings.set) and a
       // human has no row-shaped way to edit. Any type may carry it.
       if (s.hidden != null && typeof s.hidden !== 'boolean') fail(ext, `settings.${s.key}.hidden must be a boolean`);
+      // `theme` (1.46.0) makes a toggle switch one of this manifest's own
+      // `themes`: false leaves it out of the picker and its assets unserved.
+      if (s.theme != null) {
+        if (s.type !== 'toggle') fail(ext, `settings.${s.key}.theme is only valid on a toggle setting`);
+        if (ext.themes == null) fail(ext, `settings.${s.key}.theme requires the manifest's themes`);
+        if (typeof s.theme !== 'string' || !ID_RE.test(s.theme)) fail(ext, `settings.${s.key}.theme must be a theme id matching ${ID_RE}`);
+        if (themeToggles.has(s.theme)) fail(ext, `settings.${s.key}.theme "${s.theme}" is already switched by another setting`);
+        themeToggles.add(s.theme);
+      }
       const badConstraint = validateSettingDef(s);
       if (badConstraint) fail(ext, `settings.${s.key}.${badConstraint}`);
     }
@@ -400,7 +422,27 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       fail(ext, `${key} "${ext[key]}" must resolve inside ${pubDir}`);
     }
   }
+  // `themes` (1.43.0): a directory of `<id>/theme.json` + assets, read by
+  // server/styles.js. Inside the manifest's own dir but not necessarily public/:
+  // theme.json is compiled, never served, and only declared assets are.
+  if (ext.themes != null) {
+    if (typeof ext.themes !== 'string' || !ext.themes) fail(ext, 'themes must be a relative path string');
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) fail(ext, 'themes requires the manifest to export its absolute `dir`');
+    const base = path.resolve(dir);
+    if (!path.resolve(base, ext.themes).startsWith(base + path.sep)) fail(ext, `themes "${ext.themes}" must resolve inside ${base}`);
+  }
   return true;
+}
+
+// The loader's `themeDirs` as server/styles.js reads them: each with `off`, the
+// theme ids whose `theme` toggle is set to false. Read at call time, so a toggle
+// flip reaches /api/styles, the asset route and the next `styles` frame without
+// re-staging; unset counts as on.
+export function themeSources(themeDirs, valuesFor = extensionSettings) {
+  return themeDirs.map(({ id, dir, toggles = {} }) => {
+    const values = valuesFor(id);
+    return { id, dir, off: Object.keys(toggles).filter((t) => values[toggles[t]] === false) };
+  });
 }
 
 // What `graph.extensions` carries every rebuild. Identity/label/help/defaultEnabled
@@ -427,7 +469,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
 export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings) {
   return list.map(({
     id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes, hideDispatchField, keybindings,
-    quarantine, external, description, author, homepage, provenance, requires, settings, runtimes,
+    quarantine, external, description, author, homepage, provenance, requires, settings, runtimes, earlyAdopterBranch,
   }) => ({
     id, label, help, defaultEnabled, bootEnabled: Boolean(bootEnabled) && !quarantine,
     enabled: quarantine ? false : enabledFor(id, defaultEnabled),
@@ -449,7 +491,7 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // given with it to api.dispatch.submit rides `ext.<extId>.model`.
     // `agents` (1.37.0): the agent ids it takes, ['claude'] when the manifest
     // leaves it out; the dialog disables the option for any other agent.
-    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel, agents }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel), agents: [...(agents || ['claude'])] })),
+    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel, ownLaunch, agents }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel), ownLaunch: Boolean(ownLaunch), agents: [...(agents || ['claude'])] })),
     // The setting DEFS (third-party prose, rendered via textContent) plus the
     // current VALUES, re-read from config on every rebuild for exactly the
     // reason `enabled` is: an edit in another tab, or by hand in config.json,
@@ -471,7 +513,14 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // The auto-update opt-in, for the detail pane's switch. False for a
     // builtin or hand-placed entry, which has no record to carry it.
     autoUpdate: Boolean(provenance?.autoUpdate),
+    // Backs the client `api.earlyAdopter`; null when the manifest declares no
+    // branch. The host draws nothing for it.
+    earlyAdopter: earlyAdopterFacts(earlyAdopterBranch, provenance),
   }));
+}
+
+function earlyAdopterFacts(branch, provenance) {
+  return branch ? { branch, enabled: provenance?.earlyAdopter === true } : null;
 }
 
 // Boot-time check for a graph contributor's keys, run once against the real
@@ -541,6 +590,11 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     runtimes: [],
     clientManifest: [],
     dirs: {},
+    // `[{ id, dir, toggles }]`, one per ENABLED extension with a `themes` dir,
+    // in load order — server/styles.js merges these into the theme list
+    // through themeSources below. `toggles` maps a theme id to the setting key
+    // that switches it.
+    themeDirs: [],
     // The name registry, carried ON the object rather than kept local to this
     // call: a later registerExtension has to claim names against the same sets,
     // and a later unregisterExtension has to release them, or a reinstall of the
@@ -601,6 +655,7 @@ function quarantinedEntry(ext, quarantine) {
     external: Boolean(ext?.external),
     dir: typeof ext?.dir === 'string' ? ext.dir : null,
     provenance: ext?.provenance ?? null,
+    earlyAdopterBranch: null,
     quarantine,
   };
 }
@@ -671,6 +726,7 @@ function stageExtension(ext, { cfg, out, reg }) {
     external: Boolean(ext.external),
     dir: typeof ext.dir === 'string' ? ext.dir : null,
     provenance: ext.provenance ?? null,
+    earlyAdopterBranch: ext.earlyAdopter?.branch ?? null,
     quarantine: null,
   };
   if (!enabled) {
@@ -726,7 +782,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const rt of runtimes) {
     reg.runtimeIds.add(rt.id);
     out.runtimes.push(rt);
-    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function', agents: [...(rt.agents || ['claude'])] });
+    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function', ownLaunch: Boolean(rt.buildLaunch), agents: [...(rt.agents || ['claude'])] });
   }
   for (const s of shipped) reg.skillNames.add(s);
   out.skillIds.push(...(ext.skills || []));
@@ -749,6 +805,14 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const [k, fn] of Object.entries(ext.hooks || {})) out.hooks[k].push({ extId: ext.id, fn });
   for (const s of ext.sweeps || []) out.sweeps.push({ extId: ext.id, ...s });
   if (ext.dir) out.dirs[ext.id] = ext.dir;
+  // Kept in list order, not push order: a re-enable re-stages at the row's own
+  // index, and must not move its themes behind another extension's on an id tie.
+  if (ext.themes) {
+    const order = (id) => out.list.findIndex((e) => e.id === id);
+    const toggles = Object.fromEntries((ext.settings || []).filter((d) => d.theme).map((d) => [d.theme, d.key]));
+    out.themeDirs.push({ id: ext.id, dir: path.resolve(ext.dir, ext.themes), toggles });
+    out.themeDirs.sort((a, b) => order(a.id) - order(b.id));
+  }
   // Omitted rather than nulled when absent, so the announcement a stock
   // install sends is byte-identical to the pre-styles one.
   //
@@ -781,6 +845,9 @@ function stageExtension(ext, { cfg, out, reg }) {
       // a client-only capability (cards:hideChips) is checked by slots.js, which
       // must know the grant before the first graph. Omitted when empty.
       ...(listEntry.requires.length ? { requires: [...listEntry.requires] } : {}),
+      // api.earlyAdopter, for the same before-the-first-graph reason. Omitted
+      // when the manifest declares no branch.
+      ...(listEntry.earlyAdopterBranch ? { earlyAdopter: earlyAdopterFacts(listEntry.earlyAdopterBranch, ext.provenance) } : {}),
     });
   }
 }
@@ -844,6 +911,7 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
   for (const k of SESSION_HOOKS) loaded.sessionHooks[k] = loaded.sessionHooks[k].filter((h) => h.extId !== id);
   for (const k of VALUE_HOOKS) loaded.hooks[k] = loaded.hooks[k].filter((h) => h.extId !== id);
   delete loaded.dirs[id];
+  loaded.themeDirs = (loaded.themeDirs || []).filter((t) => t.id !== id);
   const skills = new Set(entry?.skills || []);
   loaded.skillIds = loaded.skillIds.filter((s) => !skills.has(s));
   if (remove) {

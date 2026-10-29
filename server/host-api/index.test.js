@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { adapterFor } from '../agents/index.js';
 import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
 import { buildHostApi, buildExtSettings } from './index.js';
 import { V1_BUILDERS, usdByCard } from './v1.js';
 import { HOST_API_VERSION } from './version.js';
 import { _resetUsageCache } from '../usage-scan-memo.js';
 import { createEventBus } from '../events.js';
+import { createExtFiles } from '../ext-files.js';
+import { runWithOrigin } from '../request-origin.js';
 
 const ALWAYS = ['id', 'version', 'stores', 'settings', 'log'];
 
@@ -33,11 +36,12 @@ function wiring(overrides = {}) {
     broadcast: () => {},
     archiveSession: () => {},
     archiveTask: async () => ({ archived: false, sessionIds: [], unclean: false }),
-    createTerminal: () => {},
+    extTerminals: { create: () => {}, alive: async () => false },
     interruptSession: async () => true,
     scheduleStore: { snapshot: () => [], create: () => {}, update: () => {}, delete: () => {} },
     mailStore: { unreadInfo: () => null, list: () => [], append: () => {} },
     scanUsage: async () => ({ sessions: [] }),
+    extFiles: createExtFiles(),
     ...overrides,
   };
 }
@@ -337,6 +341,26 @@ test('spawn autoFixPrChecks goes through the setter, since dispatch has no argum
   assert.deepEqual(untouched.seen.autoFix, [], 'absent means "inherit the default", not "off"');
 });
 
+test('spawn offBoard stamps the CALLER\'s id, and absent or false asks for a board card', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo', offBoard: true });
+  await host.sessions.spawn({ cwd: '/repo', offBoard: false });
+  await host.sessions.spawn({ cwd: '/repo' });
+  assert.equal(seen.dispatch[0].offBoard, 'x', 'forced to the extension\'s own id');
+  assert.equal('offBoard' in seen.dispatch[1], false);
+  assert.equal('offBoard' in seen.dispatch[2], false);
+});
+
+test('spawn remoteControl rides dispatch as { name } for Claude, and is absent otherwise', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo', remoteControl: { name: ' Phone ' } });
+  await host.sessions.spawn({ cwd: '/repo', agent: 'claude', remoteControl: { name: 'Phone' } });
+  await host.sessions.spawn({ cwd: '/repo' });
+  assert.deepEqual(seen.dispatch[0].remoteControl, { name: 'Phone' }, 'the default agent is Claude');
+  assert.deepEqual(seen.dispatch[1].remoteControl, { name: 'Phone' });
+  assert.equal('remoteControl' in seen.dispatch[2], false, 'an ordinary spawn never asks for Remote Control');
+});
+
 test('a mistyped spawn option is REFUSED by name, never launched around', async () => {
   const { seen, host } = spawnWiring();
   const bad = [
@@ -352,6 +376,15 @@ test('a mistyped spawn option is REFUSED by name, never launched around', async 
     [{ taskId: '' }, /taskId must be a non-empty task id/],
     [{ autoMergeOnPass: 'true' }, /autoMergeOnPass must be a boolean/],
     [{ autoFixPrChecks: 1 }, /autoFixPrChecks must be a boolean/],
+    [{ offBoard: 'other-ext' }, /offBoard must be a boolean/],
+    [{ remoteControl: 'Phone' }, /remoteControl must be an object/],
+    [{ remoteControl: true }, /remoteControl must be an object/],
+    [{ remoteControl: { label: 'Phone' } }, /remoteControl has unknown option\(s\) label/],
+    [{ remoteControl: {} }, /remoteControl\.name must be a non-empty single-line string/],
+    [{ remoteControl: { name: '  ' } }, /remoteControl\.name must be a non-empty single-line string/],
+    [{ remoteControl: { name: 'a\nb' } }, /remoteControl\.name must be a non-empty single-line string/],
+    [{ remoteControl: { name: '--help' } }, /remoteControl\.name must not start with "-"/],
+    [{ agent: 'codex', remoteControl: { name: 'Phone' } }, /codex.*does not support Remote Control/],
   ];
   for (const [args, re] of bad) {
     await assert.rejects(() => host.sessions.spawn({ cwd: '/repo', ...args }), re, JSON.stringify(args));
@@ -366,6 +399,21 @@ test('sessions:read hands back projections, never live entries', () => {
   assert.equal(row.sessionId, 'c1');
   assert.ok(Object.isFrozen(row));
   assert.equal(host.sessions.get('nope'), null);
+});
+
+test('sessions:read reports the hosting extension of an off-board card, null for a board card', () => {
+  const entries = { c1: { cwd: '/a' }, c2: { cwd: '/b', offBoard: 'jobs' } };
+  const host = buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring({
+    core: {
+      sessionManager: {
+        activeEntries: () => Object.entries(entries).map(([sessionId, e]) => ({ sessionId, ...e })),
+        entryFor: (id) => entries[id] ?? null,
+      },
+      taskStore: { taskFor: () => null },
+    },
+  }) });
+  assert.deepEqual(host.sessions.list().map((r) => [r.sessionId, r.offBoard]), [['c1', null], ['c2', 'jobs']]);
+  assert.equal(host.sessions.get('c2').offBoard, 'jobs');
 });
 
 test('host.log prefixes the message and keeps an Error its own argument', () => {
@@ -587,4 +635,132 @@ test('images:keep keeps, reads back and removes an extension\'s own copy, and sp
   assert.equal(host.images.remove(name), true);
   assert.equal(host.images.read(name), null);
   assert.equal('images' in buildHostApi({ id: 'y', requires: ['sessions:spawn'], ...wiring() }), false);
+});
+
+test('files:view registers paths per extension: allow counts the viewable ones, a sibling cannot open them', async () => {
+  const w = wiring();
+  const a = buildHostApi({ id: 'a', requires: ['files:view'], ...w });
+  const b = buildHostApi({ id: 'b', requires: ['files:view'], ...w });
+  assert.equal(a.files.allow(['/x/one.md', '/x/two.txt', 'rel.md']), 1);
+  assert.equal(a.files.allow('/x/pic.png'), 1);
+  assert.equal(w.extFiles.has('a', '/x/one.md'), true);
+  assert.equal(w.extFiles.has('b', '/x/one.md'), false);
+  assert.equal((await w.extFiles.open('b', '/x/one.md')).reason, 'not-permitted');
+  assert.equal(b.files.forget('/x/one.md'), 0);
+  assert.equal(a.files.forget('/x/one.md'), 1);
+  assert.equal('files' in buildHostApi({ id: 'y', requires: ['sessions:spawn'], ...wiring() }), false);
+});
+
+test('spawn forwards ext to dispatch whole without accepting spawnedBy', async () => {
+  const { seen, host } = spawnWiring();
+  const ext = { context: { selection: 'secondary' }, other: null };
+  await host.sessions.spawn({ cwd: '/repo', intent: 'x', ext, spawnedBy: 'untrusted' });
+  assert.deepEqual(seen.dispatch[0].ext, ext);
+  assert.equal(Object.hasOwn(seen.dispatch[0], 'spawnedBy'), false);
+});
+
+test('spawn refuses malformed ext by name before dispatch', async () => {
+  const { seen, host } = spawnWiring();
+  for (const ext of ['secondary', [], null, new Date()]) {
+    await assert.rejects(host.sessions.spawn({ cwd: '/repo', ext }), /ext must be an object keyed by extension id/);
+  }
+  for (const value of ['secondary', [], new Date(), 3]) {
+    await assert.rejects(host.sessions.spawn({ cwd: '/repo', ext: { context: value } }), /ext\.context must be an object or null/);
+  }
+  assert.deepEqual(seen.dispatch, []);
+});
+
+test('spawn without ext passes no ext key', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo' });
+  assert.equal(Object.hasOwn(seen.dispatch[0], 'ext'), false);
+});
+
+function envWiring(fn) {
+  const w = wiring();
+  const task = { id: 't1', name: 'Example' };
+  w.core.taskStore.taskFor = (sid) => sid === 'c1' ? task : null;
+  return { ...w, hostApiFor: (id) => ({ id }), launchContext: async (payload, opts) => {
+    const { collectLaunchContext } = await import('../launch-context.js');
+    return collectLaunchContext(payload, { ...opts, ext: { hooks: { 'session.launchContext': [{ extId: 'context', fn }] } } });
+  } };
+}
+
+test('sessions:env returns hook env for both agents and narrows ext for a card or a cardless run', async () => {
+  const seen = [];
+  const host = buildHostApi({ id: 'launcher', requires: ['sessions:env'], ...envWiring((p) => {
+    seen.push(p);
+    return { env: { AW_CONTEXT: p.agent }, addDirs: ['/unrelated'] };
+  }) });
+  for (const agent of ['claude', 'codex']) {
+    assert.deepEqual(await host.sessions.launchEnv({ agent, sessionId: 'c1', ext: { context: { selection: 'secondary' }, other: { hidden: true } } }), { env: { AW_CONTEXT: agent } });
+  }
+  assert.deepEqual(seen[0], { sid: 'c1', task: { id: 't1', name: 'Example' }, agent: 'claude', runtime: 'local', reason: 'headless', ext: { selection: 'secondary' }, host: { id: 'context' } });
+  assert.deepEqual(await host.sessions.launchEnv(), { env: { AW_CONTEXT: 'claude' } });
+  assert.equal(seen[2].sid, null);
+  assert.equal(seen[2].task, null);
+  assert.equal(seen[2].ext, null);
+  await host.sessions.launchEnv({ ext: { context: { selection: 'cardless' } } });
+  assert.deepEqual(seen[3].ext, { selection: 'cardless' });
+  assert.equal('sessions' in buildHostApi({ id: 'none', ...wiring() }), false);
+});
+
+test('sessions:env rejects a launch refusal with its reason', async () => {
+  const host = buildHostApi({ id: 'launcher', requires: ['sessions:env'], ...envWiring(() => ({ refuse: 'context unavailable' })) });
+  await assert.rejects(host.sessions.launchEnv({ sessionId: 'c1' }), /context unavailable/);
+});
+
+test('sessions:env rejects malformed agent, sessionId and ext by name before collecting hooks', async () => {
+  let calls = 0;
+  const host = buildHostApi({ id: 'launcher', requires: ['sessions:env'], ...envWiring(() => { calls++; }) });
+  for (const agent of ['unknown', '', null, 7]) await assert.rejects(host.sessions.launchEnv({ agent }), /agent must be "claude" or "codex"/);
+  for (const sessionId of [7, [], {}]) await assert.rejects(host.sessions.launchEnv({ sessionId }), /sessionId must be a string or null/);
+  await assert.rejects(host.sessions.launchEnv({ ext: 'bad' }), /ext must be an object keyed by extension id/);
+  await assert.rejects(host.sessions.launchEnv({ ext: { context: 7 } }), /ext\.context must be an object or null/);
+  assert.equal(calls, 0);
+});
+
+test('terminals.create namespaces key to the extension and reads the origin from the handler context', async () => {
+  const calls = [];
+  const host = buildHostApi({ id: 'logins', requires: ['terminals:create'], ...wiring({ extTerminals: { create: async (opts, ctx) => { calls.push({ opts, ctx }); return { terminalId: 't_1', reused: false }; } } }) });
+  const send = () => {};
+  await runWithOrigin(send, () => host.terminals.create({ cwd: '/a', command: 'echo', presentation: 'dialog', title: 'Log in', key: 'login:a' }));
+  await host.terminals.create({ cwd: '/a' });
+  assert.deepEqual(calls[0].opts, { cwd: '/a', command: 'echo', presentation: 'dialog', title: 'Log in', key: 'logins:login:a' });
+  assert.deepEqual(calls[0].ctx, { origin: send, owner: 'logins' });
+  assert.deepEqual(calls[1].opts, { cwd: '/a' });
+  assert.equal(calls[1].ctx.origin, null);
+});
+
+test('terminals.create refuses malformed presentation, title and key, and a dialog with no key, by name', async () => {
+  let calls = 0;
+  const host = buildHostApi({ id: 'x', requires: ['terminals:create'], ...wiring({ extTerminals: { create: async () => { calls++; } } }) });
+  await assert.rejects(host.terminals.create({ presentation: 'modal' }), /terminals\.create: presentation must be one of sidebar, dialog/);
+  await assert.rejects(host.terminals.create({ title: 7 }), /title must be a string/);
+  await assert.rejects(host.terminals.create({ title: 'x'.repeat(121) }), /title must be a string/);
+  for (const key of ['', 7, 'k'.repeat(201)]) await assert.rejects(host.terminals.create({ key }), /key must be a non-empty string/);
+  await assert.rejects(host.terminals.create({ presentation: 'dialog' }), /a dialog needs a key/);
+  assert.equal(calls, 0);
+});
+
+test('terminals.alive asks only about the calling extension\'s own terminals', async () => {
+  const asked = [];
+  const host = buildHostApi({ id: 'logins', requires: ['terminals:create'], ...wiring({ extTerminals: { create: async () => {}, alive: async (tid, owner) => { asked.push([tid, owner]); return true; } } }) });
+  assert.equal(await host.terminals.alive('t_1'), true);
+  assert.equal(await host.terminals.alive(7), false);
+  assert.deepEqual(asked, [['t_1', 'logins']]);
+});
+
+test('host spawn Remote Control refuses unknown agents and missing capability before dispatch or assignment', async () => {
+  const { seen, host } = spawnWiring();
+  await assert.rejects(() => host.sessions.spawn({ agent: 'future-agent', remoteControl: { name: 'Phone' } }), /future-agent.*does not support Remote Control/);
+  const adapter = adapterFor('claude');
+  const prev = adapter.supportsRemoteControl;
+  delete adapter.supportsRemoteControl;
+  try {
+    await assert.rejects(() => host.sessions.spawn({ remoteControl: { name: 'Phone' } }), /claude.*does not support Remote Control/);
+    assert.deepEqual(seen, { dispatch: [], assigned: [], autoFix: [] });
+  } finally {
+    adapter.supportsRemoteControl = prev;
+  }
 });

@@ -1,4 +1,5 @@
 import { parseCombo } from './keybindings.js';
+import { canOpenPath, fileTypes } from './file-types.js';
 // The client half of the extensions API: named slots an extension's client
 // module (served from /ext/<id>/, see extensions.js) contributes DOM into, and
 // the one place the board renders those contributions from. A leaf — no DOM at
@@ -71,7 +72,14 @@ import { parseCombo } from './keybindings.js';
 // A contribution may carry `weight(taskId, graph)`: the px of tile height its
 // content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
 // it. It must be cheap and synchronous; a throwing weight counts as 0.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue'];
+// `session.inputGate` (1.52.0) is a VALUE slot that can stop the human typing
+// into a session: `gate(session, graph, api)` answers `{ reason, label? }` to
+// lock it or null to leave it alone (inputGate()). Core owns the effect — typed
+// input dropped at the session's terminals, the chat composer disabled with
+// `reason` — because both are core input paths no mounted element can reach.
+// It is asked on every graph and whenever an extension calls
+// `api.refreshInputGates()`, so a time-based gate needs only a timer.
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate', 'board.tray'];
 
 
 // The capability a client-only `api.cards` call is gated on (server/extensions
@@ -79,9 +87,21 @@ export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view
 // `requires`, read back through requiresFor.
 export const HIDE_CHIPS_CAPABILITY = 'cards:hideChips';
 
+// Gates `api.files` and `api.openFile`; a server capability (host.files) the
+// browser half also reads back through requiresFor.
+export const FILES_VIEW_CAPABILITY = 'files:view';
+const FILES_API = Object.freeze({
+  canOpen: (p) => canOpenPath(p),
+  types: () => fileTypes(),
+});
+
+// Gates the `file.open` slot: a browser-only grant (server/extensions
+// CLIENT_CAPABILITIES), since taking over a core action needs the human's consent.
+export const FILES_OPEN_CAPABILITY = 'files:open';
+
 // The value slots and the one function each contribution must carry in place
 // of mount().
-const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue' };
+const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue', 'file.open': 'open', 'session.inputGate': 'gate' };
 
 // The only icon markup a `link.chip` may carry: one <svg> of <path>s with plain
 // presentation attributes. Anything else (scripts, handlers, urls, foreign
@@ -138,7 +158,7 @@ function canonCombo(str) {
   return [p.mod, p.meta, p.ctrl, p.shift, p.alt, p.key].join('|');
 }
 
-export function createSlots({ document, storage, onError = (...a) => console.error(...a), handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], keybindingsFor = () => [], labelFor = (id) => id, keys = null, onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null }) {
+export function createSlots({ document, storage, onError = (...a) => console.error(...a), onInputGatesChanged = () => {}, handlerTypesFor = () => [], hideDispatchFieldsFor = () => [], requiresFor = () => [], keybindingsFor = () => [], labelFor = (id) => id, keys = null, onChipsChanged = () => {}, onExtensionRemoved = () => {}, coreChips = [], version = null, themeButtonHtml = () => '' }) {
   const bySlot = new Map(SLOT_NAMES.map((n) => [n, []]));
   // extId -> Set<chip key>: each extension's api.cards.hideChips() choice. The
   // board hides the UNION (hiddenChips()); a removed extension's set goes with
@@ -148,10 +168,15 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const settingsListeners = new Map();
   // extId -> Set<fn>: api.agents.onChange subscribers, fed by agentsChanged().
   const agentsListeners = new Map();
+  // extId -> Set<fn>: api.onThemeChange subscribers, fed by themeChanged().
+  const themeListeners = new Map();
+  // extId -> its api.earlyAdopter, built once so it compares by identity.
+  const earlyAdopterApis = new Map();
   // Sample-card failures already reported, `extId:id`, so a pill that throws on
   // the fake session prints once rather than once per render.
   const sampleReported = new Set();
   const apis = new Map();
+  const dispatchHosts = new Set();
   // extId -> Set<fn>: the INBOUND half of the per-extension api, the mirror of
   // the bound `send` below. A server-side `host.broadcast` forces its frame's
   // type to `ext:<id>` (host-api/v1.js), and dispatchMessage() below is the only
@@ -166,6 +191,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const hideReported = new Set();
   // Colliding `card.cost` pairs already reported by costCeiling().
   const costReported = new Set();
+  const trayCollisions = new Set();
   // `extId:id` of task.body contributions whose weight() already threw.
   const weightReported = new Set();
   // extId -> Set<unregister fn>: each extension's api.keys.bind() bindings,
@@ -212,6 +238,136 @@ export function createSlots({ document, storage, onError = (...a) => console.err
 
   function teardown(c) {
     for (const host of [...c.mounts.keys()]) teardownAt(c, host);
+    for (const h of dispatchHosts) teardownHostedField(h, c);
+  }
+
+  function readDispatchFields(entries, ctx) {
+    const out = {};
+    const writer = new Map();
+    for (const [c, el] of [...entries]) {
+      if (!el) continue;
+      if (typeof c.ext === 'function') {
+        let data;
+        try {
+          data = c.ext(el, ctx);
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} ext failed — contribution removed`, err);
+          drop('dispatch.field', c);
+          continue;
+        }
+        if (data !== undefined) {
+          out.ext ||= {};
+          const prev = out.ext[c.extId];
+          out.ext[c.extId] = isPlainObject(prev) && isPlainObject(data) ? { ...prev, ...data } : data;
+        }
+      }
+      if (typeof c.fields !== 'function') continue;
+      let got;
+      try {
+        got = c.fields(el, ctx);
+      } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} fields failed — contribution removed`, err);
+        drop('dispatch.field', c);
+        continue;
+      }
+      if (!got || typeof got !== 'object') continue;
+      for (const [key, value] of Object.entries(got)) {
+        if (value === undefined) continue;
+        // `ext` is the namespaced bag above, never a field a contribution
+        // may write whole — that would let it overwrite a sibling's slice.
+        if (key === 'ext') { onError(`[ext:${c.extId}] ${c.id} cannot write dispatch field "ext"; return extension data from ext(el, ctx)`); continue; }
+        const prev = writer.get(key);
+        if (prev) onError(`[ext:${c.extId}] ${c.id} overwrites dispatch field "${key}", already written by ${prev}`);
+        writer.set(key, `[ext:${c.extId}] ${c.id}`);
+        out[key] = value;
+      }
+    }
+    return out;
+  }
+
+  function validateDispatchFields(entries, ctx) {
+    for (const [c, el] of [...entries]) {
+      if (!el || typeof c.validate !== 'function') continue;
+      let message;
+      try {
+        message = c.validate(el, ctx);
+      } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} validate failed — contribution removed`, err);
+        drop('dispatch.field', c);
+        continue;
+      }
+      if (typeof message === 'string' && message.trim()) return message;
+    }
+    return null;
+  }
+
+  function openDispatchFields(entries, ctx, savedExt = null) {
+    for (const [c, el] of [...entries]) {
+      if (!el || typeof c.open !== 'function') continue;
+      const slice = isPlainObject(savedExt) ? savedExt[c.extId] : undefined;
+      try {
+        c.open(el, { ...ctx, saved: slice === undefined ? null : structuredClone(slice) });
+      } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} open failed — contribution removed`, err);
+        drop('dispatch.field', c);
+      }
+    }
+  }
+
+  function boardDispatchFields() {
+    return slotList('dispatch.field').map((c) => [c, [...c.mounts.values()][0]]);
+  }
+
+  function teardownHostedField(h, c) {
+    const el = h.elements.get(c);
+    h.elements.delete(c);
+    if (!el) return;
+    try { c.unmount?.(el); } catch (err) { onError(`[ext:${c.extId}] ${c.id} unmount failed`, err); }
+    if (el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function mountDispatchFields(owner, baseApi, root, ctx, { saved = null } = {}) {
+    const context = (value) => ({ ...value, agents: value?.agents ?? copyAgents(baseApi.agents?.()) });
+    let current = context(ctx);
+    const h = { owner, elements: new Map(), unmount: null };
+    const entries = () => slotList('dispatch.field').filter((c) => h.elements.has(c)).map((c) => [c, h.elements.get(c)]);
+    const handle = {
+      read: () => readDispatchFields(entries(), current),
+      validate: () => validateDispatchFields(entries(), current),
+      update(ctx, graph) {
+        current = context(ctx);
+        for (const [c, el] of [...h.elements]) {
+          if (typeof c.update !== 'function') continue;
+          try { c.update(el, current, graph); } catch (err) {
+            onError(`[ext:${c.extId}] ${c.id} update failed — contribution removed`, err);
+            drop('dispatch.field', c);
+          }
+        }
+      },
+      unmount() {
+        for (const c of [...h.elements.keys()]) teardownHostedField(h, c);
+        dispatchHosts.delete(h);
+      },
+    };
+    h.unmount = handle.unmount;
+    dispatchHosts.add(h);
+    const contributions = [...slotList('dispatch.field')].sort((a, b) => DISPATCH_ANCHORS.indexOf(a.at) - DISPATCH_ANCHORS.indexOf(b.at));
+    for (const c of contributions) {
+      if (!slotList('dispatch.field').includes(c)) continue;
+      const el = document.createElement('div');
+      el.className = 'ext-slot';
+      el.dataset.ext = c.extId;
+      el.dataset.contrib = c.id;
+      root.appendChild(el);
+      h.elements.set(c, el);
+      try { c.mount(el, apiFor(c.extId, baseApi), current); } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} mount failed — contribution removed`, err);
+        drop('dispatch.field', c);
+        continue;
+      }
+      openDispatchFields([[c, el]], current, saved);
+    }
+    return handle;
   }
 
   // The per-extension `api` — the VERSIONED client half of the host façade, and
@@ -244,6 +400,27 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             panel never opened (a restore the server refused), or if a
   //             later openSession/openDiff superseded the request first. A
   //             throwing onClose is reported, the same as a throwing listener.
+  //   mountSession — the board's own session panel (header and its controls,
+  //             the extension panel sections, chat, terminal and diff) shown
+  //             INSIDE the extension's element instead of beside the grid
+  //             (1.42.0), resuming the session first if it is dormant and
+  //             restoring it if it is not on the board. Returns a handle:
+  //             `show(id)` swaps the session it shows (so does mounting the
+  //             same element again), `unmount()` gives the panel back to the
+  //             board, `sessionId` reads null once it has. One element holds the
+  //             panel at a time — a mount elsewhere takes it over and the older
+  //             handle goes inert. While the element's view is not on screen
+  //             the panel goes home for the board and comes back with the view;
+  //             an element dropped from the document without unmount is
+  //             reclaimed by the next graph tick. `{ onMaximize(on) }` adds the
+  //             header's Fullscreen button and says when it was toggled, for the
+  //             extension to give the element more room. `{ view: 'diff' }`
+  //             (1.45.0) opens it on the session's Diff rather than its Chat or
+  //             Terminal, and so does `show(id, { view: 'diff' })`; once, for
+  //             that show, not every time the view comes back on screen. Any
+  //             other view is reported and ignored, so the panel opens as it
+  //             would without one. Refused (null) for a non-element or a
+  //             non-id, like openSession.
   //   openTask — the task counterpart of openSession (1.24.0): show this task's
   //             tile, out of the tray if it was minimised, scrolled into view
   //             and pulsed. Returns whether the task is on the live board; an
@@ -262,7 +439,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             prefill from what Settings holds right now. Unset keys are
   //             absent, exactly as `host.settings` reads them server-side.
   //   agents  — the dispatch dialog's agent list (1.25.0): `[{ id, label,
-  //             models: [{ value, label, default }], efforts }]`, the same
+  //             models: [{ value, label, default, autoEffort }], efforts }]`
+  //             (`autoEffort`, 1.49.0: the level the agent runs that model at
+  //             when no effort is passed, absent when unknown), the same
   //             live-catalog list the board's own model select reads, as a
   //             fresh deep copy per call. `agents.onChange(fn)` fires when the
   //             server re-sends it (on connect, and on a catalog refresh), so
@@ -288,8 +467,21 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // since the announcement can arrive after a contribution has mounted.
   function apiFor(extId, baseApi) {
     if (!apis.has(extId)) {
+      // The view a mountSession show opens on: only 'diff' (1.45.0); null is the
+      // session's own Chat/Terminal, and anything else is reported and dropped.
+      const embedView = (opts, what) => {
+        const view = isPlainObject(opts) ? opts.view : undefined;
+        if (view == null) return null;
+        if (view === 'diff') return view;
+        let shown;
+        try { shown = JSON.stringify(view) ?? String(view); } catch { shown = typeof view; }
+        onError(`[ext:${extId}] ${what} view ignored: expected 'diff', got ${shown}`);
+        return null;
+      };
+      // openExtFile takes an extension id; only the bound openFile below may reach it.
+      const { openExtFile: _bound, ...exposed } = baseApi;
       apis.set(extId, {
-        ...baseApi,
+        ...exposed,
         // Resolved HERE rather than at createSlots time: the server announces it,
         // and an api is only ever built once a module has loaded — which cannot
         // happen before that announcement. A function is accepted so the caller
@@ -312,6 +504,34 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           connectionListeners.get(extId).add(fn);
           return () => connectionListeners.get(extId)?.delete(fn);
         },
+        // The board's theme changed (1.39.0): fn({ id, base }) with the style id
+        // and 'dark' or 'light'. Returns the unsubscribe function.
+        onThemeChange: (fn) => {
+          if (typeof fn !== 'function') {
+            onError(`[ext:${extId}] onThemeChange needs a function`);
+            return () => {};
+          }
+          if (!themeListeners.has(extId)) themeListeners.set(extId, new Set());
+          themeListeners.get(extId).add(fn);
+          return () => themeListeners.get(extId)?.delete(fn);
+        },
+        // The Settings theme picker's button (1.44.0), so an extension listing
+        // themes draws them the same way: a theme in, HTML out. Injected by
+        // app.js (theme.js), like `version`, so this module stays a leaf.
+        themeButtonHtml: (style, opts) => themeButtonHtml(style, opts),
+        // This install's early-adopter opt-in (1.39.0), present only while the
+        // manifest declares `earlyAdopter.branch`. The board draws no UI for it.
+        get earlyAdopter() {
+          if (!baseApi.earlyAdopterFor?.(extId)?.branch) return undefined;
+          if (!earlyAdopterApis.has(extId)) earlyAdopterApis.set(extId, earlyAdopterApi(extId, baseApi));
+          return earlyAdopterApis.get(extId);
+        },
+        // Ask the board to re-run every `session.inputGate` now (1.52.0), for a
+        // gate whose answer changed without a graph change: a clock, or a click
+        // on the extension's own unlock control.
+        refreshInputGates: () => {
+          try { onInputGatesChanged(); } catch (err) { onError(`[ext:${extId}] refreshInputGates failed`, err); }
+        },
         openSession: (sessionId) => {
           if (typeof sessionId !== 'string' || !sessionId) {
             onError(`[ext:${extId}] openSession refused: expected a session id, got ${JSON.stringify(sessionId)}`);
@@ -331,12 +551,49 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             }),
           });
         },
+        mountSession: (el, sessionId, opts) => {
+          if (!el || typeof el !== 'object' || el.nodeType !== 1) {
+            onError(`[ext:${extId}] mountSession refused: expected an element to mount into`);
+            return null;
+          }
+          if (typeof sessionId !== 'string' || !sessionId) {
+            onError(`[ext:${extId}] mountSession refused: expected a session id, got ${JSON.stringify(sessionId)}`);
+            return null;
+          }
+          if (typeof baseApi.mountSession !== 'function') return null;
+          const onMaximize = isPlainObject(opts) && typeof opts.onMaximize === 'function' ? opts.onMaximize : null;
+          const handle = baseApi.mountSession(extId, el, sessionId, {
+            onMaximize: onMaximize && ((on) => {
+              try { onMaximize(on); } catch (err) { onError(`[ext:${extId}] mountSession onMaximize threw: ${err?.message || err}`); }
+            }),
+            view: embedView(opts, 'mountSession'),
+          });
+          if (!handle) return null;
+          return Object.freeze({
+            get sessionId() { return handle.sessionId; },
+            show: (id, showOpts) => {
+              if (typeof id !== 'string' || !id) {
+                onError(`[ext:${extId}] mountSession show refused: expected a session id, got ${JSON.stringify(id)}`);
+                return false;
+              }
+              return handle.show(id, { view: embedView(showOpts, 'mountSession show') });
+            },
+            unmount: () => handle.unmount(),
+          });
+        },
         openTask: (taskId) => {
           if (typeof taskId !== 'string' || !taskId) {
             onError(`[ext:${extId}] openTask refused: expected a task id, got ${JSON.stringify(taskId)}`);
             return false;
           }
           return Boolean(baseApi.openTask?.(taskId));
+        },
+        setMinimisedTasks: (ids) => {
+          if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id)) {
+            onError(`[ext:${extId}] setMinimisedTasks refused: expected an array of task ids`);
+            return false;
+          }
+          return Boolean(baseApi.setMinimisedTasks?.([...ids]));
         },
         minimiseTask: (taskId) => {
           if (typeof taskId !== 'string' || !taskId) {
@@ -377,6 +634,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         }),
         settings: settingsApi(extId, baseApi),
         agents: agentsApi(extId, baseApi),
+        dispatchFields: Object.freeze({
+          mount: (el, ctx, opts) => mountDispatchFields(extId, baseApi, el, ctx, opts),
+        }),
         // The dispatch dialog's Runtime options (1.33.0), fresh per call.
         runtimes: () => copyAgents(baseApi.runtimes?.()),
         // Upload an image into paste-image's staging dir (1.31.0); resolves
@@ -388,6 +648,25 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             return Promise.resolve(baseApi.stageImage(file));
           },
         }),
+        // Open a local file in the viewer panel (1.38.0). Resolves
+        // { ok:true } or { ok:false, reason }, never rejects; the server reads
+        // only paths this extension registered with host.files.allow.
+        openFile: async (p) => {
+          if (typeof p !== 'string' || !p) return { ok: false, reason: 'invalid-path' };
+          if (!(requiresFor(extId) || []).includes(FILES_VIEW_CAPABILITY)) return { ok: false, reason: 'not-permitted' };
+          if (typeof baseApi.openExtFile !== 'function') return { ok: false, reason: 'unavailable' };
+          try {
+            const r = await baseApi.openExtFile(extId, p);
+            return r && r.ok === true ? { ok: true } : { ok: false, reason: typeof r?.reason === 'string' ? r.reason : 'error' };
+          } catch {
+            return { ok: false, reason: 'error' };
+          }
+        },
+        // Synchronous and extension-only (no disk). Absent on an older board, and
+        // here unless the manifest requires files:view, so a caller falls back.
+        get files() {
+          return (requiresFor(extId) || []).includes(FILES_VIEW_CAPABILITY) ? FILES_API : undefined;
+        },
         // Mark `el` as carrying an extension-owned drag: the board treats any
         // [data-ext-drag] element as "a drag is in progress" and holds its
         // background re-renders (app.js gridEditing) so the gesture is not torn
@@ -572,6 +851,22 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     });
   }
 
+  // `branch` and `enabled()` read the latest announcement or graph, never a
+  // capture. `set(on)` sends core's ext-set-early-adopter with the id forced
+  // from extId, and resolves with the stored flag once the server has it.
+  function earlyAdopterApi(extId, baseApi) {
+    const facts = () => baseApi.earlyAdopterFor?.(extId) || null;
+    return Object.freeze({
+      get branch() { return facts()?.branch || null; },
+      enabled: () => facts()?.enabled === true,
+      set: (on) => {
+        if (typeof on !== 'boolean') return Promise.reject(new Error(`[ext:${extId}] earlyAdopter.set needs true or false`));
+        if (typeof baseApi.setEarlyAdopter !== 'function') return Promise.reject(new Error(`[ext:${extId}] earlyAdopter.set is not available`));
+        return Promise.resolve(baseApi.setEarlyAdopter(extId, on));
+      },
+    });
+  }
+
   function agentsApi(extId, baseApi) {
     const read = () => copyAgents(baseApi.agents?.());
     return Object.assign(read, {
@@ -611,7 +906,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     host.appendChild(el);
     c.mounts.set(host, el);
     try {
-      if (slotName === 'task.body') c.mount(el, apiFor(c.extId, baseApi), subject);
+      if (slotName === 'task.body' || slotName === 'board.tray') c.mount(el, apiFor(c.extId, baseApi), subject);
       else c.mount(el, apiFor(c.extId, baseApi));
     } catch (err) {
       if (sample) { sampleFailed(c, host, 'mount', err); return false; }
@@ -756,6 +1051,25 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     return out;
   }
 
+  function trayMenuItem(method, args, baseApi) {
+    const c = slotList('board.tray').find((entry) => entry.mounts.size > 0);
+    if (!c || !c[method]) return null;
+    try {
+      const item = c[method](...args, apiFor(c.extId, baseApi));
+      if (item == null) return null;
+      if (typeof item.label !== 'string' || !item.label || typeof item.run !== 'function') throw Error('expected a label and run()');
+      return {
+        label: item.label, icon: typeof item.icon === 'string' ? item.icon : '',
+        run: (e) => { try { return item.run(e); } catch (err) { onError(`[ext:${c.extId}] ${c.id} ${method} action failed`, err); } },
+      };
+    } catch (err) {
+      onError(`[ext:${c.extId}] ${c.id} ${method} failed — contribution removed`, err);
+      drop('board.tray', c);
+      baseApi.requestBoardRender?.();
+      return null;
+    }
+  }
+
   return {
     register(slotName, extId, contribution) {
       const list = slotList(slotName);
@@ -771,6 +1085,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // reportBadges would skip it in silence and the author would be left
       // looking at a rail button that never says anything. Same reason
       // slotList refuses an unknown slot name — fail at load, not nowhere.
+      if (slotName === 'board.tray') for (const field of ['minimiseItem', 'backgroundItem']) {
+        if (contribution[field] != null && typeof contribution[field] !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ${field} must be a function`);
+      }
       if (contribution.badge != null && typeof contribution.badge !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} badge must be a function`);
       if (contribution.weight != null && typeof contribution.weight !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} weight must be a function`);
       if (contribution.ext != null && typeof contribution.ext !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} ext must be a function`);
@@ -778,6 +1095,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // Dispatch-modal specifics. Both THROW for the same reason: a typo must
       // fail at load, not render nowhere.
       if (slotName === 'dispatch.field') {
+        if (contribution.validate != null && typeof contribution.validate !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} validate must be a function`);
         if (!DISPATCH_ANCHORS.includes(contribution.at)) throw new Error(`[ext:${extId}] ${contribution.id} has an unknown dispatch anchor "${contribution.at}" (known: ${DISPATCH_ANCHORS.join(', ')})`);
         // A function `hides` can only be checked when it runs — see
         // hiddenDispatchFields() for what a bad return costs it.
@@ -788,6 +1106,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       }
       if (slotName === 'card.pill' && contribution.label != null && typeof contribution.label !== 'string') throw new Error(`[ext:${extId}] ${contribution.id} label must be a string`);
       if (slotName === 'settings.panel' && contribution.save != null && typeof contribution.save !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} save must be a function`);
+      if (slotName === 'file.open' && !(requiresFor(extId) || []).includes(FILES_OPEN_CAPABILITY)) throw new Error(`[ext:${extId}] ${contribution.id} in file.open needs the ${FILES_OPEN_CAPABILITY} capability`);
       if (list.some((c) => c.extId === extId && c.id === contribution.id)) throw new Error(`[ext:${extId}] ${contribution.id} is already registered in ${slotName}`);
       list.push({ ...contribution, extId, slotName, mounts: new Map() });
     },
@@ -819,6 +1138,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     },
 
     removeExtension(extId) {
+      for (const h of [...dispatchHosts]) if (h.owner === extId) h.unmount();
+      // A disabled gate must unlock now, not on the next graph.
+      const hadGate = slotList('session.inputGate').some((c) => c.extId === extId);
       for (const [, list] of bySlot) {
         for (const c of [...list]) if (c.extId === extId) { list.splice(list.indexOf(c), 1); teardown(c); }
       }
@@ -833,9 +1155,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       connectionListeners.delete(extId);
       settingsListeners.delete(extId);
       agentsListeners.delete(extId);
+      themeListeners.delete(extId);
+      earlyAdopterApis.delete(extId);
       for (const unbind of [...(keyUnbinds.get(extId) || [])]) unbind();
       keyUnbinds.delete(extId);
       if (hiddenByExt.delete(extId)) chipsChanged();
+      if (hadGate) { try { onInputGatesChanged(); } catch (err) { onError(`[ext:${extId}] input gate refresh failed`, err); } }
       try { onExtensionRemoved(extId); } catch (err) { onError(`[ext:${extId}] cleanup failed`, err); }
     },
 
@@ -854,6 +1179,16 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // app.js calls this when a graph carries different settingValues for
     // `extId` than the previous one. Each listener gets its own copy; a throwing
     // listener is reported and KEPT, the same rule as dispatchMessage.
+    // theme.js applied a different palette; app.js forwards { id, base }.
+    themeChanged(theme) {
+      const t = { id: String(theme?.id || ''), base: theme?.base === 'light' ? 'light' : 'dark' };
+      for (const [extId, set] of themeListeners) {
+        for (const fn of [...set]) {
+          try { fn({ ...t }); } catch (err) { onError(`[ext:${extId}] onThemeChange listener failed`, err); }
+        }
+      }
+    },
+
     settingsChanged(extId, values) {
       const set = settingsListeners.get(extId);
       if (!set) return 0;
@@ -888,6 +1223,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // Await `save(el)` of every contribution mounted in `hostEl`, in
     // registration order. A rejection (or throw) propagates, which is the
     // dialog's cue to stay open — the extension shows its own error.
+    // Whether any contribution mounted in `hostEl` has a `save`. A panel whose
+    // controls commit as they change has none, and gets no Save button.
+    hasPanelSave(hostEl, slotName = 'settings.panel') {
+      return slotList(slotName).some((c) => c.mounts.has(hostEl) && typeof c.save === 'function');
+    },
+
     async savePanels(hostEl, slotName = 'settings.panel') {
       for (const c of [...slotList(slotName)]) {
         const el = c.mounts.get(hostEl);
@@ -1047,26 +1388,18 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // sent nothing" rather than "apply your default". A throwing `open` REMOVES
     // the contribution, the mount/update rule; the caller re-runs the veto.
     openDispatchFields(ctx, savedExt = null) {
-      for (const c of [...slotList('dispatch.field')]) {
-        const el = [...c.mounts.values()][0];
-        if (!el || typeof c.open !== 'function') continue;
-        const slice = isPlainObject(savedExt) ? savedExt[c.extId] : undefined;
-        try {
-          c.open(el, { ...ctx, saved: slice === undefined ? null : structuredClone(slice) });
-        } catch (err) {
-          onError(`[ext:${c.extId}] ${c.id} open failed — contribution removed`, err);
-          drop('dispatch.field', c);
-        }
-      }
+      return openDispatchFields(boardDispatchFields(), ctx, savedExt);
+    },
+
+    validateDispatch(ctx) {
+      return validateDispatchFields(boardDispatchFields(), ctx);
     },
 
     // The payload half: every live contribution's `fields(el, ctx)` return, merged
     // over each other in REGISTRATION order and spread over core's own read by
     // the caller (app.js readDispatchFields).
     //
-    // A dispatch.field contribution has at most ONE element — its `at` matches
-    // exactly one anchor host — so the single entry of `c.mounts` is taken
-    // rather than looped over silently.
+    // Each host reads only its own element for a dispatch.field contribution.
     //
     // `undefined` VALUES are dropped: a contribution saying "no opinion" must
     // not blank a core field. `null` is a real value and is kept — `|| undefined`
@@ -1090,48 +1423,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // its own slice (onBeforeDispatch's `ext`). Plain objects from several
     // contributions of one extension merge shallowly; `undefined` is dropped.
     dispatchFields(ctx) {
-      const out = {};
-      const writer = new Map();
-      for (const c of [...slotList('dispatch.field')]) {
-        const el = [...c.mounts.values()][0];
-        if (!el) continue;
-        if (typeof c.ext === 'function') {
-          let data;
-          try {
-            data = c.ext(el, ctx);
-          } catch (err) {
-            onError(`[ext:${c.extId}] ${c.id} ext failed — contribution removed`, err);
-            drop('dispatch.field', c);
-            continue;
-          }
-          if (data !== undefined) {
-            out.ext ||= {};
-            const prev = out.ext[c.extId];
-            out.ext[c.extId] = isPlainObject(prev) && isPlainObject(data) ? { ...prev, ...data } : data;
-          }
-        }
-        if (typeof c.fields !== 'function') continue;
-        let got;
-        try {
-          got = c.fields(el, ctx);
-        } catch (err) {
-          onError(`[ext:${c.extId}] ${c.id} fields failed — contribution removed`, err);
-          drop('dispatch.field', c);
-          continue;
-        }
-        if (!got || typeof got !== 'object') continue;
-        for (const [key, value] of Object.entries(got)) {
-          if (value === undefined) continue;
-          // `ext` is the namespaced bag above, never a field a contribution
-          // may write whole — that would let it overwrite a sibling's slice.
-          if (key === 'ext') { onError(`[ext:${c.extId}] ${c.id} cannot write dispatch field "ext"; return extension data from ext(el, ctx)`); continue; }
-          const prev = writer.get(key);
-          if (prev) onError(`[ext:${c.extId}] ${c.id} overwrites dispatch field "${key}", already written by ${prev}`);
-          writer.set(key, `[ext:${c.extId}] ${c.id}`);
-          out[key] = value;
-        }
-      }
-      return out;
+      return readDispatchFields(boardDispatchFields(), ctx);
     },
 
     // `label`/`icon` are what the board needs to DRAW a chrome affordance for a
@@ -1158,6 +1450,34 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         if (Number.isFinite(w) && w > 0) total += w;
       }
       return total;
+    },
+
+    syncTray(host, baseApi, ctx, graph) {
+      const candidates = [...slotList('board.tray')];
+      for (const c of candidates.slice(1)) {
+        const key = `${candidates[0].extId}:${candidates[0].id}/${c.extId}:${c.id}`;
+        if (!trayCollisions.has(key)) {
+          trayCollisions.add(key);
+          onError(`[ext:${c.extId}] ${c.id} board.tray waiting for the first registered contributor`);
+        }
+        teardown(c);
+      }
+      for (const c of candidates) {
+        for (const old of [...c.mounts.keys()]) if (old !== host) teardownAt(c, old);
+        const snapshot = () => ({ tasks: ctx.tasks.map((t) => ({ ...t })), minimisedIds: [...ctx.minimisedIds] });
+        if (!ensure('board.tray', c, host, baseApi, false, snapshot())) continue;
+        if (!updateAt('board.tray', c, host, snapshot(), graph)) continue;
+        return true;
+      }
+      return false;
+    },
+
+    trayMinimiseItem(task, graph, baseApi = {}) {
+      return trayMenuItem('minimiseItem', [{ ...task }, graph], baseApi);
+    },
+
+    trayBackgroundItem(graph, baseApi = {}) {
+      return trayMenuItem('backgroundItem', [graph], baseApi);
     },
 
     // The `card.action` items for one card, in registration order, for the
@@ -1233,6 +1553,52 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           label: got.label,
           href: typeof got.href === 'string' ? got.href : '',
           icon: safeChipIcon(got.icon),
+        };
+      }
+      return null;
+    },
+
+    // Offer a clicked file link to the `file.open` contributions in load order;
+    // true when one took it, so core skips its own preview. Only a literal true
+    // claims it, and a throwing open() is removed and the next one asked.
+    fileOpen(file, graph, baseApi) {
+      for (const c of [...slotList('file.open')]) {
+        try {
+          if (c.open({ ...file }, graph, apiFor(c.extId, baseApi)) === true) return true;
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} open failed — contribution removed`, err);
+          drop('file.open', c);
+        }
+      }
+      return false;
+    },
+
+    // The input gate for one session: `{ key, reason, label }` from the first
+    // `session.inputGate` contribution that answers, or null. A working session
+    // is never gated — its keys are how the human steers or interrupts the turn,
+    // and its prompt cache is warm by definition. `reason` and `label` are TEXT.
+    // A throwing gate() is removed, so a broken extension unlocks rather than
+    // locking every session for good; an answer without a reason is skipped.
+    inputGate(session, graph, baseApi) {
+      if (!session || session.status === 'working') return null;
+      for (const c of [...slotList('session.inputGate')]) {
+        let got;
+        try {
+          got = c.gate(session, graph, apiFor(c.extId, baseApi));
+        } catch (err) {
+          onError(`[ext:${c.extId}] ${c.id} gate failed — contribution removed`, err);
+          drop('session.inputGate', c);
+          continue;
+        }
+        if (got == null) continue;
+        if (typeof got.reason !== 'string' || !got.reason.trim()) {
+          onError(`[ext:${c.extId}] ${c.id} returned an input gate without a reason`);
+          continue;
+        }
+        return {
+          key: `${c.extId}:${c.id}`,
+          reason: got.reason.trim(),
+          label: typeof got.label === 'string' && got.label.trim() ? got.label.trim() : '',
         };
       }
       return null;

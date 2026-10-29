@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -73,13 +73,23 @@ async function launchChrome(chromePath, profile) {
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
     '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--window-size=1400,900',
     'about:blank',
-  ], { stdio: 'ignore' });
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  // Keep startup failures visible in CI. A missing port file alone cannot tell us
+  // whether Chrome crashed, could not spawn, or stayed alive without opening CDP.
+  let stderr = '', stopped = null;
+  proc.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-16_384); });
+  proc.on('error', (error) => { stopped = `could not start: ${error.message}`; });
+  proc.on('exit', (code, signal) => { stopped = `exited (${signal ? `signal ${signal}` : `code ${code}`})`; });
   const portFile = join(profile, 'DevToolsActivePort');
   const port = await waitFor(() => {
+    // waitFor swallows read errors while the file is being created. Return a
+    // sentinel on process failure so we can report it immediately after polling.
+    if (stopped) return 'stopped';
     const line = readFileSync(portFile, 'utf8').split('\n')[0].trim();
     return line ? Number(line) : null;
   });
-  return { proc, port };
+  return { proc, port: port === 'stopped' ? null : port,
+    diagnosis: () => `Chrome ${stopped || 'never reported a DevTools port (still running)'}${stderr ? `\n${stderr}` : ''}` };
 }
 
 test('the board loads in a real browser with no console errors', { timeout: 180_000 }, async (t) => {
@@ -95,6 +105,18 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-accept-'));
   const tasks = Array.from({ length: 6 }, (_, i) => ({ id: `layout-${i}`, name: `Layout ${i}` }));
   writeFileSync(join(dataDir, 'tasks.json'), JSON.stringify({ tasks, order: [...tasks.map((t) => t.id), 'adhoc'], assignments: {}, sessionOrder: {} }));
+  // A throwaway installed extension with one view, its browser api on window so
+  // the focus-mode check below can redraw the board from inside that view.
+  const probeDir = join(dataDir, 'extensions', 'probe');
+  mkdirSync(join(probeDir, 'public'), { recursive: true });
+  writeFileSync(join(probeDir, 'index.js'), `export default { id: 'probe', dir: new URL('.', import.meta.url).pathname, label: 'Probe', defaultEnabled: true, requires: ['cards:hideChips'], client: 'public/client.js' };`);
+  writeFileSync(join(probeDir, 'public', 'client.js'), `export default { register(r) { window.__probeApi = r.api; r.register('view', { id: 'main', label: 'Probe', mount(el) { el.textContent = 'probe view'; } }); } };`);
+  writeFileSync(join(dataDir, 'extensions.json'), JSON.stringify({ probe: { id: 'probe', requires: ['cards:hideChips'] } }));
+  writeFileSync(join(dataDir, 'schedules.json'), JSON.stringify({ schedules: [{
+    id: 'sch_pick', name: 'Explicit model', enabled: false,
+    when: { kind: 'once', runAt: '2099-01-01T09:00:00.000Z' },
+    action: { kind: 'dispatch', dispatch: { agent: 'claude', model: 'opus', effort: 'low' } },
+  }] }));
   const profile = mkdtempSync(join(tmpdir(), 'aw-chrome-'));
   const port = await freePort();
   const url = `http://127.0.0.1:${port}/`;
@@ -111,7 +133,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
 
     const launched = await launchChrome(chromePath, profile);
     chrome = launched.proc;
-    assert.ok(launched.port, 'Chrome never reported a DevTools port');
+    assert.ok(launched.port, launched.diagnosis());
 
     const target = await waitFor(async () => {
       const r = await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' });
@@ -294,6 +316,24 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     };
     await action('Focus');
     assert.ok(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode') && !document.getElementById('grid').classList.contains('single-column')`), 'focus mode must clear single-column sizing');
+    // Focus mode's `display: flex` must never bring the board back beside an
+    // extension view: a board redraw from inside the view (here an extension's
+    // hideChips, which renders on a microtask) used to re-add focus-mode and
+    // split the screen.
+    assert.ok(await waitFor(() => evaluate(`!!document.querySelector('.layouts button[data-view="ext:probe:main"]')`)), 'the probe extension view never registered');
+    assert.ok(await evaluateChecked(`(() => {
+      const front = window.__probeApi.modelFront;
+      return Object.isFrozen(front) && Object.isFrozen(front.data.models)
+        && front.fullFrontOf().some((p) => p.quality > 0 && p.usd > 0 && p.minutes > 0);
+    })()`), 'the client extension must receive frozen core model-front data and working maths');
+    await evaluateChecked(`document.querySelector('.layouts button[data-view="ext:probe:main"]').click()`);
+    const gridDisplay = `getComputedStyle(document.getElementById('grid')).display`;
+    assert.equal(await evaluateChecked(gridDisplay), 'none', 'the board must hide behind an extension view');
+    await evaluateChecked(`(async () => { window.__probeApi.cards.hideChips([]); await new Promise((r) => setTimeout(r, 50)); })()`);
+    assert.equal(await evaluateChecked(gridDisplay), 'none', 'a board redraw must not bring focus mode back beside an extension view');
+    assert.ok(!(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode')`)), 'focus-mode must not be re-added while the grid is hidden');
+    await evaluateChecked(`document.querySelector('.layouts button[data-view="grid"]').click()`);
+    assert.ok(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode')`), 'returning to the board must restore focus mode');
     await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
     assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column')`)), 'restoring tasks must restore single-column mode');
     for (let i = 0; i < 3; i++) {
@@ -378,6 +418,70 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     const secondOrder = ['layout-1', 'layout-2', 'layout-0', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
     assert.ok(await waitFor(() => JSON.stringify(JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8')).order) === JSON.stringify(secondOrder)), 'moving after must persist the shifted order');
 
+
+    await resize(1400);
+    const readPick = `(() => {
+      const model = document.getElementById('m-model');
+      return { agent: model.options[model.selectedIndex]?.dataset.agent,
+        model: model.value, effort: document.getElementById('m-effort').value };
+    })()`;
+    await evaluateChecked(`document.getElementById('new-session').click()`);
+    const chosen = await evaluateChecked(`(() => {
+      const model = document.getElementById('m-model');
+      model.selectedIndex = model.options.length - 1;
+      model.dispatchEvent(new Event('change', { bubbles: true }));
+      const effort = document.getElementById('m-effort');
+      effort.selectedIndex = effort.options.length - 1;
+      effort.dispatchEvent(new Event('change', { bubbles: true }));
+      return ${readPick};
+    })()`);
+    assert.deepEqual(await evaluateChecked(`JSON.parse(localStorage.getItem('aw-dispatch-pick'))`), chosen);
+    await evaluateChecked(`document.getElementById('m-cancel').click(); document.getElementById('new-session').click()`);
+    assert.deepEqual(await evaluateChecked(readPick), chosen, 'Cancel must retain the last explicit choice');
+    await evaluateChecked(`document.getElementById('m-cancel').click()`);
+    await ack('Page.reload');
+    assert.ok(await waitFor(() => evaluate(`window.__probeApi?.agents().some((a) => a.models.length > 1)`)), 'live agents must load after reload');
+    await evaluateChecked(`document.getElementById('new-session').click()`);
+    assert.deepEqual(await evaluateChecked(readPick), chosen, 'reload must restore agent, model and effort');
+    await evaluateChecked(`(() => {
+      const effort = document.getElementById('m-effort');
+      effort.value = ''; effort.dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('m-cancel').click();
+    })()`);
+    await ack('Page.reload');
+    assert.ok(await waitFor(() => evaluate(`window.__probeApi?.agents().some((a) => a.models.length > 1)`)));
+    await evaluateChecked(`document.getElementById('new-session').click()`);
+    assert.deepEqual(await evaluateChecked(readPick), { ...chosen, effort: '' }, 'Auto must survive reload');
+    const curveCount = await evaluateChecked(`document.querySelectorAll('[data-stop]').length`);
+    if (curveCount) {
+      const beforeFocus = await evaluateChecked(readPick);
+      const preview = await evaluateChecked(`(() => {
+        const stop = document.querySelector('[data-stop]'); stop.focus();
+        return { name: stop.getAttribute('aria-label'), preview: document.querySelector('.model-front-preview').textContent };
+      })()`);
+      assert.equal(preview.name, preview.preview);
+      assert.deepEqual(await evaluateChecked(readPick), beforeFocus, 'focus must not select a stop');
+      await evaluateChecked(`document.querySelector('[data-stop]').click()`);
+      const sliderPick = await evaluateChecked(readPick);
+      assert.deepEqual(await evaluateChecked(`JSON.parse(localStorage.getItem('aw-dispatch-pick'))`), sliderPick);
+      const dotName = await evaluateChecked(`(() => {
+        const dot = document.querySelector('[data-point][data-unavailable="false"]');
+        dot.focus();
+        dot.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return document.activeElement.getAttribute('aria-label');
+      })()`);
+      assert.ok(dotName, 'chart selection must retain keyboard focus');
+      assert.deepEqual(await evaluateChecked(`JSON.parse(localStorage.getItem('aw-dispatch-pick'))`), await evaluateChecked(readPick));
+    }
+    const remembered = await evaluateChecked(`localStorage.getItem('aw-dispatch-pick')`);
+    await evaluateChecked(`document.getElementById('m-cancel').click(); document.getElementById('schedules-btn').click()`);
+    await evaluateChecked(`document.querySelector('[data-id="sch_pick"] .sched-edit').click()`);
+    assert.deepEqual(await evaluateChecked(readPick), { agent: 'claude', model: 'opus', effort: 'low' }, 'a saved schedule must take precedence');
+    assert.equal(await evaluateChecked(`localStorage.getItem('aw-dispatch-pick')`), remembered, 'opening a schedule must not replace the preference');
+    await evaluateChecked(`document.getElementById('m-cancel').click(); document.getElementById('schedules-close').click(); localStorage.setItem('aw-dispatch-pick', '{"agent":"retired","model":"gone","effort":"high"}'); document.getElementById('new-session').click()`);
+    const fallback = await evaluateChecked(readPick);
+    assert.ok(await evaluateChecked(`window.__probeApi.agents().some((a) => a.id === ${JSON.stringify(fallback.agent)} && a.models.some((m) => m.value === ${JSON.stringify(fallback.model)}))`), 'stale preferences must fall back to a live model');
+    assert.equal(fallback.effort, '');
 
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
   } finally {

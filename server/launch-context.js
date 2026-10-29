@@ -1,31 +1,68 @@
 import path from 'node:path';
-import { getExtensions } from './extensions/index.js';
+import { getExtensions, hookPayloadFor } from './extensions/index.js';
+import { tomlString } from './codex-notify-config.js';
 import { logError } from './log.js';
 
 // The `session.launchContext` seam: what a session's launch needs from the
 // extensions that are on. Each enabled extension's `hooks['session.launchContext']`
-// is asked, per launch, and answers `{ env?, addDirs? }`:
+// is asked, per launch, and answers `{ env?, addDirs?, codexConfig?, refuse?, refuseIfSet? }`:
+//   refuse  — a non-empty reason that fails the launch; later hooks are not asked.
+//   refuseIfSet — UPPER_SNAKE variable names checked in the pane itself, after
+//             the user's shell has started (tmux global env, ~/.zshenv), where
+//             this server cannot see: the launch exits naming the first one set
+//             (even to empty) before the agent runs. Values are never read.
 //   env     — extra environment variables for the agent process (task-memory's
 //             AW_TASK_MEMORY). Names must be UPPER_SNAKE (they are written into a
 //             shell command line); values are strings and are quoted by the
 //             adapter. Core's own variables are written AFTER these, so an
 //             extension can never override AW_SESSION_ID and friends.
 //   addDirs — extra directories the agent is granted (`--add-dir`), absolute.
+//   codexConfig — nonsecret Codex config overrides, `{ 'dotted.key': value }`,
+//             passed to a Codex launch as `-c key=value` (Claude ignores them).
+//             Values are strings, finite numbers or booleans and core writes the
+//             TOML. Keys core or codexPolicy own, and credential-shaped keys or
+//             values, are dropped: they land in argv, `ps` and the tmux pane.
 // The hook may be async and may do work (task-memory binds the session's
 // by-session symlink here), so callers AWAIT collectLaunchContext before they
 // build the launch command. Reasons a launch asks:
-//   dispatch | resume | fork | message | snooze-wake | spawn | assign | adopt
+//   dispatch | resume | fork | message | snooze-wake | spawn | assign | adopt | headless
 // `assign` and `adopt` are not launches (a running session was re-pointed, or
 // the server adopted it at boot); the hook still runs so side effects land and
 // the caller discards the result.
 //
+// Fork payloads include parentId, the parent card id, before inherited state is saved.
 // A hook that throws, or answers something unusable, is logged and skipped:
 // one broken extension must not keep a session from launching.
-export const LAUNCH_REASONS = ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt'];
+export const LAUNCH_REASONS = ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt', 'headless'];
 
 export const EMPTY_LAUNCH_CONTEXT = Object.freeze({ env: Object.freeze({}), addDirs: Object.freeze([]) });
 
 const ENV_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
+
+const CODEX_KEY_RE = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
+const CODEX_VALUE_MAX = 1024;
+const CODEX_RESERVED = [
+  'developer_instructions', 'notify', 'mcp_servers', 'model', 'model_reasoning_effort', 'model_auto_compact_token_limit',
+  'sandbox_mode', 'approval_policy', 'sandbox_workspace_write', 'projects', 'profile', 'profiles',
+];
+const SECRET_SEGMENT_RE = /(^|_)(api_?key|token|secret|password|passwd|bearer|cookie|credentials?|private_?key|authorization|headers)$/i;
+const SECRET_TABLE_SEGMENTS = new Set(['env', 'http_headers', 'env_http_headers']);
+const SECRET_VALUE_RE = /^(sk-|sk_|ghp_|gho_|ghu_|ghs_|github_pat_|xox[abposr]-|glpat-|AKIA|ASIA|eyJ[A-Za-z0-9_-]+\.)|^bearer\s|^basic\s/i;
+
+// Why a Codex override is dropped, or null when it passes. Never names the value.
+function codexOverrideProblem(key, value) {
+  if (!CODEX_KEY_RE.test(key)) return `key must be bare dotted segments matching ${CODEX_KEY_RE}`;
+  const segments = key.split('.');
+  if (CODEX_RESERVED.includes(segments[0])) return 'key is reserved for Agent Wrangler';
+  if (segments.some((s) => SECRET_SEGMENT_RE.test(s) || SECRET_TABLE_SEGMENTS.has(s))) return 'key looks like a credential';
+  if (segments[0] === 'shell_environment_policy' && segments[1] === 'set') return 'key looks like a credential';
+  if (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) return null;
+  if (typeof value !== 'string') return 'value must be a string, finite number or boolean';
+  if (value.length > CODEX_VALUE_MAX) return `value is longer than ${CODEX_VALUE_MAX} characters`;
+  if (/[\u0000-\u001f\u007f]/.test(value)) return 'value contains a control character';
+  if (SECRET_VALUE_RE.test(value.trim())) return 'value looks like a credential';
+  return null;
+}
 
 // sid -> the last context collected for it. Not for launches (those always
 // re-collect) but for the few synchronous readers that need to know which
@@ -42,25 +79,29 @@ export function _resetLaunchContextForTests() {
 }
 
 export async function collectLaunchContext(
-  { sid, task = null, agent = 'claude', runtime = 'local', reason = 'dispatch' } = {},
+  { sid, task = null, agent = 'claude', runtime = 'local', reason = 'dispatch', parentId, ext: dispatchExt = null } = {},
   { ext = getExtensions(), hostApiFor = () => undefined, onError = logError } = {},
 ) {
   const env = {};
   const envOwner = {};
   const addDirs = [];
+  const codexConfig = {};
+  const codexOwner = {};
+  const refuseIfSet = [];
   for (const { extId, fn } of ext.hooks?.['session.launchContext'] || []) {
     let out;
     try {
-      out = await fn({ sid, task, agent, runtime, reason, host: hostApiFor(extId) });
+      out = await fn({ ...hookPayloadFor(extId, { ext: dispatchExt }), sid, task, agent, runtime, reason, ...(parentId === undefined ? {} : { parentId }), host: hostApiFor(extId) });
     } catch (err) {
       onError(`[ext:${extId}] session.launchContext failed — skipped`, err);
       continue;
     }
     if (out == null) continue;
     if (typeof out !== 'object' || Array.isArray(out)) {
-      onError(`[ext:${extId}] session.launchContext must return { env?, addDirs? } — ignored`);
+      onError(`[ext:${extId}] session.launchContext must return { env?, addDirs?, codexConfig?, refuse?, refuseIfSet? } — ignored`);
       continue;
     }
+    if (typeof out.refuse === 'string' && out.refuse.trim()) throw new Error(out.refuse.trim());
     for (const [k, v] of Object.entries(out.env || {})) {
       if (!ENV_NAME_RE.test(k) || typeof v !== 'string') {
         onError(`[ext:${extId}] session.launchContext env ${JSON.stringify(k)} dropped (name must match ${ENV_NAME_RE}, value must be a string)`);
@@ -77,9 +118,29 @@ export async function collectLaunchContext(
       }
       if (!addDirs.includes(d)) addDirs.push(d);
     }
+    const overrides = out.codexConfig && typeof out.codexConfig === 'object' && !Array.isArray(out.codexConfig) ? out.codexConfig : {};
+    for (const [k, v] of Object.entries(overrides)) {
+      const problem = codexOverrideProblem(k, v);
+      if (problem) {
+        onError(`[ext:${extId}] session.launchContext codexConfig ${JSON.stringify(k)} dropped (${problem})`);
+        continue;
+      }
+      if (Object.hasOwn(codexConfig, k)) onError(`[launch-context] codexConfig ${k} set by ${codexOwner[k]} and ${extId}; ${extId} wins`);
+      codexConfig[k] = v;
+      codexOwner[k] = extId;
+    }
+    for (const n of Array.isArray(out.refuseIfSet) ? out.refuseIfSet : []) {
+      if (typeof n !== 'string' || !ENV_NAME_RE.test(n)) {
+        onError(`[ext:${extId}] session.launchContext refuseIfSet ${JSON.stringify(n)} dropped (name must match ${ENV_NAME_RE})`);
+        continue;
+      }
+      if (!refuseIfSet.includes(n)) refuseIfSet.push(n);
+    }
   }
   const result = { env, addDirs };
-  if (sid) lastBySession.set(sid, result);
+  if (Object.keys(codexConfig).length) result.codexConfig = codexConfig;
+  if (refuseIfSet.length) result.refuseIfSet = refuseIfSet;
+  if (sid && reason !== 'headless') lastBySession.set(sid, result);
   return result;
 }
 
@@ -100,7 +161,28 @@ export function launchEnvPrefix(launchContext, quote) {
   return Object.entries(launchEnvOf(launchContext)).map(([k, v]) => `${k}=${quote(v)} `).join('');
 }
 
+// `/bin/sh -c '<check>' && ` — the pane-side refusal for `refuseIfSet`, run
+// under /bin/sh whatever the user's shell is, with the environment the agent
+// would inherit; empty string when there is nothing to check. Names are
+// re-validated here because they are written into shell source.
+export function launchEnvGuard(launchContext, quote) {
+  const names = (Array.isArray(launchContext?.refuseIfSet) ? launchContext.refuseIfSet : []).filter((n) => ENV_NAME_RE.test(n));
+  if (!names.length) return '';
+  const check = names.map((n) => `[ -z "\${${n}+x}" ] || { echo "Agent Wrangler refused this launch: ${n} is set in the pane environment" >&2; exit 1; }`).join('; ');
+  return `/bin/sh -c ${quote(check)} && `;
+}
+
 // `--add-dir <d>` pairs for each directory the extensions granted.
 export function launchAddDirArgs(launchContext) {
   return launchAddDirsOf(launchContext).flatMap((d) => ['--add-dir', d]);
+}
+
+// `-c key=value` pairs for the extensions' Codex overrides, re-validated here
+// because a direct caller can hand a builder any context.
+export function launchCodexConfigArgs(launchContext) {
+  const overrides = launchContext?.codexConfig;
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return [];
+  return Object.entries(overrides)
+    .filter(([k, v]) => !codexOverrideProblem(k, v))
+    .flatMap(([k, v]) => ['-c', `${k}=${typeof v === 'string' ? tomlString(v) : String(v)}`]);
 }

@@ -533,14 +533,18 @@ function browseRowNode(g, { parentTitle, hideTaskChip } = {}) {
   return card;
 }
 
-// The archived children (one level deep — see foldSameBucketChildren) nested
-// under a parent row: an indented stack, each child independently
-// resumable/forkable/deletable like any other row. Nesting reads from the
-// indent alone (see styles.css) — no connector line.
-function childrenNode(children, opts) {
+// The archived children (any depth — see foldSameBucketChildren) nested under a
+// parent row: an indented stack, each child independently
+// resumable/forkable/deletable like any other row, and a child's own children
+// indent one step further inside it. Nesting reads from the indent alone (see
+// styles.css) — no connector line. `entries` are `{group, children?}`.
+function childrenNode(entries, opts) {
   const wrap = document.createElement('div');
   wrap.className = 'search-children';
-  for (const c of children) wrap.appendChild(browseRowNode(c, opts));
+  for (const e of entries) {
+    wrap.appendChild(browseRowNode(e.group, opts));
+    if (e.children?.length) wrap.appendChild(childrenNode(e.children, opts));
+  }
   return wrap;
 }
 
@@ -647,7 +651,7 @@ function browseRowUnitNode(r) {
       archivedAt: r.task.archivedAt,
       onRestore: () => restoreTaskWithPrompt(r.task.id, r.task.name),
     }));
-    if (r.nested.length) wrap.appendChild(childrenNode(r.nested));
+    if (r.nested.length) wrap.appendChild(childrenNode(r.nested.map((group) => ({ group }))));
     return wrap;
   }
   const wrap = document.createElement('div');

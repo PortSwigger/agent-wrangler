@@ -2,14 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { isValidBranchName } from '../worktree.js';
 
 // The ONE place in the tree that shells out to `git` or `npm`, the way
 // pr-status.js confines `gh`: everything an external-extension install needs
 // from a subprocess lives here behind injectable runners, so nothing else may
 // spawn either binary and a test can exercise the whole install path with no
 // process and no network. This module stays a LEAF (node:fs/path/child_process/
-// util only) — manifest reading belongs to external.js and the provenance
-// record to provenance.js; the control handler composes the three.
+// util, plus worktree.js's node-only branch-name check) — manifest reading
+// belongs to external.js and the provenance record to provenance.js; the
+// control handler composes the three.
 const execFileAsync = promisify(execFile);
 
 // Default runners. `execFile` with an argv ARRAY and no `shell` option is the
@@ -60,6 +62,36 @@ export function assertAllowedUrl(url) {
   throw new Error(`Refusing repository URL ${url} — only https://, ssh:// and git@host:path are allowed (ext:: runs an arbitrary command; file:// and local paths have no remote to verify or update against).`);
 }
 
+// What git prints when github.com would not let it read the repository: no
+// credential helper (it cannot prompt), credentials without access, or an SSH
+// key GitHub does not know. GitHub answers a private repo it will not show you
+// with "Repository not found", so that is read as an auth failure too.
+const GITHUB_URL = /^(?:(?:https|ssh):\/\/(?:[^@/]+@)?|[A-Za-z0-9._-]+@)github\.com[:/]/i;
+const AUTH_FAILURE = /could not read Username|Authentication failed|Repository not found|Permission denied \(publickey\)|Invalid username or (?:password|token)/i;
+
+// The hint added to a git failure on a github.com URL that looks like auth, or
+// null. `gh auth setup-git` makes gh git's HTTPS credential helper, so an SSH
+// URL is pointed at its https:// form rather than at SSH keys.
+export function authHint(url, err) {
+  if (!GITHUB_URL.test(String(url || ''))) return null;
+  if (!AUTH_FAILURE.test(`${err?.stderr || ''}\n${err?.message || ''}`)) return null;
+  const retry = /^https:/i.test(url) ? 'try again' : 'install from its https:// URL instead';
+  return `It may be a private repository: run gh auth login, then gh auth setup-git, and ${retry}.`;
+}
+
+// Runs a git command that reaches `url`, replacing an auth failure's long
+// "Command failed: git -c …" message with git's own last line and the hint.
+async function gitRemote(git, url, args, opts) {
+  try {
+    return await git(args, opts);
+  } catch (err) {
+    const hint = authHint(url, err);
+    if (!hint) throw err;
+    const said = String(err?.stderr || err?.message || '').trim().split('\n').pop().trim();
+    throw new Error(`Could not read ${url} (${said}). ${hint}`, { cause: err });
+  }
+}
+
 // `--` is what stops a URL beginning with `-` being read as an option. The two
 // `protocol.*.allow=never` flags are belt-and-braces BEHIND assertAllowedUrl: a
 // clone can follow a submodule URL or an HTTP redirect to a URL this process
@@ -67,15 +99,47 @@ export function assertAllowedUrl(url) {
 // to have been screened. `--no-local` additionally stops the local-path
 // optimisation (hardlinking someone else's object store) if a path ever slips
 // through.
-export async function cloneTo(url, destDir, { git = defaultGit } = {}) {
+//
+// `branch` is an opted-in early-adopter branch (provenance.js trackedBranch):
+// cloned instead of the default branch while the remote has it, and the default
+// branch otherwise, so a deleted EA branch degrades to a normal install.
+export async function cloneTo(url, destDir, { git = defaultGit, branch = null } = {}) {
   assertAllowedUrl(url);
-  await git([
+  const track = branch != null && await remoteHasBranch(url, branch, { git });
+  await gitRemote(git, url, [
     '-c', 'protocol.ext.allow=never',
     '-c', 'protocol.file.allow=never',
     'clone', '--depth', '1', '--no-recurse-submodules', '--no-local',
+    ...(track ? ['--branch', branch] : []),
     '--', url, destDir,
   ]);
   return destDir;
+}
+
+// Whether the remote has `refs/heads/<branch>`. The name is re-checked here,
+// not trusted from the caller, because it ends up in an argv and a refspec.
+export async function remoteHasBranch(url, branch, { git = defaultGit } = {}) {
+  assertAllowedUrl(url);
+  assertBranch(branch);
+  const { stdout } = await gitRemote(git, url, [
+    '-c', 'protocol.ext.allow=never',
+    '-c', 'protocol.file.allow=never',
+    'ls-remote', '--heads', '--', url, `refs/heads/${branch}`,
+  ]);
+  return refLine(stdout, `refs/heads/${branch}`) != null;
+}
+
+function assertBranch(branch) {
+  if (!isValidBranchName(branch)) throw new Error(`Refusing early-adopter branch ${JSON.stringify(branch)} — not a plain git branch name`);
+}
+
+// The sha on the `<sha>\t<ref>` line of ls-remote output naming exactly `ref`.
+function refLine(stdout, ref) {
+  for (const line of String(stdout || '').split('\n')) {
+    const [sha, name] = line.trim().split('\t');
+    if (name === ref && /^[0-9a-f]{7,40}$/.test(sha || '')) return sha;
+  }
+  return null;
 }
 
 // The pinned `sha` the provenance record stores, so a later "Check for updates"
@@ -87,14 +151,20 @@ export async function readHead(dir, { git = defaultGit } = {}) {
 
 // The remote's current default-branch head, for the on-demand update check.
 // `ls-remote` output is `<sha>\tHEAD`; same allow-list and same no-shell rule
-// as cloneTo, since this takes a URL too.
-export async function lsRemoteHead(url, { git = defaultGit } = {}) {
+// as cloneTo, since this takes a URL too. With an early-adopter `branch` both
+// are asked for in the one call and the branch wins while the remote has it.
+export async function lsRemoteHead(url, { git = defaultGit, branch = null } = {}) {
   assertAllowedUrl(url);
-  const { stdout } = await git([
+  if (branch != null) assertBranch(branch);
+  const { stdout } = await gitRemote(git, url, [
     '-c', 'protocol.ext.allow=never',
     '-c', 'protocol.file.allow=never',
-    'ls-remote', '--', url, 'HEAD',
+    'ls-remote', '--', url, 'HEAD', ...(branch != null ? [`refs/heads/${branch}`] : []),
   ]);
+  if (branch != null) {
+    const sha = refLine(stdout, `refs/heads/${branch}`) || refLine(stdout, 'HEAD');
+    if (sha) return sha;
+  }
   return parseSha(stdout, `git ls-remote ${url}`);
 }
 
@@ -128,18 +198,20 @@ export async function commitsSince(dir, priorSha, { git = defaultGit, limit = CO
   return { commits, truncated: !reachable };
 }
 
-// How many commits the remote's default branch is ahead of the installed one,
-// for the background update notice. Fetches the remote HEAD into the INSTALLED
+// How many commits the remote's default branch (or the opted-in early-adopter
+// `branch`, while the remote has it) is ahead of the installed one, for the
+// background update notice. Fetches that remote ref into the INSTALLED
 // clone (objects and FETCH_HEAD only; the working tree and HEAD are untouched),
 // from the recorded origin rather than the clone's own remote config, under the
 // same allow-list. Shallow, so a prior commit more than `limit` back, or a
 // rewritten history, reports `capped` and the count is only what was fetched.
-export async function countCommitsBehind(dir, priorSha, url, { git = defaultGit, limit = COMMIT_LIMIT } = {}) {
+export async function countCommitsBehind(dir, priorSha, url, { git = defaultGit, limit = COMMIT_LIMIT, branch = null } = {}) {
   assertAllowedUrl(url);
-  await git([
+  const ref = branch != null && await remoteHasBranch(url, branch, { git }) ? `refs/heads/${branch}` : 'HEAD';
+  await gitRemote(git, url, [
     '-c', 'protocol.ext.allow=never',
     '-c', 'protocol.file.allow=never',
-    'fetch', '--quiet', `--depth=${limit}`, '--no-tags', '--no-recurse-submodules', '--', url, 'HEAD',
+    'fetch', '--quiet', `--depth=${limit}`, '--no-tags', '--no-recurse-submodules', '--', url, ref,
   ], { cwd: dir });
   let reachable = false;
   try {
@@ -295,6 +367,13 @@ export function readDeclaration(dir) {
   const engines = d.engines;
   if (engines != null && (typeof engines !== 'object' || Array.isArray(engines))) throw new Error('wranglerExtension.engines must be an object');
   if (engines?.wranglerApi != null && typeof engines.wranglerApi !== 'string') throw new Error('wranglerExtension.engines.wranglerApi must be a semver range string');
+  // The early-adopter branch, duplicated from the manifest's `earlyAdopter` so
+  // it is part of what was consented to, and so the record can carry it: a
+  // later reinstall clones before any manifest can be imported.
+  const ea = d.earlyAdopter;
+  if (ea != null && (typeof ea !== 'object' || Array.isArray(ea) || !isValidBranchName(ea.branch))) {
+    throw new Error('wranglerExtension.earlyAdopter must be { branch } with a plain git branch name');
+  }
   // Prose only, and third-party: type-checked here, rendered via textContent
   // everywhere downstream. Capability NAMES are not validated against
   // CAPABILITIES here — this leaf cannot import the loader's vocabulary without
@@ -308,6 +387,7 @@ export function readDeclaration(dir) {
     homepage: str(d.homepage),
     requires: [...(d.requires || [])],
     range: engines?.wranglerApi ?? null,
+    earlyAdopterBranch: ea?.branch ?? null,
   };
 }
 

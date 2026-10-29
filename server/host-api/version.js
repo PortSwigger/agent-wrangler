@@ -301,7 +301,126 @@ import semver from 'semver';
 // `api.runtimes()` carry it. An older server quarantines no unknown runtime
 // key, but keeps the runtime Claude-only; a manifest that needs it declares
 // `^1.37.0`.
-export const HOST_API_VERSION = '1.37.0';
+//
+// 1.38.0 adds the capability `files:view` and the client `api.openFile(path)`
+// and `api.files` (`canOpen(path)`, `types()`). The extension registers the
+// local files it may show with `host.files.allow(paths)`; the human opens one in
+// a viewer panel (markdown rendered, images shown). `api.files` is undefined on
+// an older board, so a manifest that needs it declares `^1.38.0`.
+//
+// 1.39.0 adds the manifest's optional `earlyAdopter: { branch }` (mirrored in
+// package.json's wranglerExtension block) and a per-install opt-in that makes
+// install, the update check and updates follow that branch, falling back to the
+// default branch when the remote lacks it. The host draws no UI for it: the
+// client gets `api.earlyAdopter` (`branch`, `enabled()`, `set(on)`) and
+// `api.onThemeChange(fn)`, so an extension builds its own. An older server
+// ignores the key and an older board has neither api, so a manifest that needs
+// them declares `^1.39.0`.
+//
+// 1.40.0 adds the client value slot `file.open` and the client-only capability
+// `files:open` that gates it: `open({ path, sessionId, source }, graph, api)`
+// returning true takes a file link clicked in a session's chat or terminal
+// (`source` 'chat' or 'terminal') instead of the board's preview. Contributions
+// are asked in load order and the first true wins. An older board throws on the
+// unknown slot name, so a manifest that uses it declares `^1.40.0`.
+//
+// 1.41.0 adds `offBoard` to `host.sessions.spawn()`: `true` stamps the card with
+// the caller's extension id, and the board's grid, keyboard nav and Attach picker
+// leave it out while it stays in the graph, so the extension can show and drive
+// it in its own view. It resumes, archives and bills like any other card, and
+// `sessions:read` reports the stamp as `offBoard`. An older server refuses no
+// unknown spawn option, so the card silently lands on the board; a manifest that
+// needs it declares `^1.41.0`.
+//
+// 1.42.0 adds the client `api.mountSession(el, sessionId, { onMaximize })`:
+// the board's session panel (header controls, panel sections, chat, terminal,
+// and the diff as a third view in place) lent to an extension's own element,
+// resuming or restoring the session as openSession does, with a handle to swap
+// the session (`show`) and give the panel back (`unmount`). An older board has
+// no `api.mountSession`, so a manifest that needs it declares `^1.42.0`.
+//
+// 1.43.0 adds the manifest's optional `themes`: a directory (inside the
+// manifest's `dir`) of `<id>/theme.json` + assets. An enabled extension's themes join the Settings theme
+// picker and /api/styles, their declared assets serve from /styles/<id>/, and
+// turning the extension off takes them away again. An older server ignores the
+// key, so the extension loads with no themes; a manifest that uses it declares
+// `^1.43.0`.
+//
+// 1.44.0 adds the client `api.themeButtonHtml(style, { active })`: the Settings
+// theme picker's button (icon tile and colour swatch in the theme's own
+// colours) for an /api/styles entry, so an extension listing themes matches the
+// picker. An older board has no `api.themeButtonHtml`, so a manifest that uses
+// it declares `^1.44.0`.
+//
+// 1.45.0 adds `view: 'diff'` to the client `api.mountSession` options and to its
+// handle's `show(id, opts)`: the lent panel opens on that session's Diff
+// rather than its Chat or Terminal. An older board ignores the option and opens
+// on Chat or Terminal as before, so a manifest that needs it declares `^1.45.0`.
+//
+// 1.46.0 adds `theme` on a toggle setting def: the id of one of the manifest's
+// own themes, which the toggle switches. False leaves that theme out of the
+// picker and /api/styles and stops serving its assets; unset counts as on. An
+// older server ignores the field, so the toggle switches nothing; a manifest
+// that relies on it declares `^1.46.0`.
+//
+// 1.47.0 adds spawner, extension data and runtime kind to session.prepare;
+// fork parentId and deliberate refusal to session.launchContext; ownLaunch to
+// client runtime metadata; and validate(el, ctx) to dispatch.field. Extensions
+// that depend on these launch contracts declare `^1.47.0`.
+//
+// 1.48.0 adds ext to sessions.spawn, client dispatchFields.mount for extension-
+// owned dialogs, and sessions:env / sessions.launchEnv for headless environments.
+// Launch-context hooks receive their own ext slice and reason 'headless';
+// one-shot Claude runs merge the resulting env after cleaning the process env.
+// Extensions that depend on these launch surfaces declare `^1.48.0`.
+//
+// 1.49.0 adds the optional `autoEffort` on each model of the client
+// `api.agents()`: the effort level the agent uses for that model when a launch
+// passes none ("Auto"), resolved from the user's and organization's settings,
+// and absent when unknown. An older board never sets it, so a manifest that
+// reads it declares `^1.49.0` or treats its absence as unknown.
+//
+// 1.50.0 adds `presentation: 'dialog'`, `title` and `key` to terminals.create,
+// and terminals.alive(terminalId). A dialog (which needs a key) opens only in the
+// tab whose control frame the handler is serving, over whatever is open there;
+// closing it detaches and leaves the shell running, and a create with the same
+// live `key` presents that shell again. The result gains `reused`. An older
+// server ignores the options and opens the sidebar pane in every tab, and has no
+// `alive`, so a manifest that needs either declares `^1.50.0`.
+//
+// 1.51.0 adds `refuseIfSet` to session.launchContext: variable names checked in
+// the pane after the user's shell starts, refusing the launch when any is set.
+// A launch context whose env sets CLAUDE_CONFIG_DIR also gets the default
+// launch's folder trust written into that dir's .claude.json, authorised by the
+// server's own Claude config. An older server ignores `refuseIfSet` and launches,
+// so a manifest that relies on it declares `^1.51.0`.
+//
+// 1.52.0 adds the client `session.inputGate` slot and `api.refreshInputGates()`:
+// a gate answering `{ reason, label? }` drops typed terminal input for that
+// session (pointer reports still pass) and disables its chat composer. An older
+// board never asks the slot, so a manifest that relies on it declares `^1.52.0`.
+//
+// 1.53.0 adds board.tray ownership, its task and background menu hooks and
+// atomic client setMinimisedTasks. Extensions using them declare `^1.53.0`.
+//
+// 1.54.0 adds `codexConfig` to session.launchContext: nonsecret Codex config
+// overrides passed as `-c key=value` on a Codex dispatch, resume and fork.
+// Reserved and credential-shaped keys or values are dropped and logged. An older
+// server ignores the field and launches without them, so a manifest that relies
+// on it declares `^1.54.0`.
+//
+// 1.55.0 adds `remoteControl: { name }` to sessions.spawn: a Claude session
+// launched, and resumed every time after, with `--remote-control <name>`. Any
+// other agent is refused by name. An older server refuses nothing and launches
+// without the flag, so a manifest that relies on it declares `^1.55.0`.
+//
+// 1.56.0 adds the client `api.modelFront`: deeply frozen benchmark data and
+// pure maths bound to core's committed rows, including the quality/cost curve
+// and fitting caller-owned programme slots to an installed catalog's front.
+// There is no server capability or shared picker UI. An extension using this
+// surface declares `^1.56.0`; an older board cannot supply its data or maths,
+// so the range makes that missing client contract a visible boot failure.
+export const HOST_API_VERSION = '1.56.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

@@ -22,7 +22,7 @@ test('dispatch modal keeps the primary form compact and puts optional controls i
   assert.ok(worktree >= 0 && worktree < advanced, 'worktree controls should remain before Advanced options');
   assert.match(dispatch, /<details class="advanced-options" id="m-advanced-options">/);
 
-  const advancedMarkup = dispatch.slice(advanced);
+  const advancedMarkup = dispatch.slice(advanced, dispatch.indexOf('</details>', advanced));
   assert.doesNotMatch(advancedMarkup, /id="m-effort"/);
   for (const id of ['m-runtime', 'm-auto-compact-presets', 'm-wf-auto-merge']) {
     assert.match(advancedMarkup, new RegExp(`id="${id}"`));
@@ -81,13 +81,13 @@ test('the `advanced` anchor host is the last thing in the Advanced options body'
   assert.ok(body >= 0 && body < autoMerge && autoMerge < host, 'advanced host belongs inside the body, after the auto-merge row');
 });
 
-test('the effort row follows the `model` anchor host and precedes the worktree box', () => {
-  const model = dispatch.indexOf('id="m-model-row"');
+test('Any model holds both backing selects, with the extension model anchor outside the picker', () => {
+  const any = dispatch.indexOf('id="m-any-model"');
+  const model = dispatch.indexOf('id="m-model"');
+  const effort = dispatch.indexOf('id="m-effort"');
+  const end = dispatch.indexOf('</details>', any);
   const host = dispatch.indexOf('data-at="model"');
-  const effort = dispatch.indexOf('id="m-effort-row"');
-  const worktree = dispatch.indexOf('class="worktree-box"');
-  assert.ok(model >= 0 && model < host && host < effort && effort < worktree,
-    'effort row must sit after #m-model-row and its anchor host so effort-inline\'s sibling selectors still pair the two');
+  assert.ok(any < model && model < effort && effort < end && end < host);
 });
 
 test('every hideable core field is wrapped in its own id\'d .dispatch-field row', () => {
@@ -251,10 +251,40 @@ test('an extension runtime is offered to each agent its `agents` lists, and only
 test('openModal adds the extension runtimes BEFORE restoring a saved runtime, and falls back to local', () => {
   const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
   const sync = open.indexOf('syncExtRuntimeOptions()');
-  const restore = open.indexOf(".value = d.runtime || 'local'");
+  const restore = open.indexOf('rtSel.value = wantRuntime;');
   assert.ok(sync >= 0 && restore > sync, 'syncExtRuntimeOptions must run before the runtime prefill');
-  assert.match(open.slice(restore), /if \(rtSel\.value !== \(d\.runtime \|\| 'local'\)\) rtSel\.value = 'local';/);
+  assert.match(open.slice(restore), /if \(rtSel\.value !== wantRuntime\) rtSel\.value = 'local';/);
   assert.match(appDecl('function syncClientExtensions() {'), /syncExtRuntimeOptions\(\);/);
+});
+
+// openModal's real runtime prefill, run against the stub select: a new session
+// takes the Default runtime setting, a schedule keeps its saved runtime, and
+// anything not offered (or not for this agent, via syncRuntimeToggle) is Local.
+function prefillRuntime({ agent = 'claude', exts = [], defaultRuntime, schedule = null, d = {} }) {
+  const h = runtimeHarness(agent);
+  h.setExtensions(exts);
+  h.syncExtRuntimeOptions();
+  const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
+  const from = open.indexOf("  const rtSel = document.getElementById('m-runtime');");
+  const to = open.indexOf("rtSel.value = 'local';", from) + "rtSel.value = 'local';".length;
+  const document = { getElementById: (id) => ({ 'm-runtime': h.rt })[id] };
+  new Function('document', 'defaultRuntime', 'schedule', 'd', open.slice(from, to))(document, defaultRuntime, schedule, d);
+  h.syncRuntimeToggle();
+  return h.rt.value;
+}
+
+test('a new session pre-selects the Default runtime setting, falling back to local when it is not offered or not for this agent', () => {
+  assert.equal(prefillRuntime({ defaultRuntime: 'devcontainer' }), 'devcontainer');
+  assert.equal(prefillRuntime({ defaultRuntime: 'sandbox', exts: [ext()] }), 'sandbox');
+  assert.equal(prefillRuntime({ defaultRuntime: 'sandbox', exts: [ext({ enabled: false })] }), 'local', 'its extension is off');
+  assert.equal(prefillRuntime({ defaultRuntime: 'sandbox' }), 'local', 'its extension is gone');
+  assert.equal(prefillRuntime({ defaultRuntime: 'devcontainer', agent: 'codex' }), 'local', 'devcontainer is Claude-only');
+  assert.equal(prefillRuntime({ defaultRuntime: 'local' }), 'local');
+});
+
+test('a schedule restores its own saved runtime, never the Default runtime setting', () => {
+  assert.equal(prefillRuntime({ defaultRuntime: 'devcontainer', schedule: {}, d: {} }), 'local');
+  assert.equal(prefillRuntime({ defaultRuntime: 'local', schedule: {}, d: { runtime: 'devcontainer' } }), 'devcontainer');
 });
 
 // The real #m-runtime wiring line, the real syncDispatchExtFields /
@@ -290,7 +320,7 @@ async function dispatchExtHarness() {
     ['const DISPATCH_FIELD_ROWS = {', 'function dispatchFieldHidden(name) {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function applyDispatchFieldVeto(ctx) {', 'function syncDispatchExtFields() {', 'function openDispatchExtFields(saved) {', 'function scheduleMode() {'],
     ['syncDispatchExtFields', 'openDispatchExtFields', 'setModalMode', 'dispatchFieldHidden', 'setGraph'],
     `let modalMode = 'launch'; const setModalMode = (m) => { modalMode = m; };
-     const availableAgents = [];
+     const availableAgents = []; const dispatchModelPicker = null;
      const readCoreDispatchFields = () => ({ runtime: document.getElementById('m-runtime').value });
      let vetoedDispatchFields = new Set();
      const extApi = {}; let latestGraph = null; let latestHistory = [];
@@ -424,7 +454,7 @@ test('Codex quick launch restores retained grants when switching from a non-loca
        const autoCompactTokens = undefined; const parentSessionId = null;
        const dispatched = []; const submitDispatch = () => dispatched.push(readCoreDispatchFields());`,
       { document, additionalFolders, modal: { classList: { contains: () => false } },
-        scheduleMode: () => false, cwdField: () => '/repo' },
+        scheduleMode: () => false, cwdField: () => '/repo', populateEffortSelect() {}, rememberDispatchPick() {} },
     );
     rt.value = runtime;
     app.syncRuntimeToggle();
@@ -506,8 +536,8 @@ function scheduledFocusHarness(sessions = []) {
   const app = loadApp(
     ['function onScheduleFired(msg) {', 'function tryFulfillScheduledFocus() {', 'function tryFulfillPending() {'],
     ['onScheduleFired', 'tryFulfillScheduledFocus', 'state'],
-    "let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; }, get pendingSelect() { return pendingSelect; }, set pendingSelect(v) { pendingSelect = v; } };",
-    { Date: { now: () => clock.now }, toast: (msg) => notices.push(msg), selectSession: (id) => selected.push(id), setView: () => {}, setMaximized: () => {},
+    "let selectionBeforeView = null; let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; }, get pendingSelect() { return pendingSelect; }, set pendingSelect(v) { pendingSelect = v; } };",
+    { Date: { now: () => clock.now }, toast: (msg, isErr, opts) => notices.push({ msg, isErr, opts }), selectSession: (id) => selected.push(id), setView: () => {}, setMaximized: () => {},
       landOnCard: (id, opts, select) => { landed.push(id); select(id); },
       setSessionView: (id, view) => { views[id] = view; }, disarmChatHandoff() {},
       isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; }, boardOpen },
@@ -515,6 +545,56 @@ function scheduledFocusHarness(sessions = []) {
   app.state.sessions = sessions;
   return { ...app, boardOpen, selected, landed, views, notices, diff, clock };
 }
+
+test('schedule toast navigates only when View session is clicked', () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: true }]);
+  app.onScheduleFired({ name: 'Morning work', sessionId: 'CARD1', focus: false });
+  assert.equal(app.notices[0].msg, 'Scheduled "Morning work" started');
+  assert.equal(app.notices[0].opts.label, 'View session');
+  assert.deepEqual(app.selected, []);
+  assert.equal(app.state.view, 'search');
+  app.notices[0].opts.onClick();
+  assert.deepEqual(app.landed, ['CARD1']);
+  assert.equal(app.views.CARD1, 'terminal');
+});
+
+for (const [label, sessions] of [
+  ['dispatch', []],
+  ['existing-session', [{ sessionId: 'NEW1', managed: false }]],
+]) {
+  test(`${label} View session waits for the live target without launching or resuming it`, () => {
+    const app = scheduledFocusHarness(sessions);
+    app.onScheduleFired({ name: 'Morning work', sessionId: 'NEW1' });
+    app.notices[0].opts.onClick();
+    assert.deepEqual(app.selected, []);
+    app.state.sessions = [{ sessionId: 'OTHER', managed: true }];
+    app.tryFulfillScheduledFocus();
+    assert.deepEqual(app.selected, []);
+    app.state.sessions = [{ sessionId: 'NEW1', managed: true }];
+    app.tryFulfillScheduledFocus();
+    assert.deepEqual(app.landed, ['NEW1']);
+  });
+}
+
+test('View session expires for a missing target and starts its wait at click time', () => {
+  const app = scheduledFocusHarness();
+  app.onScheduleFired({ name: 'Missing', sessionId: 'GONE' });
+  app.clock.now = 10000;
+  app.notices[0].opts.onClick();
+  assert.equal(app.state.pending, 'GONE');
+  app.clock.now = 18000;
+  app.state.sessions = [{ sessionId: 'GONE', managed: true }];
+  app.tryFulfillScheduledFocus();
+  assert.equal(app.state.pending, null);
+  assert.deepEqual(app.landed, []);
+});
+
+test('schedule toast has no navigation action without a target id', () => {
+  const app = scheduledFocusHarness();
+  app.onScheduleFired({ name: 'Missing' });
+  assert.equal(app.notices[0].opts, undefined);
+  assert.deepEqual(app.selected, []);
+});
 
 test('focused schedule opens the live target terminal, unfocused schedule leaves selection alone', () => {
   const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: true }]);
@@ -572,16 +652,17 @@ test('scheduled focus expires after a failed resume instead of jumping to a late
 });
 
 // ── openSessionInBoard: api.openSession / api.openDiff from an extension view ──
-function boardOpenHarness(sessions = [], { minimised = [], tiles = {} } = {}) {
+function boardOpenHarness(sessions = [], { minimised = [], tiles = {}, embed = null } = {}) {
   const log = [];
   const boardOpen = createBoardOpen();
   const minimisedIds = new Set(minimised);
   const app = loadApp(
-    ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(sessionId, { diff, onClose }, select) {', 'function tryFulfillPending() {'],
+    ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(sessionId, { diff, onClose }, select) {', 'function tryFulfillPending() {', 'function applyEmbedView(o) {', 'function setPendingSelect(id) {'],
     ['openSessionInBoard', 'tryFulfillPending', 'state'],
-    "let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; const state = { set sessions(v) { latestSessions = v; }, get pending() { return pendingSelect; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };",
+    "let selectionBeforeView = null; let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; const state = { set sessions(v) { latestSessions = v; }, get pending() { return pendingSelect; }, set pending(v) { pendingSelect = v; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };",
     {
       boardOpen, minimisedIds, CSS: { escape: (x) => x },
+      sessionEmbed: { active: () => embed },
       setView: (v) => { log.push(`view:${v}`); app.state.view = v; },
       send: (f) => log.push(`send:${f.type}:${f.sessionId}`),
       toast: () => {},
@@ -592,6 +673,7 @@ function boardOpenHarness(sessions = [], { minimised = [], tiles = {} } = {}) {
       document: { querySelector: (sel) => ({ scrollIntoView: () => log.push(`scroll:${sel.match(/data-sid="([^"]+)"/)[1]}`) }) },
       setMaximized: (on) => log.push(`maximized:${on}`),
       openDiffPanel: (sid) => log.push(`diff:${sid}`),
+      renderPanel: (sid) => log.push(`render:${sid}`),
     },
   );
   app.state.sessions = sessions;
@@ -616,6 +698,69 @@ test('openSession on an archived card restores it, then lands on it when the gra
   // selectSession, not focusSession: the card has just been resumed, so it must
   // not be resumed again.
   assert.deepEqual(app.log.slice(2), ['unminimise:adhoc', 'select:S1', 'scroll:S1']);
+});
+
+// api.mountSession restoring an archived session: it lands in the embed, in the
+// extension's own view, and never sends the reader to the board.
+test('a restore an embedded panel asked for lands in the embed, not on the board', () => {
+  const removed = [];
+  const app = boardOpenHarness([], { embed: { sessionId: 'S1', wrap: { classList: { remove: (c) => removed.push(c) } } } });
+  app.state.pending = 'S1';
+  app.state.sessions = [{ sessionId: 'S1' }];
+  app.tryFulfillPending();
+  assert.deepEqual(app.log, ['select:S1']);
+  assert.deepEqual(removed, ['pending']);
+  assert.equal(app.state.pending, null);
+});
+
+test('a restore an embedded panel asked to open on its diff lands on the diff, once', () => {
+  const embed = { sessionId: 'S1', view: 'diff', wrap: null };
+  const app = boardOpenHarness([], { embed });
+  app.state.pending = 'S1';
+  app.tryFulfillPending();
+  assert.deepEqual(app.log, [], 'nothing until the card is back');
+  app.state.sessions = [{ sessionId: 'S1' }];
+  app.tryFulfillPending();
+  assert.deepEqual(app.log, ['select:S1', 'diff:S1', 'render:S1']);
+  assert.equal(embed.view, null);
+});
+
+// showEmbeddedSession: what a mount or a handle's show does with the session.
+function embedShowHarness(sessions) {
+  const log = [];
+  const app = loadApp(
+    ['function showEmbeddedSession(sessionId, o) {', 'function applyEmbedView(o) {', 'function setPendingSelect(id) {'],
+    ['showEmbeddedSession'],
+    'let selectionBeforeView = null; let pendingSelect = null; let selectedSessionId = null;',
+    {
+      latestSessions: sessions,
+      document: { querySelector: () => ({ classList: { add() {} } }), getElementById: () => ({}) },
+      resumeDormant: (sid) => log.push(`resume:${sid}`),
+      selectSession: (sid) => log.push(`select:${sid}`),
+      deselectSession: () => {},
+      isDiffPanelOpen: () => false,
+      closeDiffPanel: () => {},
+      showSidebar: () => {},
+      send: (f) => log.push(`send:${f.type}:${f.sessionId}`),
+      openDiffPanel: (sid) => log.push(`diff:${sid}`),
+      renderPanel: (sid) => log.push(`render:${sid}`),
+    },
+  );
+  return { ...app, log };
+}
+
+test('an embedded show with view: diff opens a live or dormant session on its diff, and without it on the session\'s own view', () => {
+  const app = embedShowHarness([{ sessionId: 'L', managed: true }, { sessionId: 'D', managed: false }]);
+  const o = { sessionId: 'L', view: 'diff', wrap: null };
+  app.showEmbeddedSession('L', o);
+  assert.deepEqual(app.log, ['select:L', 'diff:L', 'render:L']);
+  assert.equal(o.view, null, 'applied once');
+  app.log.length = 0;
+  app.showEmbeddedSession('L', o);
+  assert.deepEqual(app.log, ['select:L'], 'no view: Chat/Terminal as the session last had it');
+  app.log.length = 0;
+  app.showEmbeddedSession('D', { sessionId: 'D', view: 'diff', wrap: null });
+  assert.deepEqual(app.log, ['resume:D', 'diff:D', 'render:D']);
 });
 
 test('openDiff on a live card lands on it, then opens its diff panel and reports the close', () => {
@@ -688,19 +833,19 @@ test('dispatch.field update sees the cached history on a tick whose graph carrie
 });
 
 // ── submitDispatchFromExt (api.dispatch.submit, 1.28.0) ────────────────────
-function extSubmitHarness({ mode = 'launch', hidden = false, images = [], imagesBusy = false, runtimeAgentGate = true } = {}) {
+function extSubmitHarness({ mode = 'launch', hidden = false, images = [], imagesBusy = false, runtimeAgentGate = true, slotRegistry = null } = {}) {
   const model = stubSelect(['opus', 'sonnet']);
   const runtime = stubSelect(['local', 'devcontainer']);
   for (const [id, ext] of [['bifrost', 'bifrost'], ['toy', 'toy']]) { const o = runtime.appendChild(stubOption(id)); o.dataset.ext = ext; }
   const effort = stubSelect(['', 'low', 'high']);
   const modalClasses = new Set(hidden ? ['hidden'] : []);
-  const sent = []; const calls = [];
+  const sent = []; const calls = []; const notices = [];
   const state = { cwdBlocked: false, effortsAfterModel: null };
   const els = { 'm-model': model, 'm-effort': effort, 'm-intent': { value: 'x' }, 'm-runtime': runtime };
   const document = { getElementById: (id) => els[id] || { classList: { remove() {}, add() {} } } };
   const app = loadApp(
     ['function scheduleMode() {', 'function readDispatchFields() {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function submitDispatch(over) {', 'function submitDispatchFromExt({ model, effort, runtime } = {}) {', 'function runtimeOwnsModel(extId, runtimeId) {'],
-    ['submitDispatchFromExt', 'flags'],
+    ['submitDispatch', 'submitDispatchFromExt', 'flags'],
     `let modalMode = ${JSON.stringify(mode)}; let modelEdited = false; let effortEdited = false;
      let wtPending = false; const dispatchMode = 'standard'; const wtValidation = null; const availableAgents = [];
      const flags = () => ({ modelEdited, effortEdited });
@@ -712,15 +857,15 @@ function extSubmitHarness({ mode = 'launch', hidden = false, images = [], images
     {
       document, stubOption, calls, state,
       modal: { classList: { contains: (c) => modalClasses.has(c), add: (c) => modalClasses.add(c) } },
-      slots: { dispatchFields: () => (state.extSlices ? { extra: 1, ext: state.extSlices } : { extra: 1 }) },
+      slots: slotRegistry || { dispatchFields: () => (state.extSlices ? { extra: 1, ext: state.extSlices } : { extra: 1 }), validateDispatch: () => null },
       cwdBlocked: () => state.cwdBlocked, renderCwdState() {},
       additionalFolders: { invalid: () => false },
-      send: (m) => sent.push(m), dispatchWaiter: { submit() {} }, toast() {},
+      send: (m) => sent.push(m), dispatchWaiter: { submit() {} }, toast: (message) => notices.push(message),
       submitSchedule: () => calls.push('submitSchedule'), worktreeStatusMsg: () => null, setDispatchPending() {},
       intentImages: { busy: () => imagesBusy, names: () => images.slice(), reset: () => { state.imageResets = (state.imageResets || 0) + 1; } },
     },
   );
-  return { app, sent, calls, state, modalClasses };
+  return { app, sent, calls, state, modalClasses, notices };
 }
 
 test('dispatch.submit rejects unless the modal is open in launch mode', () => {
@@ -863,4 +1008,43 @@ test('api.openDispatch without cwd or images leaves the task default and adopts 
   await openDispatchAcked({ taskId: null });
   assert.equal(els['m-cwd'].value, '/task/default');
   assert.deepEqual(log, [['openModal', null], 'reset']);
+});
+
+
+test('the client runtime list exposes ownLaunch for extension runtimes and false for built-ins', () => {
+  const runtime = stubSelect(['local', 'devcontainer']);
+  for (const id of ['own', 'wrapped']) {
+    const option = runtime.appendChild(stubOption(id));
+    option.dataset.ext = 'toy';
+  }
+  const heads = ['function listDispatchRuntimes() {', 'function runtimeOwnsModel(extId, runtimeId) {', 'function runtimeAllowsAgent(opt, agent) {', 'function runtimeOwnLaunch(extId, runtimeId) {'];
+  const app = loadApp(heads, ['listDispatchRuntimes'], `
+    const availableAgents = [{ id: 'claude' }, { id: 'codex' }];
+    const latestExtensions = [{ id: 'toy', runtimes: [{ id: 'own', ownLaunch: true, agents: ['claude', 'codex'] }, { id: 'wrapped', ownLaunch: false }] }];
+  `, { document: { getElementById: () => runtime } });
+  assert.deepEqual(app.listDispatchRuntimes().map(({ id, ownLaunch }) => ({ id, ownLaunch })), [
+    { id: 'local', ownLaunch: false }, { id: 'devcontainer', ownLaunch: false },
+    { id: 'own', ownLaunch: true }, { id: 'wrapped', ownLaunch: false },
+  ]);
+});
+
+
+test('a mounted dispatch field blocks submit, toasts its reason and rejects api.dispatch.submit without sending', async () => {
+  const { slots, syncDispatchExtFields } = await dispatchExtHarness();
+  let blocked = true;
+  const seen = [];
+  slots.register('dispatch.field', 'guard', { id: 'guard', at: 'top', mount() {}, validate(el, ctx) { seen.push(ctx.draft.model); return blocked ? 'blocked' : null; } });
+  syncDispatchExtFields();
+  const { app, sent, notices, modalClasses, state } = extSubmitHarness({ slotRegistry: slots });
+  assert.equal(app.submitDispatch(), false);
+  assert.deepEqual(notices, ['blocked']);
+  assert.deepEqual(sent, []);
+  assert.equal(state.imageResets, undefined);
+  assert.equal(modalClasses.has('hidden'), false);
+  assert.throws(() => app.submitDispatchFromExt(), /dispatch blocked by validation/);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(seen, ['opus', 'opus']);
+  blocked = false;
+  assert.equal(app.submitDispatch(), true);
+  assert.equal(sent.length, 1);
 });

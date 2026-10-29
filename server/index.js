@@ -5,7 +5,6 @@
 import { INSTALL_ENV } from './install-env.js';
 import os from 'node:os';
 import fs from 'node:fs';
-import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import openModule from 'open';
 
@@ -17,7 +16,7 @@ import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
-import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor } from './extensions/index.js';
+import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor, themeSources } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
@@ -34,7 +33,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, defaultRuntime, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -43,9 +42,11 @@ import { bindHost } from './runtime.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createHttpServer } from './http-handler.js';
 import { resolveMarkdownPath } from './file-preview.js';
+import { createExtFiles } from './ext-files.js';
 import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
 import { TerminalRegistry } from './terminal-registry.js';
-import { createShellSession } from './shell-session.js';
+import { createShellSession, tmuxSessionAlive } from './shell-session.js';
+import { createExtTerminalOpener } from './ext-terminals.js';
 import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
 import { archiveTaskCascade } from './control/handlers/tasks.js';
 import { createTargets } from './control/targets.js';
@@ -59,6 +60,7 @@ import { startFdWatchdog } from './fd-watchdog.js';
 import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
 import { createHistoryGate } from './history-gate.js';
+import { createGraphFrameGate } from './graph-frame-gate.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
@@ -71,6 +73,7 @@ import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
+import { withAutoEffort, watchAutoEffortSources } from './agents/auto-effort.js';
 import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
 import { createUpdateService, updateSupport, installDriftStatus } from './update-service.js';
 import { createExtensionUpdateCheck, currentExtensionUpdates } from './extensions/update-check.js';
@@ -216,7 +219,7 @@ sessionManager._prepare = async (payload) => {
 // writes it; keeps SessionManager itself free of that dependency, and every test
 // that doesn't stub _archiveReview stays a no-op by construction.
 sessionManager._archiveReview = (sessionId, entry, task, extraDeps = {}) =>
-  runArchiveReview(sessionId, entry, task, { events: coreEvents, ...extraDeps });
+  runArchiveReview(sessionId, entry, task, { events: coreEvents, launchContext: sessionManager._launchContext, ...extraDeps });
 const scheduleStore = new ScheduleStore();
 const mailStore = new MailboxStore();
 // Bind the archive-mail-prune seam (default no-op in the class) — archive drops
@@ -260,11 +263,15 @@ const paneDeferral = createPaneDeferral({
 //
 // The wiring bag every builder draws from. Only host-api/v1.js touches these; an
 // extension sees whatever subset its `requires` declared and nothing else.
-// `archiveSession` and `createTerminal` are composed here rather than in a
+// `archiveSession` and `extTerminals` are composed here rather than in a
 // builder so host-api/ stays a thin bind layer and does not pull the control
 // handlers and the shell plumbing in behind it.
+// The paths extensions have registered through `host.files` (`files:view`); the
+// viewer route below reads only from here.
+const extFiles = createExtFiles();
 const extWiring = {
   core: extCore,
+  extFiles,
   events: coreEvents,
   // `memory.*` is provided by the task-memory extension's store while it is
   // active (host-api/v1.js degrades to "not available" when this is null).
@@ -302,13 +309,13 @@ const extWiring = {
     await sendKeys(target, ['Escape'], socketFor(sessionId) || '');
     return true;
   },
-  createTerminal: async ({ cwd, command = '' } = {}) => {
-    const terminalId = `t_${crypto.randomBytes(4).toString('hex')}`;
-    const tmuxName = await createShellSession(cwd, sessionManager.socket, sessionManager.tmuxBin, command);
-    terminalRegistry.set(terminalId, { tmuxName, socket: sessionManager.socket, cwd });
-    broadcast({ type: 'open-terminal', terminalId, command, sessionId: null });
-    return { terminalId };
-  },
+  extTerminals: createExtTerminalOpener({
+    createShellSession: (cwd, socket, command) => createShellSession(cwd, socket, sessionManager.tmuxBin, command),
+    socket: () => sessionManager.socket,
+    terminalRegistry,
+    broadcast,
+    isAlive: ({ tmuxName, socket }) => tmuxSessionAlive(sessionManager.tmuxBin, socket, tmuxName),
+  }),
 };
 // What archiveCascade reads off its ctx — the same shape the board handler and
 // the archive_session tool hand it.
@@ -482,6 +489,7 @@ function deactivateExtension(id) {
     logError(`[ext:${id}] deactivate failed`, err);
   }
   coreEvents.offOwner(id);
+  extFiles.clear(id);
   // Here rather than beside the loader's unregister, so the runtime registry
   // agrees with the loader whichever of the two runs first and a live disable
   // takes the runtime away with no restart. A card already launched on it
@@ -903,10 +911,31 @@ async function fileHandler(req, res) {
   }
 }
 
+// GET /ext-file?ext=<id>&path=… — what api.openFile reads. Same localhost posture
+// as /file (no CORS header). Answers 200 { ok, … } either way: a refusal is
+// { ok:false, reason }, and only the registry (host.files) decides what opens.
+async function extFileHandler(req, res) {
+  const json = (status, body) => {
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(body));
+  };
+  try {
+    if (!isAllowedHost(req.headers.host, PORT)) return json(403, { ok: false, reason: 'forbidden' });
+    const q = new URL(req.url, 'http://localhost').searchParams;
+    const id = q.get('ext');
+    const r = hostApis.has(id) ? await extFiles.open(id, q.get('path')) : { ok: false, reason: 'not-permitted' };
+    json(200, r);
+  } catch (err) {
+    logError('[ext-file]', err);
+    if (!res.headersSent) json(200, { ok: false, reason: 'error' });
+  }
+}
+
 // spawn_session creates a full board session, mirroring the /ws dispatch path:
 // dispatch (mints the card id, collects the launch context pre-launch) → assign →
 // rebuild.
 const mcpRequestHandler = createMcpRequestHandler({
+  agents: dispatchAgents,
   taskStore,
   graph: () => lastGraph,
   // list_tasks folds out scratch cwds when picking a task's bestFolder.
@@ -945,8 +974,9 @@ const mcpRequestHandler = createMcpRequestHandler({
 // /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
 // extensions alone — so a disabled extension's client is a 404, never served.
 const server = createHttpServer({
-  port: PORT, mcpRequestHandler, prAttachHandler, fileHandler,
+  port: PORT, mcpRequestHandler, prAttachHandler, fileHandler, extFileHandler,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
+  extensionThemes: () => themeSources(ext.themeDirs),
 });
 
 // --- WebSocket: control channel (graph + actions) and pty channel ---
@@ -975,7 +1005,7 @@ server.on('upgrade', (req, socket, head) => {
 let lastStylesKey = null;
 
 function broadcastStylesIfChanged() {
-  const styles = listStyles();
+  const styles = listStyles(themeSources(ext.themeDirs));
   const key = JSON.stringify(styles);
   if (key === lastStylesKey) return;
   lastStylesKey = key;
@@ -983,10 +1013,15 @@ function broadcastStylesIfChanged() {
 }
 
 // The dispatch dialog's agent/model/effort lists — sent on connect, and again to
-// every board whenever a model or price catalog refresh changes them.
-async function agentsMessage() {
+// every board whenever a model or price catalog refresh, or a settings file that
+// decides a model's Auto effort (`autoEffort`), changes them.
+async function dispatchAgents() {
   const list = await availableAgents();
-  return JSON.stringify({ type: 'agents', agents: list.map((a) => ({ id: a.id, label: a.label, models: modelsWithDefault(a), efforts: a.efforts || [] })) });
+  return list.map((a) => ({ id: a.id, label: a.label, models: withAutoEffort(a.id, modelsWithDefault(a)), efforts: a.efforts || [] }));
+}
+
+async function agentsMessage() {
+  return JSON.stringify({ type: 'agents', agents: await dispatchAgents() });
 }
 
 function broadcastAgents() {
@@ -996,7 +1031,10 @@ function broadcastAgents() {
 }
 
 function broadcast(obj) {
-  const msg = JSON.stringify(obj);
+  broadcastMessage(JSON.stringify(obj));
+}
+
+function broadcastMessage(msg) {
   // readyState alone is not enough: a client that stops reading stays OPEN
   // forever, so every snapshot we send it is queued in our own heap until the
   // process OOMs. sendGuarded drops such a peer instead — see ws-backpressure.js
@@ -1007,6 +1045,7 @@ function broadcast(obj) {
 // Module-scope so its "have I already sent this?" memory spans every rebuild, not
 // one call — the whole saving is across ticks.
 const wireGraph = createHistoryGate();
+const graphFrame = createGraphFrameGate();
 
 // Wrapped below in createRebuildCoalescer — see there for why an overlapping call
 // must trail rather than skip or race.
@@ -1032,6 +1071,7 @@ async function rebuildOnce() {
   graph.mailWakesDormant = mailWakesDormant();
   graph.chatViewDefault = chatViewDefault();
   graph.defaultSessionCwd = defaultSessionCwd();
+  graph.defaultRuntime = defaultRuntime();
   graph.autoUpdate = autoUpdateMode();
   graph.refreshSessionsAfterUpdate = refreshSessionsAfterUpdate();
   graph.codeVersion = codeVersion;
@@ -1064,7 +1104,10 @@ async function rebuildOnce() {
   // The wire graph, not `lastGraph`: history is omitted while unchanged, which is
   // almost every tick. See history-gate.js — and note the connect path above sends
   // `lastGraph` itself, so a fresh socket is always served the full list.
-  broadcast({ type: 'graph', graph: wireGraph(graph) });
+  // graphFrame then drops the tick altogether when nothing but generatedAt moved
+  // (see graph-frame-gate.js), which on an idle server is every one of them.
+  const frame = graphFrame(wireGraph(graph));
+  if (frame) broadcastMessage(frame);
   broadcastStylesIfChanged();
   return graph;
 }
@@ -1248,6 +1291,11 @@ async function main() {
     rolledBack: readRolledBack(),
     onStatus: (status) => broadcast({ type: 'update-status', ...status }),
     onApplied: (result) => {
+      if (result.extensions) {
+        broadcast({ type: 'update-applied', extensions: result.extensions });
+        exitForRestart(`auto-updated ${result.extensions.join(', ')}`);
+        return;
+      }
       broadcast({ type: 'update-applied', head: result.head });
       exitForRestart(`updated to ${result.head}`);
     },
@@ -1258,6 +1306,7 @@ async function main() {
       autoUpdate: (id) => autoUpdateExtension(id, { ext: extBag, rebuild, broadcast }),
     }),
     onExtensions: (summary) => broadcast({ type: 'ext-update-status', ...summary }),
+    canRestart: restartSupported(),
     log,
   });
   await sessionManager.init();
@@ -1323,6 +1372,7 @@ async function main() {
   validateDefaultModel();
   onPriceCatalogChange(broadcastAgents);
   onCodexCatalogChange(broadcastAgents);
+  watchAutoEffortSources(broadcastAgents);
   startPriceCatalogRefresh();
   startCodexCatalogRefresh();
 

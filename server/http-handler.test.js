@@ -20,13 +20,20 @@ fs.writeFileSync(path.join(extDir, 'public', 'index.js'), 'export default { regi
 fs.writeFileSync(path.join(extDir, 'public', 'nested', 'dom.js'), 'export const x = 1;\n');
 fs.writeFileSync(path.join(tmp, 'secret.txt'), 'nope\n');
 
+const themeDir = path.join(tmp, 'themes');
+fs.mkdirSync(path.join(themeDir, 'route-sky'), { recursive: true });
+fs.writeFileSync(path.join(themeDir, 'route-sky', 'theme.json'), JSON.stringify({ name: 'Route sky', base: 'dark', icon: 'M0 0', assets: { wallpaper: 'w.svg' } }));
+fs.writeFileSync(path.join(themeDir, 'route-sky', 'w.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+
 const dirs = { checklist: extDir };
+let themeDirs = [{ id: 'sky-ext', dir: themeDir }];
 const server = createHttpServer({
   port: 0,
   mcpRequestHandler: (req, res) => res.end(),
   prAttachHandler: (req, res) => res.end(),
   fileHandler: (req, res) => res.end(),
   extensionAssets: (id) => dirs[id] || null,
+  extensionThemes: () => themeDirs,
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -77,4 +84,25 @@ test('traversal out of public/ is refused with 403', async () => {
 
 test('a missing file inside public/ is a plain 404', async () => {
   assert.equal((await fetch(`${base}/ext/checklist/missing.js`)).status, 404);
+});
+
+test('an enabled extension\'s themes are listed and their declared assets served; disabled, both go', async () => {
+  themeDirs = [{ id: 'sky-ext', dir: themeDir }];
+  const listed = (await (await fetch(`${base}/api/styles`)).json()).styles.find((s) => s.id === 'route-sky');
+  assert.equal(listed.extension, 'sky-ext');
+  assert.equal(listed.wallpaperUrl, '/styles/route-sky/w.svg');
+  assert.equal((await fetch(`${base}/styles/route-sky/w.svg`)).status, 200);
+  assert.equal((await fetch(`${base}/styles/route-sky/theme.json`)).status, 404);
+  themeDirs = [];
+  const gone = (await (await fetch(`${base}/api/styles`)).json()).styles;
+  assert.equal(gone.some((s) => s.id === 'route-sky'), false);
+  assert.equal((await fetch(`${base}/styles/route-sky/w.svg`)).status, 404);
+});
+
+test('a theme its extension has switched off is neither listed nor served', async () => {
+  themeDirs = [{ id: 'sky-ext', dir: themeDir, off: ['route-sky'] }];
+  const styles = (await (await fetch(`${base}/api/styles`)).json()).styles;
+  assert.equal(styles.some((s) => s.id === 'route-sky'), false);
+  assert.equal((await fetch(`${base}/styles/route-sky/w.svg`)).status, 404);
+  themeDirs = [];
 });

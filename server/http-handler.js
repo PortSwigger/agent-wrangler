@@ -20,6 +20,7 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+  '.woff2': 'font/woff2',
 };
 
 // The plain-HTTP server: POST /mcp (CSRF-gated), POST /pr-attach (the launch
@@ -32,7 +33,12 @@ const MIME = {
 // holds enabled ids alone) — a disabled extension's client must not be served,
 // and that membership check, not an id regex, is the whole gate. GET-only static
 // content, so no origin gate, same posture as public/.
-export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fileHandler, extensionAssets = () => null }) {
+//
+// `extensionThemes()` is the loader's `themeDirs` through `themeSources`
+// (enabled extensions only, each with the themes it has switched off), so a
+// disabled extension's or switched-off theme drops out of /api/styles and its
+// assets 404.
+export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fileHandler, extFileHandler, extensionAssets = () => null, extensionThemes = () => [] }) {
   return http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
     if (urlPath === '/') urlPath = '/index.html';
@@ -57,16 +63,21 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fil
       return;
     }
 
+    if (req.method === 'GET' && urlPath === '/ext-file') {
+      extFileHandler(req, res);
+      return;
+    }
+
     // Custom styles: the compiled manifest list, and a manifest-gated asset route.
     // theme.json is never served — assetPath only resolves manifest-declared assets.
     if (urlPath === '/api/styles') {
       res.writeHead(200, { 'Content-Type': MIME['.json'] });
-      res.end(JSON.stringify({ styles: listStyles() }));
+      res.end(JSON.stringify({ styles: listStyles(extensionThemes()) }));
       return;
     }
     if (urlPath.startsWith('/styles/')) {
       const [id, ...rest] = urlPath.slice('/styles/'.length).split('/');
-      const asset = assetPath(id, rest.join('/'));
+      const asset = assetPath(id, rest.join('/'), extensionThemes());
       if (!asset) {
         res.writeHead(404).end('not found');
         return;

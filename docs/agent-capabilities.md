@@ -14,7 +14,7 @@ Managed Claude and Codex sessions receive Wrangler-specific skills: guidance for
 | `mail` | Reading queued messages from peer sessions and deciding whether a reply or action is needed. | “Check your Wrangler mailbox and act on anything relevant.” |
 | `session-activity` | Reconstructing what was worked on during a date or date range, including archived and suspended sessions. | “Summarise what I worked on yesterday from Wrangler activity.” |
 | `session-hierarchy` | Distinguishing board nesting from launch lineage, and finding a session's parent, spawner, or task. Also linking you to another session: `[name](#session=<id>)` in chat selects it in place. | “Which session spawned you, and where are you nested?” |
-| `spawn-session` | Starting a new, independent board session with an explicit handoff, agent, model, task, and optional nesting. | “Spawn a Codex session to investigate the failing integration tests.” |
+| `spawn-session` | Starting a new, independent board session with an explicit handoff, agent, model, task, optional nesting, and [Claude Remote Control](agent-tools.md#remote-control-on-spawn_session). | “Spawn a Claude session to investigate the failing integration tests with Remote Control named Phone.” |
 | `task-memory` | Reading and maintaining context shared by every session assigned to the same task, including work across multiple repositories. | “Record that decision in task memory for future sessions.” |
 | `archive-to-todo` | (Requires the `todos` extension.) Capturing a short title and descriptive handoff from the current session as a board TODO, then archiving that session. In Claude Code, invoke `/agent-skills:archive-to-todo` explicitly. For an ordinary TODO that leaves the session running, use `add_todo`. | “Archive this session to a TODO for later.” |
 
@@ -25,6 +25,24 @@ New sessions receive the skill catalogue; running sessions pick up changes after
 The `issue-to-pr` skill powers **Workflow** launch mode. Given a Jira issue, GitHub issue, or free-text
 task, it plans, builds, verifies, and opens a pull request from a dedicated worktree. The card shows its
 phase and switches to **needs-you** if blocked. Launch it from the dialog or with `spawn_workflow`.
+
+## Model-front maintenance
+
+In a checkout of this repository, ask “Are the model benchmarks current?” to use
+[the project-local `evaluate-model` skill](../.claude/skills/evaluate-model/SKILL.md).
+It reads permitted benchmark sources and the bundled LiteLLM prices, preserves
+OpenAI effort results for manual reading, and generates `public/model-front-data.json`.
+The evaluator prints separate fronts for both agents, Claude and Codex without
+requiring the client API. The weekly **Refresh model front** workflow runs the
+catalog refresh first and opens a reviewable data PR when inputs change; it never
+auto-merges. Slack notices require `SLACK_WEBHOOK_URL`.
+
+Client extensions can use [host API **1.56.0** `api.modelFront`](extensions.md)
+for the same frozen data and pure quality/cost/time maths, filtered to the installed
+agent catalog. It also supplies a quality/cost curve and resolves known Auto
+efforts; extensions provide their own presets and picker UI. The data ships
+with Wrangler and is available without installing an extension or making external
+benchmark requests.
 
 ## Human-visible collaboration surfaces
 

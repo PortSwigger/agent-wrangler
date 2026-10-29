@@ -56,6 +56,15 @@ test('claude maps an auto-compaction threshold on launch, resume, and fork', () 
   assert.match(fork, /'--autocompact' '400000'/);
 });
 
+test('claude passes --remote-control <name> on launch and resume only when asked, and never on a fork', () => {
+  const rc = { name: 'Phone orchestrator' };
+  assert.match(claude.buildLaunch({ sessionId: 'SID', remoteControl: rc }), /'--remote-control' 'Phone orchestrator'/);
+  assert.match(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE', remoteControl: rc }), /'--remote-control' 'Phone orchestrator'/);
+  assert.doesNotMatch(claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC', remoteControl: rc }), /--remote-control/);
+  assert.doesNotMatch(claude.buildLaunch({ sessionId: 'SID' }), /--remote-control/);
+  assert.doesNotMatch(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }), /--remote-control/);
+});
+
 test('claude leaves auto-compaction unset when a session has no threshold', () => {
   assert.doesNotMatch(claude.buildLaunch({ sessionId: 'SID' }), /--autocompact/);
   assert.doesNotMatch(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }), /--autocompact/);
@@ -357,3 +366,14 @@ test('derivedModels offers an unaliased family by its newest id and skips aliase
     { value: 'claude-zeta-3-2', label: 'Zeta 3.2', pillLabel: 'zeta 3.2', transcriptPrefixes: ['claude-zeta-'] },
   ]);
 });
+
+for (const method of ['buildLaunch', 'buildResume', 'buildFork']) {
+  test(`claude ${method} uses the selected permission mode and defaults to auto`, () => {
+    const opts = { sessionId: 'CARD', resumeId: 'LIVE', sourceId: 'SRC' };
+    assert.match(claude[method](opts), /'--permission-mode' 'auto'/);
+    for (const permissionMode of ['manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions']) {
+      assert.ok(claude[method]({ ...opts, permissionMode }).includes(`'--permission-mode' '${permissionMode}'`));
+    }
+    assert.throws(() => claude[method]({ ...opts, permissionMode: 'invalid' }), /permission mode/i);
+  });
+}

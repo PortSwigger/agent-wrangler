@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { adapterFor } from '../../agents/index.js';
 import { spawnSessionTool } from './spawn-session.js';
 import { registerRuntime, unregisterRuntimesFor } from '../../runtimes/index.js';
 
@@ -292,16 +293,11 @@ test('spawn_session tags parentSession = caller only when nest: true is explicit
   assert.equal(d.calls.dispatch[0].workflow, undefined); // never sets workflow — orchestrator-only
 });
 
-// Nesting only ever renders one level deep — CARD1 is already nested under
-// ORCH here, so nesting a new spawn under CARD1 would land it at depth 2,
-// which the board can't draw. Refused before dispatch, not silently chained.
-test('spawn_session refuses nest:true when the caller is itself already nested (would create depth 2)', async () => {
+test('spawn_session nests under a caller that is itself already nested (no depth limit)', async () => {
   const d = deps({ entries: { CARD1: { agent: 'claude', model: 'sonnet', parentSession: 'ORCH' } } });
   const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', nest: true });
-  assert.equal(out.isError, true);
-  assert.match(out.content[0].text, /itself nested/);
-  assert.equal(d.calls.dispatch.length, 0);
-  assert.equal(d.calls.rebuild, 0);
+  assert.notEqual(out.isError, true);
+  assert.equal(d.calls.dispatch[0].parentSession, 'CARD1');
 });
 
 test('spawn_session sets no parentSession for a null caller, even with nest: true (nothing to nest under)', async () => {
@@ -437,4 +433,95 @@ test('spawn_session on a runtime without launchStatus has no launch field', asyn
   const d = deps({ entries: { CARD1: { agent: 'claude' }, NEWCARD: {} } });
   const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
   assert.equal(out.structuredContent.launch, undefined);
+});
+
+test('spawn_session validates permission_mode before dispatch and passes valid modes', async () => {
+  for (const permission_mode of ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions']) {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', permission_mode });
+    assert.equal(out.isError, undefined);
+    assert.equal(d.calls.dispatch[0].permissionMode, permission_mode);
+  }
+  for (const args of [{ permission_mode: 'invalid' }, { permission_mode: 'default' }, { agent: 'codex', permission_mode: 'bypassPermissions' }]) {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', ...args });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /permission mode/i);
+    assert.equal(d.calls.dispatch.length, 0);
+  }
+  const d = deps();
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex', permission_mode: 'auto' });
+  assert.equal(d.calls.dispatch.length, 1);
+});
+
+test('spawn_session rejects a non-auto permission mode for a runtime supplying its own command', async () => {
+  registerRuntime({ id: 'permission-cloud', label: 'Cloud', resumable: false, buildLaunch: async () => '' }, 'permission-cloud');
+  try {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', runtime: 'permission-cloud', permission_mode: 'bypassPermissions' });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /own launch command/);
+    assert.equal(d.calls.dispatch.length, 0);
+  } finally {
+    unregisterRuntimesFor('permission-cloud');
+  }
+});
+
+for (const [label, callerAgent, agent] of [
+  ['explicit Claude', 'claude', 'claude'],
+  ['default Claude', 'claude', undefined],
+  ['default Claude from a Codex caller', 'codex', undefined],
+]) {
+  test(`spawn_session Remote Control reaches dispatch for ${label}`, async () => {
+    const d = deps({ entries: { CARD1: { agent: callerAgent, model: callerAgent === 'codex' ? 'gpt-6-sol' : 'sonnet', effort: callerAgent === 'codex' ? 'ultra' : 'high' } } });
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent, remote_control: ' Phone ' });
+    assert.equal(out.isError, undefined);
+    assert.equal(d.calls.dispatch[0].agent, 'claude');
+    assert.deepEqual(d.calls.dispatch[0].remoteControl, { name: 'Phone' });
+    assert.equal(d.calls.dispatch[0].model, callerAgent === 'codex' ? undefined : 'sonnet');
+    assert.equal(d.calls.dispatch[0].effort, callerAgent === 'codex' ? undefined : 'high');
+  });
+}
+
+test('spawn_session omitted remote_control is absent even when the caller has Remote Control', async () => {
+  const d = deps({ entries: { CARD1: { agent: 'claude', remoteControl: { name: 'Parent phone' } } } });
+  const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x' });
+  assert.equal(out.isError, undefined);
+  assert.equal('remoteControl' in d.calls.dispatch[0], false);
+});
+
+for (const remote_control of ['', '  ', 'a\nb', 'a\rb', 'a\tb', 'a\x00b', 'a\x7fb', ' --help', null, 42, {}]) {
+  test(`spawn_session refuses invalid remote_control ${JSON.stringify(remote_control)} without dispatch/assign/rebuild`, async () => {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', remote_control });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /remote_control/);
+    assert.deepEqual(d.calls, { dispatch: [], assign: [], rebuild: 0 });
+  });
+}
+
+for (const agent of ['codex', 'future-agent']) {
+  test(`spawn_session Remote Control names unsupported agent ${agent} without dispatch/assign/rebuild`, async () => {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent, remote_control: 'Phone', worktree: true, cwd: '/no/such/repo' });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, new RegExp(agent));
+    assert.match(out.content[0].text, /does not support Remote Control/);
+    assert.deepEqual(d.calls, { dispatch: [], assign: [], rebuild: 0 });
+  });
+}
+
+test('spawn_session Remote Control refuses default Claude with missing capability before dispatch/assign/rebuild', async () => {
+  const adapter = adapterFor('claude');
+  const prev = adapter.supportsRemoteControl;
+  delete adapter.supportsRemoteControl;
+  try {
+    const d = deps();
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', remote_control: 'Phone' });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /claude.*does not support Remote Control/);
+    assert.deepEqual(d.calls, { dispatch: [], assign: [], rebuild: 0 });
+  } finally {
+    adapter.supportsRemoteControl = prev;
+  }
 });

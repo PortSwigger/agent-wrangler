@@ -20,6 +20,13 @@ information about the task itself, not a channel for briefing another session.
 
 `agent` defaults to `claude`; pass `codex` to launch a Codex session instead.
 
+Call `get_model_front` when choosing a model and effort for the task. It lists
+launchable settings that nothing beats on quality, cost and time together, with
+units and source credit. Use `agent`, `maxUsd` or `minQuality` to filter the list,
+and `pick` to check a candidate against the whole installed-agent front. Auto
+uses the model's reported effort; `scored: false` means there is no benchmark
+verdict. Apply the task's capability needs and the user's model exclusions.
+
 **Choose `model` deliberately for the task — don't just accept whatever inherits or defaults.** Match the model to what the work actually needs: bounded, mechanical work (a rebase, reading logs, a small fix with a clear spec) doesn't need a frontier model; a genuinely hard, ambiguous, or high-stakes problem does. The `(default)` markers in the generated table below are just the wrangler's fallback when `model` is left unset — not a recommendation — so pick explicitly rather than relying on them.
 
 **Pass `model` explicitly whenever you spawn the *other* agent.** The "inherit
@@ -63,6 +70,22 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 The running wrangler's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
 
 <!-- END GENERATED MODELS -->
+
+## Remote Control
+
+When the user asks for Claude Code Remote Control on the new session, pass
+`remote_control: "Phone"` to `spawn_session` (using their requested name).
+For example: “Spawn a Claude session to investigate this issue with Remote
+Control named Phone.” Only Claude currently supports it; unsupported target
+agents are refused by name before any session or worktree is created.
+
+`agent` still defaults to `claude`, even for a Codex caller. The optional name
+is trimmed and must be non-empty, single-line, contain no control characters,
+and not start with `-`. Omit `remote_control` to leave it off: it never inherits
+from the caller. The name persists for every resume; forks do not inherit it.
+See [the tool guide](../../../docs/agent-tools.md#remote-control-on-spawn_session)
+for an example call and lifecycle details. Handoff, workflows and scheduling
+have no Remote Control option.
 
 ## Codex sandbox and `add_dirs`
 

@@ -170,19 +170,20 @@ async function mountView({ onSend, cwd = null, onGoTerminal, platform = 'MacInte
   const { initChatView } = await import('./chat-view.js');
   const sent = [];
   const opened = [];
+  const openedFor = [];
   const view = initChatView({
     send: (m) => { sent.push(m); return onSend?.(m) ?? true; },
     onSubagentClick() {},
     onOpenDiff() {},
     onGoTerminal: (id) => onGoTerminal?.(id),
     onPickModel() {},
-    onOpenFile: (p) => opened.push(p),
+    onOpenFile: (p, sid) => { opened.push(p); openedFor.push(sid); },
     cwdFor: () => cwd,
   });
   const input = byId.get('chat-input');
   // Wire the auto-grow listener's dependency the way a browser would.
   return {
-    view, sent, byId, input, opened, document, timers,
+    view, sent, byId, input, opened, openedFor, document, timers,
     fire: (el, type) => el.dispatchEvent({ type }),
     // Only the still-live ones — a cancelled timeout is exactly what a browser
     // would never run.
@@ -668,8 +669,8 @@ test('a failed delivery removes the echo and restores the draft', async () => {
 // never pass through appendItems, so they can only be reached by delegation off
 // the stream — which is what this covers.
 
-test('a click on a markdown-file control opens the preview at its resolved path', async () => {
-  const { view, byId, opened, document } = await mountView({ cwd: '/repo' });
+test('a click on a markdown-file control opens the preview at its resolved path, for the session on screen', async () => {
+  const { view, byId, opened, openedFor, document } = await mountView({ cwd: '/repo' });
   view.mount('sess-1');
   const btn = document.createElement('button');
   btn.dataset.mdPath = '/repo/docs/plan.md';
@@ -677,6 +678,7 @@ test('a click on a markdown-file control opens the preview at its resolved path'
   let prevented = false;
   byId.get('chat-stream').dispatchEvent({ type: 'click', target: btn, preventDefault: () => { prevented = true; } });
   assert.deepEqual(opened, ['/repo/docs/plan.md']);
+  assert.deepEqual(openedFor, ['sess-1']);
   assert.equal(prevented, true);
 });
 
@@ -1106,6 +1108,28 @@ test('clearing needs-you re-enables the composer and hides the bar', async () =>
   assert.equal(input.disabled, false);
 });
 
+test('an input gate disables the composer with its reason, refuses a send and lifts cleanly', async () => {
+  const { view, byId, input, sent } = await mountView();
+  view.mount('s1');
+  view.setStatus('idle');
+  input.value = 'hello';
+  input.dispatchEvent({ type: 'input' });
+  view.setInputGate({ reason: 'Prompt cache expired — unlock from the card' });
+  assert.equal(input.disabled, true);
+  assert.equal(byId.get('chat-send').disabled, true);
+  assert.equal(input.placeholder, 'Prompt cache expired — unlock from the card');
+  // The graph's next setStatus keeps it locked.
+  view.setStatus('idle');
+  assert.equal(input.disabled, true);
+  const before = sent.filter((m) => m.type === 'message').length;
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').length, before);
+  view.setInputGate(null);
+  assert.equal(input.disabled, false);
+  assert.equal(byId.get('chat-send').disabled, false);
+  assert.equal(input.placeholder, 'Send a prompt…');
+});
+
 test('the suggested prompt stays hidden while a sent prompt is still echoed locally', async () => {
   const { view, input, sent, byId } = await mountView();
   view.mount('sess-1');
@@ -1199,6 +1223,19 @@ test('a prompt with an attachment is matched through the TUI image marker', asyn
   const literal = { text: 'Compare [Image #1] with [Image #2]', images: [], sentAt: 1000 };
   assert.equal(echoMatchesEvent(literal, { text: 'Compare [Image #1] with [Image #2]', ts: 1500 }), true);
   assert.equal(echoMatchesEvent({ ...literal, images: ['a.png', 'b.png'] }, { text: '[Image #1][Image #2]Compare [Image #1] with [Image #2]', ts: 1500 }), true);
+});
+
+test('a pasted tab the TUI expanded to spaces still matches its echo', async () => {
+  const { echoMatchesEvent, echoRunMatchingEvent } = await import('./chat-view.js');
+  const typed = 'error: overwritten by merge:\n\tdocs/nomenclature.md\nAborting';
+  const recorded = 'error: overwritten by merge:\n    docs/nomenclature.md\nAborting';
+  assert.equal(echoMatchesEvent({ text: typed, images: [], sentAt: 1000 }, { text: recorded, ts: 1500 }), true);
+  assert.equal(echoMatchesEvent({ text: 'a\tb', images: [], sentAt: 1000 }, { text: 'a b', ts: 1500 }), true);
+  assert.equal(echoMatchesEvent({ text: 'a b', images: [], sentAt: 1000 }, { text: 'ab', ts: 1500 }), false);
+  assert.equal(echoMatchesEvent({ text: 'a\nb', images: [], sentAt: 1000 }, { text: 'a b', ts: 1500 }), false);
+  const a = { text: 'one\ttwo', images: [], sentAt: 1000 };
+  const b = { text: '\tthree', images: [], sentAt: 2000 };
+  assert.deepEqual(echoRunMatchingEvent([a, b], { text: 'one  two    three', ts: 4000 }), [a, b]);
 });
 
 test('prompts the agent folded into one message are all matched by it', async () => {

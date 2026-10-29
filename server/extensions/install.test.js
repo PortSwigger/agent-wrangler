@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  assertAllowedUrl, cloneTo, readHead, lsRemoteHead, commitsSince, countCommitsBehind, lockDependencies, npmCi, readDeclaration,
+  assertAllowedUrl, authHint, cloneTo, readHead, lsRemoteHead, commitsSince, countCommitsBehind, lockDependencies, npmCi, readDeclaration,
   MissingLockfileError, MissingDeclarationError,
 } from './install.js';
 
@@ -191,7 +191,7 @@ test('readDeclaration reads the disclosure statically, without importing anythin
     wranglerExtension: { id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'] },
   }));
   assert.deepEqual(readDeclaration(dir), {
-    id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'], range: null,
+    id: 'notes', label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', homepage: 'https://example.invalid', requires: ['tasks:read'], range: null, earlyAdopterBranch: null,
   });
 
   // The declared host API range rides along for the pre-consent engines gate.
@@ -203,7 +203,7 @@ test('readDeclaration reads the disclosure statically, without importing anythin
   // Absent prose normalises to '' rather than undefined: every consumer renders
   // it through textContent, where undefined would print as "undefined".
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes' } }));
-  assert.deepEqual(readDeclaration(dir), { id: 'notes', label: 'Notes', description: '', author: '', homepage: '', requires: [], range: null });
+  assert.deepEqual(readDeclaration(dir), { id: 'notes', label: 'Notes', description: '', author: '', homepage: '', requires: [], range: null, earlyAdopterBranch: null });
 });
 
 test('commitsSince deepens the shallow clone and logs only what the update brings in', async () => {
@@ -256,8 +256,142 @@ test('countCommitsBehind caps the count when the installed commit is out of reac
   assert.deepEqual(await countCommitsBehind('/installed', 'a'.repeat(40), 'https://github.com/org/repo.git', { git }), { commits: 50, capped: true });
 });
 
+// What execFile rejects with when git exits non-zero: a long "Command failed"
+// message with stderr appended, and stderr on its own.
+function gitFailure(stderr) {
+  return Object.assign(new Error(`Command failed: git clone -- url /dest\n${stderr}`), { code: 128, stderr });
+}
+
+test('authHint recognises git auth failures on github.com URLs', () => {
+  for (const stderr of [
+    "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/org/repo.git/'",
+    "remote: Repository not found.\nfatal: repository 'https://github.com/org/repo.git/' not found",
+    'git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.',
+  ]) {
+    assert.match(authHint('https://github.com/org/repo.git', gitFailure(stderr)) || '', /gh auth login.*gh auth setup-git/, stderr);
+  }
+  // The message alone is enough when stderr is not attached.
+  assert.ok(authHint('https://github.com/org/repo', new Error('fatal: Authentication failed')));
+});
+
+test('authHint stays out of failures that are not GitHub auth', () => {
+  const auth = gitFailure('fatal: Authentication failed');
+  assert.equal(authHint('https://gitlab.example.com/org/repo.git', auth), null);
+  assert.equal(authHint('https://notgithub.com/org/repo.git', auth), null);
+  assert.equal(authHint('https://github.com/org/repo.git', gitFailure('fatal: unable to access: Could not resolve host: github.com')), null);
+  assert.equal(authHint('https://github.com/org/repo.git', null), null);
+});
+
+test('authHint points an SSH URL at its https:// form rather than at keys', () => {
+  const err = gitFailure('git@github.com: Permission denied (publickey).');
+  for (const url of ['git@github.com:org/repo.git', 'ssh://git@github.com/org/repo.git']) {
+    assert.match(authHint(url, err), /install from its https:\/\/ URL instead/);
+  }
+  assert.match(authHint('https://github.com/org/repo.git', err), /and try again\.$/);
+});
+
+test('a GitHub auth failure on clone, ls-remote or fetch carries the hint and git\'s own line', async () => {
+  const stderr = "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
+  const git = async () => { throw gitFailure(stderr); };
+  const url = 'https://github.com/org/private.git';
+  for (const call of [
+    () => cloneTo(url, '/dest', { git }),
+    () => cloneTo(url, '/dest', { git, branch: 'next' }),
+    () => lsRemoteHead(url, { git }),
+    () => countCommitsBehind('/installed', 'a'.repeat(40), url, { git }),
+  ]) {
+    await assert.rejects(call, (err) => {
+      assert.equal(err.message, `Could not read ${url} (${stderr}). It may be a private repository: run gh auth login, then gh auth setup-git, and try again.`);
+      assert.equal(err.cause.stderr, stderr);
+      return true;
+    });
+  }
+});
+
+test('any other git failure is rethrown untouched', async () => {
+  const original = gitFailure('fatal: unable to access: Could not resolve host: github.com');
+  await assert.rejects(() => cloneTo('https://github.com/org/repo.git', '/dest', { git: async () => { throw original; } }), (err) => err === original);
+});
+
 test('countCommitsBehind refuses a disallowed origin before running git', async () => {
   let ran = 0;
   await assert.rejects(() => countCommitsBehind('/installed', 'a', 'ext::sh -c id', { git: async () => { ran += 1; return { stdout: '' }; } }), /Refusing/);
   assert.equal(ran, 0);
+});
+
+// ── early-adopter branch ────────────────────────────────────────────────────
+
+// A git fake that answers ls-remote for the refs `remote` has, and records argv.
+function remoteGit(remote) {
+  const calls = [];
+  const run = async (args, opts = {}) => {
+    calls.push({ args, opts });
+    if (args.includes('ls-remote')) {
+      const asked = args.slice(args.indexOf('--') + 2);
+      return { stdout: asked.filter((r) => remote[r]).map((r) => `${remote[r]}\t${r}\n`).join('') };
+    }
+    if (args.includes('rev-list')) return { stdout: '3\n' };
+    return { stdout: '' };
+  };
+  return { run, calls };
+}
+const URL = 'https://github.com/org/repo.git';
+const HEAD_SHA = '1'.repeat(40);
+const NEXT_SHA = '2'.repeat(40);
+
+test('with no branch, clone, ls-remote and the commit count are exactly as before', async () => {
+  const git = remoteGit({ HEAD: HEAD_SHA });
+  await cloneTo(URL, '/dest', { git: git.run });
+  assert.equal(await lsRemoteHead(URL, { git: git.run }), HEAD_SHA);
+  await countCommitsBehind('/installed', 'a'.repeat(40), URL, { git: git.run });
+  assert.equal(git.calls.length, 5, 'clone, ls-remote, fetch, merge-base, rev-list: no branch lookups');
+  assert.ok(!git.calls[0].args.includes('--branch'));
+  assert.deepEqual(git.calls[1].args.slice(-3), ['--', URL, 'HEAD']);
+  assert.deepEqual(git.calls[2].args.slice(-3), ['--', URL, 'HEAD']);
+});
+
+test('an EA branch the remote has is cloned, reported and fetched to count', async () => {
+  const git = remoteGit({ HEAD: HEAD_SHA, 'refs/heads/next': NEXT_SHA });
+  await cloneTo(URL, '/dest', { git: git.run, branch: 'next' });
+  const clone = git.calls.find((c) => c.args.includes('clone')).args;
+  assert.equal(clone[clone.indexOf('--branch') + 1], 'next');
+  assert.ok(clone.indexOf('--branch') < clone.indexOf('--'), 'the branch is an option before --');
+  assert.equal(await lsRemoteHead(URL, { git: git.run, branch: 'next' }), NEXT_SHA);
+  git.calls.length = 0;
+  assert.deepEqual(await countCommitsBehind('/installed', 'a'.repeat(40), URL, { git: git.run, branch: 'next' }), { commits: 3, capped: false });
+  const fetch = git.calls.find((c) => c.args.includes('fetch')).args;
+  assert.equal(fetch.at(-1), 'refs/heads/next');
+});
+
+test('an EA branch missing on the remote falls back to HEAD everywhere', async () => {
+  const git = remoteGit({ HEAD: HEAD_SHA });
+  await cloneTo(URL, '/dest', { git: git.run, branch: 'next' });
+  assert.ok(!git.calls.find((c) => c.args.includes('clone')).args.includes('--branch'));
+  assert.equal(await lsRemoteHead(URL, { git: git.run, branch: 'next' }), HEAD_SHA);
+  git.calls.length = 0;
+  await countCommitsBehind('/installed', 'a'.repeat(40), URL, { git: git.run, branch: 'next' });
+  assert.equal(git.calls.find((c) => c.args.includes('fetch')).args.at(-1), 'HEAD');
+});
+
+test('a branch that is not a plain git branch name never reaches git', async () => {
+  for (const bad of ['--upload-pack=touch x', 'a..b', 'a b', 'x.lock']) {
+    const git = remoteGit({ HEAD: HEAD_SHA });
+    await assert.rejects(() => cloneTo(URL, '/dest', { git: git.run, branch: bad }), /not a plain git branch name/);
+    await assert.rejects(() => lsRemoteHead(URL, { git: git.run, branch: bad }), /not a plain git branch name/);
+    await assert.rejects(() => countCommitsBehind('/i', 'a', URL, { git: git.run, branch: bad }), /not a plain git branch name/);
+    assert.deepEqual(git.calls, []);
+  }
+});
+
+test('readDeclaration carries earlyAdopter.branch and refuses a malformed one', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-decl-ea-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const write = (ea) => fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ wranglerExtension: { id: 'notes', label: 'Notes', earlyAdopter: ea } }));
+  write({ branch: 'next' });
+  assert.equal(readDeclaration(dir).earlyAdopterBranch, 'next');
+  for (const bad of ['next', { branch: '-x' }, { branch: '' }, ['next']]) {
+    write(bad);
+    assert.throws(() => readDeclaration(dir), /earlyAdopter must be \{ branch \}/);
+  }
 });

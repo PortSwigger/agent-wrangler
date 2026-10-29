@@ -163,6 +163,13 @@ export function safeHttpUrl(url) {
   }
 }
 
+// Whether a board modal is showing. Most are divs toggled by `.hidden`; a
+// <dialog> one (#ext-file-modal) has no `.hidden` and is open only via `open`.
+export function anyModalOpen(doc) {
+  return [...doc.querySelectorAll('#modal, [id$="-modal"]')]
+    .some((el) => (el.tagName === 'DIALOG' ? el.open : !el.classList.contains('hidden')));
+}
+
 export function branchBadge(branch) {
   if (!branch) return '';
   const main = branch === 'main' || branch === 'master' ? ' main' : '';

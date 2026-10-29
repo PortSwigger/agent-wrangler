@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
+import { launchAddDirArgs, launchCodexConfigArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
 import { shellQuote } from './claude.js';
 import { analyzeCodex, listResumableCodex, activityInRangeCodex, findRollout } from './codex-rollout.js';
@@ -9,30 +9,28 @@ import { worktreeGuardrailPrompt } from '../worktree.js';
 import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
 import { codexPolicyArgs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
+import { tomlString, notifyOverride } from '../codex-notify-config.js';
+import { fileURLToPath } from 'node:url';
+import { installPath } from '../install-root.js';
 
 const exec = promisify(execFile);
 
-// A TOML double-quoted string for a `-c key=value` override. Escapes backslash
-// and double-quote per TOML basic-string rules; the memory prompt has neither
-// today, but escape defensively so a future prompt edit can't break the arg.
-function tomlString(s) {
-  return `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
+const HOOK_PATH = installPath(fileURLToPath(new URL('../codex-notify-hook.js', import.meta.url)));
 
-// Env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
+// The pane-side refuseIfSet guard, env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
 // even for a fork (its own fresh board id). The extensions' env comes FIRST and
 // core's after, so an extension adds variables but can never override ours (the
 // last assignment of a name wins in a shell prefix). A path an extension hands
 // Codex (task-memory's) is already the launch-time REAL path: its hook is told
 // `agent: 'codex'`, because Codex 0.149+ rejects a symlinked writable root.
 function envPrefix(sessionId, spawnedBy, launchContext) {
-  let env = launchEnvPrefix(launchContext, shellQuote)
+  let env = launchEnvGuard(launchContext, shellQuote) + launchEnvPrefix(launchContext, shellQuote)
     + `AW_SESSION_ID=${shellQuote(sessionId)} ${MCP_TOKEN_ENV}=${shellQuote(sessionId)} `;
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
 }
 
-// Flags shared by launch/resume/fork: autonomy, network, the extensions' directory grants, and
+// Flags shared by launch/resume/fork: autonomy, network, the extensions' config overrides and directory grants, and
 // the additive developer-instructions channel. Autonomy (sandbox, approval, the
 // network grant, --approve-for-me or bypass) comes from an extension's
 // `codexPolicy` answer when one answers (codexPolicyArgs,
@@ -56,7 +54,9 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
   const base = [mandatorySkillPrompt(undefined, { disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = codexPolicyArgs(codexPolicy);
+  args.push(...launchCodexConfigArgs(launchContext));
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
+  args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
   args.push(...launchAddDirArgs(launchContext));
   for (const d of addDirs) args.push('--add-dir', d);
   args.push(...codexMcpConfigArgs());

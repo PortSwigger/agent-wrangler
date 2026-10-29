@@ -7,9 +7,11 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
   <!-- Quicksand + Pixelify Sans: loaded globally so any style can select them via
        its manifest `font` field; only applied where the --font var picks it up.
-       Pixelify Sans is a readable 8-bit/pixel face (the Pixel Cats style uses it). -->
+       Pixelify Sans is a readable 8-bit/pixel face (the Pixel Cats style uses it).
+       Roboto Mono is the Light style's --font-mono; its --font, Inter, is
+       bundled (styles.css). A browser only downloads a face once a style uses it. -->
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Pixelify+Sans:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Pixelify+Sans:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&display=swap" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="favicon.svg" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -238,6 +240,8 @@
   <div id="modal" class="hidden">
     <div class="modal-card">
       <h3 id="m-title">Dispatch a new session</h3>
+      <div id="m-dispatch-fields">
+      <div class="dispatch-task-column">
       <!-- Scheduling-only "When" section, hidden in launch mode. The picker compiles
            to a cron string (recurring) or an absolute instant (one-off) client-side. -->
       <div id="m-when" class="when-box hidden">
@@ -246,7 +250,7 @@
         <label>Action</label>
         <!-- Two action kinds: dispatch a brand-new session, or act on an existing one
              (resumed if dormant, messaged if live — the server decides at fire time).
-             The selection toggles which fields below show (#m-dispatch-fields vs
+             The selection toggles which fields below show (#m-task-fields vs
              #m-session-fields). -->
         <div id="m-sch-action" class="sched-action" role="tablist" aria-label="Schedule action">
           <button type="button" class="sched-action-btn on" id="m-sch-action-dispatch" data-action="dispatch" aria-pressed="true">New session</button>
@@ -292,9 +296,10 @@
         <label for="m-sch-message" id="m-sch-message-label">Message (optional)</label>
         <textarea id="m-sch-message" rows="4" placeholder="Resumes the session if it's dormant (delivering this as its first prompt), or sends it into the terminal if it's live."></textarea>
       </div>
-      <div id="m-dispatch-fields">
+      <div id="m-task-fields">
       <label>Task</label>
       <select id="m-task"></select>
+      <label>Session type</label>
       <div class="mode-segmented" id="m-mode-cards" role="group" aria-label="Session type">
         <button type="button" class="mode-segment" id="m-mode-standard" data-mode="standard" aria-pressed="true">
           <span class="mode-segment-title">Standard</span>
@@ -306,7 +311,7 @@
         </button>
       </div>
       <label id="m-intent-label">Intent / first prompt</label>
-      <textarea id="m-intent" rows="6" placeholder="What should the agent work on?"></textarea>
+      <textarea id="m-intent" rows="12" placeholder="What should the agent work on?"></textarea>
       <div id="m-intent-attachments" class="chat-attachments" hidden></div>
       <!-- The three `dispatch.field` anchor hosts (public/slots.js), filled by
            app.js's syncDispatchExtFields. `display: contents`, so an
@@ -323,21 +328,6 @@
       <div id="m-cwd-msg" class="worktree-msg hidden"></div>
       <div id="m-add-dirs"></div>
       <div id="m-add-dirs-note" class="worktree-msg hidden">Additional folders require a Local runtime.</div>
-      <!-- Each hideable core field is wrapped in an id'd row so a
-           `dispatch.field` contribution's `hides` can toggle it (app.js
-           DISPATCH_FIELD_ROWS). A plain block wrapper — the fields inside lay
-           out exactly as they did unwrapped. -->
-      <div class="dispatch-field" id="m-model-row">
-        <label>Model</label>
-        <select id="m-model"></select>
-      </div>
-      <!-- OUTSIDE #m-model-row on purpose: an extension that hides `model` must
-           not hide its own replacement control along with it. -->
-      <div class="ext-dispatch-slot" data-at="model"></div>
-      <div class="dispatch-field" id="m-effort-row">
-        <label>Effort</label>
-        <select id="m-effort"></select>
-      </div>
       <!-- The `worktree` dispatch-field veto toggles this OUTER row only;
            syncWorkflow owns .worktree-box's own hidden for workflow/review mode. -->
       <div class="dispatch-field" id="m-worktree-box-row">
@@ -384,6 +374,34 @@
           <div class="ext-dispatch-slot" data-at="advanced"></div>
         </div>
       </details>
+      </div>
+      </div>
+      <div class="dispatch-model-column">
+        <div class="dispatch-field" id="m-model-row">
+          <label>Model</label>
+          <div id="m-model-picker">
+            <div class="model-front-scale"><span>Cheapest</span><span>Best quality</span></div>
+            <div class="model-front-slider" role="group" aria-label="Model curve stops"><div class="model-front-control" role="slider" tabindex="0" aria-label="Model quality and cost" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></div><div class="model-front-stops"></div></div>
+            <div class="model-front-plot"></div>
+            <div class="model-front-legend"><span>● Front</span><span>◎ Selected</span><span class="model-front-ring">○ Unavailable</span><span class="model-front-ring">◆ Below front</span></div>
+            <div class="model-front-key" role="group" aria-label="Provider and model colour key"></div>
+            <div class="model-front-preview" aria-live="polite"></div>
+            <p class="model-front-credit"></p>
+            <div class="model-front-notice" role="status"></div>
+            <div class="model-front-readout" aria-live="polite"></div>
+          </div>
+          <details class="model-front-any" id="m-any-model">
+            <summary>Any model</summary>
+            <label>Agent / model</label>
+            <select id="m-model"></select>
+            <div class="dispatch-field" id="m-effort-row">
+              <label>Effort</label>
+              <select id="m-effort"></select>
+            </div>
+          </details>
+        </div>
+        <div class="ext-dispatch-slot" data-at="model"></div>
+      </div>
       </div>
       <div id="m-subagent" class="hidden">
         <h4>Prompt</h4><pre id="m-sa-prompt"></pre>
@@ -434,6 +452,35 @@
       <div class="file-body" id="file-body" aria-live="polite"></div>
     </div>
   </div>
+
+  <!-- An extension's terminal, presented over whatever is open in this tab.
+       Filled by openTerminalDialog in app.js. -->
+  <dialog id="terminal-modal" aria-labelledby="terminal-modal-title">
+    <div class="terminal-dialog-card">
+      <div class="terminal-dialog-head">
+        <h3 id="terminal-modal-title">Terminal</h3>
+        <button id="terminal-modal-close" class="ghost" type="button">Close</button>
+      </div>
+      <div class="terminal-command-preview hidden" id="terminal-modal-preview"><code></code></div>
+      <div class="terminal-dialog-ended hidden" id="terminal-modal-ended" role="status">The shell has exited.</div>
+      <div class="shell-terminal-body" id="terminal-modal-body"></div>
+    </div>
+  </dialog>
+
+  <dialog id="ext-file-modal" aria-labelledby="ext-file-title">
+    <div class="file-card">
+      <div class="file-head">
+        <div class="file-titles">
+          <h3 id="ext-file-title">File</h3>
+          <div class="file-path" id="ext-file-path"></div>
+        </div>
+        <div class="file-head-actions">
+          <button id="ext-file-close" class="ghost" type="button">Close</button>
+        </div>
+      </div>
+      <div class="file-body" id="ext-file-body"></div>
+    </div>
+  </dialog>
 
   <div id="snooze-modal" class="hidden">
     <div class="modal-card">
@@ -538,6 +585,7 @@
       <div id="ext-consent-body" class="settings-body"></div>
       <div class="modal-actions">
         <button id="ext-consent-cancel" class="ghost">Cancel</button>
+        <button id="ext-consent-later" class="ghost hidden">Update without restarting</button>
         <button id="ext-consent-ok" class="primary">Approve</button>
       </div>
     </div>
