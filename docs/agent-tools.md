@@ -22,7 +22,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | Tool | Purpose |
 | --- | --- |
 | `get_model_front` | List launchable settings on the quality/cost/time front, cheapest first, with units, source credit, and quality/cost curve membership. Optionally judge a pick against the whole installed-agent front. Read-only. |
-| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, and runtime (`local`, `devcontainer`, or one an enabled extension adds). |
+| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, optional Claude Remote Control (`remote_control`), and runtime (`local`, `devcontainer`, or one an enabled extension adds). |
 | `spawn_workflow` | Launch the issue-to-PR autopilot in a dedicated worktree. |
 | `assign_session` | Move a session and its descendants to a task, or back to Ad-hoc. |
 | `attach_session` | Nest a session under another compatible session on the board. |
@@ -49,6 +49,41 @@ reported `autoEffort`. An unmeasured model or unresolved Auto returns `scored: f
 with no measurements or verdict. Unknown or unavailable agents and unknown models produce
 errors naming valid choices. Text content is the same JSON as `structuredContent`.
 These benchmarks measure doing a coding task; they do not measure review quality.
+
+## Remote Control on `spawn_session`
+
+Ask an agent to start a Claude session you can use through Claude Code Remote Control:
+“Spawn a Claude session to investigate this issue, with Remote Control named Phone.”
+The MCP call is:
+
+```json
+{
+  "intent": "Investigate the failing integration tests in this repository.",
+  "cwd": "/path/to/repo",
+  "agent": "claude",
+  "remote_control": "Phone"
+}
+```
+
+`remote_control` is an optional name string. Wrangler trims surrounding whitespace;
+it must be non-empty, single-line, contain no control characters, and not start with `-`.
+Omit it to leave Remote Control off. A new spawn never inherits the caller's name.
+
+Only Claude currently opts into Remote Control. Codex and agents without explicit support
+are refused with an error naming the resolved target before dispatch, task assignment,
+board rebuild, or creation of a card, directory, worktree or session. The target `agent`
+defaults to `claude` even when the caller is Codex. Model and effort inherit only when
+the caller and target use the same agent; they do not change the target provider.
+
+The name becomes `--remote-control <name>` on launch and is stored for every resume,
+including idle-suspend wake, mail wake and relaunch after an update. Forks do not inherit
+it, so two sessions do not share the same Remote Control name. Claude Code must support
+Remote Control and have its required account access configured.
+
+The board dialog, workflows, `schedule_session` and handoff do not offer a Remote Control
+option. Extensions can also request it through
+[`host.sessions.spawn({ remoteControl: { name: "Phone" } })`](extensions.md), with the
+same provider and lifecycle limits.
 
 ## Coordinate sessions
 

@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
-import { adapterFor, isOwnedTmux, discoveryFloor } from './agents/index.js';
+import { adapterFor, isOwnedTmux, discoveryFloor, supportsRemoteControl } from './agents/index.js';
 import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError } from './runtimes/index.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName } from './worktree.js';
@@ -1126,6 +1126,7 @@ export class SessionManager {
     const refusal = relaunchRefusal(prev);
     if (refusal) throw new Error(refusal);
     const agent = prev?.agent || 'claude';
+    if (prev?.remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
     const adapter = adapterFor(agent);
     const runtime = runtimeFor(prev?.runtime);
     // Read what we're waking BEFORE the kill destroys the evidence: a resume off a
@@ -1851,7 +1852,7 @@ export class SessionManager {
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false, offBoard, remoteControl } = {}) {
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
-    if (remoteControl && agent !== 'claude') throw new Error(`Remote Control is Claude only (agent ${agent})`);
+    if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
     permissionMode ??= 'auto';
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);

@@ -15,6 +15,9 @@ otherwise it behaves exactly as a Claude-only board.
 - **A control plane for agents, not just for you** — sessions can spawn other agents and orchestrate
   whole multi-agent workflows, hand tasks off to each other, and send one another messages directly —
   real agent-to-agent coordination, not a one-way dashboard.
+- **Remote Control for a Claude session** — ask an agent to launch a session with
+  `spawn_session` and `remote_control: "Phone"`. Claude supports it; Codex does not.
+  See [Remote Control usage and lifecycle](docs/agent-tools.md#remote-control-on-spawn_session).
 - **Visualize your whole fleet, your way** — every agent and its sub-agents rendered on the board,
   grouped under the tasks you assign them to, nested under parent sessions, or collapsed into workflow
   boxes — organize it however makes sense to you.

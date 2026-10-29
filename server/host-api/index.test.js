@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { adapterFor } from '../agents/index.js';
 import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
 import { buildHostApi, buildExtSettings } from './index.js';
 import { V1_BUILDERS, usdByCard } from './v1.js';
@@ -383,7 +384,7 @@ test('a mistyped spawn option is REFUSED by name, never launched around', async 
     [{ remoteControl: { name: '  ' } }, /remoteControl\.name must be a non-empty single-line string/],
     [{ remoteControl: { name: 'a\nb' } }, /remoteControl\.name must be a non-empty single-line string/],
     [{ remoteControl: { name: '--help' } }, /remoteControl\.name must not start with "-"/],
-    [{ agent: 'codex', remoteControl: { name: 'Phone' } }, /remoteControl is Claude only \(agent "codex"/],
+    [{ agent: 'codex', remoteControl: { name: 'Phone' } }, /codex.*does not support Remote Control/],
   ];
   for (const [args, re] of bad) {
     await assert.rejects(() => host.sessions.spawn({ cwd: '/repo', ...args }), re, JSON.stringify(args));
@@ -748,4 +749,18 @@ test('terminals.alive asks only about the calling extension\'s own terminals', a
   assert.equal(await host.terminals.alive('t_1'), true);
   assert.equal(await host.terminals.alive(7), false);
   assert.deepEqual(asked, [['t_1', 'logins']]);
+});
+
+test('host spawn Remote Control refuses unknown agents and missing capability before dispatch or assignment', async () => {
+  const { seen, host } = spawnWiring();
+  await assert.rejects(() => host.sessions.spawn({ agent: 'future-agent', remoteControl: { name: 'Phone' } }), /future-agent.*does not support Remote Control/);
+  const adapter = adapterFor('claude');
+  const prev = adapter.supportsRemoteControl;
+  delete adapter.supportsRemoteControl;
+  try {
+    await assert.rejects(() => host.sessions.spawn({ remoteControl: { name: 'Phone' } }), /claude.*does not support Remote Control/);
+    assert.deepEqual(seen, { dispatch: [], assigned: [], autoFix: [] });
+  } finally {
+    adapter.supportsRemoteControl = prev;
+  }
 });

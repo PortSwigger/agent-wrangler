@@ -71,6 +71,22 @@ The running wrangler's lists can be newer than this table. An unknown `model` is
 
 <!-- END GENERATED MODELS -->
 
+## Remote Control
+
+When the user asks for Claude Code Remote Control on the new session, pass
+`remote_control: "Phone"` to `spawn_session` (using their requested name).
+For example: “Spawn a Claude session to investigate this issue with Remote
+Control named Phone.” Only Claude currently supports it; unsupported target
+agents are refused by name before any session or worktree is created.
+
+`agent` still defaults to `claude`, even for a Codex caller. The optional name
+is trimmed and must be non-empty, single-line, contain no control characters,
+and not start with `-`. Omit `remote_control` to leave it off: it never inherits
+from the caller. The name persists for every resume; forks do not inherit it.
+See [the tool guide](../../../docs/agent-tools.md#remote-control-on-spawn_session)
+for an example call and lifecycle details. Handoff, workflows and scheduling
+have no Remote Control option.
+
 ## Codex sandbox and `add_dirs`
 
 A Codex session runs under Codex's own OS sandbox (`--sandbox workspace-write`,

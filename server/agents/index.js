@@ -9,6 +9,10 @@ export function adapterFor(id) {
   return ALL.find((a) => a.id === id) || claude;
 }
 
+export function supportsRemoteControl(id) {
+  return ALL.find((a) => a.id === id)?.supportsRemoteControl === true;
+}
+
 // Shared by modelPillFor and maxContextWindowFor: resolve the model ENTRY a
 // transcript's live model (or, absent that, the launch model) maps to. Prefers
 // the launch entry when its transcriptPrefixes already match the transcript
