@@ -5489,6 +5489,7 @@ function syncModalChrome() {
   // Launch mode is always a dispatch (no action selector, dispatch fields visible).
   if (!sched) {
     document.getElementById('m-dispatch-fields').classList.remove('hidden');
+    document.getElementById('m-task-fields').classList.remove('hidden');
     document.getElementById('m-session-fields').classList.add('hidden');
     return;
   }
@@ -5502,7 +5503,7 @@ function syncModalChrome() {
 // Schedule mode only.
 function syncScheduleAction() {
   const isDispatch = scheduleAction === 'dispatch';
-  document.getElementById('m-dispatch-fields').classList.toggle('hidden', !isDispatch);
+  document.getElementById('m-task-fields').classList.toggle('hidden', !isDispatch);
   document.getElementById('m-session-fields').classList.toggle('hidden', isDispatch);
   document.querySelectorAll('#m-sch-action .sched-action-btn').forEach((b) => {
     const on = b.dataset.action === scheduleAction;
