@@ -6797,6 +6797,21 @@ function tryFulfillScheduledFocus() {
 
 // --- websocket control ---
 let ws;
+// The server only sends a graph when something in it changed (graph-frame-gate.js),
+// so an idle board can go minutes without one. What the board draws still moves
+// with the clock — "5m ago" tags, a comment-less snooze waking, a finished
+// sub-agent leaving the recent window — so after this long without a frame the
+// last graph is re-applied as-is, which is exactly what an unchanged server tick
+// used to do.
+const IDLE_REAPPLY_MS = 30000;
+let idleReapply = null;
+function armIdleReapply() {
+  clearTimeout(idleReapply);
+  idleReapply = setTimeout(() => {
+    if (latestGraph) applyGraph(latestGraph);
+    armIdleReapply();
+  }, IDLE_REAPPLY_MS);
+}
 export function send(obj) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify(obj));
@@ -6812,7 +6827,7 @@ function connect() {
   ws.onclose = () => { chatView.onConnectionClosed(); setTimeout(connect, 1500); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === 'graph') applyGraph(msg.graph);
+    if (msg.type === 'graph') { applyGraph(msg.graph); armIdleReapply(); }
     // A `config` is the first frame of every connect, so it is also how the board
     // learns a restart finished: the pending install/removal notes describe a
     // boot snapshot that has just been replaced, and the process holding them is
