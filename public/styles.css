@@ -1069,7 +1069,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .sched-action-btn.on, .sched-action-btn.on:hover {
   background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
 }
-#m-session-fields.hidden, #m-dispatch-fields.hidden, #m-subagent.hidden, #m-go.hidden { display: none; }
+#m-session-fields.hidden, #m-task-fields.hidden, #m-dispatch-fields.hidden, #m-subagent.hidden, #m-go.hidden { display: none; }
 
 /* Persistent server-wide alert bar (currently: fd-watchdog leak warning). Fixed
    at the very top so it can't be missed; body.system-banner-open pushes both
@@ -3489,10 +3489,12 @@ a.ext-row-origin { color: var(--blue-fg); }
 .dispatch-model-column::before { content: ''; position: absolute; top: 0; bottom: 0; left: -20px; width: 1px; background: var(--border); }
 #modal label:not(.check-row), #modal summary, #modal .worktree-title { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--fg); }
 #modal .mode-segmented { margin-top: 4px; }
-#modal:has(#m-when:not(.hidden)) > .modal-card { width: 700px; }
-#modal:has(#m-when:not(.hidden)) #m-dispatch-fields { grid-template-columns: minmax(0, 1fr); gap: 24px; }
-#modal:has(#m-when:not(.hidden)) .dispatch-model-column { border-top: 1px solid var(--border); }
-#modal:has(#m-when:not(.hidden)) .dispatch-model-column::before { display: none; }
+#modal:has(#m-dispatch-fields:not(.hidden) #m-task-fields.hidden) > .modal-card { width: 700px; }
+#m-dispatch-fields:has(#m-task-fields.hidden) { grid-template-columns: minmax(0, 1fr); gap: 0; }
+#m-dispatch-fields:has(#m-task-fields.hidden) .dispatch-model-column { display: none; }
+@media (min-width: 851px) {
+  #modal:has(#m-when:not(.hidden)):has(#m-task-fields:not(.hidden)):not(:has(#m-model-row.hidden)) .modal-actions { width: calc((100% - 40px) / 2); }
+}
 .model-front-scale, .model-front-legend { display: flex; justify-content: space-between; color: var(--fg-muted); font-size: 11px; }
 .model-front-scale { margin: 16px 0 0; }
 .model-front-slider { position: relative; height: 32px; margin: 0 8px 8px; cursor: pointer; touch-action: none; }
