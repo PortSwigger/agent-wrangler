@@ -36,7 +36,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
+import { updatePanelEl, restartPanelEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -6169,13 +6169,13 @@ function mountUpdatePanel(host) {
   // update, and a Notify or Auto value carried over in config.json is ignored by
   // the server, so the row is hidden rather than left looking live.
   host.parentElement?.querySelector('.setting-row[data-id="autoUpdate"]')?.classList.toggle('hidden', Boolean(updateUnavailable));
-  const drift = installDriftEl({
+  const restart = restartPanelEl({
     drift: installDrift,
     canRestart: canRestartServer,
-    restarting: installDriftRestarting,
+    restarting: installDriftRestarting || updatePhase === 'restarting' || extRestarting,
     onRestart: () => { installDriftRestarting = true; send({ type: 'restart-server' }); remountUpdatePanel(); },
   });
-  if (drift) host.append(drift);
+  if (restart) host.append(restart);
   host.append(updatePanelEl({
     phase: updatePhase,
     status: updateStatus,
@@ -6351,7 +6351,7 @@ let extSettingsPanelHost = null;
 
 const startExtUpdate = (entry) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); remountExtensions(); };
 
-const restartForExtensions = () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); };
+const restartForExtensions = () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); remountUpdatePanel(); };
 
 // One update at a time: each goes through its own consent modal, so the next
 // starts only once the last has settled.
@@ -6873,8 +6873,8 @@ function connect() {
       sessionsDir = msg.sessionsDir || '';
       homeDir = msg.homeDir || '';
       canRestartServer = Boolean(msg.canRestart);
-      noteConfigUpdate(msg);
       extRestarting = false;
+      noteConfigUpdate(msg);
       extPendingRemoval.clear();
       extPendingInstall = '';
       remountExtensions();
@@ -6976,7 +6976,7 @@ function connect() {
     else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
     // The board is about to lose this socket; ws.onclose already retries every
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
-    else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); }
+    else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
     else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
