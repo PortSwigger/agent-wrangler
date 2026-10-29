@@ -1,6 +1,7 @@
 import { listSessionsTool } from './list-sessions.js';
 import { getSessionInfoTool } from './get-session-info.js';
 import { getSessionCostTool } from './get-session-cost.js';
+import { getModelFrontTool } from './get-model-front.js';
 import { listTasksTool } from './list-tasks.js';
 import { assignSessionTool } from './assign-session.js';
 import { getSessionActivityTool } from './get-session-activity.js';
@@ -35,7 +36,7 @@ import { getExtensions } from '../../extensions/index.js';
 // EXTENSION's tools (server/extensions/*/index.js `tools`) are exempt from that
 // two-place rule: the loader derives their launch grant from the same list it
 // registers, so they exist in exactly one place.
-export const TOOLS = [listSessionsTool, getSessionInfoTool, getSessionCostTool, listTasksTool, assignSessionTool, getSessionActivityTool, readSessionTranscriptTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, restoreSessionTool, restoreTaskTool, detachSessionTool, attachSessionTool, renameSessionTool, scheduleSessionTool, cancelScheduleTool, createTerminalTool, readMailTool, listMailTool];
+export const TOOLS = [listSessionsTool, getSessionInfoTool, getSessionCostTool, getModelFrontTool, listTasksTool, assignSessionTool, getSessionActivityTool, readSessionTranscriptTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, restoreSessionTool, restoreTaskTool, detachSessionTool, attachSessionTool, renameSessionTool, scheduleSessionTool, cancelScheduleTool, createTerminalTool, readMailTool, listMailTool];
 
 // The tools a request actually gets: the core set plus every ENABLED extension's
 // tools. A disabled extension's tools are genuinely unregistered, not merely

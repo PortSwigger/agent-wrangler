@@ -21,6 +21,7 @@ add more tools. A running session receives tool-registry changes after its next 
 
 | Tool | Purpose |
 | --- | --- |
+| `get_model_front` | List launchable settings on the quality/cost/time front, cheapest first, with units, source credit, and quality/cost curve membership. Optionally judge a pick against the whole installed-agent front. Read-only. |
 | `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, and runtime (`local`, `devcontainer`, or one an enabled extension adds). |
 | `spawn_workflow` | Launch the issue-to-PR autopilot in a dedicated worktree. |
 | `assign_session` | Move a session and its descendants to a task, or back to Ad-hoc. |
@@ -32,6 +33,22 @@ add more tools. A running session receives tool-registry changes after its next 
 | `restore_task` | Restore an archived task (ids from `list_tasks` with `archived: true`), and by default resume the sessions archived with it (`restore_sessions: false` for the empty tile). |
 | `name_branch` | Rename the caller's Wrangler-managed worktree branch. |
 | `workflow_phase` | Update a Workflow card's phase chip. |
+
+Call `get_model_front` when choosing a model for a spawn, handoff, advisor, or reviewer.
+Its `agent`, `maxUsd`, and `minQuality` filters shorten only the returned `front`; a `pick`
+is always judged against the whole front for the installed agents. Each point has `quality`
+(Terminal-Bench 4.0 points), `usd` (list-price dollars per task), `minutes` (wall-clock minutes
+per task), and `onCurve`. A point with `onCurve: false` remains on the three-dimensional
+front because it is faster. The response includes the data's `read` date and `credit`,
+including prices from core's LiteLLM catalog.
+
+Pass `pick: { agent, model, effort }` to get `scored`, `resolvedEffort`, and, when scored,
+the three measurements, `onFront`, and `beatenBy` (the highest-quality front setting that
+dominates it, or `null`). Omitted or empty effort means Auto, resolved from that model's
+reported `autoEffort`. An unmeasured model or unresolved Auto returns `scored: false`
+with no measurements or verdict. Unknown or unavailable agents and unknown models produce
+errors naming valid choices. Text content is the same JSON as `structuredContent`.
+These benchmarks measure doing a coding task; they do not measure review quality.
 
 ## Coordinate sessions
 

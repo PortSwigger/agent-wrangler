@@ -935,6 +935,7 @@ async function extFileHandler(req, res) {
 // dispatch (mints the card id, collects the launch context pre-launch) → assign →
 // rebuild.
 const mcpRequestHandler = createMcpRequestHandler({
+  agents: dispatchAgents,
   taskStore,
   graph: () => lastGraph,
   // list_tasks folds out scratch cwds when picking a task's bestFolder.
@@ -1014,9 +1015,13 @@ function broadcastStylesIfChanged() {
 // The dispatch dialog's agent/model/effort lists — sent on connect, and again to
 // every board whenever a model or price catalog refresh, or a settings file that
 // decides a model's Auto effort (`autoEffort`), changes them.
-async function agentsMessage() {
+async function dispatchAgents() {
   const list = await availableAgents();
-  return JSON.stringify({ type: 'agents', agents: list.map((a) => ({ id: a.id, label: a.label, models: withAutoEffort(a.id, modelsWithDefault(a)), efforts: a.efforts || [] })) });
+  return list.map((a) => ({ id: a.id, label: a.label, models: withAutoEffort(a.id, modelsWithDefault(a)), efforts: a.efforts || [] }));
+}
+
+async function agentsMessage() {
+  return JSON.stringify({ type: 'agents', agents: await dispatchAgents() });
 }
 
 function broadcastAgents() {
