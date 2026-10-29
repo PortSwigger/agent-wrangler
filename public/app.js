@@ -6770,11 +6770,14 @@ schedulesModal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.
 schedulesModal.addEventListener('mousedown', (e) => { if (e.target === schedulesModal) closeSchedulesPanel(); });
 
 function onScheduleFired(msg) {
-  toast(`Scheduled "${msg.name}" started`);
-  if (msg.focus === true && msg.sessionId) {
+  const viewSession = () => {
     pendingScheduledFocus = { sessionId: msg.sessionId, expiresAt: Date.now() + 8000 };
     tryFulfillScheduledFocus();
-  }
+  };
+  toast(`Scheduled "${msg.name}" started`, false, msg.sessionId ? {
+    label: 'View session', onClick: viewSession,
+  } : undefined);
+  if (msg.focus === true && msg.sessionId) viewSession();
 }
 
 function tryFulfillScheduledFocus() {
