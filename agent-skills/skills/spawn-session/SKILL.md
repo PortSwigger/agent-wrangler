@@ -20,6 +20,13 @@ information about the task itself, not a channel for briefing another session.
 
 `agent` defaults to `claude`; pass `codex` to launch a Codex session instead.
 
+Call `get_model_front` when choosing a model and effort for the task. It lists
+launchable settings that nothing beats on quality, cost and time together, with
+units and source credit. Use `agent`, `maxUsd` or `minQuality` to filter the list,
+and `pick` to check a candidate against the whole installed-agent front. Auto
+uses the model's reported effort; `scored: false` means there is no benchmark
+verdict. Apply the task's capability needs and the user's model exclusions.
+
 **Choose `model` deliberately for the task — don't just accept whatever inherits or defaults.** Match the model to what the work actually needs: bounded, mechanical work (a rebase, reading logs, a small fix with a clear spec) doesn't need a frontier model; a genuinely hard, ambiguous, or high-stakes problem does. The `(default)` markers in the generated table below are just the wrangler's fallback when `model` is left unset — not a recommendation — so pick explicitly rather than relying on them.
 
 **Pass `model` explicitly whenever you spawn the *other* agent.** The "inherit

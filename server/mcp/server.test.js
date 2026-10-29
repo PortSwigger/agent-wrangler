@@ -52,7 +52,7 @@ async function connect(deps, caller, opts) {
 test('buildMcpServer advertises the registered tools in tools/list', async () => {
   const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ ext: NO_EXT }) });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'cancel_schedule', 'create_terminal', 'detach_session', 'get_links', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'read_session_transcript', 'remove_links', 'rename_session', 'restore_session', 'restore_task', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'workflow_phase']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'cancel_schedule', 'create_terminal', 'detach_session', 'get_links', 'get_model_front', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'read_session_transcript', 'remove_links', 'rename_session', 'restore_session', 'restore_task', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'workflow_phase']);
   await server.close();
 });
 
@@ -85,6 +85,27 @@ test('buildMcpServer runs list_sessions with the bound caller', async () => {
   assert.equal(res.structuredContent.caller.sessionId, 'CARD1');
   assert.equal(res.structuredContent.sessions[0].isCaller, true);
   await server.close();
+});
+
+test('get_model_front is callable through MCP with schema validation and helpful choice errors', async () => {
+  const { client, server } = await connect({ agents: async () => [
+    { id: 'claude', models: [{ value: 'opus', autoEffort: 'high' }], efforts: [{ value: 'high' }] },
+  ] }, null);
+  try {
+    const result = await client.callTool({ name: 'get_model_front', arguments: { pick: { agent: 'claude', model: 'opus' } } });
+    assert.equal(result.structuredContent.pick.resolvedEffort, 'high');
+    assert.equal(result.structuredContent.pick.onFront, true);
+    assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+    for (const args of [{ maxUsd: 0 }, { maxUsd: -1 }, { minQuality: -1 }, { minQuality: 101 }, { pick: { agent: 'claude' } }]) {
+      assert.equal((await client.callTool({ name: 'get_model_front', arguments: args })).isError, true);
+    }
+    const unknown = await client.callTool({ name: 'get_model_front', arguments: { agent: 'typo' } });
+    assert.equal(unknown.isError, true);
+    assert.match(unknown.content[0].text, /Valid agents: claude/);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
 
 test('buildMcpServer runs spawn_session through the SDK schema boundary', async () => {

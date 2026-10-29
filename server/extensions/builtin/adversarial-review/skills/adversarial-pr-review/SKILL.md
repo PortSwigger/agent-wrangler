@@ -63,6 +63,12 @@ that an option meets this floor, report the uncertainty rather than silently cho
 weaker option. If no eligible model is available, report the blocker instead of lowering
 the capability or effort floor.
 
+Call `get_model_front` to help pick a reviewer that's strong for its price from
+the opposite agent's eligible models, while respecting the capability and effort
+floor above and the user's exclusions. Its numbers measure doing a coding task,
+not review quality. Filtering the front never restricts how it judges a `pick`;
+an unscored pick has no benchmark verdict.
+
 ## 4. Brief the reviewer
 
 Put the whole brief in `intent` (its launch prompt). The reviewer starts cold, with none

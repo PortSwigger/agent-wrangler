@@ -76,6 +76,12 @@ test('allowedToolsArg grants the get_session_cost self-lookup tool (no per-call 
   assert.ok(allowedToolsArg().split(',').includes(allowedToolName('get_session_cost')));
 });
 
+test('get_model_front is both registered and granted to launched sessions', async () => {
+  const { TOOLS } = await import('./tools/index.js');
+  assert.ok(TOOLS.some((t) => t.name === 'get_model_front'));
+  assert.ok(allowedToolsArg({ ext: NO_EXT }).split(',').includes(allowedToolName('get_model_front')));
+});
+
 // The two-place registration is the silent-failure mode CLAUDE.md warns about:
 // registering a tool in tools/index.js's TOOLS without also allow-listing it
 // here ships something that passes every unit test and dies silently in a real
