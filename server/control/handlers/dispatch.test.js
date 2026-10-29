@@ -74,3 +74,17 @@ test('dispatch surfaces a launch failure as an error frame without acking', asyn
   assert.deepEqual(c.calls.sent, [{ type: 'error', message: 'Branch feat already exists' }]);
   assert.equal(c.calls.rebuild, 0);
 });
+
+for (const [agent, field, values] of [
+  ['codex', 'sandboxMode', ['locked', 'auto', 'full']],
+  ['claude', 'permissionMode', ['auto', 'acceptEdits', 'bypassPermissions']],
+]) {
+  test(`dispatch forwards every ${agent} dialog mode and folder grants`, async () => {
+    for (const value of values) {
+      const c = ctx();
+      await dispatchHandler.handler({ type: 'dispatch', cwd: '/repo', agent, [field]: value, addDirs: ['/extra folder'] }, c);
+      assert.equal(c.calls.dispatch[0][field], value);
+      assert.deepEqual(c.calls.dispatch[0].addDirs, ['/extra folder']);
+    }
+  });
+}

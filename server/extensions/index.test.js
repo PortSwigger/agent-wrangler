@@ -1,3 +1,4 @@
+import { codexPolicySource } from './codex-policy.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -486,6 +487,13 @@ test('createCodexPolicyResolver normalises an invalid answer, and a Promise coun
   assert.match(errs[0], /dropped sandbox="bogus"/);
   const asy = loadExtensions({ cfg: {}, builtin: [policyExt('a', async () => ({ bypass: true }))] });
   assert.equal(createCodexPolicyResolver(asy, undefined, () => {})({}), undefined);
+});
+
+test('a resolved Codex policy exposes its winning extension without changing the answer', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [policyExt('winner', () => ({ approveForMe: true }))] });
+  const policy = createCodexPolicyResolver(loaded)({ phase: 'dispatch', sessionId: 'card' });
+  assert.deepEqual(policy, { approveForMe: true });
+  assert.equal(codexPolicySource(policy), 'winner');
 });
 
 test('unregister removes the extension\'s codexPolicy', () => {

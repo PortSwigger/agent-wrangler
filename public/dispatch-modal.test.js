@@ -137,6 +137,7 @@ function appDecl(head) {
 // `prelude` declares the free variables the cut-out declarations read; `names`
 // are handed back so the test can call them.
 function loadApp(heads, names, prelude, scope) {
+  scope = { launchModeChooser: null, ...scope };
   const body = `${prelude}\n${heads.map(appDecl).join('\n')}\nreturn { ${names.join(', ')} };`;
   return new Function(...Object.keys(scope), body)(...Object.values(scope));
 }

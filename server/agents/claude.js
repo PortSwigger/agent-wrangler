@@ -1,3 +1,4 @@
+import { CLAUDE_LAUNCH_MODES } from './launch-modes.js';
 import { claudePermissionArgs } from './permission-mode.js';
 import path from 'node:path';
 import { INSTALL_ROOT } from '../install-root.js';
@@ -216,6 +217,7 @@ function claudeModels() {
 
 export const claude = {
   id: 'claude',
+  launchModes: CLAUDE_LAUNCH_MODES,
   label: 'Claude',
   tmuxPrefix: 'cc_',
   presetsSessionId: true,

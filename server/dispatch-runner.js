@@ -1,3 +1,4 @@
+import { dispatchModeError } from './agents/launch-modes.js';
 import { launchTargetError } from './agents/index.js';
 import { autoCompactTokensError } from './session-manager.js';
 import { workflowLaunchPrompt } from './workflow.js';
@@ -50,6 +51,8 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
   // Deliberately NOT the spawn path: performSpawn dispatches through
   // sessionManager.dispatch directly, so a caller-INHERITED legacy model never
   // reaches here and keeps working (see performSpawn's own comment).
+  const modeError = dispatchModeError(opts);
+  if (modeError) throw new Error(modeError);
   const badTarget = launchTargetError(opts.agent || 'claude', opts.model);
   if (badTarget) throw new Error(badTarget);
   const autoCompactError = autoCompactTokensError(opts.autoCompactTokens, opts.agent || 'claude');
@@ -75,6 +78,8 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     intent,
     model: opts.model,
     effort: opts.effort,
+    permissionMode: opts.permissionMode,
+    sandboxMode: opts.sandboxMode,
     autoCompactTokens: opts.autoCompactTokens,
     agent: opts.agent || 'claude',
     runtime: opts.runtime || 'local',

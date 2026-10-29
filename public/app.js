@@ -1,3 +1,4 @@
+import { createLaunchModeChooser, sessionPolicyHtml } from './launch-modes.js';
 import { dispatchPick, readDispatchPick, saveDispatchPick } from './dispatch-preferences.js';
 import { createDispatchModelPicker } from './dispatch-model-picker.js';
 import { effortsOf } from './model-front.js';
@@ -4520,6 +4521,8 @@ function renderPanel(sessionId) {
   if (costChip) chips.push(costChip);
   if (s.modelPill) chips.push(modelPillHtml(s.modelPill));
   if (s.permissionMode && s.agent === 'claude') chips.push(`<span class="card-tag" title="Launch permission mode">${esc(s.permissionMode)}</span>`);
+  const policyChip = sessionPolicyHtml(s);
+  if (policyChip) chips.push(policyChip);
   // The panel is never "collapsed" like a small board tile, so it always shows
   // the token breakdown.
   if (s.tokens) chips.push(tokenChipHtml(s, { expanded: true }));
@@ -5140,9 +5143,16 @@ function hideRecentFolder(path) {
   try { localStorage.setItem(HIDDEN_RECENTS_KEY, JSON.stringify([...set])); } catch {}
   recentFolders = recentFolders.filter((p) => p !== path);
 }
+let launchModeChooser = null;
 const additionalFolders = createAdditionalFolders({
   list: document.getElementById('m-add-dirs'), add: document.getElementById('m-add-dir'),
-  send, recentFolders: () => recentFolders, onChange: syncScheduleGo,
+  send, recentFolders: () => recentFolders, onChange: () => { syncScheduleGo(); launchModeChooser?.renderPreview(); },
+});
+launchModeChooser = createLaunchModeChooser({
+  root: document.getElementById('m-launch-modes'), folders: document.getElementById('m-writable-folders'),
+  preview: document.getElementById('m-launch-preview'),
+  storage: { getItem: (key) => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) },
+  dirs: () => additionalFolders.values(), onChange: () => { syncRuntimeToggle(); syncDispatchExtFields(); syncScheduleGo(); },
 });
 let suggestIndex = -1;
 // Filesystem completion for whatever is typed, answered by the 'browse-folders'
@@ -5462,7 +5472,11 @@ function syncRuntimeToggle() {
   for (const opt of rt.options) opt.disabled = !runtimeAllowsAgent(opt, agent);
   const cur = rt.options[rt.selectedIndex];
   if (cur && cur.disabled) rt.value = 'local';
-  const foldersEnabled = rt.value === 'local';
+  if (launchModeChooser) {
+    const runtime = latestExtensions.flatMap((e) => e.runtimes || []).find((r) => r.id === rt.value);
+    launchModeChooser.sync(availableAgents.find((a) => a.id === agent), Boolean(runtime?.ownLaunch));
+  }
+  const foldersEnabled = rt.value === 'local' && (launchModeChooser?.allowsFolders() ?? true);
   additionalFolders.setEnabled(foldersEnabled);
   document.getElementById('m-add-dirs-note').classList.toggle('hidden', foldersEnabled);
 }
@@ -5653,6 +5667,7 @@ function readCoreDispatchFields() {
   return {
     cwd: cwdField() || proposedCwd,
     addDirs: additionalFolders.values(),
+    ...launchModeChooser?.fields(),
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
@@ -5810,6 +5825,8 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
     ? (d.cwd || '')
     : ((selected && cwdForTask(selected)) || defaultSessionCwd);
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
+  launchModeChooser.open();
+  if (schedule) launchModeChooser.restore(d);
   additionalFolders.reset(d.addDirs || []);
   document.getElementById('m-intent').value = d.intent || '';
   // Images an openDispatch is about to adopt keep their previews through the reset.
@@ -7025,7 +7042,7 @@ function connect() {
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
     else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
-    else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
+    else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); syncRuntimeToggle(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
     else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);

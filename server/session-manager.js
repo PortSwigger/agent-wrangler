@@ -1,3 +1,5 @@
+import { codexModePolicy } from './agents/launch-modes.js';
+import { codexPolicyArgs, codexPolicySource } from './extensions/codex-policy.js';
 import { permissionModeError, runtimePermissionModeError } from './agents/permission-mode.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -220,6 +222,7 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     name: explicit ? name.trim() : (parentEntry?.name || undefined),
     model: parentEntry?.model ?? null,
     permissionMode: parentEntry?.permissionMode ?? 'auto',
+    ...(parentEntry?.agent === 'codex' ? { sandboxMode: parentEntry.sandboxMode ?? 'locked' } : {}),
     ...(parentEntry?.autoCompactTokens === undefined ? {} : { autoCompactTokens: parentEntry.autoCompactTokens }),
     createdAt,
     forkedFrom: parentId,
@@ -328,6 +331,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     model: prev?.model ?? null,
     effort: prev?.effort ?? null,
     permissionMode: prev?.permissionMode ?? 'auto',
+    ...(agent === 'codex' ? { sandboxMode: prev?.sandboxMode ?? 'locked' } : {}),
     ...(prev?.autoCompactTokens === undefined ? {} : { autoCompactTokens: prev.autoCompactTokens }),
     createdAt: prev?.createdAt ?? now,
     // When THIS relaunch happened, as distinct from createdAt (the card's birth,
@@ -1216,7 +1220,8 @@ export class SessionManager {
     if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
     const addDirs = await withCodexGitDirAddDir(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
-    const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
+    const policyState = agent === 'codex' ? this._resolveCodexPolicy({ phase: 'resume', sessionId, entry: prev }, prev?.sandboxMode) : {};
+    const { codexPolicy } = policyState;
     const inner = adapter[freshAfterUpdate ? 'buildLaunch' : 'buildResume']({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, permissionMode: prev?.permissionMode, autoCompactTokens: prev?.autoCompactTokens,
       worktree: prev?.worktree || null,
@@ -1252,6 +1257,7 @@ export class SessionManager {
     // install's socket — so a legacy default-socket session migrates here.
     this.map.set(sessionId, {
       ...resumeEntry(prev, { short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: launchedAt }),
+      ...policyState,
       ...(freshAfterUpdate ? { intent: prev?.intent || '' } : {}),
       paneId: paneId || undefined,
       launchedCodeVersion: this.codeVersion || undefined,
@@ -1312,7 +1318,8 @@ export class SessionManager {
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: parentEntry, parentId, agent, phase: 'fork' });
     // `parentId` too: onFork (which could copy the parent's stored policy) only
     // fires after this launch, so the parent's card id is how an extension finds it.
-    const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'fork', sessionId, entry: parentEntry, parentId }) : undefined;
+    const policyState = agent === 'codex' ? this._resolveCodexPolicy({ phase: 'fork', sessionId, entry: parentEntry, parentId }, parentEntry?.sandboxMode) : {};
+    const { codexPolicy } = policyState;
     const inner = adapter.buildFork({
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
       addDirs,
@@ -1328,7 +1335,7 @@ export class SessionManager {
     const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt });
     // No killForSession — the parent's mapping and tmux are deliberately left alone.
     const early = this.map.get(sessionId);
-    const entry = { ...early, ...forkEntry({ short, tmux, cwd: dir, parentEntry, parentId, name, createdAt: launchedAt }) };
+    const entry = { ...early, ...forkEntry({ short, tmux, cwd: dir, parentEntry, parentId, name, createdAt: launchedAt }), ...policyState };
     if (!name.trim() && early?.name) {
       entry.name = early.name;
       delete entry.nameInherited;
@@ -1846,13 +1853,21 @@ export class SessionManager {
     return this._whileLaunching(() => this._doDispatch(opts));
   }
 
-  async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
+  _resolveCodexPolicy(context, sandboxMode) {
+    const extension = this._extCodexPolicy(context);
+    const codexPolicy = extension ?? codexModePolicy(sandboxMode) ?? { sandbox: 'workspace-write', approval: 'never' };
+    return { codexPolicy, codexPolicySource: extension ? codexPolicySource(extension) || 'extension' : 'core', codexPolicyFlags: codexPolicyArgs(codexPolicy) };
+  }
+
+  async _doDispatch({ cwd, intent = '', model, effort, permissionMode, sandboxMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false, offBoard, remoteControl } = {}) {
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     if (remoteControl && agent !== 'claude') throw new Error(`Remote Control is Claude only (agent ${agent})`);
     permissionMode ??= 'auto';
+    if (agent === 'codex') { sandboxMode ??= 'locked'; codexModePolicy(sandboxMode); }
+    else if (sandboxMode != null) throw new Error('Sandbox mode is only supported for Codex.');
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);
     const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
@@ -1973,7 +1988,8 @@ export class SessionManager {
     // runtime's own command takes no adapter flags. Not branched around, so the
     // two paths can't drift in what they announce.
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
-    const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'dispatch', sessionId, entry: null }) : undefined;
+    const policyState = agent === 'codex' ? this._resolveCodexPolicy({ phase: 'dispatch', sessionId, entry: null }, sandboxMode) : {};
+    const { codexPolicy } = policyState;
     // `deferIntent` launches with no first prompt while still recording the intent
     // as the card's: the caller pastes it into the booted composer itself, which is
     // the only way a first prompt can carry images (dispatch-runner.js). A launch
@@ -2010,7 +2026,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(agent === 'codex' ? { sandboxMode, ...(builds ? {} : policyState) } : {}), ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });
