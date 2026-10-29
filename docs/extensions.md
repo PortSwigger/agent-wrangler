@@ -1244,6 +1244,56 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   function; subscriptions die with the extension, and a throwing listener is
   reported and kept. An extension with its own agent/model picker reads this
   instead of mirroring the vocabulary, which would drift on every model release.
+- **`api.modelFront`** (1.56.0) shares core's committed benchmark data and pure
+  model-front maths. Declare `engines.wranglerApi: '^1.56.0'` in both the runtime
+  manifest and `package.json`'s `wranglerExtension`, retaining any other engine
+  requirements. The object and its `data` are frozen, including nested rows.
+  Data is bundled with the app; no extension installation or external request
+  is needed to load it. Every data-reading method is bound to these rows;
+  callers cannot substitute a dataset.
+
+  `data` is `{ read, credit, benchmarks, models }`: `read` is the reading date,
+  `credit` cites the benchmark sources and bundled LiteLLM price catalog,
+  `benchmarks` records benchmark names, versions and weights, and
+  `models[agent][model][effort]` is `[quality, usd, minutes]` per coding task.
+  Quality is Terminal-Bench points (higher is better); dollars and wall-clock
+  minutes are lower-is-better. These are coding-task measurements, not review
+  quality scores. A **pick** is `{ agent, model, effort }`; a scored **point**
+  adds `{ quality, usd, minutes, cost, time }`. `cost` and `time` are chart
+  coordinates from 0–100 across all measured rows: logarithmic dollars and
+  linear minutes. Returned arrays and points are independent of core's data;
+  changing them cannot affect subsequent calls.
+
+  | Function | Result |
+  | --- | --- |
+  | `scoreOf(pick)` | Score fields, or `null` for an unmeasured setting, including unresolved Auto. |
+  | `dominates(a, b)` | Whether scored point `a` is at least as good on quality, dollars and minutes, and strictly better on one. Equal scores do not dominate each other. |
+  | `frontOf(agents)` | Non-dominated measured settings offered by an `api.agents()` catalog, cheapest first (quality descending on a price tie). Honors both agent and model effort lists; unknown models and efforts are omitted. |
+  | `fullFrontOf()` | The front over every measured row, installed or not, in the same order. |
+  | `unavailableOf(front)` | Full-front points absent from the supplied front, matched by agent/model/effort. |
+  | `curveOf(front)` | Points non-dominated on quality and dollars alone, cheapest first. Faster points below this curve still belong to the three-dimensional front. Equal quality/price ties are retained. |
+  | `beatenBy(front, pick)` | The highest-quality point dominating the scored pick (cheapest on a quality tie), or `null` when none does or the pick is unscored. |
+  | `nearestOf(front, point)` | Nearest point by Euclidean distance in plotted `cost` and `quality`, or `null` on an empty front. Ties take the first point. |
+  | `autoEffortOf(agents, pick)` | A model's reported `autoEffort` when the pick omits effort or uses `''`; otherwise `''`, also when unknown. |
+  | `resolvedPick(agents, pick)` | A pick with known Auto replaced by its actual effort; explicit efforts and unknown Auto are preserved. Call this before scoring or judging an Auto pick. |
+  | `programmesOf(agents, front, programmes)` | Caller-named slots fitted to distinct points of strictly rising quality; each result is `{ name, ...point }`. |
+
+  `programmes` is the caller's `{ both: [[name, pick], …], claude: […], codex: […] }`.
+  The installed agent set chooses the slot names. Each slot prefers its own
+  set's pick, then the same-named pick of an installed agent's set, then those
+  models at nearby efforts, then the point nearest its target quality. Fitting
+  fills as many slots as the front's distinct qualities allow before optimizing
+  those preferences. Missing sets produce no slots. Core supplies no presets,
+  default, naming or picker UI; those belong to the extension.
+
+  ```js
+  const agents = api.agents();
+  const front = api.modelFront.frontOf(agents);
+  const curve = api.modelFront.curveOf(front);
+  const actual = api.modelFront.resolvedPick(agents, { agent: 'claude', model: 'opus', effort: '' });
+  const score = api.modelFront.scoreOf(actual); // null when Auto is unknown
+  const presets = api.modelFront.programmesOf(agents, front, MY_PROGRAMMES);
+  ```
 - **`api.runtimes()`** (1.33.0) returns the dispatch dialog's Runtime options,
   `[{ id, label, ownsModel, ownLaunch, agents }]` (`local` and the built-ins first, then enabled
   extensions' runtimes), as a fresh copy per call. `ownsModel` marks a runtime

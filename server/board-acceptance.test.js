@@ -316,6 +316,11 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     // hideChips, which renders on a microtask) used to re-add focus-mode and
     // split the screen.
     assert.ok(await waitFor(() => evaluate(`!!document.querySelector('.layouts button[data-view="ext:probe:main"]')`)), 'the probe extension view never registered');
+    assert.ok(await evaluateChecked(`(() => {
+      const front = window.__probeApi.modelFront;
+      return Object.isFrozen(front) && Object.isFrozen(front.data.models)
+        && front.fullFrontOf().some((p) => p.quality > 0 && p.usd > 0 && p.minutes > 0);
+    })()`), 'the client extension must receive frozen core model-front data and working maths');
     await evaluateChecked(`document.querySelector('.layouts button[data-view="ext:probe:main"]').click()`);
     const gridDisplay = `getComputedStyle(document.getElementById('grid')).display`;
     assert.equal(await evaluateChecked(gridDisplay), 'none', 'the board must hide behind an extension view');

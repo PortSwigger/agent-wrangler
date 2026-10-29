@@ -305,7 +305,9 @@ Optional features are packaged as extensions — one manifest each, switched on 
 `agent-wrangler-extension`. An extension can add MCP tools,
 control handlers, board state, settings, session hooks, skills and a browser-side half. See
 [docs/extensions.md](docs/extensions.md) for installation, a minimal authoring example, and the
-complete implementation constraints.
+complete implementation constraints. Client extensions can build model pickers with
+core’s frozen benchmark data and pure quality/cost/time maths through
+`api.modelFront` (host API 1.56.0), using their own UI and presets.
 
 An extension runs inside the wrangler with full access to the machine: its capability list is
 disclosure, not a sandbox. Install one only if you trust whoever wrote it.

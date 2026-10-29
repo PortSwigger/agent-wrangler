@@ -414,7 +414,13 @@ import semver from 'semver';
 // other agent is refused by name. An older server refuses nothing and launches
 // without the flag, so a manifest that relies on it declares `^1.55.0`.
 //
-export const HOST_API_VERSION = '1.55.0';
+// 1.56.0 adds the client `api.modelFront`: deeply frozen benchmark data and
+// pure maths bound to core's committed rows, including the quality/cost curve
+// and fitting caller-owned programme slots to an installed catalog's front.
+// There is no server capability or shared picker UI. An extension using this
+// surface declares `^1.56.0`; an older board cannot supply its data or maths,
+// so the range makes that missing client contract a visible boot failure.
+export const HOST_API_VERSION = '1.56.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
