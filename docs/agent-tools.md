@@ -21,7 +21,7 @@ add more tools. A running session receives tool-registry changes after its next 
 
 | Tool | Purpose |
 | --- | --- |
-| `get_model_front` | List launchable settings on the quality/cost/time front, cheapest first, with units, source credit, and quality/cost curve membership. Optionally judge a pick against the whole installed-agent front. Read-only. |
+| `get_model_front` | List launchable settings on the quality/cost/time front, cheapest first, with units, source credit, and quality/cost curve membership. Optionally judge a pick against the whole installed-agent front. `reviewFor` returns `reviewAgent` by declared provider preference, excluding the source; `null` means no independent provider is available. Read-only. |
 | `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, optional Claude Remote Control (`remote_control`), and runtime (`local`, `devcontainer`, or one an enabled extension adds). |
 | `spawn_workflow` | Launch the issue-to-PR autopilot in a dedicated worktree. |
 | `assign_session` | Move a session and its descendants to a task, or back to Ad-hoc. |

@@ -1,8 +1,7 @@
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
 import { adapterFor } from '../../agents/index.js';
-import { createChatScanner, scanChatText } from '../../chat-events.js';
-import { forEachRolloutLine } from '../../agents/codex-rollout.js';
+import { scanChatText } from '../../chat-events.js';
 import { sessionLabel } from '../../state-reader.js';
 
 const HEAD_MESSAGES = 5;
@@ -42,12 +41,12 @@ export function summariseTranscript(text, agent) {
   };
 }
 
-async function summariseCodexRollout(file) {
-  const scanner = createChatScanner('codex');
+async function summariseStream(files, adapter) {
+  const scanner = adapter.history.createScanner();
   const head = [];
   const tail = [];
   let total = 0;
-  await forEachRolloutLine(file, (line) => {
+  for (const file of files) await adapter.history.forEachLine(file, (line) => {
     for (const event of scanner.push(line)) {
       if (event.kind !== 'user' && event.kind !== 'assistant' || !event.text) continue;
       const turn = {
@@ -88,9 +87,9 @@ export const readSessionTranscriptTool = {
   async handler({ deps }, args = {}) {
     const entry = deps.sessionManager.entryFor(args.sessionId);
     if (!entry) return errorResult(`No session with id ${args.sessionId}.`);
-    const agent = entry.agent || 'claude';
+    const agent = entry.agent ?? 'claude';
     const adapter = adapterFor(agent);
-    const dir = agent === 'codex' ? deps.codexSessionsDir : deps.projectsDir;
+    const dir = adapter.history.directory(deps);
 
     const transcriptPath = await adapter.transcriptPath(entry.liveSessionId || entry.sessionId, dir);
     if (!transcriptPath) return errorResult(`Session ${args.sessionId} has no transcript on disk yet.`);
@@ -101,8 +100,8 @@ export const readSessionTranscriptTool = {
     }
 
     try {
-      const summary = agent === 'codex'
-        ? await summariseCodexRollout(transcriptPath)
+      const summary = adapter.history.forEachLine
+        ? await summariseStream(await adapter.history.findFiles(entry.liveSessionId || entry.sessionId, deps), adapter)
         : summariseTranscript(await fsp.readFile(transcriptPath, 'utf8'), agent);
       const { total, omitted, messages } = summary;
       return transcriptResult({ args, entry, agent, transcriptPath, earlierTranscriptPaths, total, omitted, messages });

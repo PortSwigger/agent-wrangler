@@ -1,3 +1,4 @@
+import { adapterFor } from './agents/index.js';
 import { findTranscript, readLines, textOf, usageSince } from './transcript-reader.js';
 import { runHeadlessClaude } from './headless-claude.js';
 import { collectLaunchContext } from './launch-context.js';
@@ -160,7 +161,7 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
   } = deps;
 
   if (!isEnabled()) return 'skipped';
-  if ((entry?.agent || 'claude') !== 'claude') return 'skipped';
+  if (!adapterFor(entry?.agent).headlessArchiveReview) return 'skipped';
   if (!task?.id) return 'skipped';
   // The result is delivered as an `archive-review:completed` event, and the
   // task-memory extension is what writes it to memory.md. With nobody listening

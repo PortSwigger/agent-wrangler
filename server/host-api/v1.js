@@ -1,3 +1,4 @@
+import { agentError } from '../agents/index.js';
 import path from 'node:path';
 import { deepFreeze, projectSession, projectTask, worktreeSummary } from './project.js';
 import { cachedScan } from '../usage-scan-memo.js';
@@ -156,7 +157,7 @@ const sessionsEnv = ({ core, hostApiFor, launchContext = collectLaunchContext })
   sessions: {
     launchEnv: async ({ agent = 'claude', sessionId = null, ext = null } = {}) => {
       const fail = (message) => { throw new TypeError(`sessions.launchEnv: ${message}`); };
-      if (agent !== 'claude' && agent !== 'codex') fail('agent must be "claude" or "codex"');
+      if (typeof agent !== 'string' || agentError(agent)) fail(`agent must name a registered provider. ${agentError(agent) || ''}`);
       if (sessionId !== null && typeof sessionId !== 'string') fail('sessionId must be a string or null');
       if (ext !== null) checkExt(ext, fail);
       const task = sessionId === null ? null : core.taskStore.taskFor(sessionId);

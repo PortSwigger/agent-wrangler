@@ -1,3 +1,4 @@
+import { adapterFor } from '../../agents/index.js';
 import { readMeta } from '../../search/corpus.js';
 import { findTranscript } from '../../transcript-reader.js';
 import { codex as codexAdapter } from '../../agents/codex.js';
@@ -59,16 +60,18 @@ export async function adoptConversation(msg, ctx, {
     fail(ctx, liveSessionId, ADOPT_UNKNOWN_MSG);
     return;
   }
-  const agent = doc.agent === 'codex' ? 'codex' : 'claude';
-  if (agent === 'codex' && !(await codexAvailable())) {
-    fail(ctx, liveSessionId, ADOPT_NO_CODEX_MSG);
+  const agent = doc.agent ?? 'claude';
+  const adapter = adapterFor(agent);
+  const available = adapter.launch.availabilityOverride === 'codexAvailable' ? codexAvailable : () => adapter.isAvailable();
+  if (!(await available())) {
+    fail(ctx, liveSessionId, adapter.unavailableMessage || `The ${adapter.label} executable is unavailable on PATH.`);
     return;
   }
   // Claude's resume fails OPEN into a blank session, so _doResume refuses when the
   // transcript isn't findable. Check it HERE too, before the entry exists: a refusal
   // afterwards would leave a card for a conversation that can never be resumed.
   // (Codex rollouts aren't in the Claude project buckets findTranscript walks.)
-  if (agent === 'claude' && !(await transcriptFor(liveSessionId))) {
+  if (adapter.history.requiresResumeFile && !(await transcriptFor(liveSessionId))) {
     fail(ctx, liveSessionId, ADOPT_UNKNOWN_MSG);
     return;
   }

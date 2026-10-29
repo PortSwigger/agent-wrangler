@@ -1,3 +1,5 @@
+import { classifyPane } from './tmux-scraper.js';
+import { adapterFor } from './agents/index.js';
 import { sendText as defaultSendText, capturePaneStyled as defaultCapture, classify as defaultClassify } from './tmux-scraper.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
 
@@ -62,13 +64,13 @@ export function createPaneDeferral({
       const agent = agentFor(id);
       // PR notices can reach an active turn. Mail retains its agent-specific
       // timing policy, but both routes require clear input and no dialog.
-      const allowWorking = !deferWhileWorking || (allowWhileWorking && agent === 'codex');
+      const allowWorking = !deferWhileWorking || (allowWhileWorking && adapterFor(agent).terminal.allowWhileWorking);
       const canNotify = (status) => status === 'idle' || (allowWorking && status === 'working');
       const status = statusFor(id);
       if (status != null && !canNotify(status)) return `board status ${status}`;
       const pane = await capture(tmux, CAPTURE_LINES, socket);
       if (!pane) return 'pane capture empty';
-      const paneStatus = classify(pane, { tailLines: CAPTURE_LINES, strictWorking: true }).status;
+      const paneStatus = classifyPane(pane, agent, { tailLines: CAPTURE_LINES, strictWorking: true }, classify).status;
       if (!canNotify(paneStatus)) return `pane classified ${paneStatus}`;
       if (!paneComposerIsEmpty(pane, agent, { allowWhileWorking: allowWorking })) return COMPOSER_BLOCKED_REASON;
       return null;

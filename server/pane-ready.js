@@ -1,4 +1,5 @@
-import { capturePane, capturePaneStyled, classify, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys, prefillPane } from './tmux-scraper.js';
+import { adapterFor } from './agents/index.js';
+import { capturePane, capturePaneStyled, classifyPane, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys, prefillPane } from './tmux-scraper.js';
 import { paneComposerIsEmpty, paneComposerIsReady } from './ghost-suggestion.js';
 
 const READY_TIMEOUT_MS = 20000;
@@ -59,10 +60,10 @@ export async function waitForComposerReady(name, socket, agent, {
   for (;;) {
     const pane = await capture(name, 60, socket);
     if (requireEmpty) {
-      const { status } = classify(pane, { tailLines: 60, strictWorking: true });
+      const { status } = classifyPane(pane, agent, { tailLines: 60, strictWorking: true });
       if ((status === 'idle' || status === 'working')
-        && paneComposerIsEmpty(pane, agent, { allowWhileWorking: agent === 'codex' })) return true;
-    } else if (!codexUpdateState(pane) && classify(pane).status !== 'needs-you'
+        && paneComposerIsEmpty(pane, agent, { allowWhileWorking: adapterFor(agent).terminal.allowWhileWorking })) return true;
+    } else if (!codexUpdateState(pane) && classifyPane(pane, agent).status !== 'needs-you'
       && paneComposerIsReady(pane, agent)) {
       return true;
     }
@@ -125,7 +126,7 @@ export async function ensureSubmitted(name, socket, {
 } = {}) {
   if (!name) return false;
   for (let attempt = 0; ; attempt += 1) {
-    const seen = await watchPane(name, socket, capture, windowMs, pollMs, sleep);
+    const seen = await watchPane(name, socket, capture, windowMs, pollMs, sleep, agent);
     if (seen === 'working') return true;
     if (seen === 'blocked' || attempt >= attempts) return false;
     if (!composerHoldsText(await capture(name, 8, socket), agent, text)) return false;
@@ -135,12 +136,12 @@ export async function ensureSubmitted(name, socket, {
 
 // 'working' (a turn is running), 'blocked' (a dialog is up — hands off), or
 // 'idle' once the window closes with neither.
-async function watchPane(name, socket, capture, windowMs, pollMs, sleep) {
+async function watchPane(name, socket, capture, windowMs, pollMs, sleep, agent) {
   const deadline = Date.now() + windowMs;
   for (;;) {
     const pane = await capture(name, 60, socket);
     if (codexUpdateState(pane)) return 'blocked';
-    const { status } = classify(pane);
+    const { status } = classifyPane(pane, agent);
     if (status === 'working') return 'working';
     if (status === 'needs-you') return 'blocked';
     if (Date.now() >= deadline) return 'idle';
@@ -160,7 +161,7 @@ export function composerHoldsText(paneText, agent = 'claude', text = '') {
   if (typeof paneText !== 'string' || !paneText) return false;
   const probe = String(text).split('\n')[0].trim().slice(0, 40);
   if (!probe) return false;
-  const mark = agent === 'codex' ? '\u203a' : '\u276f';
+  const mark = adapterFor(agent).terminal.composerMark;
   const line = stripAnsi(paneText).split('\n').filter((l) => l.includes(mark)).pop();
   return Boolean(line) && line.includes(probe);
 }
@@ -187,20 +188,20 @@ export async function pasteImages(name, socket, agent, paths, {
   capture = capturePaneStyled,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
-  let seen = agent === 'codex' ? null : composerImageCount(await capture(name, 60, socket));
+  let seen = adapterFor(agent).terminal.imageAcknowledgement ? (adapterFor(agent).terminal.imageCount?.(await capture(name, 60, socket), composerImageCount) ?? null) : null;
   let attached = seen !== null;
   for (const p of paths) {
     await prefill(name, p, socket);
     if (seen === null) continue;
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const n = composerImageCount(await capture(name, 60, socket));
+      const n = adapterFor(agent).terminal.imageCount?.(await capture(name, 60, socket), composerImageCount) ?? null;
       if (n !== null && n > seen) { seen = n; break; }
       if (n === null || Date.now() >= deadline) { seen = n; attached = false; break; }
       await sleep(pollMs);
     }
   }
-  return agent === 'codex' || attached;
+  return !adapterFor(agent).terminal.imageAcknowledgement || attached;
 }
 
 // How many `[Image #N]` markers Claude Code's composer holds: everything from

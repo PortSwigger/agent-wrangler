@@ -19,7 +19,7 @@ export function modelKey(agents, points) {
   const unique = new Map(points.map((p) => [`${p.agent}/${p.model}`, p]));
   return [...unique].sort(([a], [b]) => a.localeCompare(b)).map(([, p]) => {
     const agent = agents.find((a) => a.id === p.agent);
-    const provider = p.agent === 'claude' ? 'Claude' : p.agent === 'codex' ? 'Codex' : agent?.label || p.agent;
+    const provider = agent?.label || p.agent;
     const model = agent?.models.find((m) => m.value === p.model)?.label?.split(' · ')[0] || p.model;
     return { label: `${provider} / ${model}`, colour: pickColour(p) };
   });

@@ -103,12 +103,12 @@ export const spawnSessionTool = {
       const name = args.remote_control;
       if (typeof name !== 'string' || !name.trim() || /[\x00-\x1f\x7f]/.test(name)) return errorResult('remote_control must be a non-empty single-line string with no control characters.');
       if (name.trim().startsWith('-')) return errorResult('remote_control must not start with "-".');
-      const agent = args.agent || 'claude';
+      const agent = args.agent ?? 'claude';
       if (!supportsRemoteControl(agent)) return errorResult(`Agent "${agent}" does not support Remote Control.`);
       remoteControl = { name: name.trim() };
     }
 
-    const modeError = permissionModeError(args.permission_mode, args.agent || 'claude');
+    const modeError = permissionModeError(args.permission_mode, args.agent ?? 'claude');
     if (modeError) return errorResult(modeError);
 
     // Refused by name rather than left to dispatch's `unknown runtime` throw, so
@@ -121,7 +121,7 @@ export const spawnSessionTool = {
         return errorResult(`Unknown runtime "${args.runtime}". Known runtimes: ${known.join(', ')}.`);
       }
       // Dispatch refuses it too; checked here so nothing is resolved first.
-      const agentErr = runtimeAgentError(findRuntime(args.runtime), args.agent || 'claude');
+      const agentErr = runtimeAgentError(findRuntime(args.runtime), args.agent ?? 'claude');
       if (agentErr) return errorResult(agentErr);
     }
 

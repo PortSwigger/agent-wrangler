@@ -1,3 +1,4 @@
+import { adapterFor } from './agents/index.js';
 import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -67,7 +68,7 @@ async function wakeDormant(to, entry, deps) {
 // it can never land in the middle of a prompt. beforeSend (the MCP-ready wait
 // after a relaunch) runs before either.
 async function liveTransport(id, entry, tmux, text, socket, paneDeferral, beforeSend, onDefer, deps) {
-  if ((entry.agent || 'claude') === 'claude') {
+  if (adapterFor(entry.agent).terminal.socketMail) {
     const target = (deps.findSocket ?? defaultFindSocket)(entry.liveSessionId || id);
     if (target) {
       try {
@@ -83,7 +84,7 @@ async function liveTransport(id, entry, tmux, text, socket, paneDeferral, before
   // Codex accepts guidance during a turn, but the paste still needs clear input
   // and no dialog. Claude's paste fallback continues to wait until idle.
   return paneDeferral.deliverOrDefer({
-    id, text, tmux, socket, deferWhileWorking: true, allowWhileWorking: entry.agent === 'codex', queueOnDefer: false, beforeSend, onDefer,
+    id, text, tmux, socket, deferWhileWorking: true, allowWhileWorking: adapterFor(entry.agent).terminal.allowWhileWorking, queueOnDefer: false, beforeSend, onDefer,
   });
 }
 

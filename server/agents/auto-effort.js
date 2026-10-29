@@ -1,3 +1,4 @@
+import { adapterFor } from './index.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -208,22 +209,14 @@ export function resolveCodexAutoEffort(slug, { configEffort = null } = {}) {
   return configEffort || codexDefaultEffort(slug);
 }
 
-function readCodexConfigEffort(file) {
+export function readCodexConfigEffort(file) {
   return readMemo(file, (f) => parseCodexConfigEffort(fs.readFileSync(f, 'utf8')));
 }
 
 // The agents frame's models with `autoEffort` added where it is known.
 export function withAutoEffort(agentId, models, paths = defaultSourcePaths()) {
-  let resolve;
-  if (agentId === 'claude') {
-    const sources = readClaudeSources(paths);
-    resolve = (value) => resolveClaudeAutoEffort(value, sources);
-  } else if (agentId === 'codex') {
-    const configEffort = readCodexConfigEffort(paths.codexConfig);
-    resolve = (value) => resolveCodexAutoEffort(value, { configEffort });
-  } else {
-    return models;
-  }
+  const resolve = adapterFor(agentId).autoEffortResolver?.(paths);
+  if (!resolve) return models;
   return models.map((m) => {
     const autoEffort = resolve(m.value);
     return autoEffort ? { ...m, autoEffort } : m;

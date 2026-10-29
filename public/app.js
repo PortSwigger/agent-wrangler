@@ -1,3 +1,4 @@
+import { setProviderMetadata, providerMetadataFor, canSwitchProviderModel, needsYouTitle } from './provider-metadata.js';
 import { dispatchPick, readDispatchPick, saveDispatchPick } from './dispatch-preferences.js';
 import { createDispatchModelPicker } from './dispatch-model-picker.js';
 import { effortsOf } from './model-front.js';
@@ -639,8 +640,7 @@ const dispatchWaiter = createDispatchWaiter();
 
 // Available agents + their models, replaced by the server's `agents` message on
 // connect (the lists are the server's live model catalogs — never copied here).
-// Seeded with just the Claude default so a dispatch before that lands still works.
-let availableAgents = [{ id: 'claude', label: 'Claude', models: [{ value: 'opus', label: 'Opus', default: true }], efforts: [] }];
+let availableAgents = [];
 
 let dispatchModelPicker = null;
 
@@ -682,7 +682,7 @@ function populateModelSelect() {
       opt.value = m.value;
       opt.textContent = m.label;
       opt.dataset.agent = a.id;
-      if (m.default && a.id === 'claude') opt.selected = true;
+      if (m.default && a.id === availableAgents[0]?.id) opt.selected = true;
       parent.appendChild(opt);
     }
   }
@@ -697,7 +697,7 @@ function populateModelSelect() {
 
 function syncAutoCompactPresets() {
   const modelSel = document.getElementById('m-model');
-  const agent = modelSel?.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
+  const agent = modelSel?.options[modelSel.selectedIndex]?.dataset.agent ?? 'claude';
   const available = new Set(autoCompactPresetTokens(agent));
   document.querySelectorAll('.auto-compact-preset').forEach((button) => {
     const tokens = button.dataset.autoCompactTokens;
@@ -717,8 +717,8 @@ function populateEffortSelect() {
   const modelSel = document.getElementById('m-model');
   if (!eff || !modelSel) return;
   const prev = eff.value;
-  const agentId = modelSel.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
-  const agent = availableAgents.find((a) => a.id === agentId) || availableAgents[0];
+  const agentId = modelSel.options[modelSel.selectedIndex]?.dataset.agent ?? 'claude';
+  const agent = availableAgents.find((a) => a.id === agentId);
   const efforts = effortsOf(agent, agent?.models.find((m) => m.value === modelSel.value));
   eff.innerHTML = '';
   const def = document.createElement('option');
@@ -2523,7 +2523,7 @@ function openActionsMenu(sessionId, x, y) {
 // inline conditions because the two sides have to agree: a mismatch here shows a
 // menu whose every choice fails.
 function canSwitchModel(s) {
-  return Boolean(s) && s.agent !== 'codex' && s.managed && displayStatus(s) === 'idle';
+  return canSwitchProviderModel(s && { ...s, status: displayStatus(s) });
 }
 
 // What this browser last asked for, per card id. Needed only to break one
@@ -2539,8 +2539,8 @@ const lastModelSet = new Map();
 function openModelMenu(sessionId, x, y) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!canSwitchModel(s)) return;
-  const claude = availableAgents.find((a) => a.id === 'claude');
-  const models = claude?.models || [];
+  const provider = availableAgents.find((a) => a.id === (s.agent ?? 'claude'));
+  const models = provider?.models || [];
   if (!models.length) return;
   // Ticked against what the CHIP shows, which is the pane's own live label —
   // not s.modelPill, which is derived from the last assistant message and so
@@ -2553,7 +2553,7 @@ function openModelMenu(sessionId, x, y) {
     // scoped to this session. Verified — it writes "model" into
     // ~/.claude/settings.json, so it becomes the default for every new Claude
     // session, wrangler-launched or not.
-    { header: 'Also becomes your default for new sessions' },
+    ...(provider.controls?.modelSwitchNote ? [{ header: provider.controls.modelSwitchNote }] : []),
     ...models.map((m) => ({
       label: m.label,
       // `trailing` rather than `icon`, and present on every row even when empty:
@@ -4341,7 +4341,7 @@ function renderSidebar(s) {
     <p>This session isn't running in tmux, so its live terminal can't be attached — ${where}.</p>
     ${exitBlock}
     <button id="resume-btn">▶ Resume a copy in a new terminal</button>
-    <p class="muted">Runs <code>claude --resume --fork-session</code> to branch a copy of this conversation into a fresh tmux session you can attach to here. The original process keeps running independently.</p>
+    <p class="muted">${esc(providerMetadataFor(s?.agent).forkHelp || 'Branch this conversation into a fresh session. The original keeps running independently.')}</p>
   </div>`;
   term.querySelector('#resume-btn').addEventListener('click', () => {
     send({ type: 'resume', sessionId: s.sessionId });
@@ -4519,7 +4519,7 @@ function renderPanel(sessionId) {
   const costChip = costTagHtml(s, slots.costCeiling(s, latestGraph), { showZero: true });
   if (costChip) chips.push(costChip);
   if (s.modelPill) chips.push(modelPillHtml(s.modelPill));
-  if (s.permissionMode && s.agent === 'claude') chips.push(`<span class="card-tag" title="Launch permission mode">${esc(s.permissionMode)}</span>`);
+  if (s.permissionMode && (providerMetadataFor(s.agent).controls?.permissionModes?.length || 0) > 1) chips.push(`<span class="card-tag" title="Launch permission mode">${esc(s.permissionMode)}</span>`);
   // The panel is never "collapsed" like a small board tile, so it always shows
   // the token breakdown.
   if (s.tokens) chips.push(tokenChipHtml(s, { expanded: true }));
@@ -5072,6 +5072,7 @@ function openTerminal(s) {
   //   Cmd+←/→     → \x1bb / \x1bf : readline backward/forward-word. (Shift+Cmd+←/→
   //                            is left for the board's session nav, so we skip it.)
   //   Cmd+⌫       → \x15   : Ctrl-U, delete from cursor to start of line.
+  const editingKeys = providerMetadataFor(s.agent).terminal?.editingKeys || {};
   const sendKey = (bytes, e) => { if (ws.readyState === 1) ws.send(bytes); e.preventDefault(); return false; };
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
@@ -5080,10 +5081,10 @@ function openTerminal(s) {
     // \x1b[3~, or the Ctrl-U below) before the window handler acts. Checked
     // before the plain Cmd+⌫ clear-line chord since that one doesn't gate on Ctrl.
     if (e.metaKey && e.ctrlKey && CTRL_CMD_KEYS.has(e.key.toLowerCase())) { e.preventDefault(); return false; }
-    if (e.key === 'Enter' && e.shiftKey) return sendKey('\x1b\r', e);
-    if (e.metaKey && !e.shiftKey && e.key === 'ArrowLeft') return sendKey('\x1bb', e);
-    if (e.metaKey && !e.shiftKey && e.key === 'ArrowRight') return sendKey('\x1bf', e);
-    if (e.metaKey && e.key === 'Backspace') return sendKey('\x15', e);
+    if (e.key === 'Enter' && e.shiftKey && editingKeys.newline) return sendKey(editingKeys.newline, e);
+    if (e.metaKey && !e.shiftKey && e.key === 'ArrowLeft' && editingKeys.wordLeft) return sendKey(editingKeys.wordLeft, e);
+    if (e.metaKey && !e.shiftKey && e.key === 'ArrowRight' && editingKeys.wordRight) return sendKey(editingKeys.wordRight, e);
+    if (e.metaKey && e.key === 'Backspace' && editingKeys.clearLine) return sendKey(editingKeys.clearLine, e);
     return true;
   });
   let lastCols = term.cols;
@@ -5457,7 +5458,7 @@ function runtimeAllowsAgent(opt, agent) {
 
 function syncRuntimeToggle() {
   const sel = document.getElementById('m-model');
-  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  const agent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   const rt = document.getElementById('m-runtime');
   for (const opt of rt.options) opt.disabled = !runtimeAllowsAgent(opt, agent);
   const cur = rt.options[rt.selectedIndex];
@@ -5641,7 +5642,7 @@ function readCoreDispatchFields() {
   const sel = document.getElementById('m-model');
   const model = sel.value.trim();
   const wfOn = dispatchMode === 'workflow';
-  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  const agent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   // !reviewMode makes the "a review never creates a worktree" invariant explicit
   // (the box is also hidden+unchecked in review mode, but don't rely on that alone).
   const wtOn = !wfOn && !reviewMode && document.getElementById('m-worktree').checked && !document.getElementById('m-worktree').disabled;
@@ -5816,7 +5817,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   intentImages.reset({ keep: keepImages });
   autoCompactTokens = d.autoCompactTokens;
   applyDispatchPick(schedule ? d : undefined);
-  autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
+  autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent ?? 'claude';
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
   // Restore the saved runtime, or for a new session the Default runtime setting;
@@ -6700,7 +6701,7 @@ document.getElementById('m-wt-folder').addEventListener('input', (e) => { wtSani
 document.getElementById('m-model').addEventListener('change', () => {
   modelEdited = true;
   const sel = document.getElementById('m-model');
-  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  const agent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   autoCompactTokens = normalizeAutoCompactPresetForAgentChange(autoCompactTokens, autoCompactAgent, agent);
   autoCompactAgent = agent;
   populateEffortSelect();
@@ -6719,7 +6720,7 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
   if (!button) return;
   autoCompactTokens = button.dataset.autoCompactTokens === '' ? undefined : Number(button.dataset.autoCompactTokens);
   const sel = document.getElementById('m-model');
-  autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   syncAutoCompactPresets();
 });
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; rememberDispatchPick(); syncDispatchExtFields(); });
@@ -6728,7 +6729,7 @@ dispatchModelPicker = createDispatchModelPicker({
   agents: () => availableAgents,
   read: () => {
     const model = document.getElementById('m-model');
-    return { agent: model.options[model.selectedIndex]?.dataset.agent || 'claude', model: model.value, effort: document.getElementById('m-effort').value };
+    return { agent: model.options[model.selectedIndex]?.dataset.agent ?? 'claude', model: model.value, effort: document.getElementById('m-effort').value };
   },
   select: (pick) => {
     const model = document.getElementById('m-model');
@@ -7025,7 +7026,7 @@ function connect() {
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
     else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
-    else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
+    else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
     else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);
@@ -7187,7 +7188,7 @@ function notify(session) {
   const body = `${session.label}${session.waitingFor ? ' — ' + session.waitingFor : ''}`;
   slots.notificationCue('needs-you', extApi);
   if (window.Notification && Notification.permission === 'granted') {
-    const n = new Notification('Claude needs you', { body });
+    const n = new Notification(needsYouTitle(session), { body });
     n.onclick = () => { window.focus(); selectSession(session.sessionId); };
   }
   toast(`⚠ ${body}`, false);

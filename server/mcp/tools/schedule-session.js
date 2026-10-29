@@ -68,7 +68,7 @@ export const scheduleSessionTool = {
       // unattended, so a bad model would silently fall back to the agent's
       // ambient default with nobody to tell — same reason runDispatch itself is
       // left alone (its other caller is a UI dropdown that can't produce one).
-      const agent = args.agent || 'claude';
+      const agent = args.agent ?? 'claude';
       const badTarget = launchTargetError(agent, args.model);
       if (badTarget) return errorResult(badTarget);
       const autoCompactError = autoCompactTokensError(args.auto_compact_tokens, agent);

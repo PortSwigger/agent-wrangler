@@ -1,8 +1,13 @@
+import { readClaudeSources, resolveClaudeAutoEffort } from './auto-effort.js';
+import { paneComposerIsReady, paneComposerIsEmpty, paneComposerDraft, parseGhostSuggestion } from './composer-parsers.js';
+import { scanDaily, scanMonth } from './claude-usage.js';
+import { costUsd } from '../pricing.js';
+import { claudeHistory } from './claude-history.js';
 import { claudePermissionArgs } from './permission-mode.js';
 import path from 'node:path';
 import { INSTALL_ROOT } from '../install-root.js';
 import { launchAddDirArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
-import { analyze, listResumable, activityInRange, findTranscript } from '../transcript-reader.js';
+import { analyze, listResumable, activityInRange, findTranscript, subagentDetail } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
@@ -215,7 +220,50 @@ function claudeModels() {
 
 export const claude = {
   id: 'claude',
+  history: claudeHistory,
+  autoEffortResolver(paths) {
+    const sources = readClaudeSources(paths);
+    return (value) => resolveClaudeAutoEffort(value, sources);
+  },
+  subagentDetail,
+  subagentDetailOverride: 'subagentDetail',
+  usage: { billingProviders: [{ id: 'anthropic', label: 'Anthropic' }], scanDaily, scanMonth, costUsd: costUsd, unknownModelLabel: 'unknown' },
+  labels: { liveTitle: true, summaryFirst: false },
+  statusSource: 'live-file',
+  presentation: { icon: 'claude', color: '#d97757', estimatedCost: false },
+  modelCommand: (model) => `/model ${model}`,
+  controls: {
+    modelSwitchNote: 'Also becomes your default for new sessions',
+    switchModel: true,
+    permissionModes: ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'],
+    autoCompact: { min: 100000, presets: [100000, 250000, 500000, 1000000] },
+  },
+  launch: { grantPaths: 'symlink', trust: 'claude', gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false },
+  terminal: {
+    readySignal: 'title',
+    contextSource: 'pane',
+    modelLabel: (pane, parse) => parse(pane),
+    contextPercent: (pane, parse) => parse(pane),
+    imageCount: (pane, parse) => parse(pane),
+    backgroundShellPattern: /·\s*\d+\s+(?:shells?|monitors?)\b/,
+    classify: (text, options, parse) => parse(text, options),
+    editingKeys: { newline: '\x1b\r', wordLeft: '\x1bb', wordRight: '\x1bf', clearLine: '\x15' },
+    clearKeys: ['C-u'],
+    composerIsReady: (text) => paneComposerIsReady(text, 'claude'),
+    composerIsEmpty: (text, options) => paneComposerIsEmpty(text, 'claude', options),
+    composerDraft: paneComposerDraft,
+    suggestion: parseGhostSuggestion,
+    composerMark: '❯',
+    paneMetadata: true,
+    restoreDraft: true,
+    socketMail: true,
+    allowWhileWorking: false,
+    imageAcknowledgement: true,
+    interruptKeys: ['Escape'],
+  },
+  reviewPriority: 10,
   supportsRemoteControl: true,
+  headlessArchiveReview: true,
   label: 'Claude',
   tmuxPrefix: 'cc_',
   presetsSessionId: true,
@@ -302,6 +350,7 @@ export const claude = {
 
   readLive({ pid }) { return liveState(pid); },
   analyze(liveSid, opts) { return analyze(liveSid, undefined, opts); },
+  graphAnalysis(liveSid, opts, enrich) { return enrich ? enrich(liveSid, opts) : null; },
   listResumable(excludeIds, opts) { return listResumable(excludeIds, opts); },
   activityInRange(liveSid, startMs, endMs, dir) { return activityInRange(liveSid, startMs, endMs, dir); },
   transcriptPath(liveSid, dir) { return findTranscript(liveSid, dir); },

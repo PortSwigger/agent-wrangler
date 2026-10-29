@@ -515,9 +515,9 @@ test('hasBackgroundShell defaults to the claude pattern when no agent is given (
   assert.equal(hasBackgroundShell(pane), true);
 });
 
-test('hasBackgroundShell returns false for an unrecognized agent rather than matching everything', () => {
+test('hasBackgroundShell rejects an unknown explicit provider', () => {
   const pane = '  ⏵⏵ auto mode on · 1 shell · ← for agents';
-  assert.equal(hasBackgroundShell(pane, 'some-future-agent'), false);
+  assert.throws(() => hasBackgroundShell(pane, 'some-future-agent'), /Unknown agent/);
 });
 
 test('hasBackgroundShell detects Claude\'s footer even when the pane is too narrow for the trailing middot to render (verified against a real truncated capture)', () => {

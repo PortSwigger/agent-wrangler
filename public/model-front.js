@@ -58,8 +58,8 @@ export function beatenBy(front, pick, data) {
 }
 
 export function programmesOf(agents, front, programmes, data) {
-  const installed = ['claude', 'codex'].filter((id) => agents.some((a) => a.id === id));
-  const set = installed.length === 2 ? 'both' : installed[0], names = (programmes[set] || []).map(([n]) => n);
+  const installed = agents.map((a) => a.id);
+  const set = installed.length >= 2 ? 'both' : installed[0], names = (programmes[set] || []).map(([n]) => n);
   const picks = (name) => [set, ...installed].map((s) => (programmes[s] || []).find(([n]) => n === name)?.[1]).filter(Boolean);
   const rank = (p) => (agents.find((a) => a.id === p.agent)?.efforts || []).findIndex((e) => e.value === p.effort);
   const costs = names.map((n) => {

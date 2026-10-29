@@ -35,7 +35,7 @@ import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, defaultRuntime, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
-import { availableAgents, modelsWithDefault, validateDefaultModel } from './agents/index.js';
+import { availableAgents, modelsWithDefault, validateDefaultModel, providerMetadata, registeredAgents } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
 import { bindHost } from './runtime.js';
@@ -251,7 +251,7 @@ const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, (
 const paneDeferral = createPaneDeferral({
   tmuxFor,
   socketFor,
-  agentFor: (id) => sessionManager.entryFor(id)?.agent || 'claude',
+  agentFor: (id) => sessionManager.entryFor(id)?.agent ?? 'claude',
   statusFor: (id) => lastGraph?.sessions?.find((s) => s.sessionId === id)?.status ?? null,
   sendText,
 });
@@ -1017,11 +1017,11 @@ function broadcastStylesIfChanged() {
 // decides a model's Auto effort (`autoEffort`), changes them.
 async function dispatchAgents() {
   const list = await availableAgents();
-  return list.map((a) => ({ id: a.id, label: a.label, models: withAutoEffort(a.id, modelsWithDefault(a)), efforts: a.efforts || [] }));
+  return list.map((a) => ({ ...providerMetadata(a), models: withAutoEffort(a.id, modelsWithDefault(a)), efforts: a.efforts || [] }));
 }
 
 async function agentsMessage() {
-  return JSON.stringify({ type: 'agents', agents: await dispatchAgents() });
+  return JSON.stringify({ type: 'agents', agents: await dispatchAgents(), providers: registeredAgents().map(providerMetadata) });
 }
 
 function broadcastAgents() {

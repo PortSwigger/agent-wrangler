@@ -695,7 +695,7 @@ test('sessions:env returns hook env for both agents and narrows ext for a card o
   for (const agent of ['claude', 'codex']) {
     assert.deepEqual(await host.sessions.launchEnv({ agent, sessionId: 'c1', ext: { context: { selection: 'secondary' }, other: { hidden: true } } }), { env: { AW_CONTEXT: agent } });
   }
-  assert.deepEqual(seen[0], { sid: 'c1', task: { id: 't1', name: 'Example' }, agent: 'claude', runtime: 'local', reason: 'headless', ext: { selection: 'secondary' }, host: { id: 'context' } });
+  assert.deepEqual(seen[0], { sid: 'c1', task: { id: 't1', name: 'Example' }, agent: 'claude', grantPaths: 'symlink', runtime: 'local', reason: 'headless', ext: { selection: 'secondary' }, host: { id: 'context' } });
   assert.deepEqual(await host.sessions.launchEnv(), { env: { AW_CONTEXT: 'claude' } });
   assert.equal(seen[2].sid, null);
   assert.equal(seen[2].task, null);
@@ -713,7 +713,7 @@ test('sessions:env rejects a launch refusal with its reason', async () => {
 test('sessions:env rejects malformed agent, sessionId and ext by name before collecting hooks', async () => {
   let calls = 0;
   const host = buildHostApi({ id: 'launcher', requires: ['sessions:env'], ...envWiring(() => { calls++; }) });
-  for (const agent of ['unknown', '', null, 7]) await assert.rejects(host.sessions.launchEnv({ agent }), /agent must be "claude" or "codex"/);
+  for (const agent of ['unknown', '', null, 7]) await assert.rejects(host.sessions.launchEnv({ agent }), /agent must name a registered provider/);
   for (const sessionId of [7, [], {}]) await assert.rejects(host.sessions.launchEnv({ sessionId }), /sessionId must be a string or null/);
   await assert.rejects(host.sessions.launchEnv({ ext: 'bad' }), /ext must be an object keyed by extension id/);
   await assert.rejects(host.sessions.launchEnv({ ext: { context: 7 } }), /ext\.context must be an object or null/);

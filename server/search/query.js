@@ -221,7 +221,7 @@ function shape(out, meta, limit) {
       g = {
         docIdx: h.docIdx,
         sessionId: d.id || '',
-        agent: d.agent || 'claude',
+        agent: d.agent ?? 'claude',
         cwd: d.cwd || '',
         title: d.title || '',
         branch: d.branch || '',

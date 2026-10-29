@@ -17,7 +17,7 @@ export function dispatchPick(agents, saved, explicit) {
   const matched = Boolean(model);
   if (!model) {
     agent = agents.find((a) => a.id === explicit?.agent && a.models.length)
-      || agents.find((a) => a.id === 'claude' && a.models.length) || agents.find((a) => a.models.length);
+      || [...agents].filter((a) => a.models.length).sort((a, b) => (a.reviewPriority ?? Infinity) - (b.reviewPriority ?? Infinity) || a.id.localeCompare(b.id))[0] || agents.find((a) => a.models.length);
     model = agent?.models.find((m) => m.default) || agent?.models[0];
   }
   if (!model) return null;

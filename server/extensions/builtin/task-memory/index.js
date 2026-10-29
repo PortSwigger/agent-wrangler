@@ -24,15 +24,15 @@ const watchers = new WeakMap();
 // so a later reassignment is followed without a relaunch); Codex 0.149+ rejects a
 // symlinked writable root, so it gets the resolved real target instead and picks
 // a reassignment up on its next relaunch.
-export function launchContext({ sid, task, agent, reason, host }) {
+export function launchContext({ sid, task, grantPaths, reason, host }) {
   if (reason === 'headless') return {};
   const store = host.stores.taskMemory;
   const binding = store.bindSession(sid, task?.id || null);
   if (!binding) return {}; // an unsafe session id: nothing to bind
-  const codex = agent === 'codex';
+  const realPaths = grantPaths === 'realpath';
   return {
-    env: { AW_TASK_MEMORY: codex ? binding.memoryPath : linkPathFor(sid) },
-    addDirs: [codex ? binding.memoryDir : addDirFor(sid)],
+    env: { AW_TASK_MEMORY: realPaths ? binding.memoryPath : linkPathFor(sid) },
+    addDirs: [realPaths ? binding.memoryDir : addDirFor(sid)],
   };
 }
 
@@ -75,6 +75,7 @@ export default {
   description: 'A shared markdown note per task that you and the agents on it edit together.',
   author: 'Agent Wrangler',
   defaultEnabled: true,
+  engines: { wranglerApi: '^1.57.0' },
   dir,
   requires: ['board:rebuild', 'board:broadcast', 'events'],
   stores: { taskMemory: () => new MemoryStore() },

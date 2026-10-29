@@ -49,7 +49,7 @@ test('launchContext (claude): binds the session, hands back the STABLE symlink p
 
 test('launchContext (codex): the RESOLVED real path, never the symlink', () => {
   const store = new MemoryStore(MEMORY_DIR);
-  const out = launchContext({ sid: 'tm-codex', task: { id: 'T2' }, agent: 'codex', host: hostFor(store) });
+  const out = launchContext({ sid: 'tm-codex', task: { id: 'T2' }, agent: 'codex', grantPaths: 'realpath', host: hostFor(store) });
   const real = fs.realpathSync(store.taskDir('T2'));
   assert.deepEqual(out, { env: { AW_TASK_MEMORY: path.join(real, 'memory.md') }, addDirs: [real] });
   assert.ok(!JSON.stringify(out).includes('by-session'));

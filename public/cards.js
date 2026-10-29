@@ -1,3 +1,4 @@
+import { providerMetadataFor } from './provider-metadata.js';
 // Pure HTML builders for the board's cards, tiles, workflow boxes and snoozed rows. Every function returns a string and has no side effects — the view
 // state each one reads (selection, flash sets, collapse set, the derived status
 // helpers, etc.) is passed in as an explicit `ctx` so the module stays testable and
@@ -301,7 +302,7 @@ export function compactPillHtml(s) {
 // turns red once reached. Without one it is the plain spend, hidden at $0
 // unless `showZero` (the panel shows a costed $0.00; a card does not).
 export function costTagHtml(s, ceiling, { titleNote = '', showZero = false } = {}) {
-  const estimated = s.agent === 'codex';
+  const estimated = providerMetadataFor(s.agent).presentation?.estimatedCost === true;
   const spent = typeof s.usd === 'number' ? s.usd : 0;
   if (!ceiling && !(spent > 0) && !(showZero && typeof s.usd === 'number')) return '';
   const cost = `${estimated ? '~' : ''}${spent.toFixed(2)}${ceiling ? ` / $${ceiling.usd.toFixed(2)}` : ''}`;
@@ -347,7 +348,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   // unmanaged (tmux down between kill and relaunch) — keep its live skin so it
   // doesn't flicker to the dormant look, and show a small badge instead.
   const dormant = (s.managed || s.restarting) ? '' : ' dormant';
-  const agentName = s.agent || 'claude';
+  const agentName = providerMetadataFor(s.agent).label;
   const wtTag = isWorktree(s);
   const wt = wtTag
     ? '<span class="card-tag wt" title="Running in a git worktree">⌥ wt</span>'

@@ -40,7 +40,8 @@ export const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 export function autoCompactTokensError(value, agent = 'claude') {
   if (value == null || value === '') return null;
   if (!Number.isInteger(value)) return 'Auto-compaction threshold must be a whole number of tokens.';
-  const min = agent === 'codex' ? 50000 : 100000;
+  const min = adapterFor(agent).controls.autoCompact?.min;
+  if (min == null) return `Automatic compaction is not supported for ${agent}.`;
   if (value < min || value > 1000000) return `Auto-compaction threshold must be between ${min} and 1000000 tokens.`;
   return null;
 }
@@ -215,7 +216,7 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     short,
     tmux,
     cwd,
-    agent: parentEntry?.agent || 'claude',
+    agent: parentEntry?.agent ?? 'claude',
     intent: parentEntry?.intent || '(forked)',
     name: explicit ? name.trim() : (parentEntry?.name || undefined),
     model: parentEntry?.model ?? null,
@@ -404,8 +405,8 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
 // off a wrangler-made worktree entry: a pre-existing worktree handed over as
 // plain `cwd` has the same problem. No-op for any other agent (no OS sandbox)
 // or a cwd outside a repository.
-async function withCodexGitDirAddDir(agent, cwd, addDirs) {
-  if (agent !== 'codex' || !cwd) return addDirs;
+async function withGitDirAddDirs(agent, cwd, addDirs) {
+  if (!adapterFor(agent).launch.gitMetadataGrants || !cwd) return addDirs;
   const gitDirsToGrant = await gitDirs(cwd);
   return gitDirsToGrant.reduce((dirs, gitDir) => dirs.includes(gitDir) ? dirs : [...dirs, gitDir], addDirs);
 }
@@ -508,7 +509,7 @@ export class SessionManager {
     return this._launchContext({
       sid: sessionId,
       task: task !== undefined ? task : (this._taskFor(sessionId) || null),
-      agent: entry?.agent || 'claude',
+      agent: entry?.agent ?? 'claude',
       runtime: entry?.runtime || 'local',
       reason,
     });
@@ -1125,7 +1126,7 @@ export class SessionManager {
     // non-resumable card's work visible, and a refused resume must not take it.
     const refusal = relaunchRefusal(prev);
     if (refusal) throw new Error(refusal);
-    const agent = prev?.agent || 'claude';
+    const agent = prev?.agent ?? 'claude';
     if (prev?.remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
     const adapter = adapterFor(agent);
     const runtime = runtimeFor(prev?.runtime);
@@ -1138,7 +1139,7 @@ export class SessionManager {
     const tmux = this._tmuxName(agent, short);
     let dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
     let freshAfterUpdate = false;
-    if (agent === 'codex' && !prev?.liveSessionId && !prev?.forkedFrom && this.dead.has(prev?.tmux)) {
+    if (adapterFor(agent).launch.recoverMissingConversation && !prev?.liveSessionId && !prev?.forkedFrom && this.dead.has(prev?.tmux)) {
       const exitedTmux = prev.tmux;
       const capture = await this._tmux(this.socketOf(exitedTmux), ['capture-pane', '-t', exitedTmux, '-p', '-S', '-60'], {
         maxBuffer: 4 * 1024 * 1024,
@@ -1176,8 +1177,8 @@ export class SessionManager {
     // rather than resume a missing conversation. (Codex discovers its id, so this
     // only applies to preset-id agents.)
     let plan = { mode: 'resume', resumeId };
-    if (adapter.presetsSessionId && !runtime.skipsHostResumeGuard && prev?.forkedFrom) {
-      plan = resumePlan({ entry: prev, resumeId, forkLiveExists: Boolean(await launchCwd(resumeId)) });
+    if (adapter.history.requiresResumeFile && !runtime.skipsHostResumeGuard && prev?.forkedFrom) {
+      plan = resumePlan({ entry: prev, resumeId, forkLiveExists: Boolean(await adapter.history.launchCwd(resumeId)) });
     }
     if (plan.mode === 'refuse') throw new Error(plan.message);
     // Guard the silent-empty-session footgun for preset-id agents (Claude): verify
@@ -1185,9 +1186,9 @@ export class SessionManager {
     // dir, so a missing transcript or a drifted/blank cwd can't make `claude
     // --resume` fail open into a fresh, empty session (see resumeLaunchPlan). Codex
     // discovers its own rollout and isn't cwd-bucketed the same way, so skip it.
-    if (adapter.presetsSessionId && !runtime.skipsHostResumeGuard) {
-      const transcript = await findTranscript(plan.resumeId);
-      const launchDir = transcript ? await launchCwd(plan.resumeId) : null;
+    if (adapter.history.requiresResumeFile && !runtime.skipsHostResumeGuard) {
+      const transcript = await adapter.history.findFile(plan.resumeId);
+      const launchDir = transcript ? await adapter.history.launchCwd(plan.resumeId) : null;
       const lp = resumeLaunchPlan({
         transcriptFound: Boolean(transcript),
         launchDir,
@@ -1204,7 +1205,7 @@ export class SessionManager {
     // It comes after every refusal above, so a resume that can't relaunch leaves
     // a live session running.
     await this.killForSession(sessionId);
-    if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
+    if (adapterFor(agent).launch.trust === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
     // Awaited before the command is built: the hook may bind state (task-memory
     // repoints the session's symlink) that the launch reads. A resume's reason is
     // passed through when it is one a hook distinguishes, else plain 'resume'.
@@ -1214,10 +1215,10 @@ export class SessionManager {
     });
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
-    const addDirs = await withCodexGitDirAddDir(agent, dir, prev?.addDirs || []);
+    if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
+    const addDirs = await withGitDirAddDirs(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
-    const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
+    const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
     const inner = adapter[freshAfterUpdate ? 'buildLaunch' : 'buildResume']({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, permissionMode: prev?.permissionMode, autoCompactTokens: prev?.autoCompactTokens,
       worktree: prev?.worktree || null,
@@ -1285,7 +1286,7 @@ export class SessionManager {
     // Same gate as _doResume: a fork relaunches the parent's runtime.
     const refusal = relaunchRefusal(parentEntry);
     if (refusal) throw new Error(refusal);
-    const agent = parentEntry?.agent || 'claude';
+    const agent = parentEntry?.agent ?? 'claude';
     const adapter = adapterFor(agent);
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
@@ -1296,7 +1297,7 @@ export class SessionManager {
     // under a known id (no phantom → the fork is resumable); a discover agent (Codex)
     // mints its own, resolved post-launch. Identity + scoped memory inject on the CARD id.
     const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
-    if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(parentEntry?.worktree?.repoRoot || dir);
+    if (adapterFor(agent).launch.trust === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(parentEntry?.worktree?.repoRoot || dir);
     // The fork lands in its parent's task, so the launch context is asked with
     // that task before the command is built (an extension that binds per-task
     // state, like task-memory, must see it first).
@@ -1305,15 +1306,15 @@ export class SessionManager {
     });
     const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
-    const addDirs = await withCodexGitDirAddDir(agent, dir, parentEntry?.addDirs || []);
+    if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
+    const addDirs = await withGitDirAddDirs(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
     // gate is shown the PARENT's — which is what it would inherit anyway, and
     // the only thing that exists to gate on at this point.
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: parentEntry, parentId, agent, phase: 'fork' });
     // `parentId` too: onFork (which could copy the parent's stored policy) only
     // fires after this launch, so the parent's card id is how an extension finds it.
-    const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'fork', sessionId, entry: parentEntry, parentId }) : undefined;
+    const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._extCodexPolicy({ phase: 'fork', sessionId, entry: parentEntry, parentId }) : undefined;
     const inner = adapter.buildFork({
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
       addDirs,
@@ -1398,7 +1399,7 @@ export class SessionManager {
     // keeps the guard, which is the safe reading.
     const rt = findRuntime(entry.runtime);
     if (rt?.resumable === false) return false;
-    const needsTranscript = adapterFor(entry.agent || 'claude').presetsSessionId
+    const needsTranscript = adapterFor(entry.agent).history.requiresResumeFile
       && !rt?.skipsHostResumeGuard;
     if (needsTranscript && !(await transcriptFor(liveSessionId))) return false;
     const prior = new Set(entry.priorLiveSessionIds || []);
@@ -1422,6 +1423,7 @@ export class SessionManager {
   // agent, and keying the card on the rollout id would look like the "no cached id"
   // case and re-discover the wrong (most recent) rollout.
   adopt({ liveSessionId, agent = 'claude', cwd = '', intent = '' } = {}) {
+    adapterFor(agent);
     const existing = this.cardForLive(liveSessionId);
     if (existing) return { sessionId: existing, adopted: false };
     const sessionId = crypto.randomUUID();
@@ -1940,12 +1942,12 @@ export class SessionManager {
     // via `parentSession`, never `workflow`) is briefed via its intent and never
     // runs the procedure.
     const loadWorkflowSkill = Boolean(workflowOpt);
-    if (agent === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(worktreeEntry?.repoRoot || cwd);
+    if (adapterFor(agent).launch.trust === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(worktreeEntry?.repoRoot || cwd);
     // Keep the grants the dispatch ASKED for, before the codex git-dir is folded
     // in: that one is derived from the cwd on every launch, so storing it would
     // only let resume grant the same path twice.
     const grantedDirs = addDirs;
-    addDirs = await withCodexGitDirAddDir(agent, cwd, addDirs);
+    addDirs = await withGitDirAddDirs(agent, cwd, addDirs);
     // Awaited, and deliberately ahead of both the skill gate and the launch: the
     // card id, cwd and worktree are settled but nothing has started, so this is
     // the only window in which an extension can persist state the agent's very
@@ -1967,14 +1969,14 @@ export class SessionManager {
     });
     const ownLaunch = ownLaunchRefusal(rt, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (agent === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(cwd, launchContext);
+    if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(cwd, launchContext);
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
     // the hooks fire either way) — their output just goes unused, since the
     // runtime's own command takes no adapter flags. Not branched around, so the
     // two paths can't drift in what they announce.
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
-    const codexPolicy = agent === 'codex' ? this._extCodexPolicy({ phase: 'dispatch', sessionId, entry: null }) : undefined;
+    const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._extCodexPolicy({ phase: 'dispatch', sessionId, entry: null }) : undefined;
     // `deferIntent` launches with no first prompt while still recording the intent
     // as the card's: the caller pastes it into the booted composer itself, which is
     // the only way a first prompt can carry images (dispatch-runner.js). A launch

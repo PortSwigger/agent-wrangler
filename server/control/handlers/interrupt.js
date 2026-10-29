@@ -1,6 +1,6 @@
+import { adapterFor } from '../../agents/index.js';
 import { sendKeys as realSendKeys, capturePaneStyled as realCapture } from '../../tmux-scraper.js';
 import { findConversationFile as realFindConversationFile } from '../../conversation-file.js';
-import { paneComposerDraft } from '../../ghost-suggestion.js';
 import { lastUserPrompt, chooseRestore } from '../../restore-prompt.js';
 
 // How long to give Claude Code to restore the interrupted prompt into its own
@@ -57,18 +57,20 @@ export const interruptHandler = {
     const socket = ctx.socketFor?.(msg.sessionId) || '';
     // The interrupt goes FIRST and is never delayed by the reading below — stopping
     // the turn is the part the human actually pressed the key for.
-    await sendKeys(target, ['Escape'], socket);
-
     const node = ctx.sessionFromGraph?.(msg.sessionId);
     const entry = ctx.sessionManager?.entryFor?.(msg.sessionId);
-    const agent = (node?.agent || entry?.agent) === 'codex' ? 'codex' : 'claude';
+    const agent = node?.agent ?? entry?.agent ?? 'claude';
+    const adapter = adapterFor(agent);
+    await sendKeys(target, adapter.terminal.interruptKeys, socket);
+
+
 
     // Poll rather than sleep-then-look: when the restore does happen there is no
     // point making the human wait out the rest of the window for it.
     let paneDraft = null;
-    if (agent === 'claude') {
+    if (adapter.terminal.restoreDraft) {
       for (let waited = 0; waited <= settleMs; waited += pollMs) {
-        paneDraft = paneComposerDraft(await capturePaneStyled(target, 14, socket));
+        paneDraft = adapter.terminal.composerDraft(await capturePaneStyled(target, 14, socket));
         if (paneDraft) break;
         if (waited + pollMs <= settleMs) await sleep(pollMs);
       }

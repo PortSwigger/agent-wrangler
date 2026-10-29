@@ -1,3 +1,4 @@
+import { agentError } from '../agents/index.js';
 import { local } from './local.js';
 import { devcontainer } from './devcontainer.js';
 
@@ -179,6 +180,8 @@ export function runtimeAgents(rt) {
 // dispatch itself, so a stale dialog selection, a schedule or a scripted
 // request can't bypass what the dialog's Runtime select disables.
 export function runtimeAgentError(rt, agent = 'claude') {
+  const invalid = agentError(agent);
+  if (invalid) return invalid;
   const agents = runtimeAgents(rt);
   if (!agents || agents.includes(agent)) return null;
   return `The "${rt.label || rt.id}" runtime can't run ${agent} sessions (it supports: ${agents.join(', ')}).`;
