@@ -77,6 +77,33 @@ const PAPER_VARS = {
   // Kept at 1px so the blocks don't change size, just invisible.
   '--code-border': 'transparent', '--bubble-border': 'transparent',
   '--chat-measure': '68em',
+  // Chrome: indigo for the accent and the selection, matching the links, and
+  // the status hues moved onto the same family of modern tones, with a mint
+  // green. Each foreground keeps at least 4.5:1 on the light surfaces.
+  '--accent': '#4f46e5', '--accent-fg': '#ffffff',
+  // A lighter fill on the selected card: the ring already marks it.
+  '--selected-tint': '8%',
+  '--blue': '#4f46e5', '--blue-fg': '#4338ca',
+  // A light mint fill takes dark ink on its bars, and a deeper mint for text.
+  '--green': '#4cc49a', '--green-fg': '#0f7a55', '--green-bar-on': '#0b3d2a',
+  '--red': '#dc2626', '--red-fg': '#b91c1c',
+  '--purple': '#7c3aed', '--wf': '#7c3aed',
+  '--cyan': '#0e7490', '--rt': '#0e7490', '--rt-fg': '#0e7490',
+  // The "just finished" ring. Its :root default is dark's bright cyan, which
+  // looked off against the deeper palette.
+  '--just-finished': '#0891b2',
+  '--snooze': '#b45309', '--snooze-fg': '#92400e',
+  '--mail': '#b45309', '--mail-fg': '#92400e',
+  '--warn': '#b45309', '--warn-fg': '#92400e',
+  '--pill-needs-bg': '#fdecec', '--pill-working-bg': '#e3f7ef',
+  '--danger-bg': '#fdf1f1', '--danger-border': '#f6caca', '--danger-strong': '#dc2626',
+  '--shadow': 'rgba(27,29,33,0.12)', '--overlay': 'rgba(27,29,33,0.32)',
+  '--term-selection': '#dfe1fb',
+  '--term-ansi-red': '#c81e1e', '--term-ansi-green': '#0f7a55', '--term-ansi-yellow': '#92400e',
+  '--term-ansi-blue': '#4338ca', '--term-ansi-magenta': '#7c3aed', '--term-ansi-cyan': '#0e7490',
+  '--term-ansi-bright-red': '#dc2626', '--term-ansi-bright-green': '#0b6e4c',
+  '--term-ansi-bright-blue': '#4f46e5', '--term-ansi-bright-magenta': '#8b5cf6',
+  '--term-ansi-bright-cyan': '#0891b2',
 };
 const BUILT_IN_STYLES = [
   { id: 'dark', name: 'Dark', base: 'dark', iconInner: MOON_ICON, vars: {}, wallpaperUrl: '/dark-bg.png' },

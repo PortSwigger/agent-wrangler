@@ -356,10 +356,11 @@ body.dragging { user-select: none; cursor: col-resize; }
 .sess-hdr.job .sess-bar { background: var(--green); }
 .sess-hdr.idle .sess-bar { background: var(--border); }
 .sess-hdr.unknown .sess-bar { background: var(--border-muted); }
-.sess-hdr.working .sess-bar > span,
-.sess-hdr.job .sess-bar > span,
 .sess-hdr.needs-you .sess-bar > span,
 .sess-hdr.just-finished .sess-bar > span { color: var(--bar-on); }
+/* --green-bar-on is unset unless a style's green is too light for --bar-on. */
+.sess-hdr.working .sess-bar > span,
+.sess-hdr.job .sess-bar > span { color: var(--green-bar-on, var(--bar-on)); }
 /* The panel's sub-agent disclosure — expanded under the header, capped + scrollable. */
 .sess-subagents { margin-top: 8px; max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .sess-subagents-empty {
@@ -1395,10 +1396,10 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .session-card.needs-you .card-bar { background: var(--red); }
 /* Filled live bars carry near-black/white ink (per theme) for contrast; idle,
    unknown and dormant keep muted text on their grey/hollow ground. */
-.session-card.working .card-bar > span,
-.session-card.job .card-bar > span,
 .session-card.needs-you .card-bar > span,
 .session-card.just-finished .card-bar > span { color: var(--bar-on); }
+.session-card.working .card-bar > span,
+.session-card.job .card-bar > span { color: var(--green-bar-on, var(--bar-on)); }
 /* Dormant: no live tmux. A hollow bar reads "nothing running here, click to
    resume"; the name dims to match. Wins over the frozen `idle` status class. */
 .session-card.dormant .card-bar { background: transparent; border: 1px solid var(--border); }
@@ -1947,7 +1948,9 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
    corner radii, and the mismatch feathers the rounded corners. */
 .session-card.selected {
   border-color: transparent;
-  background: color-mix(in srgb, var(--blue) 18%, var(--surface));
+  /* --selected-tint is unset unless a style picks how strongly the fill takes
+     the selection hue. */
+  background: color-mix(in srgb, var(--blue) var(--selected-tint, 18%), var(--surface));
   box-shadow: 0 0 0 2px var(--blue), 0 4px 14px color-mix(in srgb, var(--blue) 22%, transparent);
 }
 /* The child row's twin — same ring, so a focused worker/child row reads exactly
