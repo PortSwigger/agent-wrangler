@@ -1,7 +1,7 @@
 import { updateDiffSyntaxPalette } from './diff-syntax-palette.js';
 import { esc } from './util.js';
 
-// Style picker: built-in dark/light/paper + drop-in styles (server-compiled manifests
+// Style picker: built-in dark/light + drop-in styles (server-compiled manifests
 // from /api/styles — contributed by extensions, the core Themes one included, or
 // hand-placed under ~/.agent-wrangler/custom-styles/). Self-contained — it owns the theme vars and
 // the xterm color read; the only outward coupling is a re-theme hook the app
@@ -49,13 +49,12 @@ export function readTerminalFont() {
 
 const MOON_ICON = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>';
 const SUN_ICON = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>';
-const PAPER_ICON = '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>';
-// Paper: Light tuned for long reading. No wallpaper. Off-white and off-black
-// rather than pure white and black, a slightly darker board so the reading pane
-// stands forward, Inter (bundled, see styles.css) and Roboto Mono (loaded in
-// index.html) and a
-// centred chat column.
-const PAPER_VARS = {
+// Light, tuned for long reading, layered over body.light (which stays the
+// base that light-based extension themes inherit). No wallpaper. Off-white and
+// off-black rather than pure white and black, a slightly darker board so the
+// reading pane stands forward, Inter (bundled, see styles.css) and Roboto Mono
+// (loaded in index.html), and a centred chat column.
+const LIGHT_VARS = {
   '--bg': '#eceef1', '--surface': '#fcfcfb', '--surface-2': '#e9ebee',
   '--fg': '#1b1d21', '--fg-muted': '#4b535e', '--fg-subtle': '#69717d',
   '--border': '#d2d6dc', '--border-muted': '#e0e3e7',
@@ -121,8 +120,7 @@ const PAPER_VARS = {
 };
 const BUILT_IN_STYLES = [
   { id: 'dark', name: 'Dark', base: 'dark', iconInner: MOON_ICON, vars: {}, wallpaperUrl: '/dark-bg.png' },
-  { id: 'light', name: 'Light', base: 'light', iconInner: SUN_ICON, vars: {}, wallpaperUrl: '/light-bg.png' },
-  { id: 'paper', name: 'Paper', base: 'light', iconInner: PAPER_ICON, vars: PAPER_VARS },
+  { id: 'light', name: 'Light', base: 'light', iconInner: SUN_ICON, vars: LIGHT_VARS },
 ];
 let customStyles = [];
 let currentStyleId = 'dark';
@@ -270,8 +268,8 @@ export function setCustomStyles(styles) {
 // off, which /api/styles leaves out), never the live CSS, so every button shows
 // its theme and not the one on screen.
 // --panel-bg is the opaque one; --bg/--surface are often translucent over a
-// wallpaper. Dark and Light carry no vars and take their base's values from
-// styles.css. A value is a hand-placed theme.json string headed for a style
+// wallpaper. Dark carries no vars and takes its base's values from
+// styles.css; Light's vars cover every swatch colour. A value is a hand-placed theme.json string headed for a style
 // attribute, so only plain colour syntax gets through.
 const BASE_SWATCH = {
   dark: { tile: '#151b23', ink: '#f0f6fc', dots: ['#1f6feb', '#3fb950', '#f85149'] },

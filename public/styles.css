@@ -1,5 +1,5 @@
 /* Inter 4.1, bundled rather than taken from Google Fonts: Google's copy drops
-   Inter's character variants, and the Paper style needs cv05/cv08 to tell a
+   Inter's character variants, and the Light style needs cv05/cv08 to tell a
    capital I from a lower-case l. See vendor/inter/README.md. */
 @font-face {
   font-family: InterVariable; font-style: normal; font-weight: 100 900; font-display: swap;
@@ -94,6 +94,9 @@
   --prose-leading: 1.62;
   --chat-measure: 100%;
 }
+/* The light BASE: what a light-based extension theme inherits for any role it
+   leaves unset. The built-in Light style layers its own vars over this
+   (theme.js LIGHT_VARS), so this block is not what Light itself looks like. */
 body.light {
   --bg:#f6f8fa; --surface:#ffffff; --surface-2:#eaeef2;
   --fg:#1f2328; --fg-muted:#59636e; --fg-subtle:#818b98;
@@ -2879,8 +2882,9 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   /* --surface-2, this file's established code-block shade (.chat-prose pre,
      .file-body pre use it with the same border): --field-bg is #0d1117 in
      dark but #ffffff in light, so it would have made the output block vanish
-     into the row on the light theme. */
-  background: var(--surface-2); color: var(--fg-muted);
+     into the row on the light theme. --code-bg, when a style sets one, keeps it
+     matching the code blocks. */
+  background: var(--code-bg, var(--surface-2)); color: var(--fg-muted);
   font-size: 0.79em; line-height: 1.5;
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 200px; overflow: auto;
@@ -2891,7 +2895,7 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
    while scrolling past an expanded run. */
 .chat-tool-row[data-failed="1"] { border-color: color-mix(in srgb, var(--red) 45%, transparent); }
 .chat-tool-row[data-failed="1"] .chat-tool-name { color: var(--red-fg); }
-.chat-tool-row[data-failed="1"] .chat-tool-output { background: color-mix(in srgb, var(--red) 9%, var(--surface-2)); }
+.chat-tool-row[data-failed="1"] .chat-tool-output { background: color-mix(in srgb, var(--red) 9%, var(--code-bg, var(--surface-2))); }
 
 /* Neutral, not violet — violet (--wf) is this codebase's workflow-nested-child
    colour (see .workflow-box), a deliberately distinct concept from a sub-agent.
