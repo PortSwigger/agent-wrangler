@@ -37,8 +37,12 @@ requiring the client API. The weekly **Refresh model front** workflow runs the
 catalog refresh first and opens a reviewable data PR when inputs change; it never
 auto-merges. Slack notices require `SLACK_WEBHOOK_URL`.
 
-The companion `api.modelFront` surface is allocated additive host API **1.56.0**;
-the current data pipeline does not publish that client API.
+Client extensions can use [host API **1.56.0** `api.modelFront`](extensions.md)
+for the same frozen data and pure quality/cost/time maths, filtered to the installed
+agent catalog. It also supplies a quality/cost curve and resolves known Auto
+efforts; extensions provide their own presets and picker UI. The data ships
+with Wrangler and is available without installing an extension or making external
+benchmark requests.
 
 ## Human-visible collaboration surfaces
 

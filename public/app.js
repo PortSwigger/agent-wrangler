@@ -32,6 +32,7 @@ import {
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
+import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
@@ -384,6 +385,7 @@ const extApi = {
   setEarlyAdopter: setEarlyAdopterAcked,
   // Backs `api.agents()`; slots hands each caller a deep copy.
   agents: () => availableAgents,
+  modelFront: MODEL_FRONT,
   // Backs slots' per-extension `api.settings()`, which binds the id.
   settingsFor: (extId) => latestExtensions.find((e) => e.id === extId)?.settingValues,
   // Backs `api.settings.set` (slots binds the id). Sent through the RAW send
