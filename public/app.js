@@ -1,3 +1,4 @@
+import { dispatchPick, readDispatchPick, saveDispatchPick } from './dispatch-preferences.js';
 import { createDispatchModelPicker } from './dispatch-model-picker.js';
 import { effortsOf } from './model-front.js';
 import { createSoundMigration } from './sound-migration.js';
@@ -644,10 +645,34 @@ let availableAgents = [{ id: 'claude', label: 'Claude', models: [{ value: 'opus'
 
 let dispatchModelPicker = null;
 
+function currentDispatchPick() {
+  const model = document.getElementById('m-model');
+  return { agent: model.options[model.selectedIndex]?.dataset.agent, model: model.value, effort: document.getElementById('m-effort').value };
+}
+
+function rememberedDispatchPick() {
+  try { return readDispatchPick(localStorage); } catch { return null; }
+}
+
+function rememberDispatchPick() {
+  try { saveDispatchPick(localStorage, currentDispatchPick()); } catch {}
+}
+
+function applyDispatchPick(explicit) {
+  const pick = dispatchPick(availableAgents, rememberedDispatchPick(), explicit);
+  if (!pick) return;
+  const model = document.getElementById('m-model');
+  model.selectedIndex = [...model.options].findIndex((o) => o.value === pick.model && o.dataset.agent === pick.agent);
+  modelEdited = true;
+  populateEffortSelect();
+  document.getElementById('m-effort').value = pick.effort;
+  effortEdited = true;
+}
+
 function populateModelSelect() {
   const sel = document.getElementById('m-model');
   if (!sel) return;
-  const prev = sel.value;
+  const prev = modelEdited ? currentDispatchPick() : undefined;
   sel.innerHTML = '';
   const single = availableAgents.length === 1;
   for (const a of availableAgents) {
@@ -664,7 +689,8 @@ function populateModelSelect() {
   }
   // Preserve only a user's explicit choice across a repopulate; otherwise let the
   // server-marked default win (the seed's default must not clobber it on first load).
-  if (modelEdited && prev) sel.value = prev;
+  applyDispatchPick(prev);
+  modelEdited = Boolean(prev);
   syncQuickLaunch();
   populateEffortSelect();
   syncAutoCompactPresets();
@@ -776,6 +802,8 @@ function quickLaunch(value) {
   if (!opt) return;
   sel.value = value;
   modelEdited = true;
+  populateEffortSelect();
+  rememberDispatchPick();
   syncRuntimeToggle();
   submitDispatch();
 }
@@ -5790,7 +5818,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   // Images an openDispatch is about to adopt keep their previews through the reset.
   intentImages.reset({ keep: keepImages });
   autoCompactTokens = d.autoCompactTokens;
-  if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
+  applyDispatchPick(schedule ? d : undefined);
   autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
@@ -6681,6 +6709,7 @@ document.getElementById('m-model').addEventListener('change', () => {
   populateEffortSelect();
   syncRuntimeToggle();
   syncAutoCompactPresets();
+  rememberDispatchPick();
   // A contribution drawing a per-agent control needs the agent swap.
   syncDispatchExtFields();
 });
@@ -6696,7 +6725,7 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
   autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
   syncAutoCompactPresets();
 });
-document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; syncDispatchExtFields(); });
+document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; rememberDispatchPick(); syncDispatchExtFields(); });
 dispatchModelPicker = createDispatchModelPicker({
   root: document.getElementById('m-model-picker'),
   agents: () => availableAgents,

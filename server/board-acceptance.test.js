@@ -112,6 +112,11 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
   writeFileSync(join(probeDir, 'index.js'), `export default { id: 'probe', dir: new URL('.', import.meta.url).pathname, label: 'Probe', defaultEnabled: true, requires: ['cards:hideChips'], client: 'public/client.js' };`);
   writeFileSync(join(probeDir, 'public', 'client.js'), `export default { register(r) { window.__probeApi = r.api; r.register('view', { id: 'main', label: 'Probe', mount(el) { el.textContent = 'probe view'; } }); } };`);
   writeFileSync(join(dataDir, 'extensions.json'), JSON.stringify({ probe: { id: 'probe', requires: ['cards:hideChips'] } }));
+  writeFileSync(join(dataDir, 'schedules.json'), JSON.stringify({ schedules: [{
+    id: 'sch_pick', name: 'Explicit model', enabled: false,
+    when: { kind: 'once', runAt: '2099-01-01T09:00:00.000Z' },
+    action: { kind: 'dispatch', dispatch: { agent: 'claude', model: 'opus', effort: 'low' } },
+  }] }));
   const profile = mkdtempSync(join(tmpdir(), 'aw-chrome-'));
   const port = await freePort();
   const url = `http://127.0.0.1:${port}/`;
@@ -413,6 +418,70 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     const secondOrder = ['layout-1', 'layout-2', 'layout-0', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
     assert.ok(await waitFor(() => JSON.stringify(JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8')).order) === JSON.stringify(secondOrder)), 'moving after must persist the shifted order');
 
+
+    await resize(1400);
+    const readPick = `(() => {
+      const model = document.getElementById('m-model');
+      return { agent: model.options[model.selectedIndex]?.dataset.agent,
+        model: model.value, effort: document.getElementById('m-effort').value };
+    })()`;
+    await evaluateChecked(`document.getElementById('new-session').click()`);
+    const chosen = await evaluateChecked(`(() => {
+      const model = document.getElementById('m-model');
+      model.selectedIndex = model.options.length - 1;
+      model.dispatchEvent(new Event('change', { bubbles: true }));
+      const effort = document.getElementById('m-effort');
+      effort.selectedIndex = effort.options.length - 1;
+      effort.dispatchEvent(new Event('change', { bubbles: true }));
+      return ${readPick};
+    })()`);
+    assert.deepEqual(await evaluateChecked(`JSON.parse(localStorage.getItem('aw-dispatch-pick'))`), chosen);
+    await evaluateChecked(`document.getElementById('m-cancel').click(); document.getElementById('new-session').click()`);
+    assert.deepEqual(await evaluateChecked(readPick), chosen, 'Cancel must retain the last explicit choice');
+    await evaluateChecked(`document.getElementById('m-cancel').click()`);
+    await ack('Page.reload');
+    assert.ok(await waitFor(() => evaluate(`window.__probeApi?.agents().some((a) => a.models.length > 1)`)), 'live agents must load after reload');
+    await evaluateChecked(`document.getElementById('new-session').click()`);
+    assert.deepEqual(await evaluateChecked(readPick), chosen, 'reload must restore agent, model and effort');
+    await evaluateChecked(`(() => {
+      const effort = document.getElementById('m-effort');
+      effort.value = ''; effort.dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('m-cancel').click();
+    })()`);
+    await ack('Page.reload');
+    assert.ok(await waitFor(() => evaluate(`window.__probeApi?.agents().some((a) => a.models.length > 1)`)));
+    await evaluateChecked(`document.getElementById('new-session').click()`);
+    assert.deepEqual(await evaluateChecked(readPick), { ...chosen, effort: '' }, 'Auto must survive reload');
+    const curveCount = await evaluateChecked(`document.querySelectorAll('[data-stop]').length`);
+    if (curveCount) {
+      const beforeFocus = await evaluateChecked(readPick);
+      const preview = await evaluateChecked(`(() => {
+        const stop = document.querySelector('[data-stop]'); stop.focus();
+        return { name: stop.getAttribute('aria-label'), preview: document.querySelector('.model-front-preview').textContent };
+      })()`);
+      assert.equal(preview.name, preview.preview);
+      assert.deepEqual(await evaluateChecked(readPick), beforeFocus, 'focus must not select a stop');
+      await evaluateChecked(`document.querySelector('[data-stop]').click()`);
+      const sliderPick = await evaluateChecked(readPick);
+      assert.deepEqual(await evaluateChecked(`JSON.parse(localStorage.getItem('aw-dispatch-pick'))`), sliderPick);
+      const dotName = await evaluateChecked(`(() => {
+        const dot = document.querySelector('[data-point][data-unavailable="false"]');
+        dot.focus();
+        dot.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        return document.activeElement.getAttribute('aria-label');
+      })()`);
+      assert.ok(dotName, 'chart selection must retain keyboard focus');
+      assert.deepEqual(await evaluateChecked(`JSON.parse(localStorage.getItem('aw-dispatch-pick'))`), await evaluateChecked(readPick));
+    }
+    const remembered = await evaluateChecked(`localStorage.getItem('aw-dispatch-pick')`);
+    await evaluateChecked(`document.getElementById('m-cancel').click(); document.getElementById('schedules-btn').click()`);
+    await evaluateChecked(`document.querySelector('[data-id="sch_pick"] .sched-edit').click()`);
+    assert.deepEqual(await evaluateChecked(readPick), { agent: 'claude', model: 'opus', effort: 'low' }, 'a saved schedule must take precedence');
+    assert.equal(await evaluateChecked(`localStorage.getItem('aw-dispatch-pick')`), remembered, 'opening a schedule must not replace the preference');
+    await evaluateChecked(`document.getElementById('m-cancel').click(); document.getElementById('schedules-close').click(); localStorage.setItem('aw-dispatch-pick', '{"agent":"retired","model":"gone","effort":"high"}'); document.getElementById('new-session').click()`);
+    const fallback = await evaluateChecked(readPick);
+    assert.ok(await evaluateChecked(`window.__probeApi.agents().some((a) => a.id === ${JSON.stringify(fallback.agent)} && a.models.some((m) => m.value === ${JSON.stringify(fallback.model)}))`), 'stale preferences must fall back to a live model');
+    assert.equal(fallback.effort, '');
 
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
   } finally {

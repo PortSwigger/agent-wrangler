@@ -3584,19 +3584,31 @@ a.ext-row-origin { color: var(--blue-fg); }
 .model-front-scale, .model-front-legend { display: flex; justify-content: space-between; color: var(--fg-muted); font-size: 11px; }
 .model-front-scale { margin: 16px 0 0; }
 .model-front-slider { position: relative; height: 32px; margin: 0 8px 8px; cursor: pointer; touch-action: none; }
-.model-front-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.model-front-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
 .model-front-track { position: absolute; height: 4px; top: 14px; left: 0; right: 0; background: var(--border); border-radius: 4px; }
-.model-front-stop { position: absolute; top: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); transform: translateX(-50%); }
-.model-front-handle { position: absolute; top: 7px; height: 18px; width: 18px; border-radius: 50%; background: var(--accent); border: 3px solid var(--surface); box-shadow: 0 0 0 2px var(--accent); transform: translateX(-50%); }
+.model-front-control { position: absolute; inset: 0; }
+.model-front-stop { position: absolute; top: 6px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: transparent; transform: translateX(-50%); cursor: pointer; }
+.model-front-stop::after { content: ''; display: block; width: 8px; height: 8px; margin: auto; background: var(--pick-colour); border: 1px solid var(--fg-muted); border-radius: 50%; }
+.model-front-stop:focus-visible { outline: 2px dashed var(--fg); outline-offset: 2px; }
+.model-front-key { display: flex; flex-wrap: wrap; gap: 5px 14px; margin-top: 10px; font-size: 10px; color: var(--fg-muted); }
+.model-front-key span { display: inline-flex; align-items: center; gap: 5px; }
+.model-front-key i { width: 8px; height: 8px; border-radius: 50%; background: var(--pick-colour); border: 1px solid var(--fg-muted); }
+.model-front-preview { min-height: 18px; margin-top: 6px; font-size: 11px; color: var(--fg); }
+.model-front-handle { pointer-events: none; z-index: 2; position: absolute; top: 7px; height: 18px; width: 18px; border-radius: 50%; background: var(--surface); border: 3px solid var(--fg); box-shadow: 0 0 0 2px var(--surface); transform: translateX(-50%); }
 .model-front-slider.no-handle .model-front-handle { display: none; }
 .model-front-plot svg { display: block; width: 100%; overflow: visible; }
 .model-front-plot text { font-size: 10px; fill: var(--fg-muted); }
 .model-front-grid { stroke: var(--border); stroke-width: 0.5; }
 .model-front-curve { stroke: var(--accent); fill: none; stroke-width: 1.5; }
-.model-front-point { cursor: pointer; fill: var(--accent); stroke: var(--surface); stroke-width: 1; }
+.model-front-point { cursor: pointer; fill: var(--pick-colour); stroke: var(--surface); stroke-width: 1; }
 .model-front-point .point-hit { fill: transparent; stroke: none; }
-.model-front-point.selected, .model-front-point:focus { stroke: var(--fg); stroke-width: 2; outline: none; }
+.model-front-point:focus { outline: none; }
+.model-front-point:focus .point-mark { stroke: var(--fg); stroke-width: 2; stroke-dasharray: 2 1; }
+.model-front-point .point-selection { fill: none; stroke: var(--fg); stroke-width: 2; }
 .model-front-point.unavailable { fill: var(--surface); stroke: var(--red-fg); stroke-width: 1.5; }
+.model-front-point .point-provider { fill: var(--pick-colour); stroke: none; }
+.model-front-point.unavailable:focus .point-mark { stroke: var(--red-fg); stroke-width: 3; }
+.model-front-below { stroke: var(--fg); stroke-width: 1; }
 .model-front-ring, .model-front-below { color: var(--red-fg); fill: var(--red-fg); }
 .model-front-credit { color: var(--fg-subtle); font-size: 10px; line-height: 1.5; margin: 8px 0 16px; }
 .model-front-notice { color: var(--red-fg); font-size: 12px; line-height: 1.5; }

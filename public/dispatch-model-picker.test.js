@@ -49,3 +49,15 @@ test('Auto with a reported effort but no benchmark identifies the missing measur
   assert.equal(state.score, null);
   assert.equal(state.verdict, 'Not scored — no benchmark for this setting.');
 });
+
+test('model colours stay stable across effort changes and agent list ordering', async () => {
+  const { pickColour, modelKey } = await import('./dispatch-model-picker.js');
+  const picks = [
+    { agent: 'claude', model: 'opus', effort: 'low' },
+    { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
+  ];
+  assert.equal(pickColour(picks[0]), pickColour({ ...picks[0], effort: 'high' }));
+  assert.notEqual(pickColour(picks[0]), pickColour(picks[1]));
+  assert.deepEqual(modelKey(agents, [picks[1], picks[0], { ...picks[0], effort: 'high' }]).map((p) => p.label), ['Claude / opus', 'Codex / gpt-6.1-sol']);
+  assert.deepEqual(modelKey(agents, picks), modelKey([...agents].reverse(), [...picks].reverse()));
+});
