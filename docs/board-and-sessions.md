@@ -122,6 +122,9 @@ prompts, images, Markdown previews, drafts, model switching for idle Claude sess
 interrupt-and-edit, context display, and suggested prompts. Use Terminal for permission prompts,
 streaming output, or direct TUI control.
 
+Rendered Markdown never loads a remote image by itself: an image an agent writes is shown as a link
+to it, so opening a message or file sends nothing to that site until you click.
+
 Paste or drop an image into the Chat composer, the agent terminal, or the new-session dialog's
 **Intent / first prompt** box (local launches; the session starts and then receives the images with
 its first prompt): screenshots, Copy Image from a
