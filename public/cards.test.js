@@ -1,3 +1,6 @@
+import { setProviderMetadata } from './provider-metadata.js';
+import { registeredAgents, providerMetadata } from '../server/agents/index.js';
+setProviderMetadata(registeredAgents().map(providerMetadata));
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

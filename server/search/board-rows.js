@@ -108,7 +108,7 @@ export function buildCandidates({ docs = [], entries = new Map(), live = new Map
     const row = {
       docIdx,
       sessionId: d.id,
-      agent: d.agent || 'claude',
+      agent: d.agent ?? 'claude',
       cwd: d.cwd || '',
       title: d.title || '',
       branch: d.branch || '',
@@ -131,7 +131,7 @@ export function buildCandidates({ docs = [], entries = new Map(), live = new Map
     rows.push({
       docIdx: -1,
       sessionId: conversationId,
-      agent: e.agent || 'claude',
+      agent: e.agent ?? 'claude',
       cwd: e.cwd || '',
       title: labelOf(e),
       branch: '',

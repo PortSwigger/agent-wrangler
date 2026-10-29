@@ -211,10 +211,10 @@ test('claude discoverLiveId returns the preset id', async () => {
   assert.equal(await claude.discoverLiveId({ sessionId: 'SID', cwd: '/x' }), 'SID');
 });
 
-test('registry resolves claude, defaults unknown agent to claude', () => {
+test('registry defaults only an absent historical agent to Claude', () => {
   assert.equal(adapterFor('claude').id, 'claude');
   assert.equal(adapterFor(undefined).id, 'claude');
-  assert.equal(adapterFor('bogus').id, 'claude');
+  assert.throws(() => adapterFor('bogus'), /Unknown agent/);
 });
 
 test('adapterForProcess matches a claude command', () => {

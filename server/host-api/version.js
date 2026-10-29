@@ -420,7 +420,7 @@ import semver from 'semver';
 // There is no server capability or shared picker UI. An extension using this
 // surface declares `^1.56.0`; an older board cannot supply its data or maths,
 // so the range makes that missing client contract a visible boot failure.
-export const HOST_API_VERSION = '1.56.0';
+export const HOST_API_VERSION = '1.57.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

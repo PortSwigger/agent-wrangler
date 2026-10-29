@@ -1306,7 +1306,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   | `resolvedPick(agents, pick)` | A pick with known Auto replaced by its actual effort; explicit efforts and unknown Auto are preserved. Call this before scoring or judging an Auto pick. |
   | `programmesOf(agents, front, programmes)` | Caller-named slots fitted to distinct points of strictly rising quality; each result is `{ name, ...point }`. |
 
-  `programmes` is the caller's `{ both: [[name, pick], …], claude: […], codex: […] }`.
+  `programmes` is the caller's `{ both: [[name, pick], …], <provider id>: […] }`; `both` applies when multiple providers are installed.
   The installed agent set chooses the slot names. Each slot prefers its own
   set's pick, then the same-named pick of an installed agent's set, then those
   models at nearby efforts, then the point nearest its target quality. Fitting
@@ -1518,7 +1518,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (1.48.0, `sessions:env`)** returns `{ env }` from the enabled launch-context hooks
   with `reason: 'headless'`, resolving the task and runtime for a supplied card or
   using the supplied `ext` bag for a run with no card.
-  `agent` must be `claude` or `codex`, `sessionId` a string or `null`, and a non-null
+  `agent` must name a registered provider (currently `claude` or `codex`); unknown explicit values
+  are rejected, `sessionId` a string or `null`, and a non-null
   `ext` follows spawn's validation; a deliberate refusal rejects with its reason,
   so the caller must skip the run rather than fall back to another environment.
   This capability permits reading the merged environment for any card, including
@@ -1567,7 +1568,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 ## Launch context, events and lifecycle
 
-- **`hooks['session.launchContext']`**, called with `{ sid, task, agent, runtime,
+- **`hooks['session.launchContext']`**, called with `{ sid, task, agent, grantPaths, runtime,
   reason, parentId?, ext, host }`, returns `{ env?, addDirs?, codexConfig?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
   collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
@@ -1583,6 +1584,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   sessions keep their env until relaunched. `parentId` (1.47.0) is the parent
   card id on fork, before the child's inherited state is saved; dispatch awaits
   `onBeforeDispatch` before collecting launch context so hooks can read its bindings.
+  `grantPaths` (1.57.0) declares the adapter’s directory-grant policy: `symlink` for Claude
+  and `realpath` for Codex. Use it when choosing a stable per-session link versus its resolved
+  task directory, including on resume and fork.
   A non-empty string `refuse` (1.47.0) fails the launch with that reason immediately,
   without asking later hooks or caching a partial context.
   `refuseIfSet` (1.51.0) lists `UPPER_SNAKE` variable names that the pane checks

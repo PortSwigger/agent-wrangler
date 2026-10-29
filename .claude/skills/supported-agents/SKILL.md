@@ -31,6 +31,22 @@ These are stable conceptual differences. For current mechanisms, read the adapte
 | Slash-command plugins | Yes | No — MCP tools are the parity layer |
 | OS sandbox | None | `workspace-write` seatbelt: writes only to cwd, tmp, memory dir, each `--add-dir`; the launch cwd's git common dir is auto-granted (session-manager) |
 
+The registry owns enumeration and validation. Only an absent historical provider defaults to
+Claude; explicit unknown ids (including an empty string) are rejected before parsing or launching.
+History scanners, file/chain discovery, search extraction and usage scans are adapter capabilities.
+Browser labels, icons, cost estimates, model switching and compaction presets come from the same
+metadata; unavailable providers can still label historical conversations. The registered providers
+remain Claude and Codex.
+
+| Additional capability | Claude | Codex |
+|---|---|---|
+| History | Project transcripts with branch pruning | Validated rollout continuation chains |
+| Active-turn mail | Cross-session socket; pane fallback waits for idle | Pane input with clear-composer and dialog guards |
+| Live model switch | Guarded `/model` command | Launch-time selection only |
+| Usage | Timestamped usage with fork bounds | Estimated API-equivalent spend; calendar allocation by creation day |
+| Directory grants | Stable task-memory symlink | Real paths plus private/common Git metadata |
+| Review selection priority | First | Second |
+
 ## Three launch sites
 
 Both adapters implement `buildLaunch`, `buildResume`, and `buildFork`. A feature wired in
@@ -39,7 +55,7 @@ one must be wired in all three — omitting resume or fork is the most common ga
 ## Key files
 
 - `server/agents/claude.js`, `server/agents/codex.js` — the two adapters
-- `server/agents/index.js` — registry; `adapterFor(entry.agent)` selects by the mapping field (`absent → claude`)
+- `server/agents/index.js` — registry and provider metadata; `adapterFor(entry.agent)` selects by the mapping field (`absent → claude`; unknown explicit ids throw)
 - `server/mcp/client-config.js` — MCP config helpers for both agents; `ALLOWED_TOOLS` list
 - `server/memory-store.js` — prompt constants and path helpers shared by both adapters
 

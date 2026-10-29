@@ -1,6 +1,7 @@
+import { preferredReviewAgent } from '../../../public/review.js';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
-import { knownAgentIds } from '../../agents/index.js';
+import { knownAgentIds, agentError } from '../../agents/index.js';
 import { frontOf, curveOf, onFront, resolvedPick, scoreOf, beatenBy } from '../../../public/model-front.js';
 
 const data = JSON.parse(readFileSync(new URL('../../../public/model-front-data.json', import.meta.url), 'utf8'));
@@ -24,14 +25,17 @@ export const getModelFrontTool = {
     + 'An unscored pick has no numbers or verdict. Numbers measure doing a coding task '
     + '(Terminal-Bench 4.0), not reviewing one. Only settings this board can launch. Read-only.',
   inputSchema: {
+    reviewFor: z.string().optional().describe('Source provider for an independent review. Returns reviewAgent using declared provider preference, excluding this provider; defaults to the calling session provider.'),
     agent: z.string().optional().describe(`Only this agent's front settings (${knownAgentIds().join(', ')}); does not restrict pick judgement.`),
     maxUsd: z.number().positive().optional().describe('Leave out front settings costing more than this per task.'),
     minQuality: z.number().min(0).max(100).optional().describe('Leave out front settings scoring below this.'),
     pick: z.object({ agent: z.string(), model: z.string(), effort: z.string().optional() }).optional()
       .describe('A setting to judge. Omit effort (or pass "") for Auto, scored as the effort the agent will use.'),
   },
-  async handler({ deps }, args = {}) {
+  async handler({ deps, caller }, args = {}) {
     const agents = await deps.agents();
+    const sourceAgent = args.reviewFor ?? deps.sessionManager?.entryFor?.(caller)?.agent;
+    if (!agents.some((a) => a.id === sourceAgent) && agentError(sourceAgent)) return errorResult(agentError(sourceAgent));
     for (const id of [args.agent, args.pick?.agent]) {
       if (id !== undefined && !agents.some((a) => a.id === id)) {
         return errorResult(`Unknown or unavailable agent "${id}". Valid agents: ${agents.map((a) => a.id).join(', ') || '(none installed)'}.`);
@@ -47,6 +51,8 @@ export const getModelFrontTool = {
     const front = frontOf(agents, data);
     const curve = curveOf(front);
     const structuredContent = {
+      reviewAgent: preferredReviewAgent(sourceAgent, agents)?.id ?? null,
+      providers: agents.map((a) => ({ id: a.id, label: a.label || a.id, reviewPriority: a.reviewPriority ?? null })),
       read: data.read,
       credit: data.credit,
       units,

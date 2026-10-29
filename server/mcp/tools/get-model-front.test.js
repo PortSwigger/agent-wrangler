@@ -95,3 +95,24 @@ test('unknown or unavailable agents and models name the available choices', asyn
     assert.match(out.content[0].text, /Valid models: opus, sonnet, opusplan/);
   }
 });
+
+
+test('review provider choice follows declared priority despite shuffled availability', async () => {
+  const installed = [
+    { ...agents[1], reviewPriority: 20 },
+    { id: 'fixture', reviewPriority: 30, models: [{ value: 'fixture-model' }], efforts: [] },
+    { ...agents[0], reviewPriority: 10 },
+  ];
+  for (const values of [installed, [...installed].reverse()]) {
+    assert.equal((await call({ reviewFor: 'fixture' }, values)).structuredContent.reviewAgent, 'claude');
+    assert.equal((await call({ reviewFor: 'claude' }, values)).structuredContent.reviewAgent, 'codex');
+    assert.equal((await call({ reviewFor: 'codex' }, values)).structuredContent.reviewAgent, 'claude');
+  }
+  assert.equal((await call({ reviewFor: 'claude' }, [installed[2]])).structuredContent.reviewAgent, null);
+});
+
+test('review selection rejects an unknown explicit source provider', async () => {
+  const result = await call({ reviewFor: 'codx' });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /Unknown agent "codx"/);
+});

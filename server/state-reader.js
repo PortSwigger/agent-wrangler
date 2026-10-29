@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import chokidar from 'chokidar';
-import { discoverClaudeSessions, capturePane, classify, claudeTitle, hasBackgroundShell as detectBackgroundShell } from './tmux-scraper.js';
+import { discoverClaudeSessions, capturePane, classifyPane, claudeTitle, hasBackgroundShell as detectBackgroundShell } from './tmux-scraper.js';
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
 import { codexStatus as realCodexStatus } from './agents/codex-status.js';
 import { adapterFor, modelPillFor, maxContextWindowFor, discoveryFloor } from './agents/index.js';
@@ -123,7 +123,7 @@ async function buildTeammates(entries) {
       name: e.member.name || e.member.agentType || 'teammate',
       agentType: e.member.agentType || null,
       color: e.member.color || null,
-      status: e.paneId ? classify(text).status : 'unknown',
+      status: e.paneId ? classifyPane(text, 'claude').status : 'unknown',
       paneId: e.paneId || null,
     });
   }
@@ -229,16 +229,16 @@ function sessionLabel({ agent = 'claude', names = [], liveTitle, aiTitle, intent
   const prompt = clean(intent);
   for (const [index, n] of names.entries()) {
     const c = clean(n, index === 0);
-    if (agent === 'codex' && index > 0 && c === prompt) continue;
-    if (c) return agent === 'codex' && index > 0 ? shortCodexTitle(c) : c;
+    if (adapterFor(agent).labels.summaryFirst && index > 0 && c === prompt) continue;
+    if (c) return adapterFor(agent).labels.summaryFirst && index > 0 ? shortCodexTitle(c) : c;
   }
-  const live = agent === 'claude' ? clean(liveTitle) : '';
+  const live = adapterFor(agent).labels.liveTitle ? clean(liveTitle) : '';
   if (live) return live;
   const ai = clean(aiTitle);
   if (ai) return ai;
-  if (agent === 'codex') {
+  if (adapterFor(agent).labels.summaryFirst) {
     const source = clean(summary) || prompt;
-    if (!source) return 'Codex session';
+    if (!source) return `${adapterFor(agent).label} session`;
     return shortCodexTitle(source);
   }
   const derived = prompt || clean(summary);
@@ -317,6 +317,10 @@ export async function applyRuntimeCost(runtime, args, enr) {
 export const resolveRuntimeForGraph = (id) => findRuntime(id) || runtimeFor(undefined);
 
 export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, codexStatus = realCodexStatus, mailStore, mailDraftBlocked } = {}) {
+  const graphAnalysis = (agent, id, opts) => {
+    const adapter = adapterFor(agent);
+    return adapter.graphAnalysis ? adapter.graphAnalysis(id, opts, enrich) : adapter.analyze(id, opts);
+  };
   const now = Date.now();
   // The mail pill's data, keyed on card id like every other per-session field —
   // omitted entirely (undefined) when no mailStore is injected, so a caller that
@@ -370,7 +374,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     }
     const tmuxName = sessionManager?.tmuxNameFor?.(entry.sessionId);
     if (!tmuxName || discoveredTmux.has(tmuxName)) continue;
-    discovered.push({ tmuxName, socket: sessionManager?.socketOf?.(tmuxName) ?? '', claudePid: null, agent: entry.agent || 'claude', cwd: entry.cwd, command: '', paneTitle: '' });
+    discovered.push({ tmuxName, socket: sessionManager?.socketOf?.(tmuxName) ?? '', claudePid: null, agent: entry.agent ?? 'claude', cwd: entry.cwd, command: '', paneTitle: '' });
     discoveredTmux.add(tmuxName);
   }
   const proc = await procInfo();
@@ -484,8 +488,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     const intent = worker?.dispatch?.seed?.intent ?? '';
 
     const mapEntry = sessionManager?.entryFor?.(s.sessionId);
-    const enrichment = enrich ? await enrich(s.sessionId, { since: usageSince(mapEntry) }) : null;
-    const agentId = mapEntry?.agent || 'claude';
+    const agentId = mapEntry?.agent ?? 'claude';
+    const enrichment = await graphAnalysis(agentId, s.sessionId, { since: usageSince(mapEntry) });
     const name = sessionLabel({
       agent: agentId,
       names: [mapEntry?.name, s.name && s.name !== s.jobId ? s.name : null, worker?.dispatch?.seed?.name],
@@ -511,11 +515,11 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     let scrapeWaitingFor = null;
     if (status === 'scrape') {
       if (!tmux) status = 'unknown';
-      else if (agentId === 'codex') {
+      else if (adapterFor(agentId).statusSource === 'codex-rollout') {
         const c = await codexStatus({ liveSid: mapEntry?.liveSessionId, paneText });
         status = c.status;
         scrapeWaitingFor = c.waitingFor;
-      } else status = paneText === '' ? 'unknown' : classify(paneText).status;
+      } else status = paneText === '' ? 'unknown' : classifyPane(paneText, agentId).status;
     }
     // Claude's own 'shell' status (→ working) means "a Bash tool is tracked as
     // live" — it covers both a still-blocking foreground command AND a detached
@@ -525,7 +529,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // can go stale for as long as the job runs (verified against a real session:
     // frozen 20+ minutes after the pane itself reached its idle prompt) — else a
     // detached background job pins the card at "busy" for its entire lifetime.
-    if (s.status === 'shell' && tmux && classify(paneText).status === 'idle') status = 'idle';
+    if (s.status === 'shell' && tmux && classifyPane(paneText, agentId).status === 'idle') status = 'idle';
     // A dropped API connection ends the turn with no permission request, so the
     // status file reports idle/unknown even though the response is incomplete —
     // surface it as needs-you instead of a silent "done" (see transcript-reader's
@@ -645,7 +649,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // An archived session that's still running in tmux stays off the board.
     if (sessionManager?.isArchived?.(realSid)) continue;
     const fcwd = d.cwd || appEntry?.cwd;
-    const agentId = appEntry?.agent || d.agent || 'claude';
+    const agentId = appEntry?.agent ?? d.agent ?? 'claude';
     const adapter = adapterFor(agentId);
     // The Claude actually running in this owned tmux may be a Resume fork with a
     // *different* id than the owner. Read its live id + hook-written status from
@@ -679,9 +683,9 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // status above already has its own waitingFor (needs-you) or none (working/idle).
     let scrapeWaitingFor = null;
     if (status === 'scrape') {
-      const c = agentId === 'codex'
+      const c = adapterFor(agentId).statusSource === 'codex-rollout'
         ? await codexStatus({ liveSid: live?.liveSid || appEntry.liveSessionId, paneText })
-        : paneText === '' ? { status: 'unknown' } : classify(paneText);
+        : paneText === '' ? { status: 'unknown' } : classifyPane(paneText, agentId);
       status = c.status;
       scrapeWaitingFor = c.waitingFor || null;
     }
@@ -689,7 +693,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // can go stale for as long as a detached background job runs, well past the
     // pane's own idle prompt — trust the pane over it. `live.status` above is
     // already mapped, so `rawStatus` is the only way to tell 'shell' from 'busy'.
-    if (live?.rawStatus === 'shell' && classify(paneText).status === 'idle') status = 'idle';
+    if (live?.rawStatus === 'shell' && classifyPane(paneText, agentId).status === 'idle') status = 'idle';
     // See the managed-session pass above: a dropped API connection ends the turn
     // without a permission request, so surface it as needs-you rather than idle.
     const apiError = apiErrorPromotion(status, enr?.apiError, enr?.apiErrorText);
@@ -792,7 +796,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     if (representedSids.has(sid)) continue;
     representedSids.add(sid);
     const cwd = entry.cwd || null;
-    const agentId = entry.agent || 'claude';
+    const agentId = entry.agent ?? 'claude';
     const deadTmux = sessionManager.deadTmuxNameFor?.(sid);
     const exitOutput = deadTmux ? (await capture(deadTmux, 40, entry.socket || '')).trim() || null : null;
     // Enrich by the LIVE id, not the card id: a Claude session's transcript (cost,
@@ -802,9 +806,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // (which for them is the live id). Mirrors the Codex branch.
     const runtime = runtimeResolver(entry.runtime);
     const enrichment = await applyRuntimeCost(runtime, { entry, liveSid: entry.liveSessionId || sid }, (runtime.analyze ? await runtime.analyze({ entry, liveSid: entry.liveSessionId || sid }) : null)
-      || ((entry.agent && entry.agent !== 'claude')
-        ? await adapterFor(entry.agent).analyze(entry.liveSessionId || sid, { since: usageSince(entry) })
-        : (enrich ? await enrich(entry.liveSessionId || sid, { since: usageSince(entry) }) : null)));
+      || await graphAnalysis(agentId, entry.liveSessionId || sid, { since: usageSince(entry) }));
     const label = sessionLabel({
       agent: agentId,
       names: [entry.name, entry.lastLabel],

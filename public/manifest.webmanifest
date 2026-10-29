@@ -1,7 +1,7 @@
 {
   "name": "Agent Wrangler",
   "short_name": "Wrangler",
-  "description": "Board for managing Claude and Codex agent sessions.",
+  "description": "Board for managing coding agent sessions.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

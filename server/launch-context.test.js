@@ -87,13 +87,13 @@ test('the hook gets the full context and ITS OWN host; an async hook is awaited 
     { ext, hostApiFor: (id) => hosts[id], onError: () => {} },
   );
   assert.deepEqual(out.env, { AW_LATE: 'x' });
-  assert.deepEqual(seen, [{ sid: 'S1', task: { id: 'T1', name: 'n' }, agent: 'codex', runtime: 'devcontainer', reason: 'resume', ext: null, host: { id: 'host-a' } }]);
+  assert.deepEqual(seen, [{ sid: 'S1', task: { id: 'T1', name: 'n' }, agent: 'codex', grantPaths: 'realpath', runtime: 'devcontainer', reason: 'resume', ext: null, host: { id: 'host-a' } }]);
 });
 
 test('defaults: claude, local, dispatch, no task', async () => {
   let got;
   await collectLaunchContext({ sid: 's' }, { ext: registry(['a', (c) => { got = c; }]), onError: () => {} });
-  assert.deepEqual({ ...got, host: undefined }, { sid: 's', task: null, agent: 'claude', runtime: 'local', reason: 'dispatch', ext: null, host: undefined });
+  assert.deepEqual({ ...got, host: undefined }, { sid: 's', task: null, agent: 'claude', grantPaths: 'symlink', runtime: 'local', reason: 'dispatch', ext: null, host: undefined });
 });
 
 test('the last answer is remembered per session (what paste-store reads), and an unknown session reads as empty', async () => {

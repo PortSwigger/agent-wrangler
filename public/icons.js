@@ -1,3 +1,4 @@
+import { providerMetadataFor } from './provider-metadata.js';
 // Inline SVG glyphs shared across the board UI. All theme via currentColor and
 // share the `.icon` sizing so a row of them reads at one weight (mixing these
 // with variable-width unicode/emoji looked ragged). Pure strings — this module
@@ -155,8 +156,8 @@ const AGENT_ICONS = { claude: CLAUDE_ICON, codex: CODEX_ICON };
 // A mapping entry with no `agent` is Claude (the registry default); any unknown
 // agent falls back to the generic chip rather than masquerading as Claude.
 export function agentIcon(agent) {
-  if (!agent) return CLAUDE_ICON;
-  return AGENT_ICONS[agent] || AGENT_FALLBACK_ICON;
+  if (agent == null) return CLAUDE_ICON;
+  return AGENT_ICONS[providerMetadataFor(agent).presentation?.icon] || AGENT_FALLBACK_ICON;
 }
 
 // Lucide "copy" — two overlapping sheets; the copy-to-clipboard affordance.

@@ -1,3 +1,4 @@
+import { providerMetadataFor, providerChoices } from './provider-metadata.js';
 import { send, setPendingSelect, latestTasks, latestSessions, latestHistory, restoreTaskWithPrompt } from './app.js';
 import { toast } from './toast.js';
 import { openFork } from './modals.js';
@@ -36,7 +37,7 @@ const state = {
   wholeWord: false,
   role: 'all',     // all | user | assistant
   scope: 'all',    // all | transcript | session | task — what's being searched
-  agent: 'all',    // all | claude | codex — which provider, independent of scope
+  agent: 'all',    // provider facet, independent of scope
   status: 'all',   // all | board | archived | offboard
   time: 'any',     // any | 24h | 7d | 30d
   taskIds: [],
@@ -174,10 +175,11 @@ function ddFilter(id, options, get, set) {
   const panel = details?.querySelector('.search-dd-panel');
   if (!details || !label || !panel) return;
   function paint() {
-    const current = options.find((o) => o.value === get()) || options[0];
+    const values = typeof options === 'function' ? options() : options;
+    const current = values.find((o) => o.value === get()) || values[0];
     label.textContent = current.label;
     panel.textContent = '';
-    for (const opt of options) {
+    for (const opt of values) {
       // A real <button>, not a plain div: the div-with-onclick version this
       // replaced was mouse-only — unreachable by Tab, unactivatable by
       // Enter/Space, and announced to a screen reader as inert text rather
@@ -195,6 +197,7 @@ function ddFilter(id, options, get, set) {
       panel.appendChild(row);
     }
   }
+  details.addEventListener('toggle', () => { if (details.open) paint(); });
   paint();
 }
 
@@ -457,7 +460,9 @@ function groupNode(g) {
 
   if (g.archived) head.appendChild(archivedChip());
   else if (!g.cardId) head.appendChild(externalChip());
-  head.appendChild(chip(g.agent === 'codex' ? 'Codex' : 'Claude', `chip search-agent search-agent--${g.agent}`));
+  const providerChip = chip(providerMetadataFor(g.agent).label, 'chip search-agent');
+  providerChip.style.color = providerMetadataFor(g.agent).presentation?.color || '';
+  head.appendChild(providerChip);
   if (g.task) head.appendChild(chip(g.task, 'chip search-task'));
   head.appendChild(chip(`${fmtNum(g.matches)} match${g.matches === 1 ? '' : 'es'}`, 'chip search-count'));
 
@@ -509,7 +514,9 @@ function browseRowNode(g, { parentTitle, hideTaskChip } = {}) {
 
   if (g.archived) head.appendChild(archivedChip());
   else if (!g.cardId) head.appendChild(externalChip());
-  head.appendChild(chip(g.agent === 'codex' ? 'Codex' : 'Claude', `chip search-agent search-agent--${g.agent}`));
+  const providerChip = chip(providerMetadataFor(g.agent).label, 'chip search-agent');
+  providerChip.style.color = providerMetadataFor(g.agent).presentation?.color || '';
+  head.appendChild(providerChip);
   if (g.task && !hideTaskChip) head.appendChild(chip(g.task, 'chip search-task'));
   if (g.model) head.appendChild(chip(g.model, 'chip search-model'));
   if (g.isWorkflow) head.appendChild(chip('⚙ workflow', 'chip search-wf'));
@@ -800,9 +807,7 @@ export function initSearchView() {
     { value: 'all', label: 'All' }, { value: 'transcript', label: 'Transcript' },
     { value: 'session', label: 'Session' }, { value: 'task', label: 'Task' },
   ], () => state.scope, (v) => { state.scope = v; });
-  ddFilter('search-agent-filter', [
-    { value: 'all', label: 'All' }, { value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' },
-  ], () => state.agent, (v) => { state.agent = v; });
+  ddFilter('search-agent-filter', () => [{ value: 'all', label: 'All' }, ...providerChoices()], () => state.agent, (v) => { state.agent = v; });
   ddFilter('search-status-filter', [
     { value: 'all', label: 'All' }, { value: 'board', label: 'Board' },
     { value: 'archived', label: 'Archived' }, { value: 'offboard', label: 'External' },

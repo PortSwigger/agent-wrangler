@@ -56,7 +56,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   // Ordered: clear first, then attachments, then the prose. Clearing after an
   // attachment would throw the attachment away with it.
   const attach = async (tmux, socket, agent) => {
-    if (wantClear) await clearComposer(tmux, socket);
+    if (wantClear) await clearComposer(tmux, socket, { agent });
     if (imagePaths.length) await pasteImages(tmux, socket, agent, imagePaths, { prefill: prefillPane });
   };
 

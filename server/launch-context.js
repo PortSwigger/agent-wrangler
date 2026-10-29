@@ -1,3 +1,4 @@
+import { adapterFor } from './agents/index.js';
 import path from 'node:path';
 import { getExtensions, hookPayloadFor } from './extensions/index.js';
 import { tomlString } from './codex-notify-config.js';
@@ -82,6 +83,7 @@ export async function collectLaunchContext(
   { sid, task = null, agent = 'claude', runtime = 'local', reason = 'dispatch', parentId, ext: dispatchExt = null } = {},
   { ext = getExtensions(), hostApiFor = () => undefined, onError = logError } = {},
 ) {
+  const adapter = adapterFor(agent);
   const env = {};
   const envOwner = {};
   const addDirs = [];
@@ -91,7 +93,7 @@ export async function collectLaunchContext(
   for (const { extId, fn } of ext.hooks?.['session.launchContext'] || []) {
     let out;
     try {
-      out = await fn({ ...hookPayloadFor(extId, { ext: dispatchExt }), sid, task, agent, runtime, reason, ...(parentId === undefined ? {} : { parentId }), host: hostApiFor(extId) });
+      out = await fn({ ...hookPayloadFor(extId, { ext: dispatchExt }), sid, task, agent, grantPaths: adapter.launch.grantPaths, runtime, reason, ...(parentId === undefined ? {} : { parentId }), host: hostApiFor(extId) });
     } catch (err) {
       onError(`[ext:${extId}] session.launchContext failed — skipped`, err);
       continue;

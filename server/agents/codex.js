@@ -1,9 +1,14 @@
+import { readCodexConfigEffort, resolveCodexAutoEffort } from './auto-effort.js';
+import { paneComposerIsReady, paneComposerIsEmpty, paneComposerDraft, parseGhostSuggestion } from './composer-parsers.js';
+import { scanDaily, scanMonth } from './codex-usage.js';
+import { codexCostUsd } from '../pricing.js';
+import { codexHistory } from './codex-history.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { launchAddDirArgs, launchCodexConfigArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
 import { shellQuote } from './claude.js';
-import { analyzeCodex, listResumableCodex, activityInRangeCodex, findRollout } from './codex-rollout.js';
+import { analyzeCodex, listResumableCodex, activityInRangeCodex, codexContextWindow, codexSubagentDetail, findRollout } from './codex-rollout.js';
 import { discoverCodexLiveId } from './codex-discover.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
@@ -65,7 +70,48 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
 
 export const codex = {
   id: 'codex',
+  history: codexHistory,
+  autoEffortResolver(paths) {
+    const configEffort = readCodexConfigEffort(paths.codexConfig);
+    return (value) => resolveCodexAutoEffort(value, { configEffort });
+  },
+  subagentDetail: codexSubagentDetail,
+  subagentDetailOverride: 'codexSubagentDetail',
+  usage: { billingProviders: [{ id: 'openai', label: 'OpenAI' }], scanDaily, scanMonth, costUsd: codexCostUsd, unknownModelLabel: 'gpt (codex est.)' },
+  labels: { liveTitle: false, summaryFirst: true },
+  statusSource: 'codex-rollout',
+  presentation: { icon: 'codex', color: '#10a37f', estimatedCost: true },
+  controls: {
+    switchModel: false,
+    permissionModes: ['auto'],
+    autoCompact: { min: 50000, presets: [50000, 100000, 250000] },
+  },
+  launch: { grantPaths: 'realpath', availabilityOverride: 'codexAvailable', trust: 'codex', gitMetadataGrants: true, codexPolicy: true, recoverMissingConversation: true },
+  terminal: {
+    readySignal: 'composer',
+    contextSource: 'analysis',
+    modelLabel: () => null,
+    contextPercent: () => null,
+    imageCount: () => null,
+    backgroundShellPattern: /\d+\s+background terminals?\s+running/i,
+    classify: (text, options, parse) => parse(text, options),
+    editingKeys: { newline: '\x1b\r', wordLeft: '\x1bb', wordRight: '\x1bf', clearLine: '\x15' },
+    clearKeys: ['C-u'],
+    composerIsReady: (text) => paneComposerIsReady(text, 'codex'),
+    composerIsEmpty: (text, options) => paneComposerIsEmpty(text, 'codex', options),
+    composerDraft: () => null,
+    suggestion: () => null,
+    composerMark: '›',
+    paneMetadata: false,
+    restoreDraft: false,
+    allowWhileWorking: true,
+    imageAcknowledgement: false,
+    interruptKeys: ['Escape'],
+  },
+  contextWindow: codexContextWindow,
+  reviewPriority: 20,
   label: 'Codex',
+  unavailableMessage: "This is a Codex conversation, but the `codex` binary isn't on PATH — install it (or put it on the launchd PATH) to resume Codex sessions.",
   tmuxPrefix: 'cx_',
   presetsSessionId: false,
   // `codex resume` takes no trailing prompt, so buildResume can't thread an `intent`

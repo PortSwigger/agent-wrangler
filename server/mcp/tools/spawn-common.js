@@ -20,12 +20,10 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   // `into` wins; otherwise inherit the caller's current task; null caller → Ad-hoc.
   const taskId = args.into ?? deps.taskStore.taskFor(caller)?.id ?? null;
 
-  const agent = args.agent || 'claude';
+  const agent = args.agent ?? 'claude';
 
   // Reject a caller-supplied agent/model/effort the adapters don't offer, rather than
-  // passing it through to a CLI that either errors in the pane or (for a bad
-  // agent, which adapterFor silently resolves to claude) launches something the
-  // caller didn't ask for. Validates `args.model`/`args.effort` and deliberately runs BEFORE
+  // passing it through to a CLI that errors in the pane. Validates `args.model`/`args.effort` and deliberately runs BEFORE
   // the inheritance fallback below: an existing entry may carry a model value
   // since dropped from an adapter, and failing a spawn over a string the caller
   // never supplied would break the inheritance this tool is meant to provide.
@@ -59,7 +57,7 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   // cross-agent spawn falls back to that agent's own default.
   let { model, effort } = args;
   const callerEntry = caller ? deps.sessionManager?.entryFor(caller) : null;
-  if (callerEntry && (callerEntry.agent || 'claude') === agent) {
+  if (callerEntry && (callerEntry.agent ?? 'claude') === agent) {
     // The caller's model belongs to the caller's agent, not to a runtime that owns its own.
     if (model == null && !ownsModel) model = callerEntry.model || undefined;
     if (effort == null) effort = callerEntry.effort || undefined;

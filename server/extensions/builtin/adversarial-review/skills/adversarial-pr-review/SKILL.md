@@ -1,13 +1,12 @@
 ---
 name: adversarial-pr-review
-description: Use when you want a second, adversarial opinion on a pull request before merging it — spawns a child session running the OPPOSITE agent provider (Claude <-> Codex) to review it, and has it raise concerns back to you via mail.
+description: Use when you want a second, adversarial opinion on a pull request before merging it — spawns a child session running the preferred available different agent provider to review it, and has it raise concerns back to you via mail.
 ---
 
 # Adversarial PR review
 
 Get a genuinely independent second opinion on a PR by having a session running the
-**opposite agent provider** review it — a Claude session spawns a Codex reviewer, a Codex
-session spawns a Claude reviewer. Cross-provider is the point: a same-provider reviewer
+**preferred available different agent provider** review it. Cross-provider is the point: a same-provider reviewer
 shares your training and blind spots and is likelier to just agree with you. This is
 heavier than an inline code-review pass — reach for it when you want a fresh, adversarial
 pair of eyes on a specific PR, not for every PR.
@@ -26,14 +25,17 @@ Call `spawn_session` with `nest: true`, however deep you are yourself: nesting h
 limit, so the reviewer lands under you whether you are top-level or already nested. Leave
 `into` unset so it lands on your current task.
 
-## 3. Choose the opposite agent
+## 3. Choose an independent provider
 
-- You're Claude → spawn `agent: "codex"`.
-- You're Codex → spawn `agent: "claude"`.
+Call `get_model_front` with `reviewFor` set to your source provider. Use its
+`reviewAgent`: the available provider with the lowest declared review priority,
+excluding the source (Claude before Codex). Availability ordering does not matter.
+If it is null, report that no independent provider is available; do not launch a
+same-provider reviewer.
 
 **Always pass `model` and `effort` explicitly — don't leave either unset.** `spawn_session`'s "inherit the
 caller's model" default only applies when the new session runs the *same* agent as you;
-since this skill always spawns the opposite one, that inheritance never fires, and
+since this skill always spawns a different provider, that inheritance never fires, and
 leaving it unset lands you on whatever that agent's ambient default happens to be right
 now — not necessarily a suitable option, and for Claude not even a fixed value (its
 default can be changed machine-wide by an unrelated `/model` call). Passing a `model`
@@ -64,7 +66,7 @@ weaker option. If no eligible model is available, report the blocker instead of 
 the capability or effort floor.
 
 Call `get_model_front` to help pick a reviewer that's strong for its price from
-the opposite agent's eligible models, while respecting the capability and effort
+the selected provider's eligible models, while respecting the capability and effort
 floor above and the user's exclusions. Its numbers measure doing a coding task,
 not review quality. Filtering the front never restricts how it judges a `pick`;
 an unscored pick has no benchmark verdict.

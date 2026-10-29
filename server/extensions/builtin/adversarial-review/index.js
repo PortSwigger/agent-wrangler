@@ -45,7 +45,7 @@ const adversarialReviewProcessTool = {
 export default {
   id: 'adversarial-review',
   label: 'Adversarial PR review',
-  description: 'A second opinion on a pull request from the opposite agent provider, following a written-out review process you can replace in Settings.',
+  description: 'A second opinion on a pull request from the preferred available different agent provider, following a written-out review process you can replace in Settings.',
   help: 'Adds the adversarial-pr-review skill and the review process its reviewer follows.',
   author: 'Agent Wrangler',
   dir,

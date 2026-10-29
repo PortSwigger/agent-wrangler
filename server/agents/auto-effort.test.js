@@ -116,7 +116,7 @@ test('withAutoEffort adds autoEffort where known and leaves the rest as they wer
     { value: 'opusplan', label: 'Plan' },
   ]);
   assert.deepEqual(withAutoEffort('codex', [{ value: 'gpt-6-sol' }], paths), [{ value: 'gpt-6-sol', autoEffort: 'xhigh' }]);
-  assert.deepEqual(withAutoEffort('other', claudeModels, paths), claudeModels);
+  assert.throws(() => withAutoEffort('other', claudeModels, paths), /Unknown agent/);
 });
 
 test('a settings change is re-read and changes the sources signature', () => {

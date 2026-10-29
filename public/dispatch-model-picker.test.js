@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MODEL_FRONT } from './model-front-api.js';
 import { pickerState, curveStep } from './dispatch-model-picker.js';
-const agents = Object.entries(MODEL_FRONT.data.models).map(([id, models]) => ({ id, label: id, models: Object.keys(models).map((value) => ({ value, label: value })), efforts: [...new Set(Object.values(models).flatMap(Object.keys))].map((value) => ({ value, label: value })) }));
+const agents = Object.entries(MODEL_FRONT.data.models).map(([id, models]) => ({ id, label: id === 'claude' ? 'Claude' : 'Codex', models: Object.keys(models).map((value) => ({ value, label: value })), efforts: [...new Set(Object.values(models).flatMap(Object.keys))].map((value) => ({ value, label: value })) }));
 
 test('slider stops exclude faster-only front points while their verdict stays on the front', () => {
   const front = MODEL_FRONT.frontOf(agents);

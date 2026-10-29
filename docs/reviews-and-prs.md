@@ -8,7 +8,7 @@ Choose a review flow based on what you need reviewed:
 | --- | --- | --- | --- |
 | **Diff review** | While you are supervising the current session | Uncommitted changes, the full branch, or an attached PR | Your line comments are sent to the owning session as one structured message |
 | **Peer review session** | Before a PR exists, or when uncommitted work matters | The selected session's current working directory | A new session opens on the board; it uses the other provider when available |
-| **Adversarial PR review** | Before merging a specific pull request, when both providers are installed | The PR as published on GitHub | An opposite-provider reviewer sends findings through Wrangler mail |
+| **Adversarial PR review** | Before merging a specific pull request, when another provider is installed | The PR as published on GitHub | An independent provider reviewer sends findings through Wrangler mail |
 
 ## Review a diff yourself
 
@@ -48,7 +48,8 @@ when a comment gesture, editor or text selection is active.
 
 Choose **Peer review session…** from **Actions**, or press `Control+Command+P`.
 
-The dialog selects the complementary provider when installed, shares the source directory so
+The dialog selects the available different provider with the highest declared preference (Claude
+before Codex), shares the source directory so
 uncommitted work is visible, and supplies a review prompt. With one provider installed, it keeps an
 available model selected for same-provider review.
 
@@ -60,9 +61,10 @@ Ask the working session directly:
 
 > Run an adversarial review of the PR attached to this session.
 
-The `adversarial-pr-review` skill resolves the PR and launches a reviewer on the opposite provider: a
-Claude session launches Codex, a Codex session launches Claude. It requires both Claude Code and Codex;
-with one provider, use peer review.
+The `adversarial-pr-review` skill resolves the PR and uses `get_model_front`’s `reviewAgent` to
+select an available provider different from the source, preferring Claude before Codex. Selection
+does not depend on discovery order. A Claude session selects Codex; a Codex session selects Claude.
+If no different provider is available, it reports a blocker; use peer review for a same-provider review.
 
 The skill requires an explicit reviewer model and effort: a current, high-capability general-purpose
 model at medium effort or higher. It excludes lightweight, fast/cheap and reduced-capability variants,

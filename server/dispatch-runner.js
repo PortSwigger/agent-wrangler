@@ -50,9 +50,9 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
   // Deliberately NOT the spawn path: performSpawn dispatches through
   // sessionManager.dispatch directly, so a caller-INHERITED legacy model never
   // reaches here and keeps working (see performSpawn's own comment).
-  const badTarget = launchTargetError(opts.agent || 'claude', opts.model);
+  const badTarget = launchTargetError(opts.agent ?? 'claude', opts.model);
   if (badTarget) throw new Error(badTarget);
-  const autoCompactError = autoCompactTokensError(opts.autoCompactTokens, opts.agent || 'claude');
+  const autoCompactError = autoCompactTokensError(opts.autoCompactTokens, opts.agent ?? 'claude');
   if (autoCompactError) throw new Error(autoCompactError);
   // Autopilot (issue→PR) mode: wrap the raw issue into a skill-naming imperative
   // (so the run goes through the tracked procedure, not freelance prose) and force
@@ -76,7 +76,7 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     model: opts.model,
     effort: opts.effort,
     autoCompactTokens: opts.autoCompactTokens,
-    agent: opts.agent || 'claude',
+    agent: opts.agent ?? 'claude',
     runtime: opts.runtime || 'local',
     addDirs: opts.addDirs || [],
     worktree: workflow ? true : Boolean(opts.worktree),
@@ -100,7 +100,7 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
   });
   let firstPrompt;
   if (withImages) {
-    const agent = opts.agent || 'claude';
+    const agent = opts.agent ?? 'claude';
     const imagePaths = claimStagedPastes(sessionId, agent, imageNames);
     // Not awaited: the dialog closes on the dispatch ack, and the TUI can take
     // seconds to boot. Returned so a test can wait for it.
