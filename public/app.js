@@ -4892,6 +4892,7 @@ function attachClipboard(term) {
   term.loadAddon(new globalThis.ClipboardAddon.ClipboardAddon(undefined, {
     readText: () => Promise.resolve(''),
     writeText: (_sel, text) => {
+      if (!text) return;
       const p = navigator.clipboard?.writeText(text);
       if (!p) return;
       return p.then(() => { if (text && text.trim()) toast('Copied to clipboard', false, { duration: 1500 }); }, () => {});
