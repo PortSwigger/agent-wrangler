@@ -26,6 +26,20 @@ The `issue-to-pr` skill powers **Workflow** launch mode. Given a Jira issue, Git
 task, it plans, builds, verifies, and opens a pull request from a dedicated worktree. The card shows its
 phase and switches to **needs-you** if blocked. Launch it from the dialog or with `spawn_workflow`.
 
+## Model-front maintenance
+
+In a checkout of this repository, ask “Are the model benchmarks current?” to use
+[the project-local `evaluate-model` skill](../.claude/skills/evaluate-model/SKILL.md).
+It reads permitted benchmark sources and the bundled LiteLLM prices, preserves
+OpenAI effort results for manual reading, and generates `public/model-front-data.json`.
+The evaluator prints separate fronts for both agents, Claude and Codex without
+requiring the client API. The weekly **Refresh model front** workflow runs the
+catalog refresh first and opens a reviewable data PR when inputs change; it never
+auto-merges. Slack notices require `SLACK_WEBHOOK_URL`.
+
+The companion `api.modelFront` surface is allocated additive host API **1.56.0**;
+the current data pipeline does not publish that client API.
+
 ## Human-visible collaboration surfaces
 
 - **Checklist:** the human and agent edit the same per-session list.
