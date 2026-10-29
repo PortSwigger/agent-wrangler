@@ -178,6 +178,34 @@ subdirectory is one theme: `<id>/theme.json` with
 `assets` (`wallpaper`, `iconImage`) naming files beside it. The folder name is the theme's id, which
 is what a browser saves as its choice, so keep it stable across releases.
 
+A theme starts from its base and overrides only what it sets. The `light` base is the built-in Light
+theme and the `dark` base is the built-in Dark theme, so a light-based theme inherits Light's fonts,
+reading column and colours unless it sets its own. Each key in `colors` becomes the CSS variable of
+the same name with `--` in front, and `font` sets `--font`. Besides the core colours (`bg`, `surface`,
+`surface-2`, `fg`, `accent`, `blue`, `green`, `red` and so on, which the worked examples show), a theme
+can set these reading and detail variables:
+
+| Key | What it controls | Default when unset |
+| --- | --- | --- |
+| `font-mono` | Monospace font for code, the terminal and command output | The system monospace font |
+| `font-features` | `font-feature-settings` for the UI font, such as `"cv05", "cv08"` | `normal` |
+| `numerals` | `font-variant-numeric` for card, chat footer and usage numbers, such as `tabular-nums` | `normal` |
+| `prose-leading` | Line height of chat messages | `1.62` |
+| `prose-gap` | Space between paragraphs and lists in chat and file views | `0.6em` |
+| `heading-tracking` | Letter spacing of chat headings | `normal` |
+| `chat-measure` | Maximum width of the chat column and message box, such as `68em` | `100%` (full width) |
+| `code-fg`, `code-bg`, `code-border` | Inline code and code blocks. `code-bg` also colours command output | `blue-fg`, `surface-2`, `border-muted` |
+| `bubble-bg`, `bubble-border` | Your own messages in the chat view | `surface-2`, `border-muted` |
+| `link-fg`, `link-decoration` | Links in chat and file views. `link-decoration` is a `text-decoration` value | `blue-fg`, `none` |
+| `branch-fg` | Branch names on cards, including `main` | `purple`, and `blue-fg` for `main` |
+| `selected-tint` | How strongly the selected card is tinted with `blue` | `18%` |
+| `green-bar-on`, `snooze-on` | Text on the green working bar and on the snooze or warning fills | `bar-on` |
+
+The defaults in this table are the Dark base's. Light sets most of them, so read the `body.light`
+block in `public/styles.css` for the values a light-based theme inherits. A light theme with
+translucent surfaces will usually want to set `code-bg` and `bubble-bg` to one of its own tints, as
+Pink and Pixel Cats do.
+
 While the extension is on, its themes appear in Settings › Appearance and in `/api/styles`, and
 their declared assets are served from `/styles/<id>/<file>`. `theme.json` itself and any file the
 manifest does not declare are never served. Turning the extension off removes its themes from

@@ -10,6 +10,8 @@
     "surface": "rgba(255,250,245,0.8)",
     "panel-bg": "#fffaf5",
     "surface-2": "rgba(244,238,250,0.82)",
+    "code-bg": "rgba(244,238,250,0.82)",
+    "bubble-bg": "rgba(244,238,250,0.82)",
     "chrome": "rgba(255,249,238,0.85)",
     "tile-bg": "rgba(255,250,245,0.46)",
     "field-bg": "rgba(255,251,247,0.88)",

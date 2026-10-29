@@ -40,11 +40,18 @@ export function readTerminalTheme() {
   };
 }
 
+// The terminals' font family, from the theme's --font-mono. Read separately from
+// readTerminalTheme because xterm takes it as its own option, not a colour.
+export function readTerminalFont() {
+  return getComputedStyle(document.body).getPropertyValue('--font-mono').trim()
+    || 'ui-monospace, SFMono-Regular, Menlo, monospace';
+}
+
 const MOON_ICON = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>';
 const SUN_ICON = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>';
 const BUILT_IN_STYLES = [
   { id: 'dark', name: 'Dark', base: 'dark', iconInner: MOON_ICON, vars: {}, wallpaperUrl: '/dark-bg.png' },
-  { id: 'light', name: 'Light', base: 'light', iconInner: SUN_ICON, vars: {}, wallpaperUrl: '/light-bg.png' },
+  { id: 'light', name: 'Light', base: 'light', iconInner: SUN_ICON, vars: {} },
 ];
 let customStyles = [];
 let currentStyleId = 'dark';
@@ -197,7 +204,7 @@ export function setCustomStyles(styles) {
 // attribute, so only plain colour syntax gets through.
 const BASE_SWATCH = {
   dark: { tile: '#151b23', ink: '#f0f6fc', dots: ['#1f6feb', '#3fb950', '#f85149'] },
-  light: { tile: '#ffffff', ink: '#1f2328', dots: ['#0969da', '#1a7f37', '#cf222e'] },
+  light: { tile: '#fcfcfb', ink: '#1b1d21', dots: ['#4f46e5', '#3eb489', '#dc2626'] },
 };
 const COLOUR_RE = /^(#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%/+-]+\))$/i;
 export function safeColour(v) { return typeof v === 'string' && COLOUR_RE.test(v.trim()) ? v.trim() : null; }
