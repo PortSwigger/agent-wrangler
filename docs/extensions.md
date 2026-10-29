@@ -881,11 +881,21 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   bypass }`, validated by `server/extensions/codex-policy.js`: an invalid field
   is dropped and the rest applies, bypass is exclusive, and a combination Codex
   refuses (its `INCOMPATIBLE` table) drops the named field. The first answer
-  wins and a later one is logged as a collision; a throw fails open to the core
-  defaults (`--sandbox workspace-write --ask-for-approval never` plus the
-  network grant). It is synchronous (a Promise is dropped) and consulted only
-  for Codex, through the `_extCodexPolicy` seam; a new launch path must thread
-  `codexPolicy` too. **`hideTool` is the one surface that shapes tools an
+  wins and a later one is logged as a collision; a throw or unusable answer falls back to the session's core Sandbox choice
+  (Locked to worktree for legacy sessions: `--sandbox workspace-write --ask-for-approval never`
+  plus the network grant). It is synchronous (a Promise is dropped) and consulted only
+  for Codex, through the `_extCodexPolicy` seam; a new launch path must thread `codexPolicy` too.
+  The dialog's Sandbox chooser is a core preview and does not replace extension Advanced controls.
+  The session retains `sandboxMode` as its fallback and records `codexPolicy`, `codexPolicySource`
+  (the winning extension id, or `core`) and `codexPolicyFlags` for the actual launch. These are
+  available in graph sessions and session details when an adapter builds the launch;
+  a runtime supplying its own command does not claim adapter policy flags. The hook's answer shape
+  and first-answer order stay the same. Disabling a policy extension restores the saved core choice on the next launch.
+  Agent discovery includes optional `launchModes: { label, field, overridable?, modes }`; each mode
+  declares `id`, `name`, `hint`, `icon`, `default?`, `folders` and `flags`. The dialog renders those
+  declarations and uses the same flags as the adapters, hiding the section when absent.
+
+  **`hideTool` is the one surface that shapes tools an
   extension does NOT own, and it is a VETO that fails OPEN** — `buildMcpServer`
   filters `activeTools()` per request through `deps.ext.hideTool`, a throwing
   filter hides nothing and is logged, because this is a UX narrowing over an
@@ -1259,7 +1269,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `wranglerExtension` when using these hooks. Server host access still requires
   the capabilities listed in `requires`.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
-  `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
+  `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }], launchModes? }]`,
   the same list core's model select reads, sourced from the live model and
   price catalogs — as a fresh deep copy per call. A model's `autoEffort`
   (1.49.0) is the level the agent runs it at when a launch passes no effort

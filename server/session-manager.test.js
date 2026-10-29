@@ -3523,16 +3523,22 @@ test('killForSession lists the pane processes before kill-session so the agent i
   assert.deepEqual(verbs, ['list-panes', 'kill-session', 'has-session']);
 });
 
-for (const permissionMode of [undefined, 'bypassPermissions']) {
+for (const permissionMode of [undefined, 'auto', 'acceptEdits', 'bypassPermissions']) {
   test(`dispatch and resume preserve permission mode ${permissionMode ?? 'auto'}`, async () => {
     const sm = smForDispatch();
     let captured = '';
     sm._newSession = async (_t, _d, inner) => { captured = inner; };
     sm.killForSession = async () => [];
-    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', permissionMode });
+    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', permissionMode, addDirs: [os.tmpdir()] });
     const expected = permissionMode ?? 'auto';
     assert.equal(sm.map.get(sessionId).permissionMode, expected);
     assert.ok(captured.includes(`'--permission-mode' '${expected}'`));
+    const file = path.join(DATA_DIR, 'mappings.json');
+    const saved = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    try {
+      SessionManager.prototype._save.call(sm);
+      sm.map = new SessionManager().map;
+    } finally { if (saved) fs.writeFileSync(file, saved); else fs.rmSync(file, { force: true }); }
     await withRuntime({ id: 'permission-test', label: 'Test', skipsHostResumeGuard: true, wrapLaunch: async ({ inner }) => inner }, 'permission-test', async () => {
       sm.map.get(sessionId).runtime = 'permission-test';
       await sm.resume(sessionId, os.tmpdir());
@@ -3541,6 +3547,8 @@ for (const permissionMode of [undefined, 'bypassPermissions']) {
       const fork = await sm.fork({ sourceId: sm.map.get(sessionId).liveSessionId, parentId: sessionId, parentEntry: sm.map.get(sessionId), cwd: os.tmpdir() });
       assert.ok(captured.includes(`'--permission-mode' '${expected}'`));
       assert.equal(sm.map.get(fork.sessionId).permissionMode, expected);
+      assert.deepEqual(sm.map.get(fork.sessionId).addDirs, [os.tmpdir()]);
+      assert.ok(captured.includes(`'--add-dir' '${os.tmpdir()}'`));
     });
   });
 }

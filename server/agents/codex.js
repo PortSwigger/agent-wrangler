@@ -1,3 +1,4 @@
+import { CODEX_LAUNCH_MODES, codexModePolicy } from './launch-modes.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { launchAddDirArgs, launchCodexConfigArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
@@ -34,9 +35,9 @@ function envPrefix(sessionId, spawnedBy, launchContext) {
 // the additive developer-instructions channel. Autonomy (sandbox, approval, the
 // network grant, --approve-for-me or bypass) comes from an extension's
 // `codexPolicy` answer when one answers (codexPolicyArgs,
-// extensions/codex-policy.js); otherwise the core defaults apply:
-// --sandbox workspace-write --ask-for-approval never plus the workspace-write
-// network grant. Everything else is unconditional, bypass included.
+// extensions/codex-policy.js); otherwise the adapter's Sandbox choice applies.
+// Locked uses workspace-write, never ask and the network grant. Everything else
+// is unconditional, bypass included.
 // Developer instructions are the verified equivalent of Claude's
 // --append-system-prompt; injected as a `developer`-role message). Directory trust is NOT handled
 // here: verified against the installed binary that Codex's interactive trust
@@ -44,7 +45,7 @@ function envPrefix(sessionId, spawnedBy, launchContext) {
 // an entry already persisted in `~/.codex/config.toml` at process start
 // suppresses it. See `ensureCodexTrust` (codex-trust.js), which the caller runs
 // before this launch command is ever spawned.
-function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchContext, disabledSkills, codexPolicy }) {
+function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchContext, disabledSkills, codexPolicy, sandboxMode }) {
   // memory/links are wrangler-meta skills now; Codex gets a read-only catalog of
   // them in developer_instructions and reads a SKILL.md on demand (workspace-write
   // allows reads outside cwd). A mandatory skill's nudge (task-memory) still rides
@@ -53,7 +54,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
   const titlePrompt = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call the agent-wrangler rename_session MCP tool with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
   const base = [mandatorySkillPrompt(undefined, { disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
-  const args = codexPolicyArgs(codexPolicy);
+  const args = codexPolicyArgs(codexPolicy ?? codexModePolicy(sandboxMode));
   args.push(...launchCodexConfigArgs(launchContext));
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
   args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
@@ -65,6 +66,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
 
 export const codex = {
   id: 'codex',
+  launchModes: CODEX_LAUNCH_MODES,
   label: 'Codex',
   tmuxPrefix: 'cx_',
   presetsSessionId: false,
@@ -103,31 +105,31 @@ export const codex = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)codex(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, spawnedBy, launchContext, disabledSkills, codexPolicy }) {
+  buildLaunch({ sessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, spawnedBy, launchContext, disabledSkills, codexPolicy, sandboxMode }) {
     const args = ['-m', model || defaultCodexModel()];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, worktree, launchContext, disabledSkills, codexPolicy }));
+    args.push(...commonFlags({ sessionId, addDirs, worktree, launchContext, disabledSkills, codexPolicy, sandboxMode }));
     let inner = `${envPrefix(sessionId, spawnedBy, launchContext)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, launchContext, disabledSkills, codexPolicy }) {
+  buildResume({ sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, launchContext, disabledSkills, codexPolicy, sandboxMode }) {
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, launchContext, disabledSkills, codexPolicy }));
+    args.push(...commonFlags({ sessionId, addDirs, launchContext, disabledSkills, codexPolicy, sandboxMode }));
     return `${envPrefix(sessionId, spawnedBy, launchContext)}codex ${args.map(shellQuote).join(' ')}`;
   },
 
-  buildFork({ sessionId, sourceId, model, effort, autoCompactTokens, intent = '', addDirs = [], launchContext, disabledSkills, codexPolicy }) {
+  buildFork({ sessionId, sourceId, model, effort, autoCompactTokens, intent = '', addDirs = [], launchContext, disabledSkills, codexPolicy, sandboxMode }) {
     // `codex fork <SESSION_ID> [PROMPT]` branches the transcript into a new thread
     // (verified against codex 0.139.0): the prompt trails as the last positional.
     const args = ['fork', sourceId, '-m', model || defaultCodexModel()];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, launchContext, disabledSkills, codexPolicy }));
+    args.push(...commonFlags({ sessionId, addDirs, launchContext, disabledSkills, codexPolicy, sandboxMode }));
     let inner = `${envPrefix(sessionId, undefined, launchContext)}codex ${args.map(shellQuote).join(' ')}`;
     if (intent.trim()) inner += ` ${shellQuote(intent.trim())}`;
     return inner;

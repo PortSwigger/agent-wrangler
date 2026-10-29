@@ -1,3 +1,4 @@
+import { dispatchModeError } from './agents/launch-modes.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR } from './data-dir.js';
@@ -50,6 +51,8 @@ function validateAction(action, { isCron }) {
     // client's {type:'error'}. Only reached from create/update — `_load` maps
     // stored rows through migrateStored alone, so an already-persisted legacy
     // value can never break startup.
+    const modeError = dispatchModeError(d);
+    if (modeError) throw new Error(modeError);
     const badTarget = launchTargetError(d.agent || 'claude', d.model);
     if (badTarget) throw new Error(badTarget);
     if (isCron && d.worktree && !d.workflow) d.worktreeAuto = true;

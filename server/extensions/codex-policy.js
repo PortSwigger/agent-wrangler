@@ -70,3 +70,7 @@ export function codexPolicyArgs(policy) {
   if (sandbox === 'workspace-write') args.push(...NETWORK_GRANT);
   return args;
 }
+
+const policySources = new WeakMap();
+export function setCodexPolicySource(policy, source) { policySources.set(policy, source); }
+export function codexPolicySource(policy) { return policySources.get(policy); }

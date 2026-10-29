@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
+import { DATA_DIR } from './data-dir.js';
 import { SessionManager } from './session-manager.js';
 
 // The extension session hooks (server/extensions/index.js `sessionHooks`) are
@@ -241,4 +244,89 @@ test('the Codex policy is never consulted for a Claude launch', async () => {
   await sm.fork({ sourceId: 'SRC', parentId: 'P', parentEntry: { agent: 'claude', cwd: os.tmpdir() }, cwd: os.tmpdir() });
   assert.equal(asked, 0);
   assert.doesNotMatch(built, /dangerously-bypass-approvals/);
+});
+
+for (const sandboxMode of ['locked', 'auto', 'full']) {
+  test(`Codex ${sandboxMode} survives disk reload, resume, relaunch and fork`, async () => {
+    const sm = codexManager();
+    const commands = [];
+    sm._newSession = async (_t, _d, inner) => { commands.push(inner); };
+    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), agent: 'codex', sandboxMode, addDirs: [os.tmpdir()] });
+    assert.equal(sm.entryFor(sessionId).sandboxMode, sandboxMode);
+    const file = path.join(DATA_DIR, 'mappings.json');
+    const saved = fs.existsSync(file) ? fs.readFileSync(file) : null;
+    try {
+      SessionManager.prototype._save.call(sm);
+      const restored = codexManager();
+      assert.equal(restored.entryFor(sessionId).sandboxMode, sandboxMode);
+      restored._newSession = sm._newSession;
+      await restored.resume(sessionId, os.tmpdir());
+      restored.map.get(sessionId).runtime = undefined;
+
+      await restored.resume(sessionId, os.tmpdir());
+      const parent = restored.entryFor(sessionId);
+      const fork = await restored.fork({ sourceId: 'live-codex', parentId: sessionId, parentEntry: parent, cwd: os.tmpdir() });
+      assert.equal(restored.entryFor(fork.sessionId).sandboxMode, sandboxMode);
+      assert.deepEqual(restored.entryFor(fork.sessionId).addDirs, [os.tmpdir()]);
+      const flag = { locked: '--sandbox', auto: '--approve-for-me', full: '--dangerously-bypass-approvals-and-sandbox' }[sandboxMode];
+      assert.equal(commands.length, 4);
+      for (const cmd of commands) assert.ok(cmd.includes(`'${flag}'`));
+    } finally { if (saved) fs.writeFileSync(file, saved); else fs.rmSync(file, { force: true }); }
+  });
+}
+
+test('extension policy wins while core choice remains fallback on resume and fork', async () => {
+  const sm = codexManager();
+  sm._extCodexPolicy = () => ({ sandbox: 'read-only' });
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), agent: 'codex', sandboxMode: 'full' });
+  assert.equal(sm.entryFor(sessionId).sandboxMode, 'full');
+  assert.deepEqual(sm.entryFor(sessionId).codexPolicy, { sandbox: 'read-only' });
+  assert.equal(sm.entryFor(sessionId).codexPolicySource, 'extension');
+  sm._extCodexPolicy = () => undefined;
+  await sm.resume(sessionId, os.tmpdir());
+  assert.deepEqual(sm.entryFor(sessionId).codexPolicy, { bypass: true });
+  assert.equal(sm.entryFor(sessionId).codexPolicySource, 'core');
+  const parent = sm.entryFor(sessionId);
+  const fork = await sm.fork({ sourceId: 'live-codex', parentId: sessionId, parentEntry: parent, cwd: os.tmpdir() });
+  assert.deepEqual(sm.entryFor(fork.sessionId).codexPolicy, { bypass: true });
+});
+
+test('legacy Codex sessions use Locked on resume and fork', async () => {
+  const sm = codexManager();
+  sm.map.set('legacy', { agent: 'codex', cwd: os.tmpdir(), liveSessionId: 'old-live', tmux: 'cx_legacy' });
+  await sm.resume('legacy', os.tmpdir());
+  const entry = sm.entryFor('legacy');
+  assert.equal(entry.sandboxMode, 'locked');
+  assert.equal(entry.codexPolicySource, 'core');
+  assert.deepEqual(entry.codexPolicy, { sandbox: 'workspace-write', approval: 'never' });
+  const fork = await sm.fork({ sourceId: 'old-live', parentId: 'legacy', parentEntry: entry, cwd: os.tmpdir() });
+  assert.equal(sm.entryFor(fork.sessionId).sandboxMode, 'locked');
+});
+
+test('Codex update relaunch uses the saved core mode', async () => {
+  const sm = codexManager();
+  let command;
+  sm._newSession = async (_t, _d, inner) => { command = inner; };
+  sm._tmux = async () => ({ stdout: '🎉 Update ran successfully! Please restart Codex.' });
+  sm.map.set('updated', { agent: 'codex', cwd: os.tmpdir(), tmux: 'cx_updated', sandboxMode: 'auto' });
+  sm.dead.add('cx_updated');
+  await sm.resume('updated', os.tmpdir());
+  assert.match(command, /'--approve-for-me'/);
+  assert.doesNotMatch(command, /codex 'resume'/);
+  assert.equal(sm.entryFor('updated').sandboxMode, 'auto');
+});
+
+test('Codex own-launch runtime keeps its core choice without claiming unused policy flags', async () => {
+  const { registerRuntime, unregisterRuntimesFor } = await import('./runtimes/index.js');
+  registerRuntime({ id: 'policy-own-launch', label: 'Own launch', agents: ['codex'], resumable: false, buildLaunch: async () => 'echo own-launch' }, 'policy-test');
+  try {
+    const sm = codexManager();
+    let asked = false;
+    sm._extCodexPolicy = () => { asked = true; return { bypass: true }; };
+    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), agent: 'codex', sandboxMode: 'auto', runtime: 'policy-own-launch' });
+    assert.equal(asked, true);
+    assert.equal(sm.entryFor(sessionId).sandboxMode, 'auto');
+    assert.equal(sm.entryFor(sessionId).codexPolicyFlags, undefined);
+    assert.equal(sm.entryFor(sessionId).codexPolicySource, undefined);
+  } finally { unregisterRuntimesFor('policy-test'); }
 });

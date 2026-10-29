@@ -3,7 +3,7 @@ import semver from 'semver';
 import { readConfig, extensionEnabled, extensionSettings } from '../config-store.js';
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
-import { normalizeCodexPolicy } from './codex-policy.js';
+import { normalizeCodexPolicy, setCodexPolicySource } from './codex-policy.js';
 import { isValidBranchName } from '../worktree.js';
 import { parseCombo, SCOPES as KEY_SCOPES } from '../../public/keybindings.js';
 import checklist from './builtin/checklist/index.js';
@@ -1015,7 +1015,7 @@ export function createTaskDeleteNotifier(ext, hostApiFor = () => undefined, onEr
 // one is logged as a collision and discarded. A throw fails open for that
 // extension only, and the next is still asked. Synchronous, like `skillsFor`: a
 // returned Promise is an invalid answer, logged and dropped. `undefined` means
-// the core defaults (codexPolicyArgs).
+// the session's core Sandbox choice.
 export function createCodexPolicyResolver(ext, hostApiFor = () => undefined, onError = () => {}) {
   return function codexPolicyFor(context = {}) {
     let winner;
@@ -1036,6 +1036,7 @@ export function createCodexPolicyResolver(ext, hostApiFor = () => undefined, onE
       }
       winner = policy;
       winnerId = id;
+      setCodexPolicySource(winner, id);
     }
     return winner;
   };

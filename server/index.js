@@ -1017,7 +1017,7 @@ function broadcastStylesIfChanged() {
 // decides a model's Auto effort (`autoEffort`), changes them.
 async function dispatchAgents() {
   const list = await availableAgents();
-  return list.map((a) => ({ id: a.id, label: a.label, models: withAutoEffort(a.id, modelsWithDefault(a)), efforts: a.efforts || [] }));
+  return list.map((a) => ({ id: a.id, label: a.label, models: withAutoEffort(a.id, modelsWithDefault(a)), efforts: a.efforts || [], launchModes: a.launchModes }));
 }
 
 async function agentsMessage() {

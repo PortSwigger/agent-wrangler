@@ -254,3 +254,27 @@ test('session focus survives saving, reloading, and unrelated edits, and can be 
   assert.equal(reloaded.update(s.id, { name: 'Renamed' }, NOW).action.focus, true);
   assert.equal(reloaded.update(s.id, { action: { ...s.action, focus: false } }, NOW).action.focus, undefined);
 });
+
+for (const [agent, field, modes] of [
+  ['codex', 'sandboxMode', ['locked', 'auto', 'full']],
+  ['claude', 'permissionMode', ['auto', 'acceptEdits', 'bypassPermissions']],
+]) {
+  test(`scheduled ${agent} dispatches retain modes and folders on reload`, () => {
+    const file = tmpFile();
+    try {
+      const store = new ScheduleStore(file);
+      for (const mode of modes) store.create({ when: DAILY, dispatch: { agent, [field]: mode, addDirs: ['/extra folder'] } }, NOW);
+      const reloaded = new ScheduleStore(file);
+      for (const [index, schedule] of reloaded.snapshot().schedules.entries()) {
+        assert.equal(schedule.action.dispatch[field], modes[index]);
+        assert.deepEqual(schedule.action.dispatch.addDirs, ['/extra folder']);
+      }
+    } finally { fs.rmSync(path.dirname(file), { recursive: true, force: true }); }
+  });
+}
+
+test('schedule creation refuses unsupported dialog modes', () => {
+  for (const dispatch of [{ agent: 'claude', permissionMode: 'plan' }, { agent: 'codex', sandboxMode: 'invalid' }, { agent: 'claude', sandboxMode: 'full' }]) {
+    assert.throws(() => validateSchedule(DAILY, { kind: 'dispatch', dispatch }), /[Mm]ode|permissions/);
+  }
+});

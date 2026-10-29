@@ -1,3 +1,5 @@
+import { CLAUDE_LAUNCH_MODES } from './launch-modes.js';
+
 export const CLAUDE_PERMISSION_MODES = ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'];
 
 export function permissionModeError(value, agent = 'claude') {
@@ -14,7 +16,7 @@ export function permissionModeError(value, agent = 'claude') {
 export function claudePermissionArgs(value) {
   const error = permissionModeError(value);
   if (error) throw new Error(error);
-  return ['--permission-mode', value ?? 'auto'];
+  return [...(CLAUDE_LAUNCH_MODES.modes.find((m) => m.id === (value ?? 'auto'))?.flags || ['--permission-mode', value])];
 }
 
 export function runtimePermissionModeError(value, runtime) {

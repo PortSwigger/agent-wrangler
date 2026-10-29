@@ -15,6 +15,27 @@ narrow screens. **Intent / first prompt** starts at twelve rows and can be resiz
 **Schedule a session** uses the same layout, with timing and action controls on the task side.
 Choose **Existing session** to show the target session and optional message instead of launch controls.
 
+Open **Advanced options** below Branch to find **Sandbox** (Codex) or **Permissions** (Claude).
+The section is supplied by the selected agent; agents without declared modes show no section.
+
+| Agent | Default | Other choices |
+| --- | --- | --- |
+| Codex | **Locked to worktree** — workspace-write, never ask, network enabled | **Auto-approve** — a reviewer model can approve leaving the sandbox; **Full access** — bypass sandbox and approvals |
+| Claude | **Auto** — automatic permission checks | **Accept edits** — accept file edits and check other actions; **Bypass** — skip Claude permission checks |
+
+Claude permissions are not an OS sandbox. **Also writable** adds existing folders using the folder
+picker; Full access and Bypass hide these controls and omit their grants. Extra host folders require **Local**.
+The **Launches** line quotes paths and previews the adapter's flags. Codex labels this as a core preview:
+an extension such as **aw-codex-policy** can override it through its controls in **Advanced options**.
+After launch, the session details show the resolved Codex policy, flags and winning source.
+
+Your browser remembers the last selected mode separately for each agent. A session saves its own mode
+and applicable folders: resume, relaunch and fork retain them after a server restart, independently of
+browser preferences. Legacy sessions use Locked to worktree for Codex and Auto for Claude. Schedules
+save explicit choices; editing an older schedule uses the agent default. Runtimes that supply their
+own launch command explain why Claude's Accept edits and Bypass are unavailable. The manual, plan
+and dontAsk modes are available only through `spawn_session`'s `permission_mode` argument.
+
 The model section plots measured quality against cost per task on a log scale. Drag the slider or
 use its arrow keys to move through the quality/cost curve, cheapest to best. Click a chart point to
 choose any available front setting, including points that earn their place only by being faster;
@@ -37,11 +58,12 @@ remembered effort falls back to **Auto**.
 
 Expand **Any model** for the agent/model and effort dropdowns. **Auto** uses the effort reported by
 the agent; without a reported effort or benchmark row, the pick is unscored. Source credit sits under
-the chart. **Advanced options** starts collapsed and holds auto-compaction and runtime controls.
+the chart. **Advanced options** starts collapsed and holds sandbox or permission modes, **Also writable**
+folders, the launch preview, auto-compaction and runtime controls.
 
 Optional launch controls include:
 
-- **Additional folders:** use the square **+** button beside the main folder to grant a local Claude or Codex session access to more existing folders. Browse or type each path, and remove rows you no longer need. Grants persist across resume and fork and are saved with scheduled launches. The main folder remains the working directory. Devcontainer and extension runtimes disable these extra host folder controls; switching back to Local restores your selections.
+- **Also writable:** use the square **+** button beside **Also writable** to grant a local Claude or Codex session access to more existing folders. Browse or type each path, and remove rows you no longer need. Grants persist across resume and fork and are saved with scheduled launches. The main folder remains the working directory. Devcontainer and extension runtimes disable these extra host folder controls; switching back to Local restores your selections.
 - **Git worktree:** create or adopt a worktree with an explicit or generated branch name.
 - **Effort:** select a provider-supported reasoning level.
 - **Auto-compaction threshold:** set the working-context budget.
