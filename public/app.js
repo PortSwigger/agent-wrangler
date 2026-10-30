@@ -1048,10 +1048,24 @@ let insertLineEl = null;
 // dragstart (beginDragCaches) and dragend.
 let dragNestTargets = new Set();
 let dragMultiColumn = new Map();
+let dragColumnGap = new Map();
+// The cursor position of the last session dragover handled. The browser keeps
+// firing dragover while the cursor is held still; with nothing re-rendering
+// mid-drag, an unchanged position can change nothing, so those are skipped.
+let lastDragPoint = null;
 
 function beginDragCaches(sessionId) {
   dragNestTargets = nestTargetsFor(sessionId, latestSessions, assignedTaskId);
   dragMultiColumn = new Map();
+  dragColumnGap = new Map();
+  lastDragPoint = null;
+}
+
+function endDragCaches() {
+  dragNestTargets = new Set();
+  dragMultiColumn = new Map();
+  dragColumnGap = new Map();
+  lastDragPoint = null;
 }
 
 let taskDragActive = false;
@@ -1180,7 +1194,8 @@ function updateInsertLine(body) {
   const ref = next || prev;
   if (!ref) { updateInsertLine(null); return; }
   const rect = ref.getBoundingClientRect();
-  const gap = parseFloat(getComputedStyle(body).columnGap) || 12;
+  if (!dragColumnGap.has(body)) dragColumnGap.set(body, parseFloat(getComputedStyle(body).columnGap) || 12);
+  const gap = dragColumnGap.get(body);
   const x = next ? rect.left - gap / 2 : rect.right + gap / 2;
   if (!insertLineEl) {
     insertLineEl = document.createElement('div');
@@ -2820,6 +2835,9 @@ function wireGridDnd(el) {
         card.parentNode.insertBefore(ph, card);
         card.classList.add(dim ? 'drag-source' : 'dragging-hidden');
         shapePlaceholder();
+        // The placeholder and Nest zones only exist from here on, so a dragover
+        // handled before this tick must not let the same position be skipped.
+        lastDragPoint = null;
         addNestZones(el);
       }, 0);
     });
@@ -2828,8 +2846,7 @@ function wireGridDnd(el) {
       exitNestPreview();
       removePlaceholder();
       updateInsertLine(null);
-      dragNestTargets = new Set();
-      dragMultiColumn = new Map();
+      endDragCaches();
       setNestTarget(null);
       nestLane = false;
       draggedCard = null;
@@ -2887,6 +2904,12 @@ function wireGridDnd(el) {
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
       if (taskDragActive) return;
+      // Held still: nothing to recompute (preventDefault above still accepts the
+      // drop). See lastDragPoint.
+      if (dragActive) {
+        if (lastDragPoint && lastDragPoint.x === e.clientX && lastDragPoint.y === e.clientY && lastDragPoint.cell === cell) return;
+        lastDragPoint = { x: e.clientX, y: e.clientY, cell };
+      }
       // Still inside the Nest zone's rect from when its preview began: hold the
       // preview, whatever the shifted cards now put under the cursor.
       if (nestZoneRect && inRect(nestZoneRect, e.clientX, e.clientY)) { cell.classList.remove('drop-target'); return; }
