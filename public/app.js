@@ -15,7 +15,7 @@ import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption,
 import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.js';
 import { cascadeSummary, cascadeDialogBody, worktreeStillInUse, containerStillInUse } from './archive-cascade.js';
 import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-picker.js';
-import { inNestBand, canNestOnto, mergeSessionOrder, createNestDwell } from './session-drag.js';
+import { canNestOnto, childDropAction, mergeSessionOrder } from './session-drag.js';
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
@@ -1009,11 +1009,14 @@ let autoEditTaskId = null;
 let dragActive = false;
 let draggedCard = null;
 let placeholderEl = null;
-// The card a session drag has held in its nesting band for the dwell time
-// (session-drag.js): dropping now nests the dragged session under it instead
-// of reordering. Before the dwell elapses the drag reorders as usual.
+// The card whose Nest zone a session drag is over: dropping now nests the
+// dragged session under it. The zones (addNestZones) sit apart from the
+// reorder area, so reordering and nesting never compete for the same spot.
 let nestTargetEl = null;
-const nestDwell = createNestDwell();
+// True after the cursor was last over a Nest zone, until it is over some other
+// card: crossing the gap between two stacked zones then leaves the placeholder
+// where it is, so the cards don't shift under the cursor.
+let nestLane = false;
 
 let taskDragActive = false;
 let draggedTaskId = null;
@@ -1048,33 +1051,65 @@ function dragUnitSid(el) {
   return el.dataset.childSid || el.dataset.sid;
 }
 
-// The top-level card under a session drag that it can nest into, or null: the
-// cursor must be in the card's middle band (inNestBand) and the target one the
-// "Attach to…" picker would offer (canNestOnto). A card drawn in a spine is
-// itself a child, and nesting is one level deep, so it is never a target.
-function nestTargetAt(e) {
-  if (!draggedCard) return null;
-  const card = e.target.closest?.('.session-card');
-  if (!card || card.closest('.child-spine, .workflow-spine') || draggedCard.contains(card)) return null;
-  if (!inNestBand(card.getBoundingClientRect(), e.clientY)) return null;
-  return canNestOnto(dragUnitSid(draggedCard), card.dataset.sid, latestSessions, assignedTaskId) ? card : null;
+// During a session drag, give every top-level card the dragged session could
+// nest under (canNestOnto) a Nest zone: a labelled drop target on the card's
+// right-hand side. A card drawn in a spine is itself a child, and nesting is
+// one level deep, so it never gets one. The zones go when the board
+// re-renders at dragend.
+function addNestZones(grid, sessionId) {
+  for (const card of grid.querySelectorAll('.task-body .session-card')) {
+    if (card.closest('.child-spine, .workflow-spine') || draggedCard?.contains(card)) continue;
+    if (!canNestOnto(sessionId, card.dataset.sid, latestSessions, assignedTaskId)) continue;
+    const zone = document.createElement('div');
+    zone.className = 'nest-zone';
+    zone.innerHTML = `${ATTACH_ICON}<span>Nest</span>`;
+    card.appendChild(zone);
+  }
 }
 
-// Whether `sessionId` is a workflow worker: one that must stay in its
-// orchestrator's spine (see the Promote menu item).
+// The session whose spine `spine` is: a plain parent's .child-group, or a
+// workflow run's box.
+function spineParentSid(spine) {
+  return spine.closest('.child-group, .workflow-box')?.dataset.sid || null;
+}
+
+// The child spine under a drag of a nested child that will take it, or null:
+// its own spine (a sibling reorder), or another parent's spine it could nest
+// under (a move to that parent, at the slot it's dropped in). Only a child
+// drag uses spines: a top-level card dragged past a parent's spine reorders as
+// usual and nests only through a Nest zone.
+function spineDropTarget(e, cell) {
+  if (!draggedCard?.dataset.childSid) return null;
+  const spine = e.target.closest?.('.child-spine, .workflow-spine');
+  if (!spine || !cell.contains(spine)) return null;
+  if (spine === draggedCard.parentNode) return spine;
+  return canNestOnto(dragUnitSid(draggedCard), spineParentSid(spine), latestSessions, assignedTaskId) ? spine : null;
+}
+
+// Whether `sessionId` is a workflow worker: its orchestrator's run tracks it,
+// so it can't be promoted (see the Promote menu item).
 function isWorkerSid(sessionId) {
   const byId = new Map(latestSessions.map((x) => [x.sessionId, x]));
   return !!byId.get(sessionId) && isWorkflowWorker(byId.get(sessionId), byId);
 }
 
-// Before a dragged nested child moves to another task, promote it, so it
-// doesn't keep a parent link to a session it no longer sits with. False for a
-// workflow worker, which can't leave its run: the drop is then ignored.
-function releaseChildForMove(sessionId) {
-  if (!latestSessions.find((x) => x.sessionId === sessionId)?.parentSession) return true;
-  if (isWorkerSid(sessionId)) return false;
+// Promote a dragged child, or refuse with a toast when it's a workflow worker
+// (the server refuses that too, so the drop would only snap back silently).
+// Returns whether the move can go ahead.
+function promoteDraggedChild(sessionId) {
+  if (isWorkerSid(sessionId)) {
+    toast('A workflow worker stays with its run. Drag it within its spine to reorder it.', true);
+    return false;
+  }
   promoteSession(sessionId);
   return true;
+}
+
+// Before a dragged nested child moves to another task, promote it, so it
+// doesn't keep a parent link to a session it no longer sits with.
+function releaseChildForMove(sessionId) {
+  if (!latestSessions.find((x) => x.sessionId === sessionId)?.parentSession) return true;
+  return promoteDraggedChild(sessionId);
 }
 
 // Same as dragAfterElement, for the rows of one child spine.
@@ -2573,8 +2608,9 @@ function wireGridDnd(el) {
   // the card stays snoozed (snooze lives on the mapping entry, untouched by assign).
   // A nested child (a spine's .worker-row or .spine-full-row, data-child-sid) is
   // its own drag unit too: stopPropagation keeps the enclosing group from
-  // starting a drag of the parent. It reorders within its spine, nests onto
-  // another card, or (dropped among the top-level cards) is promoted.
+  // starting a drag of the parent. It reorders within its spine, moves to
+  // another parent (its spine or its Nest zone), or, dropped among the
+  // top-level cards, is promoted.
   el.querySelectorAll('.session-card[draggable="true"], .workflow-box[draggable="true"], .child-group[draggable="true"], .snoozed-row[draggable="true"], [data-child-sid][draggable="true"]').forEach((card) => {
     card.addEventListener('dragstart', (e) => {
       if (e.target.closest('.link-chip')) { e.preventDefault(); return; }
@@ -2593,13 +2629,14 @@ function wireGridDnd(el) {
         ph.style.height = `${card.offsetHeight}px`;
         card.parentNode.insertBefore(ph, card);
         card.classList.add('dragging-hidden');
+        addNestZones(el, dragUnitSid(card));
       }, 0);
     });
     card.addEventListener('dragend', () => {
       card.classList.remove('dragging-hidden');
       removePlaceholder();
       setNestTarget(null);
-      nestDwell.reset();
+      nestLane = false;
       draggedCard = null;
       dragActive = false;
       armNewTask(false);
@@ -2655,14 +2692,18 @@ function wireGridDnd(el) {
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
       if (taskDragActive) return;
-      // Held over the middle of a card it can nest into: that card is the only
-      // affordance, and the placeholder holds still so the cards don't shift
-      // under the cursor. dragover keeps firing while the cursor is still, so
-      // the dwell elapses without movement. Checked before the activity-sort
-      // bail below, since nesting needs no manual order.
-      const nest = nestDwell.update(nestTargetAt(e), performance.now());
+      // Over a card's Nest zone: that card is the only affordance, and the
+      // placeholder holds still so the cards don't shift under the cursor.
+      // Checked before the activity-sort bail below, since nesting needs no
+      // manual order.
+      const zone = e.target.closest?.('.nest-zone');
+      const nest = zone && cell.contains(zone) ? zone.closest('.session-card') : null;
       setNestTarget(nest);
-      if (nest) { cell.classList.remove('drop-target'); return; }
+      if (nest) { nestLane = true; cell.classList.remove('drop-target'); return; }
+      // In a gap straight after a Nest zone (e.g. between two stacked zones):
+      // hold the placeholder too, until the cursor is over another card.
+      if (e.target.closest?.('.session-card, .worker-row, .spine-full-row, .snoozed-row, .session-placeholder')) nestLane = false;
+      else if (nestLane) return;
       // Same-task reorder in progress (the hidden source lives in this cell):
       // the placeholder is the only affordance, so skip the cell highlight and
       // slide it to the slot the cursor points at. An activity-sorted bucket owns
@@ -2670,11 +2711,11 @@ function wireGridDnd(el) {
       if (placeholderEl && cell.contains(draggedCard)) {
         const bucket = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
         if (activitySortedTasks.has(bucket)) return;
-        // A child dragged inside its own spine reorders among its siblings. A
-        // workflow worker never leaves its spine this way: promoting it would
-        // desync its orchestrator's run (the same rule as the Promote menu item).
-        const spine = draggedCard.dataset.childSid ? draggedCard.parentNode : null;
-        if (spine && (isWorkerSid(dragUnitSid(draggedCard)) || spine.contains(e.target))) {
+        // Over a child spine that takes the dragged session: its own (reorder
+        // among siblings) or another parent's (move to that parent, at this
+        // slot). Anywhere else among the cards is a top-level slot.
+        const spine = spineDropTarget(e, cell);
+        if (spine) {
           const after = dragAfterChild(spine, e.clientY);
           if (after) spine.insertBefore(placeholderEl, after);
           else spine.appendChild(placeholderEl);
@@ -2703,7 +2744,7 @@ function wireGridDnd(el) {
       try { p = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
       const isNoTask = cell.dataset.entity === 'no-task';
       const taskId = cell.dataset.taskid;
-      // Dropped onto the middle of a card: nest under it (the same attach the
+      // Dropped on a card's Nest zone: nest under it (the same attach the
       // "Attach to…" menu sends; the server re-checks every rule).
       const nestSid = nestTargetEl?.dataset.sid;
       setNestTarget(null);
@@ -2727,10 +2768,20 @@ function wireGridDnd(el) {
           // then ranks Infinity (orderSessions) and sinks to the bottom regardless
           // of where it's actually dropped.
           const order = bucketOrderFromDom(body, p.sessionId, latestTasks.sessionOrder?.[bucket]);
-          // A child dropped among the top-level cards rather than in its spine is
-          // promoted there, before the order lands.
-          const child = draggedCard?.dataset.childSid === p.sessionId;
-          if (child && placeholderEl.parentNode === body) promoteSession(p.sessionId);
+          // Landed in another parent's spine → nest there; a child landed among
+          // the top-level cards → promote it. Either goes before the order lands.
+          const inSpine = placeholderEl.parentNode?.closest?.('.child-spine, .workflow-spine');
+          const action = childDropAction({
+            spineParent: inSpine ? spineParentSid(inSpine) : null,
+            currentParent: latestSessions.find((x) => x.sessionId === p.sessionId)?.parentSession || null,
+            drawnAsChild: draggedCard?.dataset.childSid === p.sessionId,
+          });
+          if (action === 'attach') attachSession(p.sessionId, spineParentSid(inSpine));
+          else if (action === 'promote' && !promoteDraggedChild(p.sessionId)) return;
+          // Optimistic, like the order below: dragend re-renders before the
+          // server's graph lands, and would briefly draw the old parent link.
+          const live = action && latestSessions.find((x) => x.sessionId === p.sessionId);
+          if (live) live.parentSession = action === 'attach' ? spineParentSid(inSpine) : undefined;
           latestTasks.sessionOrder = latestTasks.sessionOrder || {};
           latestTasks.sessionOrder[bucket] = order; // optimistic; server confirms on next graph
           send({ type: 'task-reorder-sessions', taskId: bucket, order });

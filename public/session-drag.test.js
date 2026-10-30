@@ -1,19 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { inNestBand, canNestOnto, mergeSessionOrder, createNestDwell, NEST_EDGE, NEST_DWELL_MS } from './session-drag.js';
-
-const rect = { top: 100, bottom: 200, height: 100 };
-
-test('inNestBand: only the middle of a card nests, its top and bottom edges still reorder', () => {
-  assert.equal(NEST_EDGE, 0.25);
-  assert.equal(inNestBand(rect, 150), true);
-  assert.equal(inNestBand(rect, 126), true);
-  assert.equal(inNestBand(rect, 174), true);
-  assert.equal(inNestBand(rect, 110), false);
-  assert.equal(inNestBand(rect, 125), false);
-  assert.equal(inNestBand(rect, 190), false);
-  assert.equal(inNestBand(rect, 250), false);
-});
+import { canNestOnto, childDropAction, mergeSessionOrder } from './session-drag.js';
 
 const taskOf = (map) => (sid) => map[sid] ?? null;
 
@@ -51,25 +38,20 @@ test('mergeSessionOrder: dedupes and tolerates a missing previous order', () => 
   assert.deepEqual(mergeSessionOrder(['a', null, 'b'], [undefined, 'c']), ['a', 'b', 'c']);
 });
 
-test('createNestDwell: a card only becomes the nest target after being held for the dwell time', () => {
-  assert.equal(NEST_DWELL_MS, 600);
-  const dwell = createNestDwell(600);
-  const a = { id: 'a' };
-  assert.equal(dwell.update(a, 1000), null);
-  assert.equal(dwell.update(a, 1599), null);
-  assert.equal(dwell.update(a, 1600), a);
-  assert.equal(dwell.update(a, 2000), a);
+test('childDropAction: a child dropped in its own spine is a plain reorder', () => {
+  assert.equal(childDropAction({ spineParent: 'p', currentParent: 'p', drawnAsChild: true }), null);
 });
 
-test('createNestDwell: moving to another card, or off every card, restarts the hold', () => {
-  const dwell = createNestDwell(600);
-  const a = { id: 'a' };
-  const b = { id: 'b' };
-  dwell.update(a, 0);
-  assert.equal(dwell.update(b, 700), null);
-  assert.equal(dwell.update(b, 1300), b);
-  assert.equal(dwell.update(null, 1400), null);
-  assert.equal(dwell.update(b, 1500), null);
-  dwell.reset();
-  assert.equal(dwell.update(b, 2000), null);
+test('childDropAction: dropped in another parent\'s spine, it moves to that parent', () => {
+  assert.equal(childDropAction({ spineParent: 'q', currentParent: 'p', drawnAsChild: true }), 'attach');
+});
+
+test('childDropAction: a child dropped among the top-level cards is promoted', () => {
+  assert.equal(childDropAction({ spineParent: null, currentParent: 'p', drawnAsChild: true }), 'promote');
+});
+
+test('childDropAction: a top-level card reordered among top-level cards keeps its parent link', () => {
+  assert.equal(childDropAction({ spineParent: null, currentParent: null, drawnAsChild: false }), null);
+  // An orphan (parent on another task) draws top-level; a reorder doesn't touch its link.
+  assert.equal(childDropAction({ spineParent: null, currentParent: 'p', drawnAsChild: false }), null);
 });

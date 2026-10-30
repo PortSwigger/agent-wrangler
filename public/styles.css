@@ -1836,12 +1836,23 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .session-card.dragging-hidden, .snoozed-row.dragging-hidden,
 .workflow-box.dragging-hidden, .child-group.dragging-hidden,
 .worker-row.dragging-hidden, .spine-full-row.dragging-hidden { display: none; }
-/* A dragged session hovering the middle of a card it can nest under: dropping
-   now makes it that card's child (app.js nestTargetAt). */
-.session-card.nest-target {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-  background: color-mix(in srgb, var(--blue) 8%, var(--card-bg));
+/* During a session drag, each card the session can nest under shows a Nest
+   zone on its right-hand side (app.js addNestZones), apart from the area that
+   reorders. Dropping on it nests; .nest-target marks the one under the cursor. */
+.nest-zone {
+  position: absolute; top: 4px; right: 4px; bottom: 4px; width: 36%;
+  z-index: 2;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px dashed var(--blue); border-radius: 6px;
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+  color: var(--blue); font-size: 12px; font-weight: 600;
+}
+.nest-zone svg { width: 14px; height: 14px; pointer-events: none; }
+.nest-zone span { pointer-events: none; }
+.session-card.nest-target { outline: 2px solid var(--blue); outline-offset: 2px; }
+.session-card.nest-target .nest-zone {
+  border-style: solid;
+  background: color-mix(in srgb, var(--blue) 24%, var(--surface));
 }
 .session-placeholder {
   border: 1px dashed var(--blue);

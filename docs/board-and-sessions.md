@@ -29,11 +29,12 @@ attachable terminal only after being resumed through the board.
 Tasks are board columns for related sessions. Drag cards between tasks; moving a parent also moves its
 nested descendants.
 
-To nest a card as a child of another card in the same task, drag it over the middle of that card and
-hold it there for a moment. The target lights up blue when a drop will nest. A drag without the pause
-reorders cards as usual. Drag a
-child row up or down within its parent to reorder the children, or drag it out among the top-level cards
-to promote it. Workflow workers can be reordered but stay with their run.
+While you drag a session, each card it can nest under shows a **Nest** zone on its right-hand side.
+Drop on the zone to make the session that card's child. Dropping anywhere else reorders cards as usual.
+
+Child rows can be dragged too: up or down within their parent to reorder them, into another parent's
+children or onto its Nest zone to move them there, or out among the top-level cards to promote them.
+Workflow workers can be reordered but stay with their run.
 
 Each task also has:
 
