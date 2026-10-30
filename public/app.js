@@ -3385,6 +3385,7 @@ let selectedNewSlot = null;
 // load / back-forward. Fulfilled in applyGraph; survives until the session shows.
 let pendingSelect = null;
 let pendingScheduledFocus = null;
+let scheduleNotificationId = 0;
 // Setter so split-out views (search.js) can arm a post-resume jump without
 // owning the binding (ES live bindings are read-only to importers).
 export function setPendingSelect(id) { selectionBeforeView = null; pendingSelect = id; }
@@ -6855,9 +6856,13 @@ function onScheduleFired(msg) {
     pendingScheduledFocus = { sessionId: msg.sessionId, expiresAt: Date.now() + 8000 };
     tryFulfillScheduledFocus();
   };
-  toast(`Scheduled "${msg.name}" started`, false, msg.sessionId ? {
-    label: 'View session', onClick: viewSession,
-  } : undefined);
+  notifications.show('core:schedules', {
+    id: String(++scheduleNotificationId),
+    title: `Scheduled "${msg.name}" started`,
+    actions: msg.sessionId ? [{ id: 'view', label: 'View session', primary: true }] : [],
+  }).then((answer) => {
+    if (answer === 'view' && msg.sessionId) viewSession();
+  });
   if (msg.focus === true && msg.sessionId) viewSession();
 }
 

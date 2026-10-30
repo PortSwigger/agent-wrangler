@@ -536,8 +536,8 @@ function scheduledFocusHarness(sessions = []) {
   const app = loadApp(
     ['function onScheduleFired(msg) {', 'function tryFulfillScheduledFocus() {', 'function tryFulfillPending() {'],
     ['onScheduleFired', 'tryFulfillScheduledFocus', 'state'],
-    "let selectionBeforeView = null; let pendingSelect = null; let pendingScheduledFocus = null; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; }, get pendingSelect() { return pendingSelect; }, set pendingSelect(v) { pendingSelect = v; } };",
-    { Date: { now: () => clock.now }, toast: (msg, isErr, opts) => notices.push({ msg, isErr, opts }), selectSession: (id) => selected.push(id), setView: () => {}, setMaximized: () => {},
+    "let selectionBeforeView = null; let pendingSelect = null; let pendingScheduledFocus = null; let scheduleNotificationId = 0; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; }, get pendingSelect() { return pendingSelect; }, set pendingSelect(v) { pendingSelect = v; } };",
+    { Date: { now: () => clock.now }, toast() {}, notifications: { show: (owner, opts) => new Promise((resolve) => notices.push({ owner, opts, answer: resolve })) }, selectSession: (id) => selected.push(id), setView: () => {}, setMaximized: () => {},
       landOnCard: (id, opts, select) => { landed.push(id); select(id); },
       setSessionView: (id, view) => { views[id] = view; }, disarmChatHandoff() {},
       isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; }, boardOpen },
@@ -546,14 +546,15 @@ function scheduledFocusHarness(sessions = []) {
   return { ...app, boardOpen, selected, landed, views, notices, diff, clock };
 }
 
-test('schedule toast navigates only when View session is clicked', () => {
+test('persistent schedule notification navigates only when View session is clicked', async () => {
   const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: true }]);
   app.onScheduleFired({ name: 'Morning work', sessionId: 'CARD1', focus: false });
-  assert.equal(app.notices[0].msg, 'Scheduled "Morning work" started');
-  assert.equal(app.notices[0].opts.label, 'View session');
+  assert.equal(app.notices[0].opts.title, 'Scheduled "Morning work" started');
+  assert.equal(app.notices[0].opts.actions[0].label, 'View session');
   assert.deepEqual(app.selected, []);
   assert.equal(app.state.view, 'search');
-  app.notices[0].opts.onClick();
+  app.notices[0].answer('view');
+  await Promise.resolve();
   assert.deepEqual(app.landed, ['CARD1']);
   assert.equal(app.views.CARD1, 'terminal');
 });
@@ -562,10 +563,11 @@ for (const [label, sessions] of [
   ['dispatch', []],
   ['existing-session', [{ sessionId: 'NEW1', managed: false }]],
 ]) {
-  test(`${label} View session waits for the live target without launching or resuming it`, () => {
+  test(`${label} View session waits for the live target without launching or resuming it`, async () => {
     const app = scheduledFocusHarness(sessions);
     app.onScheduleFired({ name: 'Morning work', sessionId: 'NEW1' });
-    app.notices[0].opts.onClick();
+    app.notices[0].answer('view');
+    await Promise.resolve();
     assert.deepEqual(app.selected, []);
     app.state.sessions = [{ sessionId: 'OTHER', managed: true }];
     app.tryFulfillScheduledFocus();
@@ -576,11 +578,12 @@ for (const [label, sessions] of [
   });
 }
 
-test('View session expires for a missing target and starts its wait at click time', () => {
+test('View session expires for a missing target and starts its wait at click time', async () => {
   const app = scheduledFocusHarness();
   app.onScheduleFired({ name: 'Missing', sessionId: 'GONE' });
   app.clock.now = 10000;
-  app.notices[0].opts.onClick();
+  app.notices[0].answer('view');
+  await Promise.resolve();
   assert.equal(app.state.pending, 'GONE');
   app.clock.now = 18000;
   app.state.sessions = [{ sessionId: 'GONE', managed: true }];
@@ -589,11 +592,20 @@ test('View session expires for a missing target and starts its wait at click tim
   assert.deepEqual(app.landed, []);
 });
 
-test('schedule toast has no navigation action without a target id', () => {
+test('schedule notification has no navigation action without a target id', () => {
   const app = scheduledFocusHarness();
   app.onScheduleFired({ name: 'Missing' });
-  assert.equal(app.notices[0].opts, undefined);
+  assert.deepEqual(app.notices[0].opts.actions, []);
   assert.deepEqual(app.selected, []);
+});
+
+test('closing a schedule notification leaves selection alone', async () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: true }]);
+  app.onScheduleFired({ id: 'schedule1', name: 'Morning work', sessionId: 'CARD1' });
+  app.notices[0].answer(null);
+  await Promise.resolve();
+  assert.deepEqual(app.selected, []);
+  assert.equal(app.state.pending, null);
 });
 
 test('focused schedule opens the live target terminal, unfocused schedule leaves selection alone', () => {

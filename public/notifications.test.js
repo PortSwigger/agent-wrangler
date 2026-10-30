@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createNotifications, MAX_ACTIONS } from './notifications.js';
 
@@ -72,4 +73,32 @@ test('at most MAX_ACTIONS buttons are drawn', () => {
   const n = createNotifications({ document: doc });
   n.show('ext', { id: 'a', title: 'T', actions: Array.from({ length: 5 }, (_, i) => ({ id: String(i), label: String(i) })) });
   assert.equal(buttons(cards(doc)[0]).length, MAX_ACTIONS);
+});
+
+test('scheduled runs stack independently and stay until viewed or closed', async () => {
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+  const start = source.indexOf('function onScheduleFired(msg) {');
+  const end = source.indexOf('\nfunction tryFulfillScheduledFocus()', start);
+  const doc = fakeDocument();
+  const notifications = createNotifications({ document: doc });
+  const selected = [];
+  const fire = new Function('notifications', 'tryFulfillScheduledFocus', `
+    let pendingScheduledFocus;
+    let scheduleNotificationId = 0;
+    ${source.slice(start, end)}
+    return onScheduleFired;
+  `)(notifications, () => selected.push('viewed'));
+  fire({ id: 'daily', name: 'Daily work', sessionId: 'CARD1' });
+  fire({ id: 'daily', name: 'Daily work', sessionId: 'CARD2' });
+  assert.equal(cards(doc).length, 2);
+  await Promise.resolve();
+  assert.equal(cards(doc).length, 2);
+  find(cards(doc)[0], 'notif-close').click();
+  await Promise.resolve();
+  assert.deepEqual(selected, []);
+  assert.equal(cards(doc).length, 1);
+  buttons(cards(doc)[0])[0].click();
+  await Promise.resolve();
+  assert.deepEqual(selected, ['viewed']);
+  assert.equal(cards(doc).length, 0);
 });
