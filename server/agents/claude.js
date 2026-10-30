@@ -10,7 +10,7 @@ import { launchAddDirArgs, launchEnvGuard, launchEnvPrefix } from '../launch-con
 import { analyze, listResumable, activityInRange, findTranscript, subagentDetail } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
-import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
+import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl, prModelUrl } from '../mcp/client-config.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
 import { newestClaudeId, newestClaudeName, priceCatalogVersion, snapshotClaudeFamilies } from '../price-catalog.js';
 
@@ -30,14 +30,19 @@ export const PR_HOOK_PATH = path.join(INSTALL_ROOT, 'scripts', 'pr-attach-hook.m
 // The .mjs imports `../server/pr-hook.js` at runtime; the devcontainer runtime copies
 // this file to the sibling container location so that relative import resolves.
 export const PR_HOOK_DEP_PATH = path.join(INSTALL_ROOT, 'server', 'pr-hook.js');
+// The hook starts the model footer script, which imports `../server/pr-footer.js`;
+// both are copied into a devcontainer the same way.
+export const PR_FOOTER_PATH = path.join(INSTALL_ROOT, 'scripts', 'pr-model-footer.mjs');
+export const PR_FOOTER_DEP_PATH = path.join(INSTALL_ROOT, 'server', 'pr-footer.js');
 
 // Inline --settings value for every Claude launch. Claude merges --settings with
 // the user's own settings.json (additive) and an explicit --settings key wins over
 // the file, so this forces behaviour regardless of the user's global config:
 //   - tui: 'fullscreen' pins the alternate-screen renderer on (CLI 2.1.89+) so a
 //     spawned pane never falls back to the inline renderer, whatever the user set.
-//   - the PR-attach hook on Bash; a user's own hooks still run alongside it. Passive:
-//     the hook exits 0 with no stdout, never blocking a tool.
+//   - the PR-attach hook on Bash (which also starts the PR model footer); a user's
+//     own hooks still run alongside it. Passive: the hook exits 0 with no stdout,
+//     never blocking a tool.
 //   - crossSessionInbound: 'accept' lets the board's socket messages (mail
 //     notifications) through. These sessions bypass permissions, so without it
 //     Claude holds every inbound message for approval, then drops it. Set here,
@@ -150,7 +155,7 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   // Extension env first, core's after: in a shell prefix the LAST assignment of
   // a name wins, so an extension can add variables but never override ours.
   let inner = launchEnvPrefix(launchContext, shellQuote)
-    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} `;
+    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `;
   if (spawnedBy) inner += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   inner += `claude ${full.map(shellQuote).join(' ')}`;
   // `--` terminates option parsing: the trailing flags (--mcp-config,
@@ -220,6 +225,7 @@ function claudeModels() {
 
 export const claude = {
   id: 'claude',
+  modelId: claudeModelId,
   history: claudeHistory,
   autoEffortResolver(paths) {
     const sources = readClaudeSources(paths);

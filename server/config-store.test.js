@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, defaultRuntime, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -97,6 +97,13 @@ test('childFullViewByDefault defaults to off (compact); only an explicit true en
 // Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
 // Default OFF (unlike most of these): archive review spends real money per
 // archive and grows a task's memory.md unbounded, so it must be an explicit opt-in.
+test('prModelFooterEnabled defaults to on; only an explicit false disables', () => {
+  assert.equal(prModelFooterEnabled({}), true);
+  assert.equal(prModelFooterEnabled({ prModelFooter: true }), true);
+  assert.equal(prModelFooterEnabled({ prModelFooter: false }), false);
+  assert.equal(prModelFooterEnabled({ autoAttachPr: false }), true, 'independent of autoAttachPr');
+});
+
 test('mailWakesDormant defaults to off; only an explicit true enables', () => {
   assert.equal(mailWakesDormant({}), false);
   assert.equal(mailWakesDormant({ mailWakesDormant: false }), false);
