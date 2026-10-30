@@ -90,7 +90,7 @@ work, reviewing changes, managing tasks, and automating pull requests.
 | --- | --- |
 | [Board and sessions](docs/board-and-sessions.md) | Dispatch, tasks, TODOs, task memory, worktrees, devcontainers, nesting, snoozing, archiving, search, settings, and shortcuts |
 | [Agent capabilities](docs/agent-capabilities.md) | The skills you can ask an agent to use, including adversarial PR review, advisor consultations, session spawning, mail, links, and activity summaries |
-| [Reviews and pull requests](docs/reviews-and-prs.md) | Peer-review sessions, adversarial PR reviews, the diff reviewer, PR status, auto-fix, and auto-merge |
+| [Reviews and pull requests](docs/reviews-and-prs.md) | Peer-review sessions, adversarial PR reviews, the diff reviewer, PR status, the model footer, auto-fix, and auto-merge |
 | [Agent tools](docs/agent-tools.md) | Reference for the MCP tools available to Agent Wrangler sessions |
 | [Extensions](docs/extensions.md) | The core extensions, installing more, and building one with server, browser, tool, setting, and skill contributions |
 | [Install signals](docs/install-signals.md) | For packagers: the environment variables that decide restart and update behaviour, app identity, and why sessions never inherit them |

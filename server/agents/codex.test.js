@@ -4,6 +4,7 @@ import { codex } from './codex.js';
 import { fileURLToPath } from 'node:url';
 import { adapterForContainerProcess } from './index.js';
 import { shellQuote } from './claude.js';
+import { postToolHookOverrides } from '../codex-hook-config.js';
 
 // What the task-memory extension's session.launchContext hook answers for Codex
 // (the resolved real path — Codex 0.149+ rejects a symlinked writable root).
@@ -206,6 +207,16 @@ test('codexPolicy approve-for-me emits the flag without -s/-a', () => {
   assert.match(cmd, /'--approve-for-me'/);
   assert.match(cmd, /'sandbox_workspace_write\.network_access=true'/);
   assert.doesNotMatch(cmd, /--sandbox|--ask-for-approval/);
+});
+
+test('launch, resume and fork all pass the pre-trusted PR model footer hook and its lookup url', () => {
+  const hook = fileURLToPath(new URL('../../scripts/codex-pr-footer-hook.mjs', import.meta.url));
+  const [hookOverride, trustOverride] = postToolHookOverrides(`${shellQuote(process.execPath)} ${shellQuote(hook)}`);
+  for (const cmd of [codex.buildLaunch({ sessionId: 's' }), codex.buildResume({ sessionId: 's', resumeId: 'r' }), codex.buildFork({ sessionId: 's', sourceId: 'r' })]) {
+    assert.ok(cmd.includes(`'-c' ${shellQuote(hookOverride)} '-c' ${shellQuote(trustOverride)}`), cmd);
+    assert.match(cmd, /AW_PR_MODEL_URL='http:\/\/127\.0\.0\.1:\d+\/pr-model'/);
+    assert.doesNotMatch(cmd, /pr-attach/);
+  }
 });
 
 test('launch, resume and fork all pass the notify hook override', () => {

@@ -34,6 +34,17 @@ export function supportsRemoteControl(id) {
   return allAgents().find((a) => a.id === id)?.supportsRemoteControl === true;
 }
 
+// The exact model id a session runs now: its transcript's live model, else its
+// launch model as a full id (the adapter's `modelId` resolves an alias, opus →
+// claude-opus-5-5; without one the launch value already is an id). Null when
+// neither is known.
+export function sessionModelId(agentId, currentModel, launchModel) {
+  if (currentModel) return currentModel;
+  if (!launchModel) return null;
+  const adapter = allAgents().find((a) => a.id === (agentId ?? 'claude'));
+  return (adapter?.modelId ? adapter.modelId(launchModel) : launchModel) || null;
+}
+
 // Shared by modelPillFor and maxContextWindowFor: resolve the model ENTRY a
 // transcript's live model (or, absent that, the launch model) maps to. Prefers
 // the launch entry when its transcriptPrefixes already match the transcript

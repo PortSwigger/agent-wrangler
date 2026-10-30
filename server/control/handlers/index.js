@@ -20,6 +20,7 @@ import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { trustClaudeLaunchCwdHandler } from './trust-claude-launch-cwd.js';
 import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { mailWakesDormantHandler } from './mail-wakes-dormant.js';
+import { prModelFooterHandler } from './pr-model-footer.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
@@ -95,6 +96,7 @@ export const CONTROL_HANDLERS = [
   trustAgyLaunchCwdHandler,
   archiveReviewEnabledHandler,
   mailWakesDormantHandler,
+  prModelFooterHandler,
   childFullViewHandler,
   childFullViewDefaultHandler,
   chatViewDefaultHandler,

@@ -39,10 +39,11 @@ import { discoverClaudeSessions, setTmuxBin, sendText, sendKeys } from './tmux-s
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, defaultRuntime, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel, providerMetadata, registeredAgents } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
+import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
 import { bindHost } from './runtime.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
@@ -886,6 +887,13 @@ async function prAttachHandler(req, res) {
   }
 }
 
+const prModelHandler = createPrModelHandler({
+  graph: () => lastGraph,
+  entryFor: (id) => sessionManager.entryFor(id),
+  enabled: () => prModelFooterEnabled(),
+  logError,
+});
+
 // GET /file?path=… — read a markdown file for the click-to-preview modal.
 // Localhost posture like the static routes; the response carries NO CORS header
 // so a cross-origin page can't read it (load-bearing for the .md-anywhere read
@@ -984,7 +992,7 @@ const mcpRequestHandler = createMcpRequestHandler({
 // /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
 // extensions alone — so a disabled extension's client is a 404, never served.
 const server = createHttpServer({
-  port: PORT, mcpRequestHandler, prAttachHandler,
+  port: PORT, mcpRequestHandler, prAttachHandler, prModelHandler,
   agyHookHandler: async (req, res) => {
     try {
       let body = '';
@@ -1109,6 +1117,7 @@ async function rebuildOnce() {
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
   graph.mailWakesDormant = mailWakesDormant();
+  graph.prModelFooter = prModelFooterEnabled();
   graph.chatViewDefault = chatViewDefault();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();

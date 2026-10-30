@@ -31,6 +31,7 @@ const server = createHttpServer({
   port: 0,
   mcpRequestHandler: (req, res) => res.end(),
   prAttachHandler: (req, res) => res.end(),
+  prModelHandler: (req, res) => res.end('pr-model'),
   fileHandler: (req, res) => res.end(),
   extensionAssets: (id) => dirs[id] || null,
   extensionThemes: () => themeDirs,
@@ -52,6 +53,13 @@ function rawGet(rawPath) {
     sock.on('error', reject);
   });
 }
+
+test('POST /pr-model reaches its handler; a cross-origin POST is refused', async () => {
+  const ok = await fetch(`${base}/pr-model`, { method: 'POST' });
+  assert.equal(await ok.text(), 'pr-model');
+  const cross = await fetch(`${base}/pr-model`, { method: 'POST', headers: { Origin: 'https://example.com' } });
+  assert.equal(cross.status, 403);
+});
 
 test('serves an enabled extension client module from its public/ dir, no-store', async () => {
   const res = await fetch(`${base}/ext/checklist/index.js`);

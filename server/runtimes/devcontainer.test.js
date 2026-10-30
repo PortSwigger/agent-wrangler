@@ -67,7 +67,7 @@ test('buildPaneScript: substitutes each manifest src → its container dest; ski
   assert.match(s, /docker exec -u root "\$CID" chmod \+x '\/tmp\/aw-abc\/scripts\/pr-attach-hook\.mjs'/);
 });
 
-test('launchInputs: base = skills + PR-hook (2 files) + each extension-granted dir; workflow adds issue-to-pr', () => {
+test('launchInputs: base = skills + PR-hook (4 files) + each extension-granted dir; workflow adds issue-to-pr', () => {
   // Extension-shipped skill dirs ride along too (checklist, todos, adversarial-review,
   // task-memory); they are covered by their own asserts, so only the core inputs are pinned here.
   const core = (inputs) => inputs.filter((i) => !i.dest.includes('/ext-skills/'));
@@ -76,15 +76,20 @@ test('launchInputs: base = skills + PR-hook (2 files) + each extension-granted d
   assert.deepEqual(dests, [
     '/tmp/aw-abc/skills', '/tmp/aw-abc/launch-dirs/0', '/tmp/aw-abc/launch-dirs/1',
     '/tmp/aw-abc/scripts/pr-attach-hook.mjs', '/tmp/aw-abc/server/pr-hook.js',
+    '/tmp/aw-abc/scripts/pr-model-footer.mjs', '/tmp/aw-abc/server/pr-footer.js',
   ]);
   assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/checklist/checklist'), 'the checklist extension\'s skill dir is copied in');
   assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/todos/archive-to-todo'), 'the todos extension\'s skill dir is copied in');
   assert.ok(base.some((i) => i.dest === '/tmp/aw-abc/ext-skills/adversarial-review/adversarial-pr-review'), 'the adversarial-review extension\'s skill dir is copied in');
   assert.deepEqual(core(launchInputs('abc')).map((i) => i.dest), [
     '/tmp/aw-abc/skills', '/tmp/aw-abc/scripts/pr-attach-hook.mjs', '/tmp/aw-abc/server/pr-hook.js',
+    '/tmp/aw-abc/scripts/pr-model-footer.mjs', '/tmp/aw-abc/server/pr-footer.js',
   ]); // no grant, no extra copy
   // the parser dep is copied but its path is NOT substituted into the command
   assert.equal(base.find((i) => i.dest.endsWith('/server/pr-hook.js')).substitute, false);
+  // so are the footer script the hook starts beside itself and its shared module
+  assert.equal(base.find((i) => i.dest.endsWith('/scripts/pr-model-footer.mjs')).substitute, false);
+  assert.equal(base.find((i) => i.dest.endsWith('/server/pr-footer.js')).substitute, false);
   assert.equal(base.find((i) => i.dest.endsWith('/pr-attach-hook.mjs')).chmodX, true);
   const wf = launchInputs('abc', { workflow: true });
   assert.ok(wf.some((i) => i.dest === '/tmp/aw-abc/issue-to-pr'), 'workflow adds issue-to-pr');

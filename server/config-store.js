@@ -60,6 +60,15 @@ export function autoAttachPrEnabled() {
   return readConfig().autoAttachPr !== false;
 }
 
+// Whether a PR an agent creates with `gh pr create` gets a `Model: <id>` footer
+// naming the session's model (server/pr-footer.js), so PRs can be searched by
+// model. Independent of autoAttachPr: the footer never attaches anything. Default
+// on; config.json `prModelFooter: false` turns it off. Takes cfg so tests never
+// write the shared config.json.
+export function prModelFooterEnabled(cfg = readConfig()) {
+  return cfg.prModelFooter !== false;
+}
+
 // Whether a session's sub-agents zone (board card + panel) starts expanded or
 // collapsed for cards the user hasn't explicitly toggled either way. Default off
 // (collapsed) to preserve today's behaviour; toggled from the board's settings

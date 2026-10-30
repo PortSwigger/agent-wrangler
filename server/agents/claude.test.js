@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getExtensions, _resetExtensionsForTests } from '../extensions/index.js';
-import { claude, derivedModels, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
+import { claude, derivedModels, PR_HOOK_PATH, PR_HOOK_DEP_PATH, PR_FOOTER_PATH, PR_FOOTER_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
 import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, maxContextWindowFor, modelsWithDefault } from './index.js';
 
 test('claude adapter identity', () => {
@@ -192,6 +192,7 @@ test('claude launch injects the PR-attach hook on Bash + the attach-url env', ()
   assert.match(cmd, /PostToolUse/);
   assert.match(cmd, /pr-attach-hook\.mjs/);
   assert.match(cmd, /AW_PR_ATTACH_URL='http:\/\/127\.0\.0\.1:\d+\/pr-attach'/);
+  assert.match(cmd, /AW_PR_MODEL_URL='http:\/\/127\.0\.0\.1:\d+\/pr-model'/);
 });
 
 test('claude launch accepts inbound cross-session messages for this session only', () => {
@@ -313,6 +314,8 @@ test('exported launch-input paths resolve to real files/dirs', () => {
   assert.ok(fs.existsSync(PR_HOOK_DEP_PATH), 'server/pr-hook.js missing');
   assert.ok(PR_HOOK_PATH.endsWith('/scripts/pr-attach-hook.mjs'));
   assert.ok(PR_HOOK_DEP_PATH.endsWith('/server/pr-hook.js'));
+  assert.ok(fs.existsSync(PR_FOOTER_PATH), 'pr-model-footer.mjs missing');
+  assert.ok(fs.existsSync(PR_FOOTER_DEP_PATH), 'server/pr-footer.js missing');
   assert.ok(fs.existsSync(ISSUE_TO_PR_SKILL_DIR), 'skills/issue-to-pr missing');
 });
 

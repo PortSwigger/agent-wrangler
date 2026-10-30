@@ -113,6 +113,34 @@ The board can detect a branch's pull request automatically, or an agent can atta
 With authenticated `gh`, card indicators track required checks, merge conflicts, PR state, and new
 unresolved review threads.
 
+## Model footer on new pull requests
+
+When a Claude or Codex session creates a pull request with `gh pr create`, the wrangler adds one last
+line to its description naming the exact model the session was running, with no effort level:
+
+```text
+Model: claude-opus-5-5
+```
+
+The model is the session's live model, read from its transcript, or its launch model before the
+first reply. A description that already has a `Model:` line is left alone. Search pull requests by
+model with:
+
+```sh
+gh search prs --owner acme '"Model: claude-opus-5-5" in:body'
+```
+
+The footer is on by default; turn it off with **Tag new PRs with the session's model** in
+**Settings → Automation**. It is separate from attaching pull requests: it never adds a PR to a
+card, and works with automatic attaching off. It runs after the `gh pr create` call has returned, so
+it never delays or fails it, and it uses the session's own `gh` login, including inside a
+devcontainer.
+
+Codex runs it as a hook the wrangler passes at launch, resume and fork. Codex asks you to review a
+new hook before running it; the wrangler marks this one trusted in the same launch flags, so no
+prompt appears and nothing is written to `~/.codex/config.toml`. The hook runs outside Codex's
+sandbox, so it works whichever sandbox the session runs under.
+
 ## Auto-fix PR checks
 
 **Auto-fix PR checks** defaults on for new sessions and can be changed in **Settings → Automation** or
