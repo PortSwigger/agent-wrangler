@@ -46,6 +46,72 @@ function load({ storage = memStorage(), sent = [], renders = { n: 0 } } = {}) {
 
 beforeEach(() => reset());
 
+function inlineEditor({ editing = false } = {}) {
+  const env = load();
+  const { slots, document, baseApi } = env;
+  const host = document.make();
+  const graph = { todos: editing ? { t1: [{ id: 'a', text: 'Original' }] } : {} };
+  const hosts = [{ host, session: { taskId: 't1', adhocId: 'adhoc', container: host } }];
+  slots.syncHosts('task.body', hosts, {}, graph);
+  const el = host.children[0];
+  const input = document.make();
+  input.tagName = 'INPUT';
+  input.focus = () => { document.activeElement = input; };
+  input.select = () => {};
+  input.blur = () => {
+    if (document.activeElement !== input) return;
+    document.activeElement = null;
+    for (const fn of input.listeners.blur || []) fn();
+  };
+  const anchor = document.make();
+  anchor.style = {};
+  anchor.textContent = 'Original';
+  anchor.querySelector = () => input;
+  const row = { dataset: { todoid: 'a' }, querySelector: () => anchor };
+  anchor.closest = (selector) => selector === '.todo-row' ? row : selector === '.todo-text' ? anchor : null;
+  el.querySelector = () => anchor;
+  el.contains = (node) => node === input;
+  baseApi.requestBoardRender = () => {
+    env.renders.n += 1;
+    slots.syncHosts('task.body', hosts, {}, graph);
+  };
+  if (editing) {
+    for (const fn of el.listeners.click) fn({ target: anchor, stopPropagation() {} });
+  } else {
+    slots.taskMenuItems({ id: 't1' }, {}, graph)[0].run();
+  }
+  return { ...env, el, graph, input };
+}
+
+for (const editing of [false, true]) {
+  for (const key of ['Enter', 'Escape']) {
+    test(`${key} finishes inline TODO ${editing ? 'editing' : 'creation'} immediately`, () => {
+      const { el, graph, input, sent } = inlineEditor({ editing });
+      input.value = '  Updated TODO  ';
+      let prevented = false;
+      let stopped = false;
+      for (const fn of input.listeners.keydown) fn({
+        key,
+        preventDefault() { prevented = true; },
+        stopPropagation() { stopped = true; },
+      });
+      assert.equal(prevented, true);
+      assert.equal(stopped, true);
+      if (key === 'Enter') {
+        assert.deepEqual(sent, [{ type: editing ? 'todo-edit' : 'todo-add', taskId: 't1', ...(editing ? { todoId: 'a' } : {}), text: 'Updated TODO' }]);
+        assert.equal(graph.todos.t1[0].text, 'Updated TODO');
+        assert.match(el.innerHTML, /Updated TODO/);
+      } else {
+        assert.deepEqual(sent, []);
+        assert.deepEqual(graph.todos, editing ? { t1: [{ id: 'a', text: 'Original' }] } : {});
+      }
+      assert.notEqual(document.activeElement, input, 'a finished editor must no longer block board rendering');
+      input.blur();
+      assert.equal(sent.length, key === 'Enter' ? 1 : 0, 'blur must not save twice or save a cancelled edit');
+    });
+  }
+}
+
 test('registers a task.body zone with a weight and a task.action New TODO item', () => {
   const { slots } = load();
   assert.deepEqual(slots.contributions('task.body').map((c) => `${c.extId}:${c.id}`), ['todos:todos']);
