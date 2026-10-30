@@ -6860,7 +6860,7 @@ function onScheduleFired(msg) {
     viewSession();
     return;
   }
-  notifications.show('core:schedules', {
+  notifications.show('core_schedules', {
     id: String(++scheduleNotificationId),
     title: `Scheduled "${msg.name}" started`,
     actions: msg.sessionId ? [{ id: 'view', label: 'View session', primary: true }] : [],

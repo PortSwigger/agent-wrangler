@@ -91,6 +91,7 @@ test('scheduled runs stack independently and stay until viewed or closed', async
   fire({ id: 'daily', name: 'Daily work', sessionId: 'CARD1' });
   fire({ id: 'daily', name: 'Daily work', sessionId: 'CARD2' });
   assert.equal(cards(doc).length, 2);
+  notifications.clear('core');
   await Promise.resolve();
   assert.equal(cards(doc).length, 2);
   find(cards(doc)[0], 'notif-close').click();
