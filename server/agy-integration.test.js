@@ -15,6 +15,8 @@ import { readAgySummaries } from './agents/agy-summaries.js';
 import { agyHistory, readAgySteps } from './agents/agy-history.js';
 import { manageAgyIntegration } from './config-store.js';
 import { agy } from './agents/agy.js';
+import { acceptAgyNative, agyNativeReady, AGY_STARTUP_PROBE } from './agy-startup.js';
+import { INSTALL_ROOT } from './install-root.js';
 
 const idle = '────────────────────────────\n> \n────────────────────────────\n? for shortcuts      auto   Gemini 3.8 Flash · medium';
 test('Manage agy integration defaults off and refuses dispatch before side effects', async () => {
@@ -42,24 +44,42 @@ test('dispatch, resume and interactive fork retain grants, auto policy, launch s
   const sm = new SessionManager(), commands = [], phases = [];
   sm._agyReady = () => true; sm._save = () => {}; sm.refreshAlive = async () => {}; sm.killForSession = async () => {}; sm._fireExtHooks = async () => {};
   sm._newSession = async (_tmux, _dir, cmd) => { commands.push(cmd); return '%1'; };
-  let card;
-  sm._prepareAgyPane = async ({ fork }) => {
-    phases.push(Boolean(fork));
-    const [id] = [...sm.map].find(([, e]) => e.tmux === [...sm.map.values()].at(-1).tmux);
-    const cardId = fork ? [...sm.map.keys()].at(-1) : card || id;
-    await acceptAgyHook({ cardId, parentPid: 42, conversationId: fork ? 'fixture-child' : root, event: 'PreInvocation', stepIdx: fork ? 1 : 0 }, { map: sm.map, rootPid: async () => 42, summaries: async () => [{ conversation_id: fork ? 'fixture-child' : root, parent_conversation_id: '', nesting_depth: 0 }], save: () => {} });
-    return { ready: true };
+  const sent = [];
+  sm._prepareAgyPane = async () => ({ ready: true });
+  sm._agyPaneIO = { send: async (_target, text) => sent.push(text), confirm: async () => true };
+  const recover = async (cardId, conversationId) => {
+    const entry = sm.entryFor(cardId);
+    await acceptAgyHook({ cardId, launchId: entry.agyStartup.launchId, parentPid: 42, conversationId, event: 'PreInvocation', stepIdx: 1 }, { map: sm.map, rootPid: async () => 42, summaries: async () => [{ conversation_id: conversationId, parent_conversation_id: '', nesting_depth: 0 }], save: () => {} });
+    assert.equal(await acceptAgyNative({ cardId, launchId: entry.agyStartup.launchId, pid: process.pid, connectionId: 'native-fixture', state: 'ready' }, { map: sm.map, rootPid: async () => 42, inspect: async () => ({ parentPid: 42, command: `${process.execPath} ${INSTALL_ROOT}/server/agy-mcp-entry.js` }) }), true);
+    await Promise.all([sm._finishProviderLaunch(agy, cardId), sm._finishProviderLaunch(agy, cardId)]);
+    await sm._finishProviderLaunch(agy, cardId);
   };
   try {
-    const launch = await sm.dispatch({ agent: 'agy', cwd, intent: 'hello', model: 'gemini-3.8-flash', effort: 'medium', addDirs: [cwd] }); card = launch.sessionId;
-    assert.equal(sm.entryFor(card).liveSessionId, root);
-    await sm.resume(card, cwd);
-    const child = await sm.fork({ sourceId: root, parentId: card, parentEntry: sm.entryFor(card), cwd });
+    const launch = await sm.dispatch({ agent: 'agy', cwd, intent: 'hello', model: 'gemini-3.8-flash', effort: 'medium', addDirs: [cwd] });
+    const card = launch.sessionId;
+    assert.deepEqual(sent, [AGY_STARTUP_PROBE]);
+    assert.equal(sm.entryFor(card).agyPendingIntent.state, 'pending');
+    await recover(card, root);
+    assert.deepEqual(sent, [AGY_STARTUP_PROBE, 'hello']);
+    const oldLaunch = sm.entryFor(card).agyStartup.launchId;
+    await sm.resume(card, cwd, { intent: 'wake task', queueIntent: true });
+    assert.equal(sm.entryFor(card).agyPendingIntent.text, 'wake task');
+    assert.equal(sent.filter((t) => t === 'wake task').length, 0);
+    assert.notEqual(sm.entryFor(card).agyStartup.launchId, oldLaunch);
+    assert.equal(agyNativeReady(sm.entryFor(card)), false);
+    await recover(card, root);
+    assert.equal(sent.filter((t) => t === 'hello').length, 1);
+    assert.equal(sent.filter((t) => t === 'wake task').length, 1);
+    const child = await sm.fork({ sourceId: root, parentId: card, parentEntry: sm.entryFor(card), cwd, prompt: 'child task' });
+    assert.equal(sent.filter((t) => t === '/fork').length, 1);
+    await sm._finishProviderLaunch(agy, child.sessionId);
+    await recover(child.sessionId, 'fixture-child');
+    assert.equal(sent.filter((t) => t === 'child task').length, 1);
     assert.equal(sm.entryFor(child.sessionId).liveSessionId, 'fixture-child');
     assert.equal(sm.entryFor(card).liveSessionId, root);
     assert.equal(sm.entryFor(child.sessionId).agyFork.forkStep, 0);
-    assert.deepEqual(phases, [false, false, true]);
-    for (const cmd of commands) { assert.match(cmd, /'--mode' 'auto'/); assert.match(cmd, /'--model' 'gemini-3.8-flash'/); assert.match(cmd, /'--effort' 'medium'/); assert.ok(cmd.includes(cwd)); }
+    assert.equal(sm.entryFor(child.sessionId).effort, 'medium');
+    for (const cmd of commands) { assert.match(cmd, /'--mode' 'auto'/); assert.match(cmd, /'--model' 'gemini-3.8-flash'/); assert.match(cmd, /'--effort' 'medium'/); assert.ok(cmd.includes(cwd)); assert.doesNotMatch(cmd, /hello|child task/); }
     fs.writeFileSync(path.join(logs, 'transcript_full.jsonl'), line(0, 'parent rewound after fork') + '\n');
     const file = await agyHistory.findFile('fixture-child');
     assert.match(fs.readFileSync(file, 'utf8'), /parent before fork/);
@@ -70,7 +90,7 @@ test('mail preserves drafts and permission screens; busy clear input gets one no
   let pane = idle, sent = 0;
   const entry = { agent: 'agy', createdAt: 10, relaunchedAt: 20 };
   const deferral = createPaneDeferral({ agentFor: () => 'agy', tmuxFor: () => 'ag_fixture', socketFor: () => '', capture: async () => pane, sendText: async () => { sent++; } });
-  const deps = { sessionManager: { entryFor: () => entry }, tmuxFor: () => 'ag_fixture', socketFor: () => '', paneDeferral: deferral, mcpSeenAt: () => 30 };
+  const deps = { sessionManager: { entryFor: () => entry }, tmuxFor: () => 'ag_fixture', socketFor: () => '', paneDeferral: deferral, mcpSeenAt: () => 30, agyNativeReady: () => true };
   pane = idle.replace('> ', '> a human draft');
   assert.equal((await deliverMailNotification('card', 'mail', deps)).mode, 'deferred');
   pane = idle + '\nAllow calling this tool?';
@@ -78,7 +98,7 @@ test('mail preserves drafts and permission screens; busy clear input gets one no
   pane = idle.replace('? for shortcuts', 'esc to cancel');
   assert.equal((await deliverMailNotification('card', 'mail', deps)).mode, 'live');
   assert.equal(sent, 1);
-  assert.equal((await deliverMailNotification('card', 'mail', { ...deps, mcpSeenAt: () => 5 })).mode, 'deferred');
+  assert.equal((await deliverMailNotification('card', 'mail', { ...deps, mcpSeenAt: () => Date.now(), agyNativeReady: () => false })).mode, 'deferred');
   assert.equal(sent, 1);
   const result = await deliverMessage('card', 'hello', { ...deps, waitForCompactionEnd: async () => 'none', waitForComposerReady: async () => false, sendText: async () => assert.fail('draft overwritten') });
   assert.equal(result.outcome, 'rejected');

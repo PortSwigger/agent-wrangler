@@ -22,11 +22,10 @@ function command(options, conversation) {
   const args = [...agyModeArgs(), '--model', model];
   if (effort) args.push('--effort', effort);
   if (conversation) args.push('--conversation', conversation);
-  else if (intent) args.push('-i', intent);
   args.push(...launchAddDirArgs(launchContext));
   for (const dir of addDirs) args.push('--add-dir', dir);
   const clean = [...Object.keys(process.env).filter((k) => k.startsWith('ANTIGRAVITY_')), 'AGY_ADC_AUTH', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'AGY_ACCOUNT'];
-  const env = `${launchEnvPrefix({ ...launchContext, env: Object.fromEntries(Object.entries(launchContext?.env || {}).filter(([k]) => !k.startsWith('ANTIGRAVITY_') && !['AGY_ADC_AUTH', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'AGY_ACCOUNT'].includes(k))) }, shellQuote)}AW_SESSION_ID=${shellQuote(sessionId)} AW_CWD=${shellQuote(cwd)} AW_INSTALL_ROOT=${shellQuote(INSTALL_ROOT)} AW_NODE=${shellQuote(process.execPath)} AW_PORT=${shellQuote(String(serverPort()))} AW_AGY_WORKTREE=${shellQuote(JSON.stringify(options.worktree || null))} AW_AGY_DISABLED_SKILLS=${shellQuote(JSON.stringify(options.disabledSkills || []))} `
+  const env = `${launchEnvPrefix({ ...launchContext, env: Object.fromEntries(Object.entries(launchContext?.env || {}).filter(([k]) => !k.startsWith('ANTIGRAVITY_') && !['AGY_ADC_AUTH', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'AGY_ACCOUNT'].includes(k))) }, shellQuote)}AW_SESSION_ID=${shellQuote(sessionId)} AW_AGY_LAUNCH_ID=${shellQuote(options.launchId || '')} AW_CWD=${shellQuote(cwd)} AW_INSTALL_ROOT=${shellQuote(INSTALL_ROOT)} AW_NODE=${shellQuote(process.execPath)} AW_PORT=${shellQuote(String(serverPort()))} AW_AGY_WORKTREE=${shellQuote(JSON.stringify(options.worktree || null))} AW_AGY_DISABLED_SKILLS=${shellQuote(JSON.stringify(options.disabledSkills || []))} `
     + (spawnedBy ? `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} ` : '');
   const cleanup = String.raw`for aw_agy_key in $(env | sed -n 's/^\(ANTIGRAVITY_[A-Z0-9_]*\)=.*/\1/p'); do unset "$aw_agy_key"; done;`;
   return `${launchEnvGuard(launchContext, shellQuote)}( unset ${clean.join(' ')}; ${cleanup} ${env}exec agy ${args.map(shellQuote).join(' ')} )`;

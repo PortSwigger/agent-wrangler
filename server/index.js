@@ -2,6 +2,7 @@
 import { manageAgyIntegration, trustAgyLaunchCwd } from './config-store.js';
 import { syncAgyPlugin, agyIntegrationState } from './agy-plugin.js';
 import { acceptAgyHook } from './agy-hooks.js';
+import { acceptAgyNative, agyNativeReady } from './agy-startup.js';
 import { refreshAgyModels } from './agents/agy-catalog.js';
 import { activeTools } from './mcp/tools/index.js';
 // First, before any other module runs: captures the install-scoped signals
@@ -258,6 +259,10 @@ const paneDeferral = createPaneDeferral({
   socketFor,
   agentFor: (id) => sessionManager.entryFor(id)?.agent ?? 'claude',
   statusFor: (id) => lastGraph?.sessions?.find((s) => s.sessionId === id)?.status ?? null,
+  readinessFor: (id) => {
+    const entry = sessionManager.entryFor(id);
+    return entry?.agent !== 'agy' || (agyNativeReady(entry) && !entry.agyLaunchWarning && !entry.agyForkPending);
+  },
   sendText,
 });
 
@@ -984,15 +989,25 @@ const server = createHttpServer({
     try {
       let body = '';
       for await (const chunk of req) { body += chunk; if (body.length > 65536) { res.writeHead(413).end(); return; } }
+      const payload = JSON.parse(body);
+      const rootPid = async (entry) => (await discoverClaudeSessions([entry.socket || ''])).find((d) => d.tmuxName === entry.tmux && (d.socket || '') === (entry.socket || ''))?.claudePid;
+      if (payload.event === 'NativeMcp') {
+        const accepted = await acceptAgyNative(payload, { map: sessionManager.map, rootPid });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ accepted }));
+        if (accepted) sessionManager.advanceProviderStartups();
+        return;
+      }
       let identified = false;
-      const accepted = await acceptAgyHook(JSON.parse(body), {
+      const accepted = await acceptAgyHook(payload, {
         onIdentity: () => { identified = true; },
         map: sessionManager.map,
-        rootPid: async (entry) => (await discoverClaudeSessions([entry.socket || ''])).find((d) => d.tmuxName === entry.tmux && (d.socket || '') === (entry.socket || ''))?.claudePid,
+        rootPid,
         save: () => sessionManager._save(),
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ accepted, identified, tools: accepted ? activeTools().map((t) => t.name) : [] }));
+      const entry = sessionManager.entryFor(payload.cardId);
+      res.end(JSON.stringify({ accepted, identified, startupPending: !agyNativeReady(entry) || !entry?.liveSessionId || Boolean(entry.agyForkPending || entry.agyLaunchWarning), tools: identified ? activeTools().map((t) => t.name) : [] }));
       if (accepted) rebuild().catch(() => {});
     } catch { res.writeHead(400).end(); }
   }, fileHandler, extFileHandler,
@@ -1072,6 +1087,7 @@ const graphFrame = createGraphFrameGate();
 // must trail rather than skip or race.
 async function rebuildOnce() {
   await sessionManager.refreshAlive();
+  sessionManager.advanceProviderStartups();
   // Sweep cleanly-exited agents into the archive before building the graph, so a
   // self-stopped session goes straight there rather than flickering through a
   // dormant Resume card. Carry the task snapshot so its archived row can still

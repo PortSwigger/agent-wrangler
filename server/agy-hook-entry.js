@@ -9,12 +9,12 @@ if (process.env.AW_SESSION_ID) {
     if (port > 0 && port <= 65535) {
       const response = await fetch(`http://127.0.0.1:${port}/agy-hook`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(900),
-        body: JSON.stringify({ cardId: process.env.AW_SESSION_ID, conversationId: payload.conversationId, event, parentPid: process.ppid, modelName: payload.modelName, stepIdx: payload.stepIdx, fullyIdle: payload.fullyIdle, terminationReason: payload.terminationReason }),
+        body: JSON.stringify({ cardId: process.env.AW_SESSION_ID, launchId: process.env.AW_AGY_LAUNCH_ID, conversationId: payload.conversationId, event, parentPid: process.ppid, modelName: payload.modelName, stepIdx: payload.stepIdx, fullyIdle: payload.fullyIdle, terminationReason: payload.terminationReason }),
       });
       if (response.ok) {
-        const { accepted, identified, tools } = await response.json();
-        if (accepted || (identified && event === 'SessionStart')) {
-          const result = agyHookResponse(event, payload, { tools });
+        const { accepted, identified, tools, startupPending } = await response.json();
+        if (accepted || (identified && ['SessionStart', 'PreToolUse'].includes(event))) {
+          const result = agyHookResponse(event, payload, { tools, startupPending });
           if (result) process.stdout.write(JSON.stringify(result));
         }
       }

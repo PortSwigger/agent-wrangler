@@ -2,7 +2,7 @@
 
 This matrix covers every inventory §13 item. **Support** means implemented on the listed shared or agy-specific path, exercised with fakes where tests are named. It is not a native acceptance tick. **Replace** names a narrower explicit workflow. **Decline** names an unavailable interface. All native claims remain pending the human acceptance runner and board checks.
 
-The automated evidence is `server/agents/agy.test.js`, `server/agents/agy-history.test.js`, `server/agy-plugin.test.js`, `server/agy-integration.test.js`, `server/agy-terminal.test.js`, `server/price-catalog.test.js`, and `scripts/gen-catalog-agy.test.js`. Existing-provider suites cover shared terminal and lifecycle behavior. Cross-cutting scenarios combine that coverage; they are not claims that every native variant has been tested.
+The automated evidence is `server/agents/agy.test.js`, `server/agents/agy-history.test.js`, `server/agy-plugin.test.js`, `server/agy-integration.test.js`, `server/agy-terminal.test.js`, `server/agy-startup.test.js`, `server/agy-native-stdio.test.js`, `server/price-catalog.test.js`, and `scripts/gen-catalog-agy.test.js`. Existing-provider suites cover shared terminal and lifecycle behavior. Cross-cutting scenarios combine that coverage; they are not claims that every native variant has been tested.
 
 ## 1. Launch a CLI reliably and control its environment
 
@@ -122,7 +122,7 @@ The automated evidence is `server/agents/agy.test.js`, `server/agents/agy-histor
 | Deliver arbitrary multiline text as one block | Support; native pending | pane-ready.js; mailbox-delivery.js; message-delivery.js; agy-integration.test.js |
 | Submit after input is absorbed | Support; native pending | pane-ready.js; mailbox-delivery.js; message-delivery.js; agy-integration.test.js |
 | Submit prompts ending in escape characters | Support; native pending | pane-ready.js; mailbox-delivery.js; message-delivery.js; agy-integration.test.js |
-| Deliver after startup without silent loss | Support; native pending | pane-ready.js; mailbox-delivery.js; message-delivery.js; agy-integration.test.js |
+| Deliver after startup without silent loss | Support; native pending | agy-startup.js; agy-lifecycle.js; mailbox-delivery.js; message-delivery.js; agy-startup.test.js; agy-native-stdio.test.js. Current native read gates retained intent/mail; uncertain sends are never replayed. |
 | Confirm delivery and repair safely | Support; native pending | pane-ready.js; mailbox-delivery.js; message-delivery.js; agy-integration.test.js |
 | Deliver through context-maintenance transitions | Support; native pending | pane-ready.js; mailbox-delivery.js; message-delivery.js; agy-integration.test.js |
 | Deliver notifications without clobbering drafts | Support; native pending | pane-ready.js; mailbox-delivery.js; message-delivery.js; agy-integration.test.js |
@@ -208,7 +208,7 @@ The automated evidence is `server/agents/agy.test.js`, `server/agents/agy-histor
 
 | Capability / scenario | Disposition | Path or boundary |
 | --- | --- | --- |
-| Connect and preapprove session tools | Support; native pending | agy-plugin.js; agy-hooks.js; agy-mcp-entry.js; agy-plugin.test.js |
+| Connect and preapprove session tools | Support; native pending | agy-startup.js; agy-hooks.js; agy-mcp-entry.js; agy-native-stdio.test.js. Exact captured call_mcp_tool envelope; installed plugin namespace and process ancestry require human checks. |
 | Supply reusable skills and mandatory guidance | Support; native pending | agy-plugin.js; agy-hooks.js; agy-mcp-entry.js; agy-plugin.test.js |
 | Keep provider instruction scope correct | Support; native pending | agy-plugin.js; agy-hooks.js; agy-mcp-entry.js; agy-plugin.test.js |
 | Automatically attach created PRs | Replace | Explicit set_links and existing PR discovery are available; uncorrelated agy PostToolUse output is never used to infer a PR. |

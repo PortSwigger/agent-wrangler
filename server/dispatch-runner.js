@@ -109,7 +109,11 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     const imagePaths = claimStagedPastes(sessionId, agent, imageNames);
     // Not awaited: the dialog closes on the dispatch ack, and the TUI can take
     // seconds to boot. Returned so a test can wait for it.
-    firstPrompt = adapterFor(agent).terminal.guardEverySend && sessionManager.entryFor(sessionId)?.agyLaunchWarning ? Promise.resolve() : deliver({ tmux, socket: sessionManager.entryFor(sessionId)?.socket ?? '', agent, text: intent, imagePaths });
+    if (agent === 'agy') {
+      sessionManager.entryFor(sessionId).agyPendingIntent = { text: intent, imagePaths, state: 'pending' };
+      sessionManager._save();
+      firstPrompt = sessionManager._finishProviderLaunch(adapterFor(agent), sessionId);
+    } else firstPrompt = deliver({ tmux, socket: sessionManager.entryFor(sessionId)?.socket ?? '', agent, text: intent, imagePaths });
   }
   // Optional task targeting: assign is a no-op if the task was deleted between
   // saving and firing, so the session just falls back to Ad hoc.

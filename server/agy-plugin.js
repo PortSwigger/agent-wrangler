@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { DATA_DIR } from './data-dir.js';
 import { manageAgyIntegration } from './config-store.js';
 const exec = promisify(execFile);
-const VERSION = '4';
+const VERSION = '5';
 let state = { ready: false, error: null };
 let pending = Promise.resolve();
 export function agyIntegrationReady() { return manageAgyIntegration() && state.ready; }

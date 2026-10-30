@@ -2,22 +2,24 @@ import { worktreeGuardrailPrompt } from './worktree.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from './agent-skills.js';
 import { readAgySummaries, isAgyRoot } from './agents/agy-summaries.js';
 import { saveAgyLineage } from './agents/agy-history.js';
+import { AGY_MCP_SERVER } from './agy-startup.js';
 const events = new Set(['SessionStart', 'PreInvocation', 'PostInvocation', 'PreToolUse', 'PostToolUse', 'Stop']);
 const liveByPid = new Map();
-export function agyHookResponse(event, payload, { env = process.env, tools = [] } = {}) {
+export function agyHookResponse(event, payload, { env = process.env, tools = [], startupPending = false } = {}) {
   if (!env.AW_SESSION_ID) return null;
   if (event === 'PreToolUse') {
     const call = payload.toolCall;
-    if (call && (!call.serverName || call.serverName === 'agent-wrangler')
-      && tools.some((name) => call.name === `mcp__agent-wrangler__${name}`)) return { decision: 'auto_approve' };
+    const native = call?.name === 'call_mcp_tool' && call.args?.ServerName === AGY_MCP_SERVER && tools.includes(call.args?.ToolName);
+    if (native && (!startupPending || call.args.ToolName === 'get_session_info')) return { decision: 'auto_approve' };
+    if (startupPending) return { decision: 'deny', reason: 'Native Wrangler startup is pending. Only the native get_session_info read is allowed; stop if it is unavailable. Do not search configuration or use shell repair.' };
   }
   if (event === 'SessionStart') {
     let disabledSkills = []; try { disabledSkills = JSON.parse(env.AW_AGY_DISABLED_SKILLS || '[]'); } catch {}
     let worktree; try { worktree = JSON.parse(env.AW_AGY_WORKTREE || 'null'); } catch {}
     const prompt = [
       worktree ? worktreeGuardrailPrompt(worktree) : '',
-      `Name this card using rename_session with target ${env.AW_SESSION_ID}, a concise task name, and only_if_unnamed: true.`,
-      `This is Agent Wrangler card ${env.AW_SESSION_ID}. Use the agent-wrangler MCP tools read_mail, send_message, spawn_session and rename_session explicitly; tools may load on demand. Use Wrangler tools for orchestration.`,
+      `This is Agent Wrangler card ${env.AW_SESSION_ID}. Before task delivery, use only the native ${AGY_MCP_SERVER} get_session_info read. Never search configuration or call Wrangler through shell, curl or Node. If native tools are missing, stop and report integration unavailable.`,
+      `After Wrangler delivers the task, name this card using rename_session with target ${env.AW_SESSION_ID}, a concise task name, and only_if_unnamed: true. Use the native ${AGY_MCP_SERVER} tools read_mail, send_message, spawn_session and rename_session for orchestration; tools may load on demand.`,
       `Run shell commands in ${env.AW_CWD || 'the card workspace'} explicitly. Git metadata grants can change agy's default cwd. For git, network, localhost and package commands denied by the sandbox, retry with BypassSandbox: true and allow agy's normal reviewer to decide. Do not widen permissions.`,
       mandatorySkillPrompt(undefined, { disabledSkills }), codexSkillCatalog(undefined, { disabledSkills }),
     ].filter(Boolean).join('\n\n');
@@ -28,6 +30,7 @@ export function agyHookResponse(event, payload, { env = process.env, tools = [] 
 export async function acceptAgyHook(payload, { map, rootPid, summaries = readAgySummaries, save = () => {}, onIdentity = () => {}, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   if (!payload || !events.has(payload.event) || !Number.isSafeInteger(payload.parentPid) || payload.parentPid <= 0) return false;
   const entry = map.get(payload.cardId);
+  if (entry?.agyStartup && entry.agyStartup.launchId !== payload.launchId) return false;
   if (entry?.agent !== 'agy' || !entry.tmux || payload.parentPid !== Number(await rootPid(entry))) return false;
   onIdentity();
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(payload.conversationId || '')) return false;

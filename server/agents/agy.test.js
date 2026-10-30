@@ -20,7 +20,7 @@ test('agy launch, resume and fork preserve model, grants, policy and core identi
       assert.match(out, /--mode\nauto/);
       assert.match(out, /--effort\nmedium/);
       for (const dir of ['/tmp/private git', '/tmp/common', '/tmp/memory']) assert.ok(out.includes(dir));
-      if (method === 'buildLaunch') assert.ok(out.includes(opts.intent));
+      if (method === 'buildLaunch') assert.ok(!out.includes(opts.intent));
       else { assert.match(out, /--conversation\n(root|parent)/); assert.ok(!out.includes(opts.intent)); }
     }
     assert.throws(() => execFileSync('sh', ['-c', agy.buildLaunch({ ...opts, launchContext: { refuseIfSet: ['BLOCKED_AUTH'] } })], { env: { ...process.env, BLOCKED_AUTH: 'set', PATH: `${home}:${process.env.PATH}` }, stdio: 'pipe' }));

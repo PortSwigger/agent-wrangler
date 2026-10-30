@@ -1,5 +1,6 @@
 import { adapterFor } from './agents/index.js';
 import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
+import { agyNativeReady } from './agy-startup.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import crypto from 'node:crypto';
@@ -27,8 +28,9 @@ export async function deliverMailNotification(to, text, deps) {
     return wakeDormant(to, entry, deps);
   }
 
-  if (adapterFor(entry.agent).hookIdentity && mcpSeenAt(to) <= (entry.relaunchedAt || entry.createdAt || 0)) return { mode: 'deferred', reason: 'current Antigravity process MCP handshake pending' };
+  if (entry.agent === 'agy' && (!(deps.agyNativeReady ?? agyNativeReady)(entry) || entry.agyLaunchWarning || entry.agyForkPending)) return { mode: 'deferred', reason: 'current Antigravity native tool readiness pending' };
   const beforeSend = async () => {
+    if (entry.agent === 'agy') return (deps.agyNativeReady ?? agyNativeReady)(entry) && !entry.agyLaunchWarning && !entry.agyForkPending;
     const relaunchedAt = entry.relaunchedAt;
     const relaunchAge = Date.now() - relaunchedAt;
     if (typeof relaunchedAt === 'number' && relaunchAge >= 0 && relaunchAge <= mcpReadyTimeoutMs

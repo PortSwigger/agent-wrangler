@@ -32,10 +32,10 @@ test('off and missing-binary startup have no provider-global effects; opt-in ins
 });
 test('plugin has no always-on rules or skills; approval requires card identity and exact registered server/tool name', () => {
   assert.ok(!Object.keys(pluginFiles()).some((f) => /rules|skills/.test(f)));
-  const payload = { toolCall: { name: 'mcp__agent-wrangler__read_mail', serverName: 'agent-wrangler' } };
+  const payload = { toolCall: { name: 'call_mcp_tool', args: { ServerName: 'agent-wrangler_agent-wrangler', ToolName: 'read_mail', Arguments: {} } } };
   assert.equal(agyHookResponse('PreToolUse', payload, { env: {}, tools: ['read_mail'] }), null);
   assert.deepEqual(agyHookResponse('PreToolUse', payload, { env: { AW_SESSION_ID: 'card' }, tools: ['read_mail'] }), { decision: 'auto_approve' });
-  for (const toolCall of [{ name: 'run_command', input: JSON.stringify(payload) }, { name: 'mcp__other__read_mail' }, { name: 'mcp__agent-wrangler__read_mail_extra' }, { ...payload.toolCall, serverName: 'other' }]) {
+  for (const toolCall of [{ name: 'run_command', input: JSON.stringify(payload) }, { name: 'mcp__other__read_mail' }, { name: 'mcp__agent-wrangler__read_mail_extra' }, { ...payload.toolCall, args: { ...payload.toolCall.args, ServerName: 'other' } }]) {
     assert.equal(agyHookResponse('PreToolUse', { toolCall }, { env: { AW_SESSION_ID: 'card' }, tools: ['read_mail'] }), null);
   }
 });
