@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { inNestBand, canNestOnto, mergeSessionOrder, NEST_EDGE } from './session-drag.js';
+import { inNestBand, canNestOnto, mergeSessionOrder, createNestDwell, NEST_EDGE, NEST_DWELL_MS } from './session-drag.js';
 
 const rect = { top: 100, bottom: 200, height: 100 };
 
@@ -49,4 +49,27 @@ test('mergeSessionOrder: shown order wins, unshown ids keep their earlier relati
 test('mergeSessionOrder: dedupes and tolerates a missing previous order', () => {
   assert.deepEqual(mergeSessionOrder(['a', 'b', 'a']), ['a', 'b']);
   assert.deepEqual(mergeSessionOrder(['a', null, 'b'], [undefined, 'c']), ['a', 'b', 'c']);
+});
+
+test('createNestDwell: a card only becomes the nest target after being held for the dwell time', () => {
+  assert.equal(NEST_DWELL_MS, 600);
+  const dwell = createNestDwell(600);
+  const a = { id: 'a' };
+  assert.equal(dwell.update(a, 1000), null);
+  assert.equal(dwell.update(a, 1599), null);
+  assert.equal(dwell.update(a, 1600), a);
+  assert.equal(dwell.update(a, 2000), a);
+});
+
+test('createNestDwell: moving to another card, or off every card, restarts the hold', () => {
+  const dwell = createNestDwell(600);
+  const a = { id: 'a' };
+  const b = { id: 'b' };
+  dwell.update(a, 0);
+  assert.equal(dwell.update(b, 700), null);
+  assert.equal(dwell.update(b, 1300), b);
+  assert.equal(dwell.update(null, 1400), null);
+  assert.equal(dwell.update(b, 1500), null);
+  dwell.reset();
+  assert.equal(dwell.update(b, 2000), null);
 });

@@ -15,7 +15,7 @@ import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption,
 import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.js';
 import { cascadeSummary, cascadeDialogBody, worktreeStillInUse, containerStillInUse } from './archive-cascade.js';
 import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-picker.js';
-import { inNestBand, canNestOnto, mergeSessionOrder } from './session-drag.js';
+import { inNestBand, canNestOnto, mergeSessionOrder, createNestDwell } from './session-drag.js';
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
@@ -1009,9 +1009,11 @@ let autoEditTaskId = null;
 let dragActive = false;
 let draggedCard = null;
 let placeholderEl = null;
-// The card a session drag is hovering in its nesting band (session-drag.js):
-// dropping now nests the dragged session under it instead of reordering.
+// The card a session drag has held in its nesting band for the dwell time
+// (session-drag.js): dropping now nests the dragged session under it instead
+// of reordering. Before the dwell elapses the drag reorders as usual.
 let nestTargetEl = null;
+const nestDwell = createNestDwell();
 
 let taskDragActive = false;
 let draggedTaskId = null;
@@ -2597,6 +2599,7 @@ function wireGridDnd(el) {
       card.classList.remove('dragging-hidden');
       removePlaceholder();
       setNestTarget(null);
+      nestDwell.reset();
       draggedCard = null;
       dragActive = false;
       armNewTask(false);
@@ -2652,11 +2655,12 @@ function wireGridDnd(el) {
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
       if (taskDragActive) return;
-      // Over the middle of a card it can nest into: that card is the only
+      // Held over the middle of a card it can nest into: that card is the only
       // affordance, and the placeholder holds still so the cards don't shift
-      // under the cursor. Checked before the activity-sort bail below, since
-      // nesting needs no manual order.
-      const nest = nestTargetAt(e);
+      // under the cursor. dragover keeps firing while the cursor is still, so
+      // the dwell elapses without movement. Checked before the activity-sort
+      // bail below, since nesting needs no manual order.
+      const nest = nestDwell.update(nestTargetAt(e), performance.now());
       setNestTarget(nest);
       if (nest) { cell.classList.remove('drop-target'); return; }
       // Same-task reorder in progress (the hidden source lives in this cell):

@@ -4,15 +4,34 @@
 // reason attach-picker.js takes it.
 import { attachCandidates } from './attach-picker.js';
 
-// Share of a card's height, at its top and at its bottom, that still reorders.
-// Only the middle band between them nests, so a drag can still slot a card
-// above or below a neighbour without nesting into it by accident.
+// Share of a card's height, at its top and at its bottom, that never nests.
+// Only a hold in the middle band between them nests (see createNestDwell).
 export const NEST_EDGE = 0.25;
 
 // True when viewport-Y `y` is in the nesting band of `rect`.
 export function inNestBand(rect, y) {
   const edge = rect.height * NEST_EDGE;
   return y > rect.top + edge && y < rect.bottom - edge;
+}
+
+// How long a drag must hold over a card's nesting band before a drop nests.
+// Until then the drag reorders exactly as it always has, so a quick drag
+// through or onto the middle of a card never nests by accident.
+export const NEST_DWELL_MS = 600;
+
+// Tracks how long a drag has held over the same nest candidate. `update` takes
+// the card under the cursor (null when none) and the current time, and returns
+// that card once it has been held for `dwellMs`, else null.
+export function createNestDwell(dwellMs = NEST_DWELL_MS) {
+  let candidate = null;
+  let since = 0;
+  return {
+    update(card, now) {
+      if (card !== candidate) { candidate = card; since = now; }
+      return candidate && now - since >= dwellMs ? candidate : null;
+    },
+    reset() { candidate = null; since = 0; },
+  };
 }
 
 // Whether dropping `sessionId` onto `targetId` may nest it there. Uses the
