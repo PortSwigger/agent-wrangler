@@ -1329,6 +1329,24 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 /* The orchestrator card reads as the run's lead: a violet-tinted frame + faint
    ring. Yield entirely to an alarm state (needs-you / just-finished / snooze) so
    their rings still win. */
+/* A workflow run nested as another session's child (cards.js workerRowHtml /
+   childRowHtml): the same violet box as a top-level run, with the workflow
+   symbol leading and the name and status pushed right after it. */
+/* Scoped under the spine so it outranks the alarm states' transparent border
+   (.worker-row.needs-you etc.): the box stays violet, the ring still shows. */
+.child-spine > .worker-row.wf-child, .workflow-spine > .worker-row.wf-child {
+  border-color: color-mix(in srgb, var(--wf) 45%, transparent);
+  background: color-mix(in srgb, var(--wf) 9%, var(--surface));
+}
+.worker-row.wf-child:hover { background: color-mix(in srgb, var(--wf) 15%, var(--surface)); }
+.spine-full-row.wf-child {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--wf) 45%, transparent);
+  background: color-mix(in srgb, var(--wf) 9%, var(--surface));
+}
+.spine-full-row.wf-child > .wf-ico { padding-top: 6px; }
+.spine-full-row.wf-child > .session-card { flex: 1 1 auto; min-width: 0; }
 .session-card.wf-orchestrator:not(.needs-you):not(.just-finished):not(.snooze-alarm) {
   border-color: color-mix(in srgb, var(--wf) 42%, var(--border-muted));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--wf) 16%, transparent);
@@ -1849,14 +1867,48 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 }
 .nest-zone svg { width: 14px; height: 14px; pointer-events: none; }
 .nest-zone span { pointer-events: none; }
+/* In a multi-column task the card's halves pick the insert slot, so the zone
+   sits in the middle (app.js addNestZones). */
+.nest-zone.center { left: 30%; right: 30%; width: auto; }
 .session-card.nest-target { outline: 2px solid var(--blue); outline-offset: 2px; }
+/* A multi-column drag leaves the source in place, dimmed, and shows where it
+   will land with an insert line in the gap instead of a moving placeholder,
+   which would reflow every later card into the next column. */
+.session-card.drag-source, .workflow-box.drag-source, .child-group.drag-source { opacity: 0.4; }
+.session-placeholder.as-line { display: none; }
+.insert-line {
+  position: fixed; width: 3px; border-radius: 2px;
+  background: var(--blue); pointer-events: none; z-index: 50;
+}
+/* A placeholder in a spine previews a child: same corner radius and elbow
+   connector as a .worker-row (geometry copied from .worker-row::before/::after). */
+.session-placeholder.in-spine { position: relative; border-radius: 7px; }
+.session-placeholder.in-spine::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: -6px;
+  width: 11px;
+  height: calc(50% + 6px);
+  border-left: 2px solid var(--line-color);
+  border-bottom: 2px solid var(--line-color);
+  pointer-events: none;
+}
+.session-placeholder.in-spine:first-child::before { top: -9px; height: calc(50% + 9px); }
+.session-placeholder.in-spine:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  bottom: -6px;
+  width: 2px;
+  background: var(--line-color);
+  pointer-events: none;
+}
 .session-card.nest-target .nest-zone {
   border-style: solid;
   background: color-mix(in srgb, var(--blue) 24%, var(--surface));
 }
-/* Holds a dragged card's old slot open during a nest preview (app.js
-   enterNestPreview), so the cards above the target don't shift. */
-.session-slot-spacer { flex: 0 0 auto; }
 .session-placeholder {
   border: 1px dashed var(--blue);
   border-radius: 8px;

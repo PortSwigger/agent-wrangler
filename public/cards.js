@@ -452,10 +452,14 @@ export function workerRowHtml(s, ctx) {
     : '';
   // Keep fresh mail visible when a child is collapsed into its parent's spine.
   const mailBadge = mailBadgeHtml(s);
+  // A child that is itself a workflow run keeps the workflow look in a spine:
+  // the violet box (`wf-child`) with the workflow symbol leading the row.
+  const wf = isWorkflowRun(s);
+  const wfIco = wf ? `<span class="wf-ico" title="Workflow">${WORKFLOW_ICON}</span>` : '';
   // data-child-sid + draggable: the row is its own drag unit, reordered within
   // its spine or dropped onto another card to move it (app.js wireGrid).
-  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}" data-sid="${esc(s.sessionId)}" data-child-sid="${esc(s.sessionId)}" draggable="true" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
-    <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
+  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}${wf ? ' wf-child' : ''}" data-sid="${esc(s.sessionId)}" data-child-sid="${esc(s.sessionId)}" draggable="true" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
+    ${wfIco}<span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
     ${mailBadge}
     <span class="worker-meta">${costEl}${metaLinks}</span>
@@ -481,8 +485,14 @@ export function workerRowHtml(s, ctx) {
 // background/border/padding. The card itself is non-draggable (`nested: true`);
 // the `.spine-full-row` wrapper is the child's drag unit, the same as a
 // `.worker-row` (data-child-sid), so dragging it never drags the parent group.
+// A full-view child that is a workflow run gets the same violet box as its
+// compact row, the workflow symbol beside the card and the card's violet frame
+// (`wf`), without the top-level box's "Workflow" header.
 function childRowHtml(c, ctx, { focusMode } = {}) {
   if (!ctx.isChildFullView(c)) return workerRowHtml(c, ctx);
+  if (isWorkflowRun(c)) {
+    return `<div class="spine-full-row wf-child" data-child-sid="${esc(c.sessionId)}" draggable="true"><span class="wf-ico" title="Workflow">${WORKFLOW_ICON}</span>${sessionCardHtml(c, ctx, { expanded: focusMode, wf: true })}</div>`;
+  }
   return `<div class="spine-full-row" data-child-sid="${esc(c.sessionId)}" draggable="true">${sessionCardHtml(c, ctx, { expanded: focusMode, nested: true })}</div>`;
 }
 

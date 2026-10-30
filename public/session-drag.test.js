@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canNestOnto, childDropAction, mergeSessionOrder } from './session-drag.js';
+import { canNestOnto, childDropAction, mergeSessionOrder, gridSlotAt } from './session-drag.js';
 
 const taskOf = (map) => (sid) => map[sid] ?? null;
 
@@ -54,4 +54,29 @@ test('childDropAction: a top-level card reordered among top-level cards keeps it
   assert.equal(childDropAction({ spineParent: null, currentParent: null, drawnAsChild: false }), null);
   // An orphan (parent on another task) draws top-level; a reorder doesn't touch its link.
   assert.equal(childDropAction({ spineParent: null, currentParent: 'p', drawnAsChild: false }), null);
+});
+
+// Two columns, two rows: A B / C (C is shorter than its row).
+const r = (left, top, w = 100, h = 80) => ({ left, right: left + w, top, bottom: top + h });
+const grid = [r(0, 0), r(112, 0), r(0, 92, 100, 40)];
+
+test('gridSlotAt: over a unit, its left half is before it and its right half after it', () => {
+  assert.deepEqual(gridSlotAt(grid, 20, 40), { index: 0, after: false });
+  assert.deepEqual(gridSlotAt(grid, 80, 40), { index: 0, after: true });
+  assert.deepEqual(gridSlotAt(grid, 130, 40), { index: 1, after: false });
+  assert.deepEqual(gridSlotAt(grid, 200, 40), { index: 1, after: true });
+});
+
+test('gridSlotAt: in a column gap, the nearest unit in that row decides', () => {
+  assert.deepEqual(gridSlotAt(grid, 104, 40), { index: 0, after: true });
+  assert.deepEqual(gridSlotAt(grid, 110, 40), { index: 1, after: false });
+  // Beside the short C, in the empty second column of its row.
+  assert.deepEqual(gridSlotAt(grid, 180, 100), { index: 2, after: true });
+});
+
+test('gridSlotAt: between or below rows, it goes after the last unit above the cursor', () => {
+  assert.deepEqual(gridSlotAt(grid, 50, 86), { index: 1, after: true });
+  assert.deepEqual(gridSlotAt(grid, 50, 300), { index: 2, after: true });
+  assert.deepEqual(gridSlotAt(grid, 50, -10), { index: 0, after: false });
+  assert.equal(gridSlotAt([], 0, 0), null);
 });

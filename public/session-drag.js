@@ -38,3 +38,28 @@ export function mergeSessionOrder(next, previous = []) {
   }
   return out;
 }
+
+// The insert slot for a cursor at (x, y) in a multi-column task body, whose
+// top-level units have viewport rects `rects` in reading order (left to
+// right, then top to bottom). Returns { index, after }: the unit the drop goes
+// beside, and whether after it. Over a unit, its left half is before and its
+// right half after. In a gap, the nearest unit in the same visual row decides;
+// below every row is after the last unit. null when there are no units.
+export function gridSlotAt(rects, x, y) {
+  if (!rects.length) return null;
+  const side = (i) => ({ index: i, after: x >= (rects[i].left + rects[i].right) / 2 });
+  const inside = rects.findIndex((r) => x >= r.left && x < r.right && y >= r.top && y < r.bottom);
+  if (inside >= 0) return side(inside);
+  let best = -1;
+  let bestDist = Infinity;
+  rects.forEach((r, i) => {
+    if (y < r.top || y >= r.bottom) return;
+    const dist = x < r.left ? r.left - x : x >= r.right ? x - r.right : 0;
+    if (dist < bestDist) { best = i; bestDist = dist; }
+  });
+  if (best >= 0) return side(best);
+  // Between or past rows: after the last unit that starts above the cursor.
+  let last = -1;
+  rects.forEach((r, i) => { if (r.top <= y) last = i; });
+  return last >= 0 ? { index: last, after: true } : { index: 0, after: false };
+}

@@ -15,7 +15,7 @@ import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption,
 import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.js';
 import { cascadeSummary, cascadeDialogBody, worktreeStillInUse, containerStillInUse } from './archive-cascade.js';
 import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-picker.js';
-import { canNestOnto, childDropAction, mergeSessionOrder } from './session-drag.js';
+import { canNestOnto, childDropAction, mergeSessionOrder, gridSlotAt } from './session-drag.js';
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
@@ -1017,20 +1017,25 @@ let nestTargetEl = null;
 // card: crossing the gap between two stacked zones then leaves the placeholder
 // where it is, so the cards don't shift under the cursor.
 let nestLane = false;
-// Placeholder heights for a dragged child: its own row's height while it sits
-// in a spine, and a full card's once it sits among the top-level cards, so the
-// gap shows it will land as a full card there (sizePlaceholderFor).
+// Placeholder sizes (shapePlaceholder): a dragged child's own row height, a
+// full top-level card's height (a child dragged out lands as one), and the
+// dragged unit's own height.
 let childRowHeight = 0;
 let topLevelCardHeight = 0;
-// The dragged unit's own height, restored to the placeholder when a nest
-// preview ends (exitNestPreview).
 let dragUnitHeight = 0;
 // While a Nest zone is hovered the placeholder previews the nest: it moves
-// into the target's spine as a child row (or into `previewSpine`, a temporary
-// spine, when the target has none yet). `slotSpacer` holds the old slot open
-// when it sits above the target, so the target doesn't shift under the cursor.
-let slotSpacer = null;
+// into the target's spine (or `previewSpine`, a temporary spine, when the
+// target has none yet), and the old slot closes, so spacing matches the
+// result. `previewReturn` is where the placeholder goes back to when the
+// preview ends. `nestZoneRect` is the zone's rect when the preview began:
+// closing the old slot can shift the target, so the preview holds for as long
+// as the cursor stays in that rect, rather than flickering off and on.
 let previewSpine = null;
+let previewReturn = null;
+let nestZoneRect = null;
+// The insert line a multi-column task shows instead of a moving gap
+// (updateInsertLine).
+let insertLineEl = null;
 
 let taskDragActive = false;
 let draggedTaskId = null;
@@ -1075,7 +1080,9 @@ function addNestZones(grid, sessionId) {
     if (card.closest('.child-spine, .workflow-spine') || draggedCard?.contains(card)) continue;
     if (!canNestOnto(sessionId, card.dataset.sid, latestSessions, assignedTaskId)) continue;
     const zone = document.createElement('div');
-    zone.className = 'nest-zone';
+    // In a multi-column body a card's left and right halves pick the insert
+    // slot, so its Nest zone sits in the middle instead of on the right.
+    zone.className = isMultiColumn(card.closest('.task-body')) ? 'nest-zone center' : 'nest-zone';
     zone.innerHTML = `${ATTACH_ICON}<span>Nest</span>`;
     card.appendChild(zone);
   }
@@ -1088,11 +1095,71 @@ function topLevelHeightIn(body, fallback) {
   return Math.max(fallback, ...[...cards].map((c) => c.offsetHeight));
 }
 
-// Size the placeholder for where it now sits: a dragged child gets a row's
-// height in a spine and a full card's among the top-level cards.
-function sizePlaceholderFor(inSpine) {
-  if (!placeholderEl || !draggedCard?.dataset.childSid) return;
-  placeholderEl.style.height = `${inSpine ? childRowHeight : topLevelCardHeight}px`;
+// Whether a task body lays its cards out in more than one column (focus
+// mode's grid). There a moving gap would reflow every later card into the
+// next column, so the drag shows an insert line instead.
+function isMultiColumn(body) {
+  const cs = getComputedStyle(body);
+  return cs.display === 'grid' && cs.gridTemplateColumns.trim().split(/\s+/).length > 1;
+}
+
+// A task body's top-level drag units, in reading order.
+function topUnits(body) {
+  return [...body.querySelectorAll(':scope > .session-card, :scope > .workflow-box, :scope > .child-group')];
+}
+
+// The height the dragged session will have as a child: its own row's, if it
+// is one already; else a full card's if it will show in full view (its own
+// setting, or the new-child default the server stamps on attach), else a
+// compact row's.
+function childShapeHeight() {
+  if (draggedCard?.dataset.childSid) return childRowHeight;
+  const s = latestSessions.find((x) => x.sessionId === dragUnitSid(draggedCard));
+  const full = s?.childFullView === true || (s?.childFullView === undefined && childFullViewByDefault);
+  if (full) return dragUnitHeight;
+  return document.querySelector('#grid .worker-row')?.offsetHeight || 30;
+}
+
+// Give the placeholder the shape the dragged session will have where it now
+// sits. In a spine it is a child: a row (or full-view card) with the spine's
+// connector. Among the top-level cards it is a full card (a dragged child
+// becomes one) or the dragged unit's own size, and in a multi-column body it
+// hides behind the insert line. Worked out afresh after every move, so it
+// never keeps a stale shape from an earlier spot.
+function shapePlaceholder() {
+  if (!placeholderEl?.parentNode || !draggedCard) return;
+  const inSpine = !!placeholderEl.parentNode.closest('.child-spine, .workflow-spine');
+  const body = placeholderEl.closest('.task-body');
+  const line = !inSpine && !!body && isMultiColumn(body);
+  placeholderEl.classList.toggle('in-spine', inSpine);
+  placeholderEl.classList.toggle('as-line', line);
+  const h = inSpine ? childShapeHeight() : draggedCard.dataset.childSid ? topLevelCardHeight : dragUnitHeight;
+  placeholderEl.style.height = `${h}px`;
+  updateInsertLine(line ? body : null);
+}
+
+// Draw the multi-column insert line in the gap at the placeholder's slot:
+// before the unit after it, else after the last unit. Hidden for null.
+function updateInsertLine(body) {
+  if (!body) { insertLineEl?.remove(); insertLineEl = null; return; }
+  const units = topUnits(body);
+  let next = placeholderEl.nextElementSibling;
+  while (next && !units.includes(next)) next = next.nextElementSibling;
+  let prev = placeholderEl.previousElementSibling;
+  while (prev && !units.includes(prev)) prev = prev.previousElementSibling;
+  const ref = next || prev;
+  if (!ref) { updateInsertLine(null); return; }
+  const rect = ref.getBoundingClientRect();
+  const gap = parseFloat(getComputedStyle(body).columnGap) || 12;
+  const x = next ? rect.left - gap / 2 : rect.right + gap / 2;
+  if (!insertLineEl) {
+    insertLineEl = document.createElement('div');
+    insertLineEl.className = 'insert-line';
+    document.body.appendChild(insertLineEl);
+  }
+  insertLineEl.style.left = `${x - 1.5}px`;
+  insertLineEl.style.top = `${rect.top}px`;
+  insertLineEl.style.height = `${rect.height}px`;
 }
 
 // The session whose spine `spine` is: a plain parent's .child-group, a
@@ -1101,51 +1168,47 @@ function spineParentSid(spine) {
   return spine.dataset.parentSid || spine.closest('.child-group, .workflow-box')?.dataset.sid || null;
 }
 
-// The height a child row is drawn at, for a nest preview.
-function childRowHeightIn(grid) {
-  return childRowHeight || grid.querySelector('.worker-row')?.offsetHeight || 30;
-}
-
 // Show what nesting under `card` will do: move the placeholder to the end of
-// its spine, sized as a child row. A card with no spine yet (a bare card, a
-// solo or collapsed workflow) gets a temporary one right after it.
-function enterNestPreview(card) {
-  const host = card.closest('.child-group, .workflow-box');
-  const group = host && host.dataset.sid === card.dataset.sid ? host : null;
-  const spine = group?.querySelector(':scope > .child-spine, :scope > .workflow-spine:not(:empty)') || null;
-  const target = spine || previewSpine;
-  if (target && placeholderEl.parentNode === target && target.dataset.nestFor === card.dataset.sid) return;
+// its spine, shaped as the child it will be, closing the old slot. A card with
+// no spine yet (a bare card, a solo or collapsed workflow) gets a temporary
+// one right after it.
+function enterNestPreview(card, zone) {
+  const sid = card.dataset.sid;
+  if (previewReturn && placeholderEl.parentNode?.dataset.nestFor === sid) return;
   exitNestPreview();
-  slotSpacer = document.createElement('div');
-  slotSpacer.className = 'session-slot-spacer';
-  const aboveTarget = placeholderEl.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING;
-  slotSpacer.style.height = aboveTarget ? placeholderEl.style.height : '0px';
-  placeholderEl.parentNode.insertBefore(slotSpacer, placeholderEl);
-  let into = spine;
+  const host = card.closest('.child-group, .workflow-box');
+  const group = host && host.dataset.sid === sid ? host : null;
+  let into = group?.querySelector(':scope > .child-spine, :scope > .workflow-spine') || null;
+  previewReturn = { parent: placeholderEl.parentNode, next: placeholderEl.nextSibling };
+  nestZoneRect = zone.getBoundingClientRect();
   if (!into) {
     previewSpine = document.createElement('div');
     previewSpine.className = 'child-spine';
-    previewSpine.dataset.parentSid = card.dataset.sid;
+    previewSpine.dataset.parentSid = sid;
     card.after(previewSpine);
     into = previewSpine;
   }
-  into.dataset.nestFor = card.dataset.sid;
+  into.dataset.nestFor = sid;
   into.appendChild(placeholderEl);
-  placeholderEl.style.height = `${childRowHeightIn(document.getElementById('grid'))}px`;
+  shapePlaceholder();
 }
 
-// End a nest preview: the placeholder goes back to the slot it held, at the
-// size it had there.
+// End a nest preview: the placeholder goes back to the slot it held.
 function exitNestPreview() {
-  if (!slotSpacer) return;
+  if (!previewReturn) return;
   delete placeholderEl.parentNode?.dataset.nestFor;
-  slotSpacer.parentNode?.insertBefore(placeholderEl, slotSpacer);
-  slotSpacer.remove();
-  slotSpacer = null;
+  const { parent, next } = previewReturn;
+  if (next && next.parentNode === parent) parent.insertBefore(placeholderEl, next);
+  else parent.appendChild(placeholderEl);
+  previewReturn = null;
+  nestZoneRect = null;
   previewSpine?.remove();
   previewSpine = null;
-  if (draggedCard?.dataset.childSid) sizePlaceholderFor(!!placeholderEl.parentNode?.closest('.child-spine, .workflow-spine'));
-  else placeholderEl.style.height = `${dragUnitHeight}px`;
+  shapePlaceholder();
+}
+
+function inRect(rect, x, y) {
+  return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
 }
 
 // The child spine under a drag of a nested child that will take it, or null:
@@ -2701,22 +2764,24 @@ function wireGridDnd(el) {
       setTimeout(() => {
         if (draggedCard !== card || !card.parentNode) return;
         const ph = ensurePlaceholder();
-        ph.style.height = `${card.offsetHeight}px`;
+        const body = card.closest('.task-body');
         dragUnitHeight = card.offsetHeight;
-        if (card.dataset.childSid) {
-          childRowHeight = card.offsetHeight;
-          const body = card.closest('.task-body');
-          topLevelCardHeight = body ? topLevelHeightIn(body, childRowHeight) : childRowHeight;
-        }
+        childRowHeight = card.dataset.childSid ? card.offsetHeight : 0;
+        topLevelCardHeight = body ? topLevelHeightIn(body, card.offsetHeight) : card.offsetHeight;
+        // A top-level card in a multi-column body stays in place, dimmed: hiding
+        // it would reflow every later card into the next column.
+        const dim = !card.dataset.childSid && body && isMultiColumn(body);
         card.parentNode.insertBefore(ph, card);
-        card.classList.add('dragging-hidden');
+        card.classList.add(dim ? 'drag-source' : 'dragging-hidden');
+        shapePlaceholder();
         addNestZones(el, dragUnitSid(card));
       }, 0);
     });
     card.addEventListener('dragend', () => {
-      card.classList.remove('dragging-hidden');
-      removePlaceholder();
+      card.classList.remove('dragging-hidden', 'drag-source');
       exitNestPreview();
+      removePlaceholder();
+      updateInsertLine(null);
       setNestTarget(null);
       nestLane = false;
       draggedCard = null;
@@ -2774,23 +2839,25 @@ function wireGridDnd(el) {
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
       if (taskDragActive) return;
+      // Still inside the Nest zone's rect from when its preview began: hold the
+      // preview, whatever the shifted cards now put under the cursor.
+      if (nestZoneRect && inRect(nestZoneRect, e.clientX, e.clientY)) { cell.classList.remove('drop-target'); return; }
       // Over a card's Nest zone: that card is the only affordance, and the
-      // placeholder holds still so the cards don't shift under the cursor.
-      // Checked before the activity-sort bail below, since nesting needs no
-      // manual order.
+      // placeholder previews the nest in its spine. Checked before the
+      // activity-sort bail below, since nesting needs no manual order.
       const zone = e.target.closest?.('.nest-zone');
       const nest = zone && cell.contains(zone) ? zone.closest('.session-card') : null;
+      // In a gap straight after a Nest zone (e.g. between two stacked zones):
+      // hold the preview and its target, until the cursor is over a card.
+      const overCard = e.target.closest?.('.session-card, .worker-row, .spine-full-row, .snoozed-row, .session-placeholder');
+      if (!nest && nestLane && !overCard) return;
+      nestLane = !!nest;
       setNestTarget(nest);
       if (nest) {
-        nestLane = true;
         cell.classList.remove('drop-target');
-        if (placeholderEl?.parentNode && cell.contains(draggedCard)) enterNestPreview(nest);
+        if (placeholderEl?.parentNode && cell.contains(draggedCard)) enterNestPreview(nest, zone);
         return;
       }
-      // In a gap straight after a Nest zone (e.g. between two stacked zones):
-      // hold the preview too, until the cursor is over another card.
-      if (e.target.closest?.('.session-card, .worker-row, .spine-full-row, .snoozed-row, .session-placeholder')) nestLane = false;
-      else if (nestLane) return;
       exitNestPreview();
       // Same-task reorder in progress (the hidden source lives in this cell):
       // the placeholder is the only affordance, so skip the cell highlight and
@@ -2807,27 +2874,39 @@ function wireGridDnd(el) {
           const after = dragAfterChild(spine, e.clientY);
           if (after) spine.insertBefore(placeholderEl, after);
           else spine.appendChild(placeholderEl);
-          sizePlaceholderFor(true);
+          shapePlaceholder();
           return;
         }
         const body = cell.querySelector('.task-body');
-        if (body) {
-          sizePlaceholderFor(false);
+        if (body && isMultiColumn(body)) {
+          // Pick the slot by where the cursor is across the row as well as down
+          // it (gridSlotAt); the placeholder hides behind the insert line, so
+          // nothing reflows mid-drag.
+          const units = topUnits(body);
+          const slot = gridSlotAt(units.map((u) => u.getBoundingClientRect()), e.clientX, e.clientY);
+          if (slot) units[slot.index][slot.after ? 'after' : 'before'](placeholderEl);
+        } else if (body) {
           const after = dragAfterElement(body, e.clientY);
           if (after) body.insertBefore(placeholderEl, after);
           else body.appendChild(placeholderEl);
         }
+        shapePlaceholder();
         return;
       }
       cell.classList.add('drop-target');
     });
     cell.addEventListener('dragleave', (e) => {
-      if (cell.contains(e.relatedTarget)) return;
+      // Some browsers give no relatedTarget for a move between elements inside
+      // the tile, so the cursor still being over the tile also counts as not
+      // leaving it.
+      if (cell.contains(e.relatedTarget) || inRect(cell.getBoundingClientRect(), e.clientX, e.clientY)) return;
       cell.classList.remove('drop-target');
       if (nestTargetEl && cell.contains(nestTargetEl)) setNestTarget(null);
-      // Left the tile: a nest preview (and the gap-holding nest lane) ends here.
+      // Left the tile: a nest preview (and the gap-holding nest lane) ends here,
+      // and so does the insert line (a drop elsewhere reassigns, not reorders).
       nestLane = false;
       exitNestPreview();
+      if (placeholderEl?.classList.contains('as-line')) updateInsertLine(null);
     });
     cell.addEventListener('drop', (e) => {
       if (extDragActive()) return;
@@ -2842,10 +2921,10 @@ function wireGridDnd(el) {
       // preview put the placeholder in its spine, so the reorder path below
       // stores the new child last among its siblings, where the preview drew
       // it. An activity-sorted bucket has no manual order, so it only attaches.
-      const nestSid = nestTargetEl?.dataset.sid;
+      const nestSid = (nestTargetEl || e.target.closest?.('.nest-zone')?.closest('.session-card'))?.dataset.sid;
       setNestTarget(null);
       const nestBucket = isNoTask ? ADHOC_ID : taskId;
-      if (p.kind === 'session' && nestSid && (activitySortedTasks.has(nestBucket) || !slotSpacer)) {
+      if (p.kind === 'session' && nestSid && (activitySortedTasks.has(nestBucket) || !previewReturn)) {
         attachSession(p.sessionId, nestSid);
         return;
       }

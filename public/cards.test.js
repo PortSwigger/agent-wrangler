@@ -316,6 +316,23 @@ test('workerRowHtml: carries data-sid and the status word as the dot tooltip, no
   assert.doesNotMatch(html, /worker-status/);
 });
 
+test('workerRowHtml: a workflow-run child gets the violet wf-child box with the workflow symbol leading the row', () => {
+  const html = workerRowHtml(sess({ label: 'w', workflow: { phase: 'build' } }), ctx());
+  assert.match(html, /worker-row [^"]*wf-child/);
+  assert.ok(html.indexOf('wf-ico') < html.indexOf('worker-dot'), 'symbol comes before the status dot and name');
+  assert.doesNotMatch(html, />Workflow</);
+  assert.doesNotMatch(workerRowHtml(sess({ label: 'w' }), ctx()), /wf-child|wf-ico/);
+});
+
+test('renderTileCards: a full-view workflow-run child keeps the violet box and frame, without the Workflow header', () => {
+  const parent = sess({ sessionId: 'p1', label: 'parent' });
+  const child = sess({ sessionId: 'c1', label: 'run', parentSession: 'p1', childFullView: true, workflow: { phase: 'plan' } });
+  const html = renderTileCards([parent, child], ctx({ isChildFullView: (s) => s.childFullView === true }));
+  assert.match(html, /class="spine-full-row wf-child" data-child-sid="c1" draggable="true"><span class="wf-ico"/);
+  assert.match(html, /session-card [^"]*wf-orchestrator[^"]*" data-sid="c1"/);
+  assert.doesNotMatch(html, /wf-title/);
+});
+
 test('workerRowHtml: is its own drag unit, tagged with data-child-sid so app.js tells it from a top-level card', () => {
   const html = workerRowHtml(sess({ label: 'w' }), ctx());
   assert.match(html, /data-child-sid="s1" draggable="true"/);

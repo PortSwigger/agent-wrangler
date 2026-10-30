@@ -31,10 +31,17 @@ nested descendants.
 
 While you drag a session, each card it can nest under shows a **Nest** zone on its right-hand side.
 Drop on the zone to make the session that card's child. Dropping anywhere else reorders cards as usual.
+The dashed placeholder shows the shape the board will take: a child row under the target while you hover
+its Nest zone, or a full card when a child is about to become a top-level session.
+
+When a task shows its cards in more than one column (focus mode), the dragged card stays in place,
+dimmed, and a blue line shows where it will land. The left or right half of the card under the cursor
+picks the side, and the Nest zone sits in the middle of the card.
 
 Child rows can be dragged too: up or down within their parent to reorder them, into another parent's
 children or onto its Nest zone to move them there, or out among the top-level cards to promote them.
-Workflow workers can be reordered but stay with their run.
+Workflow workers can be reordered but stay with their run. A workflow run nested under another session
+keeps its violet box and workflow symbol.
 
 Each task also has:
 
