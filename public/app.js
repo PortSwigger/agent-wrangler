@@ -1031,6 +1031,12 @@ let dragUnitHeight = 0;
 // closing the old slot can shift the target, so the preview holds for as long
 // as the cursor stays in that rect, rather than flickering off and on.
 let previewSpine = null;
+// A bare top-level card being previewed as a parent is wrapped, with its
+// temporary spine, in this `.child-group`, the same unit a real parent with
+// children renders as. In a multi-column body each direct child is its own
+// grid cell, so an unwrapped spine would land in the next column instead of
+// under the card.
+let previewGroup = null;
 let previewReturn = null;
 let nestZoneRect = null;
 // The insert line a multi-column task shows instead of a moving gap
@@ -1185,7 +1191,15 @@ function enterNestPreview(card, zone) {
     previewSpine = document.createElement('div');
     previewSpine.className = 'child-spine';
     previewSpine.dataset.parentSid = sid;
-    card.after(previewSpine);
+    if (!host && card.parentNode.classList.contains('task-body')) {
+      // data-sid keeps it counted as the card's unit (bucketOrderFromDom,
+      // topUnits) while the card sits inside it.
+      previewGroup = document.createElement('div');
+      previewGroup.className = 'child-group';
+      previewGroup.dataset.sid = sid;
+      card.before(previewGroup);
+      previewGroup.append(card, previewSpine);
+    } else card.after(previewSpine);
     into = previewSpine;
   }
   into.dataset.nestFor = sid;
@@ -1197,13 +1211,20 @@ function enterNestPreview(card, zone) {
 function exitNestPreview() {
   if (!previewReturn) return;
   delete placeholderEl.parentNode?.dataset.nestFor;
+  // Unwrap first: the slot to return to may sit right before the card.
+  if (previewGroup) {
+    const card = previewGroup.querySelector(':scope > .session-card');
+    if (card) previewGroup.before(card);
+    previewGroup.remove();
+    previewGroup = null;
+  }
+  previewSpine?.remove();
+  previewSpine = null;
   const { parent, next } = previewReturn;
   if (next && next.parentNode === parent) parent.insertBefore(placeholderEl, next);
   else parent.appendChild(placeholderEl);
   previewReturn = null;
   nestZoneRect = null;
-  previewSpine?.remove();
-  previewSpine = null;
   shapePlaceholder();
 }
 
