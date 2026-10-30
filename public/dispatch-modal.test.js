@@ -608,7 +608,7 @@ test('closing a schedule notification leaves selection alone', async () => {
   assert.equal(app.state.pending, null);
 });
 
-test('focused schedule opens the live target terminal, unfocused schedule leaves selection alone', () => {
+test('focused schedule opens the terminal without another notification', () => {
   const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: true }]);
   app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1' });
   assert.deepEqual(app.selected, []);
@@ -617,11 +617,13 @@ test('focused schedule opens the live target terminal, unfocused schedule leaves
   assert.equal(app.views.CARD1, 'terminal');
   assert.deepEqual(app.landed, ['CARD1']);
   assert.equal(app.state.pending, null);
+  assert.equal(app.notices.length, 1);
 });
 
 test('focused schedule waits for resumed target to be live without requesting another resume', () => {
   const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: false }]);
   app.onScheduleFired({ name: 'Wake', sessionId: 'CARD1', focus: true });
+  assert.deepEqual(app.notices, []);
   app.tryFulfillScheduledFocus();
   assert.deepEqual(app.selected, []);
   assert.equal(app.state.pending, 'CARD1');

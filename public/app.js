@@ -6856,6 +6856,10 @@ function onScheduleFired(msg) {
     pendingScheduledFocus = { sessionId: msg.sessionId, expiresAt: Date.now() + 8000 };
     tryFulfillScheduledFocus();
   };
+  if (msg.focus === true && msg.sessionId) {
+    viewSession();
+    return;
+  }
   notifications.show('core:schedules', {
     id: String(++scheduleNotificationId),
     title: `Scheduled "${msg.name}" started`,
@@ -6863,7 +6867,6 @@ function onScheduleFired(msg) {
   }).then((answer) => {
     if (answer === 'view' && msg.sessionId) viewSession();
   });
-  if (msg.focus === true && msg.sessionId) viewSession();
 }
 
 function tryFulfillScheduledFocus() {
