@@ -186,6 +186,11 @@ for (const adhoc of [false, true]) test(`New TODO creates and renders in ${adhoc
   const input = document.make();
   input.focus = () => { document.activeElement = input; };
   input.value = '  Follow up  ';
+  input.blur = () => {
+    if (document.activeElement !== input) return;
+    document.activeElement = null;
+    for (const fn of input.listeners.blur || []) fn();
+  };
   const zone = document.make();
   zone.style = {};
   zone.querySelector = (selector) => selector === '.todo-add-input' ? input : null;
@@ -195,6 +200,7 @@ for (const adhoc of [false, true]) test(`New TODO creates and renders in ${adhoc
   item.run();
   assert.equal(document.activeElement, input);
   input.listeners.keydown[0]({ key: 'Enter', preventDefault() {}, stopPropagation() {} });
+  assert.notEqual(document.activeElement, input);
   input.listeners.blur[0]();
   assert.deepEqual(sent, [{ type: 'todo-add', taskId: adhoc ? null : 't1', text: 'Follow up' }]);
   assert.equal(graph.todos[key][0].text, 'Follow up');
