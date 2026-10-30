@@ -23,8 +23,8 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
-// The plain-HTTP server: POST /mcp (CSRF-gated), POST /pr-attach (the launch
-// hook's callback), the styles manifest + asset routes, the /ext/<id>/ extension
+// The plain-HTTP server: POST /mcp (CSRF-gated), POST /pr-attach and POST
+// /pr-model (the launch hook's callbacks), the styles manifest + asset routes, the /ext/<id>/ extension
 // client route, and static public/ serving. WS upgrades are wired separately on
 // the returned server in index.js.
 //
@@ -38,7 +38,7 @@ const MIME = {
 // (enabled extensions only, each with the themes it has switched off), so a
 // disabled extension's or switched-off theme drops out of /api/styles and its
 // assets 404.
-export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fileHandler, extFileHandler, extensionAssets = () => null, extensionThemes = () => [] }) {
+export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, prModelHandler, fileHandler, extFileHandler, extensionAssets = () => null, extensionThemes = () => [] }) {
   return http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
     if (urlPath === '/') urlPath = '/index.html';
@@ -46,7 +46,8 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fil
     // The explicit <link rel=icon> in index.html is what's actually used.
     if (urlPath === '/favicon.ico') urlPath = '/favicon.svg';
 
-    if (req.method === 'POST' && (urlPath === '/mcp' || urlPath === '/pr-attach')) {
+    const postHandlers = { '/mcp': mcpRequestHandler, '/pr-attach': prAttachHandler, '/pr-model': prModelHandler };
+    if (req.method === 'POST' && Object.hasOwn(postHandlers, urlPath)) {
       // Same CSRF gate as the WS upgrade: a cross-origin POST still fires spawn even
       // when CORS blocks the reply. Absent Origin = a non-browser client (MCP client,
       // or the local PostToolUse hook fetch) → allow.
@@ -54,7 +55,7 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, fil
         res.writeHead(403).end('forbidden');
         return;
       }
-      (urlPath === '/mcp' ? mcpRequestHandler : prAttachHandler)(req, res);
+      postHandlers[urlPath](req, res);
       return;
     }
 

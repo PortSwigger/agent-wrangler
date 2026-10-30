@@ -18,6 +18,12 @@ export function prAttachUrl(port = serverPort()) {
   return `http://127.0.0.1:${port}/pr-attach`;
 }
 
+// Where the PR model footer (scripts/pr-model-footer.mjs) asks which model to
+// tag the caller's new PR with.
+export function prModelUrl(port = serverPort()) {
+  return `http://127.0.0.1:${port}/pr-model`;
+}
+
 // Claude carries the caller's card id as a custom header (supported by
 // --mcp-config's per-server `headers`).
 export function claudeMcpConfigArg(cardId, port = serverPort()) {

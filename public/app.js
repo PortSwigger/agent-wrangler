@@ -171,6 +171,7 @@ let trustClaudeLaunchCwd = true; // likewise
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let mailWakesDormant = false;
+let prModelFooter = true;
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
@@ -850,6 +851,7 @@ function applyGraph(graph) {
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
   mailWakesDormant = graph.mailWakesDormant === true;
+  prModelFooter = graph.prModelFooter !== false;
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
@@ -6585,6 +6587,7 @@ initSettings({
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'mailWakesDormant') return mailWakesDormant;
+      if (id === 'prModelFooter') return prModelFooter;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'defaultRuntime') return defaultRuntime;
@@ -6621,6 +6624,9 @@ initSettings({
       } else if (id === 'mailWakesDormant') {
         mailWakesDormant = Boolean(value);
         send({ type: 'set-mail-wakes-dormant', enabled: mailWakesDormant });
+      } else if (id === 'prModelFooter') {
+        prModelFooter = Boolean(value);
+        send({ type: 'set-pr-model-footer', enabled: prModelFooter });
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });

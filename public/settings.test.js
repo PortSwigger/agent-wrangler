@@ -30,6 +30,7 @@ test('each registered setting appears in exactly one tab', () => {
     'trustClaudeLaunchCwd',
     'archiveReviewEnabled',
     'mailWakesDormant',
+    'prModelFooter',
     'flipNavHotkeys',
     'autoUpdate',
     'refreshSessionsAfterUpdate',

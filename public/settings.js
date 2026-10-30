@@ -91,6 +91,14 @@ export const SETTINGS = [
     default: false,
   },
   {
+    id: 'prModelFooter',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Tag new PRs with the session\'s model',
+    help: 'When a session opens a PR with gh pr create, add a last line to its description naming the model the session is running, e.g. "Model: claude-opus-5-5", so you can search PRs by model with gh search prs \'"Model: claude-opus-5-5" in:body\'. A description that already has a Model: line is left alone. This never attaches the PR to a card.',
+    default: true,
+  },
+  {
     id: 'childFullViewByDefault',
     type: 'toggle',
     scope: 'server',
@@ -169,7 +177,7 @@ export const SETTINGS_TABS = [
   {
     id: 'automation',
     label: 'Automation',
-    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
+    settingIds: ['autoFixPrChecksDefault', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
   },
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
