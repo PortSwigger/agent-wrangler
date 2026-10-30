@@ -50,6 +50,8 @@ With `AW_INSTALL_ROOT` set, these paths are built from it instead (`server/insta
 - the PostToolUse PR-attach hook, `scripts/pr-attach-hook.mjs`, and its `server/pr-hook.js`
   (the hook starts `scripts/pr-model-footer.mjs`, and through it `server/pr-footer.js`, from
   beside itself)
+- Codex's PostToolUse model footer hook, `scripts/codex-pr-footer-hook.mjs`, which starts the same
+  footer script
 - the wrangler-meta skills plugin, `agent-skills` (Claude's `--plugin-dir`, and the `SKILL.md`
   paths in Codex's instructions)
 - each builtin extension's skills, `server/extensions/builtin/<id>/skills/<name>`

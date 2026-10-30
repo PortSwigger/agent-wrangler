@@ -115,8 +115,8 @@ unresolved review threads.
 
 ## Model footer on new pull requests
 
-When a Claude session creates a pull request with `gh pr create`, the wrangler adds one last line to
-its description naming the exact model the session was running, with no effort level:
+When a Claude or Codex session creates a pull request with `gh pr create`, the wrangler adds one last
+line to its description naming the exact model the session was running, with no effort level:
 
 ```text
 Model: claude-opus-5-5
@@ -135,6 +135,11 @@ The footer is on by default; turn it off with **Tag new PRs with the session's m
 card, and works with automatic attaching off. It runs after the `gh pr create` call has returned, so
 it never delays or fails it, and it uses the session's own `gh` login, including inside a
 devcontainer.
+
+Codex runs it as a hook the wrangler passes at launch, resume and fork. Codex asks you to review a
+new hook before running it; the wrangler marks this one trusted in the same launch flags, so no
+prompt appears and nothing is written to `~/.codex/config.toml`. The hook runs outside Codex's
+sandbox, so it works whichever sandbox the session runs under.
 
 ## Auto-fix PR checks
 
