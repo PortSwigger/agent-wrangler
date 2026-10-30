@@ -29,6 +29,11 @@ attachable terminal only after being resumed through the board.
 Tasks are board columns for related sessions. Drag cards between tasks; moving a parent also moves its
 nested descendants.
 
+Drag a card onto the middle of another card in the same task to nest it there as a child. The target
+lights up blue when a drop will nest; dropping near a card's top or bottom edge reorders instead. Drag a
+child row up or down within its parent to reorder the children, or drag it out among the top-level cards
+to promote it. Workflow workers can be reordered but stay with their run.
+
 Each task also has:
 
 - **TODOs:** add, complete, reorder, and collapse task-level work items. TODOs are an optional builtin extension (`todos`, on by default); turning it off in Settings → Extensions removes the zone, tools, and skill without deleting stored TODOs.

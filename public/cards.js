@@ -452,7 +452,9 @@ export function workerRowHtml(s, ctx) {
     : '';
   // Keep fresh mail visible when a child is collapsed into its parent's spine.
   const mailBadge = mailBadgeHtml(s);
-  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
+  // data-child-sid + draggable: the row is its own drag unit, reordered within
+  // its spine or dropped onto another card to move it (app.js wireGrid).
+  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}" data-sid="${esc(s.sessionId)}" data-child-sid="${esc(s.sessionId)}" draggable="true" title="${esc(s.label)}" role="button" tabindex="0"${throbDelayStyle(state)}>
     <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
     ${mailBadge}
@@ -476,11 +478,12 @@ export function workerRowHtml(s, ctx) {
 // default) instead draws it as an ordinary top-level card, wrapped in a bare
 // `.spine-full-row` div purely so it can carry the same elbow connector a
 // `.worker-row` draws (see styles.css) without borrowing that class's own
-// background/border/padding. Still non-draggable (`nested: true`) — the
-// enclosing `.child-group`/`.workflow-box` wrapper is the actual drag unit.
+// background/border/padding. The card itself is non-draggable (`nested: true`);
+// the `.spine-full-row` wrapper is the child's drag unit, the same as a
+// `.worker-row` (data-child-sid), so dragging it never drags the parent group.
 function childRowHtml(c, ctx, { focusMode } = {}) {
   if (!ctx.isChildFullView(c)) return workerRowHtml(c, ctx);
-  return `<div class="spine-full-row">${sessionCardHtml(c, ctx, { expanded: focusMode, nested: true })}</div>`;
+  return `<div class="spine-full-row" data-child-sid="${esc(c.sessionId)}" draggable="true">${sessionCardHtml(c, ctx, { expanded: focusMode, nested: true })}</div>`;
 }
 
 export function workflowBoxHtml(orch, workers, ctx, { focusMode, nested } = {}) {

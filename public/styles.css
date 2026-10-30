@@ -1834,7 +1834,15 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 /* While reordering, the dragged card is hidden and a single dashed placeholder
    (sized to the card) slides to the slot it would land in. */
 .session-card.dragging-hidden, .snoozed-row.dragging-hidden,
-.workflow-box.dragging-hidden, .child-group.dragging-hidden { display: none; }
+.workflow-box.dragging-hidden, .child-group.dragging-hidden,
+.worker-row.dragging-hidden, .spine-full-row.dragging-hidden { display: none; }
+/* A dragged session hovering the middle of a card it can nest under: dropping
+   now makes it that card's child (app.js nestTargetAt). */
+.session-card.nest-target {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--blue) 8%, var(--card-bg));
+}
 .session-placeholder {
   border: 1px dashed var(--blue);
   border-radius: 8px;

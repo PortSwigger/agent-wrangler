@@ -316,6 +316,11 @@ test('workerRowHtml: carries data-sid and the status word as the dot tooltip, no
   assert.doesNotMatch(html, /worker-status/);
 });
 
+test('workerRowHtml: is its own drag unit, tagged with data-child-sid so app.js tells it from a top-level card', () => {
+  const html = workerRowHtml(sess({ label: 'w' }), ctx());
+  assert.match(html, /data-child-sid="s1" draggable="true"/);
+});
+
 test('workerRowHtml: renders a trailing worker-ring element as the halo — not row-level outline/box-shadow, which the join line paints over', () => {
   const html = workerRowHtml(sess({ label: 'w', status: 'working' }), ctx());
   assert.match(html, /<span class="worker-ring" aria-hidden="true"><\/span>\s*<\/div>$/);
@@ -517,8 +522,10 @@ test('renderTileCards: a "full view" child (ctx.isChildFullView) draws a real .s
   const c1Row = html.split('\n').find((line) => line.includes('data-sid="c1"'));
   assert.match(c1Row, /session-card/);
   assert.doesNotMatch(c1Row, /worker-row/);
-  // Non-draggable — the enclosing .child-group is the actual drag unit.
+  // The card is non-draggable; its .spine-full-row wrapper is the child's own
+  // drag unit, so dragging it moves the child, not the whole parent group.
   assert.match(c1Row, /session-card [^"]*" data-sid="c1" draggable="false"/);
+  assert.match(html, /class="spine-full-row" data-child-sid="c1" draggable="true"/);
 });
 
 test('renderTileCards: a full-view child falls back to a compact row via the server-wide default when no per-session override is set', () => {
