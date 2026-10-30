@@ -1854,6 +1854,9 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
   border-style: solid;
   background: color-mix(in srgb, var(--blue) 24%, var(--surface));
 }
+/* Holds a dragged card's old slot open during a nest preview (app.js
+   enterNestPreview), so the cards above the target don't shift. */
+.session-slot-spacer { flex: 0 0 auto; }
 .session-placeholder {
   border: 1px dashed var(--blue);
   border-radius: 8px;

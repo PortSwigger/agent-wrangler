@@ -1017,6 +1017,20 @@ let nestTargetEl = null;
 // card: crossing the gap between two stacked zones then leaves the placeholder
 // where it is, so the cards don't shift under the cursor.
 let nestLane = false;
+// Placeholder heights for a dragged child: its own row's height while it sits
+// in a spine, and a full card's once it sits among the top-level cards, so the
+// gap shows it will land as a full card there (sizePlaceholderFor).
+let childRowHeight = 0;
+let topLevelCardHeight = 0;
+// The dragged unit's own height, restored to the placeholder when a nest
+// preview ends (exitNestPreview).
+let dragUnitHeight = 0;
+// While a Nest zone is hovered the placeholder previews the nest: it moves
+// into the target's spine as a child row (or into `previewSpine`, a temporary
+// spine, when the target has none yet). `slotSpacer` holds the old slot open
+// when it sits above the target, so the target doesn't shift under the cursor.
+let slotSpacer = null;
+let previewSpine = null;
 
 let taskDragActive = false;
 let draggedTaskId = null;
@@ -1067,10 +1081,71 @@ function addNestZones(grid, sessionId) {
   }
 }
 
-// The session whose spine `spine` is: a plain parent's .child-group, or a
-// workflow run's box.
+// A full top-level card's height in `body` (the tallest drawn there, else the
+// row's own height), for a child dragged out to a top-level slot.
+function topLevelHeightIn(body, fallback) {
+  const cards = body.querySelectorAll(':scope > .session-card:not(.dragging-hidden), :scope > .child-group > .session-card, :scope > .workflow-box > .session-card');
+  return Math.max(fallback, ...[...cards].map((c) => c.offsetHeight));
+}
+
+// Size the placeholder for where it now sits: a dragged child gets a row's
+// height in a spine and a full card's among the top-level cards.
+function sizePlaceholderFor(inSpine) {
+  if (!placeholderEl || !draggedCard?.dataset.childSid) return;
+  placeholderEl.style.height = `${inSpine ? childRowHeight : topLevelCardHeight}px`;
+}
+
+// The session whose spine `spine` is: a plain parent's .child-group, a
+// workflow run's box, or the target of a temporary nest-preview spine.
 function spineParentSid(spine) {
-  return spine.closest('.child-group, .workflow-box')?.dataset.sid || null;
+  return spine.dataset.parentSid || spine.closest('.child-group, .workflow-box')?.dataset.sid || null;
+}
+
+// The height a child row is drawn at, for a nest preview.
+function childRowHeightIn(grid) {
+  return childRowHeight || grid.querySelector('.worker-row')?.offsetHeight || 30;
+}
+
+// Show what nesting under `card` will do: move the placeholder to the end of
+// its spine, sized as a child row. A card with no spine yet (a bare card, a
+// solo or collapsed workflow) gets a temporary one right after it.
+function enterNestPreview(card) {
+  const host = card.closest('.child-group, .workflow-box');
+  const group = host && host.dataset.sid === card.dataset.sid ? host : null;
+  const spine = group?.querySelector(':scope > .child-spine, :scope > .workflow-spine:not(:empty)') || null;
+  const target = spine || previewSpine;
+  if (target && placeholderEl.parentNode === target && target.dataset.nestFor === card.dataset.sid) return;
+  exitNestPreview();
+  slotSpacer = document.createElement('div');
+  slotSpacer.className = 'session-slot-spacer';
+  const aboveTarget = placeholderEl.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING;
+  slotSpacer.style.height = aboveTarget ? placeholderEl.style.height : '0px';
+  placeholderEl.parentNode.insertBefore(slotSpacer, placeholderEl);
+  let into = spine;
+  if (!into) {
+    previewSpine = document.createElement('div');
+    previewSpine.className = 'child-spine';
+    previewSpine.dataset.parentSid = card.dataset.sid;
+    card.after(previewSpine);
+    into = previewSpine;
+  }
+  into.dataset.nestFor = card.dataset.sid;
+  into.appendChild(placeholderEl);
+  placeholderEl.style.height = `${childRowHeightIn(document.getElementById('grid'))}px`;
+}
+
+// End a nest preview: the placeholder goes back to the slot it held, at the
+// size it had there.
+function exitNestPreview() {
+  if (!slotSpacer) return;
+  delete placeholderEl.parentNode?.dataset.nestFor;
+  slotSpacer.parentNode?.insertBefore(placeholderEl, slotSpacer);
+  slotSpacer.remove();
+  slotSpacer = null;
+  previewSpine?.remove();
+  previewSpine = null;
+  if (draggedCard?.dataset.childSid) sizePlaceholderFor(!!placeholderEl.parentNode?.closest('.child-spine, .workflow-spine'));
+  else placeholderEl.style.height = `${dragUnitHeight}px`;
 }
 
 // The child spine under a drag of a nested child that will take it, or null:
@@ -2627,6 +2702,12 @@ function wireGridDnd(el) {
         if (draggedCard !== card || !card.parentNode) return;
         const ph = ensurePlaceholder();
         ph.style.height = `${card.offsetHeight}px`;
+        dragUnitHeight = card.offsetHeight;
+        if (card.dataset.childSid) {
+          childRowHeight = card.offsetHeight;
+          const body = card.closest('.task-body');
+          topLevelCardHeight = body ? topLevelHeightIn(body, childRowHeight) : childRowHeight;
+        }
         card.parentNode.insertBefore(ph, card);
         card.classList.add('dragging-hidden');
         addNestZones(el, dragUnitSid(card));
@@ -2635,6 +2716,7 @@ function wireGridDnd(el) {
     card.addEventListener('dragend', () => {
       card.classList.remove('dragging-hidden');
       removePlaceholder();
+      exitNestPreview();
       setNestTarget(null);
       nestLane = false;
       draggedCard = null;
@@ -2699,11 +2781,17 @@ function wireGridDnd(el) {
       const zone = e.target.closest?.('.nest-zone');
       const nest = zone && cell.contains(zone) ? zone.closest('.session-card') : null;
       setNestTarget(nest);
-      if (nest) { nestLane = true; cell.classList.remove('drop-target'); return; }
+      if (nest) {
+        nestLane = true;
+        cell.classList.remove('drop-target');
+        if (placeholderEl?.parentNode && cell.contains(draggedCard)) enterNestPreview(nest);
+        return;
+      }
       // In a gap straight after a Nest zone (e.g. between two stacked zones):
-      // hold the placeholder too, until the cursor is over another card.
+      // hold the preview too, until the cursor is over another card.
       if (e.target.closest?.('.session-card, .worker-row, .spine-full-row, .snoozed-row, .session-placeholder')) nestLane = false;
       else if (nestLane) return;
+      exitNestPreview();
       // Same-task reorder in progress (the hidden source lives in this cell):
       // the placeholder is the only affordance, so skip the cell highlight and
       // slide it to the slot the cursor points at. An activity-sorted bucket owns
@@ -2719,10 +2807,12 @@ function wireGridDnd(el) {
           const after = dragAfterChild(spine, e.clientY);
           if (after) spine.insertBefore(placeholderEl, after);
           else spine.appendChild(placeholderEl);
+          sizePlaceholderFor(true);
           return;
         }
         const body = cell.querySelector('.task-body');
         if (body) {
+          sizePlaceholderFor(false);
           const after = dragAfterElement(body, e.clientY);
           if (after) body.insertBefore(placeholderEl, after);
           else body.appendChild(placeholderEl);
@@ -2735,6 +2825,9 @@ function wireGridDnd(el) {
       if (cell.contains(e.relatedTarget)) return;
       cell.classList.remove('drop-target');
       if (nestTargetEl && cell.contains(nestTargetEl)) setNestTarget(null);
+      // Left the tile: a nest preview (and the gap-holding nest lane) ends here.
+      nestLane = false;
+      exitNestPreview();
     });
     cell.addEventListener('drop', (e) => {
       if (extDragActive()) return;
@@ -2745,10 +2838,17 @@ function wireGridDnd(el) {
       const isNoTask = cell.dataset.entity === 'no-task';
       const taskId = cell.dataset.taskid;
       // Dropped on a card's Nest zone: nest under it (the same attach the
-      // "Attach to…" menu sends; the server re-checks every rule).
+      // "Attach to…" menu sends; the server re-checks every rule). The nest
+      // preview put the placeholder in its spine, so the reorder path below
+      // stores the new child last among its siblings, where the preview drew
+      // it. An activity-sorted bucket has no manual order, so it only attaches.
       const nestSid = nestTargetEl?.dataset.sid;
       setNestTarget(null);
-      if (p.kind === 'session' && nestSid) { attachSession(p.sessionId, nestSid); return; }
+      const nestBucket = isNoTask ? ADHOC_ID : taskId;
+      if (p.kind === 'session' && nestSid && (activitySortedTasks.has(nestBucket) || !slotSpacer)) {
+        attachSession(p.sessionId, nestSid);
+        return;
+      }
       if (p.kind === 'session') {
         // Same bucket (a task, or Ad-hoc for unassigned sessions) → reorder: build
         // the new order by walking the DOM, dropping the dragged session in at the
