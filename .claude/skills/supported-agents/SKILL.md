@@ -70,7 +70,7 @@ one must be wired in all three — omitting resume or fork is the most common ga
 | Capability | Antigravity |
 |---|---|
 | Dispatch | Local, Default login only; opt-in plugin; retained intent follows current-launch native read and idle composer |
-| Mode | `--mode auto` with bounded post-composer BTab/footer verification; uncertainty needs human attention |
+| Mode | `--mode auto` with bounded post-composer BTab/footer verification; captured idle accept-edits hint is a placeholder, coloured auto footer is accepted; uncertainty shows setup |
 | Resume | `--conversation`, launch model/effort/grants retained; fresh native readiness before wake text; uncertain intent never replayed |
 | Fork | Guarded `/fork` in a separate pane; immutable parent prefix and step saved before launch |
 | Identity/status | Six identity-scoped hooks; pane-process PID and summaries classification required; child events never set root status |

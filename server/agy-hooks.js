@@ -69,6 +69,6 @@ export async function acceptAgyHook(payload, { map, rootPid, summaries = readAgy
   save(); return true;
 }
 export function readAgyLive({ pid, entry }) {
-  if (entry?.agyLaunchWarning) return { liveSid: entry.liveSessionId, status: 'needs-you', waitingFor: entry.agyLaunchWarning };
+  if (entry?.agyLaunchWarning) return { liveSid: entry.liveSessionId, status: 'needs-you', waitingFor: entry.agyLaunchWarning, waitingReason: 'agent-startup' };
   return liveByPid.get(Number(pid)) || (entry?.agyLive?.parentPid === Number(pid) ? entry.agyLive : null);
 }

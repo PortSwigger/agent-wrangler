@@ -43,7 +43,10 @@ missing, signed-out or older CLIs retain the bundled model list. This is separat
 API pricing and never runs in the catalog-refresh Action.
 
 Task text is retained on the card; it is never passed through `-i`. Launches use auto mode. Wrangler waits for a clear, framed composer, cycles Shift+Tab
-with a bounded retry and verifies `auto` in the footer. A timeout or unsupported account
+with a bounded retry and verifies `auto` in the footer, including coloured terminal output.
+The captured accept-edits mode hint counts as an empty composer only with the idle
+shortcuts footer and matching mode; additional text remains a protected draft.
+A timeout or unsupported account
 shows needs-you and holds automated delivery. Auto availability depends on the account;
 check it in the terminal. Wrangler does not silently switch to full access. Permission,
 trust, login, theme, terms, artifact review, survey and quota screens need your attention.
@@ -66,7 +69,7 @@ the native read, root identity and clear composer are confirmed, the retained ta
 sent once. Uncertain task or image submission stays visible and is never automatically
 replayed, including after Resume. Inspect the terminal before manually resending it.
 
-If tools remain unavailable, the card shows **needs-you**, with task and durable mail
+If tools remain unavailable, the card shows **setup** in its needs-you state, with task and durable mail
 retained. Complete sign-in and inspect the native **`/mcp` manager**. Google's
 [MCP guide](https://antigravity.google/docs/mcp?tab=cli) describes manual configuration
 reload there; it does not specify a portable `/mcp reload` command. Wrangler sends no
@@ -74,6 +77,8 @@ unverified reload shortcut and never chooses a permission option. After recovery
 agy to call native `get_session_info` with empty arguments again, or use **Resume** once
 a root identity is known. No shell approval is required for a repair bridge because no
 repair bridge is part of this workflow.
+Actual terminal prompts, including sign-in and permission choices, use **reply** and
+take precedence over a startup warning. The startup explanation is visible in Chat.
 
 Transport failures invalidate native readiness. A later native request reconnects with
 bounded connection/discovery timeouts; writes are never retried. A lost write response

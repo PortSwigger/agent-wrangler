@@ -36,7 +36,7 @@ fs.writeFileSync(path.join(logs, 'transcript_full.jsonl'), [
 ].map((r) => JSON.stringify(r)).join('\n') + '\n');
 fs.writeFileSync(path.join(data, 'price-catalog.json'), JSON.stringify({ fetchedAt: at, gemini: { 'gemini-3.8-flash': { input: 1, output: 2, cacheRead: 0.1, cacheWrite5m: 0, cacheWrite1h: 0 } } }));
 fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({ tmuxSocket: socket, manageAgyIntegration: false }));
-fs.writeFileSync(path.join(data, 'mappings.json'), JSON.stringify({ [cardId]: { agent: 'agy', tmux: 'ag_fixture', socket, cwd: workspace, intent: 'Fixture-backed Antigravity integration', model: 'gemini-3.8-flash', effort: 'medium', liveSessionId: nativeId, createdAt: Date.now() } }));
+fs.writeFileSync(path.join(data, 'mappings.json'), JSON.stringify({ [cardId]: { agent: 'agy', tmux: 'ag_fixture', socket, cwd: workspace, intent: 'Fixture-backed Antigravity integration', model: 'gemini-3.8-flash', effort: 'medium', liveSessionId: nativeId, createdAt: Date.now(), ...(process.argv.includes('--startup-pending') ? { agyLaunchWarning: 'Antigravity native Wrangler tools are unavailable. Task and mail are retained. Complete sign-in, inspect the native /mcp manager, then retry native get_session_info.' } : {}) } }));
 const live = path.join(root, 'live'); fs.mkdirSync(live);
 const pane = 'Antigravity 1.4.10 fixture\n─────────────────────────────────────────────────\n> \n─────────────────────────────────────────────────\n? for shortcuts           auto   Gemini 3.8 Flash · medium\n';
 const fakeLive = path.join(live, 'fixture.mjs');

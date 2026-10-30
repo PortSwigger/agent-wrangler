@@ -9,6 +9,18 @@ import { parseAgyModels, resolveAgyModel } from './agy-catalog.js';
 import { agyPane } from './agy-pane.js';
 
 const idle = '────────────────────────────\n> \n────────────────────────────\n? for shortcuts     auto   Gemini 3.8 Flash · medium';
+const modes = JSON.parse(fs.readFileSync(new URL('../fixtures/agy-1.4.11/mode-panes.json', import.meta.url), 'utf8'));
+test('only the captured idle mode placeholder is empty; matching human drafts and extra text are protected', () => {
+  assert.equal(agyPane.empty(modes.acceptEdits), true);
+  assert.equal(agyPane.draft(modes.acceptEdits), '');
+  for (const pane of [
+    modes.acceptEdits.replace('? for shortcuts', ''),
+    modes.acceptEdits.replace('(shift+tab to cycle)', '(shift+tab to cycle) my draft'),
+    modes.acceptEdits.replace('> Accept-edits', '> human text\n  Accept-edits'),
+    modes.acceptEdits.replace('accept-edits · Gemini', 'default · Gemini'),
+  ]) assert.equal(agyPane.empty(pane), false);
+  assert.equal(agyPane.empty(modes.acceptEdits + '\nAllow calling this tool?'), false);
+});
 test('agy launch, resume and fork preserve model, grants, policy and core identity with shell-safe prompts', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-argv-'));
   try {

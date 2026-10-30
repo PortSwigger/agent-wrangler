@@ -10,6 +10,23 @@ import fs from 'node:fs';
 const evidence = JSON.parse(fs.readFileSync(new URL('./fixtures/agy-1.4.10/startup.json', import.meta.url), 'utf8'));
 
 const idle = '────────────────────────────\n> \n────────────────────────────\n? for shortcuts      auto   Gemini 3.8 Flash · medium';
+const modes = JSON.parse(fs.readFileSync(new URL('./fixtures/agy-1.4.11/mode-panes.json', import.meta.url), 'utf8'));
+
+test('captured accept-edits placeholder permits mode recovery; styled auto still waits for native readiness', async () => {
+  const entry = { agyStartup: createAgyStartup(), agyPendingIntent: { text: 'one task', state: 'pending' }, liveSessionId: 'root' };
+  let pane = modes.acceptEdits, ready = false;
+  const sent = [], keys = [];
+  const args = { entry, capture: async () => pane, keys: async (_t, value) => { keys.push(value); pane = modes.autoStyled; }, send: async (_t, text) => sent.push(text), confirm: async () => true, nativeReady: () => ready, timeoutMs: 1 };
+  for (let n = 0; n < 3; n++) await advanceAgyStartup(args);
+  assert.deepEqual(keys, [['BTab']]);
+  assert.deepEqual(sent, [AGY_STARTUP_PROBE]);
+  assert.equal(entry.agyPendingIntent.state, 'pending');
+  ready = true;
+  await advanceAgyStartup(args);
+  await advanceAgyStartup(args);
+  assert.deepEqual(sent, [AGY_STARTUP_PROBE, 'one task']);
+  assert.equal(entry.agyPendingIntent.state, 'submitted');
+});
 
 test('launch holds task intent out of argv until native discovery', () => {
   const cmd = agy.buildLaunch({ sessionId: 'card', intent: 'PRIVATE TASK MUST WAIT', launchId: 'launch-one' });

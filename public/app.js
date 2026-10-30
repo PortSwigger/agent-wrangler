@@ -47,7 +47,7 @@ import {
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
   anyModalOpen as anyModalOpenIn,
 } from './util.js';
-import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
+import { STATUS_WORDS, needsYouWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
@@ -827,8 +827,7 @@ function barWord(s) {
   // suggest the same "go answer a prompt in the terminal" affordance as a real
   // permission prompt or OAuth screen (see workerStatusWord in cards.js, same
   // vocabulary).
-  if (s.status === 'needs-you' && s.waitingReason === 'api-error') return 'error';
-  if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
+  if (s.status === 'needs-you') return needsYouWord(s);
   if (unread.has(s.sessionId)) return 'unread';
   if (justFinished.has(s.sessionId)) return 'done';
   return STATUS_WORDS[displayStatus(s)] || '?';

@@ -19,6 +19,7 @@ import { acceptAgyNative, agyNativeReady, AGY_STARTUP_PROBE } from './agy-startu
 import { INSTALL_ROOT } from './install-root.js';
 
 const idle = '────────────────────────────\n> \n────────────────────────────\n? for shortcuts      auto   Gemini 3.8 Flash · medium';
+const modes = JSON.parse(fs.readFileSync(new URL('./fixtures/agy-1.4.11/mode-panes.json', import.meta.url), 'utf8'));
 test('Manage agy integration defaults off and refuses dispatch before side effects', async () => {
   assert.equal(manageAgyIntegration({}), false);
   assert.equal(manageAgyIntegration({ manageAgyIntegration: true }), true);
@@ -41,12 +42,16 @@ test('dispatch, resume and interactive fork retain grants, auto policy, launch s
   const logs = path.join(os.homedir(), '.gemini/antigravity-cli/brain', root, '.system_generated/logs'); fs.mkdirSync(logs, { recursive: true });
   const line = (step_index, content) => JSON.stringify({ step_index, type: 'USER_INPUT', content });
   fs.writeFileSync(path.join(logs, 'transcript_full.jsonl'), line(0, 'parent before fork') + '\n');
-  const sm = new SessionManager(), commands = [], phases = [];
+  const sm = new SessionManager(), commands = [], panes = new Map(), modeKeys = [];
   sm._agyReady = () => true; sm._save = () => {}; sm.refreshAlive = async () => {}; sm.killForSession = async () => {}; sm._fireExtHooks = async () => {};
-  sm._newSession = async (_tmux, _dir, cmd) => { commands.push(cmd); return '%1'; };
+  sm._newSession = async (_tmux, _dir, cmd) => { commands.push(cmd); const pane = `%${commands.length}`; panes.set(pane, modes.acceptEdits); return pane; };
   const sent = [];
-  sm._prepareAgyPane = async () => ({ ready: true });
-  sm._agyPaneIO = { send: async (_target, text) => sent.push(text), confirm: async () => true };
+  sm._agyPaneIO = {
+    capture: async (target) => panes.get(target),
+    keys: async (target, keys) => { assert.deepEqual(keys, ['BTab']); modeKeys.push(target); panes.set(target, modes.autoStyled); },
+    send: async (_target, text) => sent.push(text), confirm: async () => true,
+  };
+  const advance = async (id) => { for (let n = 0; n < 3; n++) await sm._finishProviderLaunch(agy, id); };
   const recover = async (cardId, conversationId) => {
     const entry = sm.entryFor(cardId);
     await acceptAgyHook({ cardId, launchId: entry.agyStartup.launchId, parentPid: 42, conversationId, event: 'PreInvocation', stepIdx: 1 }, { map: sm.map, rootPid: async () => 42, summaries: async () => [{ conversation_id: conversationId, parent_conversation_id: '', nesting_depth: 0 }], save: () => {} });
@@ -57,12 +62,14 @@ test('dispatch, resume and interactive fork retain grants, auto policy, launch s
   try {
     const launch = await sm.dispatch({ agent: 'agy', cwd, intent: 'hello', model: 'gemini-3.8-flash', effort: 'medium', addDirs: [cwd] });
     const card = launch.sessionId;
+    await advance(card);
     assert.deepEqual(sent, [AGY_STARTUP_PROBE]);
     assert.equal(sm.entryFor(card).agyPendingIntent.state, 'pending');
     await recover(card, root);
     assert.deepEqual(sent, [AGY_STARTUP_PROBE, 'hello']);
     const oldLaunch = sm.entryFor(card).agyStartup.launchId;
     await sm.resume(card, cwd, { intent: 'wake task', queueIntent: true });
+    await advance(card);
     assert.equal(sm.entryFor(card).agyPendingIntent.text, 'wake task');
     assert.equal(sent.filter((t) => t === 'wake task').length, 0);
     assert.notEqual(sm.entryFor(card).agyStartup.launchId, oldLaunch);
@@ -71,6 +78,7 @@ test('dispatch, resume and interactive fork retain grants, auto policy, launch s
     assert.equal(sent.filter((t) => t === 'hello').length, 1);
     assert.equal(sent.filter((t) => t === 'wake task').length, 1);
     const child = await sm.fork({ sourceId: root, parentId: card, parentEntry: sm.entryFor(card), cwd, prompt: 'child task' });
+    await advance(child.sessionId);
     assert.equal(sent.filter((t) => t === '/fork').length, 1);
     await sm._finishProviderLaunch(agy, child.sessionId);
     await recover(child.sessionId, 'fixture-child');
@@ -79,6 +87,8 @@ test('dispatch, resume and interactive fork retain grants, auto policy, launch s
     assert.equal(sm.entryFor(card).liveSessionId, root);
     assert.equal(sm.entryFor(child.sessionId).agyFork.forkStep, 0);
     assert.equal(sm.entryFor(child.sessionId).effort, 'medium');
+    assert.deepEqual(modeKeys, ['%1', '%2', '%3']);
+    assert.equal(sent.filter((t) => t === '/fork').length, 1);
     for (const cmd of commands) { assert.match(cmd, /'--mode' 'auto'/); assert.match(cmd, /'--model' 'gemini-3.8-flash'/); assert.match(cmd, /'--effort' 'medium'/); assert.ok(cmd.includes(cwd)); assert.doesNotMatch(cmd, /hello|child task/); }
     fs.writeFileSync(path.join(logs, 'transcript_full.jsonl'), line(0, 'parent rewound after fork') + '\n');
     const file = await agyHistory.findFile('fixture-child');
