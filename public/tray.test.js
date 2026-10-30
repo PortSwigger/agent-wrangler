@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createSlots } from './slots.js';
 import { pruneMinimised, visibleTileIds } from './layout.js';
 
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
@@ -80,30 +81,60 @@ test('tray read model follows live display order, includes Unassigned and drops 
   assert.equal(read().tasks.at(-1).id, 'new');
 });
 
-for (const adhoc of [false, true]) test(`both task menus replace only Minimise for ${adhoc ? 'Unassigned' : 'a named task'}`, () => {
+for (const adhoc of [false, true]) test(`both task menus preserve extension actions and guards for ${adhoc ? 'Unassigned' : 'a named task'}`, () => {
   let replacement = true, items;
+  const subjects = [];
+  const invoked = [];
+  const slots = createSlots({});
+  slots.forExtension('task-tints', {}).register('task.action', {
+    id: 'colour', items: (task) => { subjects.push(task); return [{ label: 'Colour…', run: () => { invoked.push(task.id); } }]; },
+  });
+  slots.forExtension('task-memory', {}).register('task.action', {
+    id: 'memory', items: (task) => task.adhoc ? [] : [{ label: 'Memory…', run() {} }],
+  });
+  slots.forExtension('minimise-task', {}).register('task.action', {
+    id: 'minimise', items: () => [{ label: 'Minimise', run() {} }],
+  });
+  slots.trayMinimiseItem = (task) => replacement ? { label: 'Manage profiles…', run: () => task.id } : null;
   const id = adhoc ? 'adhoc' : 'a';
   const scope = {
     ADHOC_ID: 'adhoc', latestTasks: { tasks: [{ id: 'a', name: 'Alpha' }] }, latestGraph: {}, extApi: {},
-    activitySortedTasks: new Set(), slots: { trayMinimiseItem: (task) => replacement ? { label: 'Manage profiles…', run: () => task.id } : null },
-    mountMenu: (value) => { items = value; }, extTaskMenuItems: () => [],
+    activitySortedTasks: new Set(), slots,
+    mountMenu: (value) => { items = value; },
     FOCUS_ICON: '', MINIMISE_ICON: '', SORT_ICON: '', CHECK_ICON: '', ARCHIVE_ICON: '', TERMINAL_ICON: '', PENCIL_ICON: '',
     focusOnly() {}, minimise() {},
   };
   const menus = new Function(...Object.keys(scope), `
-    ${['taskMinimiseMenuItem', 'openTaskActionsMenu', 'openTaskMenu'].map(declaration).join('\n')}
+    ${['extTaskMenuItems', 'taskMinimiseMenuItem', 'openTaskActionsMenu', 'openTaskMenu'].map(declaration).join('\n')}
     return { openTaskActionsMenu, openTaskMenu };
   `)(...Object.values(scope));
   const open = [() => menus.openTaskActionsMenu(id, 0, 0), () => menus.openTaskMenu({ dataset: { taskid: id, entity: adhoc ? 'no-task' : 'task' } }, 0, 0)];
   for (const menu of open) {
     menu();
+    assert.ok(items.find((x) => x.label === 'Colour…'));
+    items.find((x) => x.label === 'Colour…').run();
+    assert.equal(invoked.at(-1), id);
+    assert.deepEqual(subjects.at(-1), { id, name: adhoc ? null : 'Alpha', adhoc });
+    assert.equal(items.some((x) => x.label === 'Memory…'), !adhoc);
+    assert.equal(items.some((x) => x.label === 'Archive task'), !adhoc);
     assert.equal(items.some((x) => x.label === 'Minimise'), false);
+    assert.ok(!items[0].sep && !items.at(-1).sep);
+    assert.ok(items.every((item, i) => !item.sep || !items[i - 1]?.sep));
     assert.equal(items.find((x) => x.label === 'Manage profiles…').run(), id);
   }
   open[0]();
   assert.ok(items.some((x) => x.label === 'Focus'));
+  assert.ok(items.some((x) => x.label === 'Sort by activity'));
   replacement = false;
-  for (const menu of open) { menu(); assert.ok(items.some((x) => x.label === 'Minimise')); }
+  for (const menu of open) { menu(); assert.equal(items.filter((x) => x.label === 'Minimise').length, 1); }
+  slots.removeExtension('task-tints');
+  slots.removeExtension('task-memory');
+  slots.removeExtension('minimise-task');
+  for (const menu of open) {
+    menu();
+    assert.ok(!items.at(-1).sep);
+    assert.ok(items.every((item, i) => !item.sep || !items[i - 1]?.sep));
+  }
 });
 
 test('housekeeping clears stale ids and restores all when the last visible task disappears', () => {
