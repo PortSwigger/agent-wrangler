@@ -15,7 +15,7 @@ import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption,
 import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.js';
 import { cascadeSummary, cascadeDialogBody, worktreeStillInUse, containerStillInUse } from './archive-cascade.js';
 import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-picker.js';
-import { canNestOnto, childDropAction, mergeSessionOrder, gridSlotAt } from './session-drag.js';
+import { nestTargetsFor, childDropAction, mergeSessionOrder, gridSlotAt } from './session-drag.js';
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
@@ -1042,6 +1042,17 @@ let nestZoneRect = null;
 // The insert line a multi-column task shows instead of a moving gap
 // (updateInsertLine).
 let insertLineEl = null;
+// Per-drag caches for the dragover hot path (it fires every few dozen ms):
+// the sessions the dragged one may nest under, and each body's column check.
+// Both hold for the whole drag, as nothing re-renders mid-drag. Reset at
+// dragstart (beginDragCaches) and dragend.
+let dragNestTargets = new Set();
+let dragMultiColumn = new Map();
+
+function beginDragCaches(sessionId) {
+  dragNestTargets = nestTargetsFor(sessionId, latestSessions, assignedTaskId);
+  dragMultiColumn = new Map();
+}
 
 let taskDragActive = false;
 let draggedTaskId = null;
@@ -1077,14 +1088,14 @@ function dragUnitSid(el) {
 }
 
 // During a session drag, give every top-level card the dragged session could
-// nest under (canNestOnto) a Nest zone: a labelled drop target on the card's
+// nest under (dragNestTargets) a Nest zone: a labelled drop target on the card's
 // right-hand side. A card drawn in a spine is itself a child, and nesting is
 // one level deep, so it never gets one. The zones go when the board
 // re-renders at dragend.
-function addNestZones(grid, sessionId) {
+function addNestZones(grid) {
   for (const card of grid.querySelectorAll('.task-body .session-card')) {
     if (card.closest('.child-spine, .workflow-spine') || draggedCard?.contains(card)) continue;
-    if (!canNestOnto(sessionId, card.dataset.sid, latestSessions, assignedTaskId)) continue;
+    if (!dragNestTargets.has(card.dataset.sid)) continue;
     const zone = document.createElement('div');
     // In a multi-column body a card's left and right halves pick the insert
     // slot, so its Nest zone sits in the middle instead of on the right.
@@ -1105,8 +1116,21 @@ function topLevelHeightIn(body, fallback) {
 // mode's grid). There a moving gap would reflow every later card into the
 // next column, so the drag shows an insert line instead.
 function isMultiColumn(body) {
+  if (dragMultiColumn.has(body)) return dragMultiColumn.get(body);
   const cs = getComputedStyle(body);
-  return cs.display === 'grid' && cs.gridTemplateColumns.trim().split(/\s+/).length > 1;
+  const multi = cs.display === 'grid' && cs.gridTemplateColumns.trim().split(/\s+/).length > 1;
+  dragMultiColumn.set(body, multi);
+  return multi;
+}
+
+// Put the placeholder in `parent` before `ref` (null appends), unless it is
+// there already. Returns whether it moved, so a dragover that lands on the
+// same slot (most of them) writes nothing to the DOM and forces no layout.
+function placePlaceholder(parent, ref) {
+  if (ref === placeholderEl) return false;
+  if (placeholderEl.parentNode === parent && placeholderEl.nextSibling === ref) return false;
+  parent.insertBefore(placeholderEl, ref);
+  return true;
 }
 
 // A task body's top-level drag units, in reading order.
@@ -1242,7 +1266,7 @@ function spineDropTarget(e, cell) {
   const spine = e.target.closest?.('.child-spine, .workflow-spine');
   if (!spine || !cell.contains(spine)) return null;
   if (spine === draggedCard.parentNode) return spine;
-  return canNestOnto(dragUnitSid(draggedCard), spineParentSid(spine), latestSessions, assignedTaskId) ? spine : null;
+  return dragNestTargets.has(spineParentSid(spine)) ? spine : null;
 }
 
 // Whether `sessionId` is a workflow worker: its orchestrator's run tracks it,
@@ -2778,6 +2802,7 @@ function wireGridDnd(el) {
       e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'session', sessionId: dragUnitSid(card) }));
       draggedCard = card;
       dragActive = true;
+      beginDragCaches(dragUnitSid(card));
       armNewTask(true); // reveal the "drop to create" landing area immediately
       // Defer one tick: the native drag image (the floating card) is
       // snapshotted synchronously now, so the card must still look intact. Then
@@ -2795,7 +2820,7 @@ function wireGridDnd(el) {
         card.parentNode.insertBefore(ph, card);
         card.classList.add(dim ? 'drag-source' : 'dragging-hidden');
         shapePlaceholder();
-        addNestZones(el, dragUnitSid(card));
+        addNestZones(el);
       }, 0);
     });
     card.addEventListener('dragend', () => {
@@ -2803,6 +2828,8 @@ function wireGridDnd(el) {
       exitNestPreview();
       removePlaceholder();
       updateInsertLine(null);
+      dragNestTargets = new Set();
+      dragMultiColumn = new Map();
       setNestTarget(null);
       nestLane = false;
       draggedCard = null;
@@ -2893,9 +2920,7 @@ function wireGridDnd(el) {
         const spine = spineDropTarget(e, cell);
         if (spine) {
           const after = dragAfterChild(spine, e.clientY);
-          if (after) spine.insertBefore(placeholderEl, after);
-          else spine.appendChild(placeholderEl);
-          shapePlaceholder();
+          if (placePlaceholder(spine, after)) shapePlaceholder();
           return;
         }
         const body = cell.querySelector('.task-body');
@@ -2905,13 +2930,9 @@ function wireGridDnd(el) {
           // nothing reflows mid-drag.
           const units = topUnits(body);
           const slot = gridSlotAt(units.map((u) => u.getBoundingClientRect()), e.clientX, e.clientY);
-          if (slot) units[slot.index][slot.after ? 'after' : 'before'](placeholderEl);
-        } else if (body) {
-          const after = dragAfterElement(body, e.clientY);
-          if (after) body.insertBefore(placeholderEl, after);
-          else body.appendChild(placeholderEl);
-        }
-        shapePlaceholder();
+          const unit = slot && units[slot.index];
+          if (unit && placePlaceholder(body, slot.after ? unit.nextSibling : unit)) shapePlaceholder();
+        } else if (body && placePlaceholder(body, dragAfterElement(body, e.clientY))) shapePlaceholder();
         return;
       }
       cell.classList.add('drop-target');

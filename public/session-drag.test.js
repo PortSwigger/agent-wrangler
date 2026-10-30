@@ -1,15 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canNestOnto, childDropAction, mergeSessionOrder, gridSlotAt } from './session-drag.js';
+import { nestTargetsFor, childDropAction, mergeSessionOrder, gridSlotAt } from './session-drag.js';
 
 const taskOf = (map) => (sid) => map[sid] ?? null;
+const canNestOnto = (sid, target, sessions, tasks) => nestTargetsFor(sid, sessions, tasks).has(target);
 
-test('canNestOnto: a same-task top-level session is a target', () => {
+test('nestTargetsFor: a same-task top-level session is a target', () => {
   const sessions = [{ sessionId: 'a', label: 'A' }, { sessionId: 'b', label: 'B' }];
   assert.equal(canNestOnto('a', 'b', sessions, taskOf({ a: 'T', b: 'T' })), true);
 });
 
-test('canNestOnto: refuses itself, another task, a nested target, and the current parent', () => {
+test('nestTargetsFor: refuses itself, another task, a nested target, and the current parent', () => {
   const sessions = [
     { sessionId: 'a', label: 'A', parentSession: 'p' },
     { sessionId: 'p', label: 'P' },
@@ -24,7 +25,7 @@ test('canNestOnto: refuses itself, another task, a nested target, and the curren
   assert.equal(canNestOnto('a', null, sessions, tasks), false);
 });
 
-test('canNestOnto: a session with its own children cannot nest (one level deep)', () => {
+test('nestTargetsFor: a session with its own children cannot nest (one level deep)', () => {
   const sessions = [{ sessionId: 'p', label: 'P' }, { sessionId: 'c', label: 'C', parentSession: 'p' }, { sessionId: 'q', label: 'Q' }];
   assert.equal(canNestOnto('p', 'q', sessions, taskOf({ p: 'T', c: 'T', q: 'T' })), false);
 });
@@ -79,4 +80,8 @@ test('gridSlotAt: between or below rows, it goes after the last unit above the c
   assert.deepEqual(gridSlotAt(grid, 50, 300), { index: 2, after: true });
   assert.deepEqual(gridSlotAt(grid, 50, -10), { index: 0, after: false });
   assert.equal(gridSlotAt([], 0, 0), null);
+});
+
+test('nestTargetsFor: an empty set without a session id', () => {
+  assert.equal(nestTargetsFor(null, [{ sessionId: 'a' }], () => null).size, 0);
 });

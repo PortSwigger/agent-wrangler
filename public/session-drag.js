@@ -4,13 +4,14 @@
 // reason attach-picker.js takes it.
 import { attachCandidates } from './attach-picker.js';
 
-// Whether `sessionId` may be nested under `targetId`, by a drop on the
-// target's Nest zone or into its child spine. Uses the "Attach to…" picker's
-// own candidate list, so a drag offers exactly the targets the menu does
-// (same task, one level deep, not its current parent).
-export function canNestOnto(sessionId, targetId, sessions, taskOf) {
-  if (!sessionId || !targetId || sessionId === targetId) return false;
-  return attachCandidates(sessionId, sessions, taskOf).some((c) => c.sessionId === targetId);
+// The sessions `sessionId` may be nested under, by a drop on a target's Nest
+// zone or into its child spine, as a Set of ids. Uses the "Attach to…"
+// picker's own candidate list, so a drag offers exactly the targets the menu
+// does (same task, one level deep, not its current parent). Worked out once
+// per drag: the picker's search filters and sorts every session.
+export function nestTargetsFor(sessionId, sessions, taskOf) {
+  if (!sessionId) return new Set();
+  return new Set(attachCandidates(sessionId, sessions, taskOf).map((c) => c.sessionId));
 }
 
 // What a same-task drop at the placeholder does to the dragged session's
