@@ -46,6 +46,11 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, prM
     // The explicit <link rel=icon> in index.html is what's actually used.
     if (urlPath === '/favicon.ico') urlPath = '/favicon.svg';
 
+    if (urlPath === '/mcp' && req.method !== 'POST') {
+      res.writeHead(405, { Allow: 'POST' }).end('method not allowed');
+      return;
+    }
+
     const postHandlers = { '/mcp': mcpRequestHandler, '/pr-attach': prAttachHandler, '/pr-model': prModelHandler };
     if (agyHookHandler) postHandlers['/agy-hook'] = agyHookHandler;
     if (req.method === 'POST' && Object.hasOwn(postHandlers, urlPath)) {

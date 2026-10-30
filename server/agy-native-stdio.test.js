@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import http from 'node:http';
 import { fork, execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
@@ -12,10 +11,11 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { syncAgyPlugin } from './agy-plugin.js';
 import { createAgyStartup, acceptAgyNative, agyNativeReady } from './agy-startup.js';
 import { createMcpRequestHandler } from './mcp/server.js';
+import { createHttpServer } from './http-handler.js';
 import { INSTALL_ROOT } from './install-root.js';
 import { mcpSeenAt } from './mcp-activity.js';
 
-test('installed plugin stdio waits through sign-in and lazy discovery, rejects shell proofs and reconnects', async () => {
+test('installed plugin stdio through the production router waits for native discovery, rejects shell proofs and reconnects', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-native-stdio-'));
   const plugin = path.join(home, '.gemini/config/plugins/agent-wrangler');
   const entry = { agent: 'agy', cwd: home, tmux: 'ag_fake', agyStartup: createAgyStartup() };
@@ -23,20 +23,19 @@ test('installed plugin stdio waits through sign-in and lazy discovery, rejects s
   const events = [];
   let child, unavailable = false;
   const handler = createMcpRequestHandler({ sessionManager: { entryFor: (id) => map.get(id) }, taskStore: { taskFor: () => null } });
-  const server = http.createServer(async (req, res) => {
-    if (req.url === '/mcp') {
+  const server = createHttpServer({
+    port: 0,
+    mcpRequestHandler: async (req, res) => {
       if (unavailable) { res.writeHead(503).end(); return; }
       return handler(req, res);
-    }
-    if (req.url === '/agy-hook') {
+    },
+    agyHookHandler: async (req, res) => {
       let body = ''; for await (const chunk of req) body += chunk;
       const payload = JSON.parse(body);
       const accepted = await acceptAgyNative(payload, { map, rootPid: async () => child.pid });
       events.push({ state: payload.state, accepted });
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ accepted }));
-      return;
-    }
-    res.writeHead(404).end();
+    },
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
@@ -77,6 +76,10 @@ process.on('message', async ({ id, op }) => {
       child.on('message', receive); child.send({ id, op });
     });
     assert.equal(agyNativeReady(entry), false, 'stdio initialization is not native tool use');
+    unavailable = true;
+    assert.ok((await request('list')).error, 'delayed upstream discovery must fail without closing native stdio');
+    assert.equal(agyNativeReady(entry), false);
+    unavailable = false;
     const { stdout: shellBridge } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
       const { createAgyMcpBridge } = await import(${JSON.stringify(new URL('./agy-mcp-entry.js', import.meta.url).href)});
       const bridge = await createAgyMcpBridge();
@@ -88,6 +91,7 @@ process.on('message', async ({ id, op }) => {
     assert.equal(agyNativeReady(entry), false, 'shell-created clients cannot prove native readiness');
     assert.ok(mcpSeenAt('card') > 0, 'unrelated HTTP traffic really happened');
     const listing = await request('list');
+    assert.equal(listing.error, undefined, listing.error);
     assert.ok(listing.result.tools.some((tool) => tool.name === 'read_mail'));
     assert.equal(agyNativeReady(entry), false, 'cached/listed definitions do not release work');
     assert.equal((await request('read')).result.structuredContent.sessionId, 'card');

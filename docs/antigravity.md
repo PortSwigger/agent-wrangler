@@ -84,6 +84,12 @@ Transport failures invalidate native readiness. A later native request reconnect
 bounded connection/discovery timeouts; writes are never retried. A lost write response
 has an unknown outcome: inspect its effect before making another call. Reconnection
 requires another successful native `get_session_info` read before task/mail delivery.
+Wrangler's local MCP endpoint accepts POST requests and returns **405 Method Not Allowed**
+for the client's optional GET event stream and DELETE session request. The stateless
+endpoint does not offer those features. A 404 on that GET is a startup transport failure;
+the bridge can close an in-flight read in response. If native calls still report
+`MCP error -32000: Connection closed`, record the native manager's error and the tested
+build for this PR; keep the task held and avoid shell repair.
 Native reload, post-sign-in discovery, process ancestry and exact plugin naming remain
 human probes, not conclusions from the fake client.
 
@@ -156,6 +162,8 @@ same PR. A tested build is ready for human trials while the PR remains open; man
 merge approval follows successful native trials.
 
 Automated tests use temporary homes, fake binaries, SQLite and transcript/pane fixtures.
+The installed-plugin stdio test runs through the production HTTP router, including
+optional GET handling, delayed discovery and reconnects before a fresh native read.
 They do **not** prove native plugin validation, exact MCP naming, PID ancestry, auto-mode
 activation, worktree git/cwd/network access, attachment visibility, or instruction retention
 through resume/compaction. Complete the runner and board acceptance after installation.

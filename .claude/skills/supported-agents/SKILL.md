@@ -74,7 +74,7 @@ one must be wired in all three — omitting resume or fork is the most common ga
 | Resume | `--conversation`, launch model/effort/grants retained; fresh native readiness before wake text; uncertain intent never replayed |
 | Fork | Guarded `/fork` in a separate pane; immutable parent prefix and step saved before launch |
 | Identity/status | Six identity-scoped hooks; pane-process PID and summaries classification required; child events never set root status |
-| MCP/instructions | Installed stdio native get_session_info read, launch identity and process ancestry gate intent/mail; HTTP activity, shell imports and cached definitions cannot release them; SessionStart ephemeral instructions and skill catalog |
+| MCP/instructions | Installed stdio native get_session_info read through the production POST router, launch identity and process ancestry gate intent/mail; optional GET streams receive 405; HTTP activity, shell imports and cached definitions cannot release them; SessionStart ephemeral instructions and skill catalog |
 | Approval | Captured call_mcp_tool envelope, exact args.ServerName = agent-wrangler_agent-wrangler and registered ToolName; startup permits only get_session_info; human verifies installed namespace |
 | Input | Bracketed paste, framed composer, busy mail, Ctrl-U draft clearing, Escape interrupt; no generated Ctrl-C |
 | History | JSONL/chunks, rewind pruning, saved fork prefix; chat, search, activity and restore share the parser |
