@@ -59,3 +59,12 @@ test('todo-move to an unknown task is a no-op; non-array order is tolerated', as
   assert.deepEqual(texts(store, 't1'), ['a']);
   assert.equal(calls.rebuild, 2);
 });
+
+test('todo-add accepts null and reserved Unassigned task ids in the same bucket', async () => {
+  const { host, store, calls } = fakeHost();
+  await todoAddHandler.handler({ type: 'todo-add', taskId: null, text: 'From menu' }, host);
+  await todoAddHandler.handler({ type: 'todo-add', taskId: 'adhoc', text: 'Reserved id' }, host);
+  assert.deepEqual(texts(store, 'adhoc'), ['From menu', 'Reserved id']);
+  assert.deepEqual(Object.keys(store.snapshot().todos), ['adhoc']);
+  assert.equal(calls.rebuild, 2);
+});
