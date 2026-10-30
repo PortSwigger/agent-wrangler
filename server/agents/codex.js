@@ -11,16 +11,19 @@ import { shellQuote } from './claude.js';
 import { analyzeCodex, listResumableCodex, activityInRangeCodex, codexContextWindow, codexSubagentDetail, findRollout } from './codex-rollout.js';
 import { discoverCodexLiveId } from './codex-discover.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
-import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
+import { codexMcpConfigArgs, MCP_TOKEN_ENV, prModelUrl } from '../mcp/client-config.js';
 import { codexPolicyArgs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
 import { tomlString, notifyOverride } from '../codex-notify-config.js';
+import { postToolHookOverrides } from '../codex-hook-config.js';
 import { fileURLToPath } from 'node:url';
 import { installPath } from '../install-root.js';
 
 const exec = promisify(execFile);
 
 const HOOK_PATH = installPath(fileURLToPath(new URL('../codex-notify-hook.js', import.meta.url)));
+// The PR model footer's PostToolUse hook (scripts/codex-pr-footer-hook.mjs).
+const PR_FOOTER_HOOK_PATH = installPath(fileURLToPath(new URL('../../scripts/codex-pr-footer-hook.mjs', import.meta.url)));
 
 // The pane-side refuseIfSet guard, env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
 // even for a fork (its own fresh board id). The extensions' env comes FIRST and
@@ -30,7 +33,7 @@ const HOOK_PATH = installPath(fileURLToPath(new URL('../codex-notify-hook.js', i
 // `agent: 'codex'`, because Codex 0.149+ rejects a symlinked writable root.
 function envPrefix(sessionId, spawnedBy, launchContext) {
   let env = launchEnvGuard(launchContext, shellQuote) + launchEnvPrefix(launchContext, shellQuote)
-    + `AW_SESSION_ID=${shellQuote(sessionId)} ${MCP_TOKEN_ENV}=${shellQuote(sessionId)} `;
+    + `AW_SESSION_ID=${shellQuote(sessionId)} ${MCP_TOKEN_ENV}=${shellQuote(sessionId)} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `;
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
 }
@@ -41,7 +44,9 @@ function envPrefix(sessionId, spawnedBy, launchContext) {
 // `codexPolicy` answer when one answers (codexPolicyArgs,
 // extensions/codex-policy.js); otherwise the core defaults apply:
 // --sandbox workspace-write --ask-for-approval never plus the workspace-write
-// network grant. Everything else is unconditional, bypass included.
+// network grant. Everything else is unconditional, bypass included, the
+// notify hook and the PR model footer's PostToolUse hook among it (pre-trusted
+// in the same flags, codex-hook-config.js; it never attaches a PR to a card).
 // Developer instructions are the verified equivalent of Claude's
 // --append-system-prompt; injected as a `developer`-role message). Directory trust is NOT handled
 // here: verified against the installed binary that Codex's interactive trust
@@ -62,6 +67,7 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
   args.push(...launchCodexConfigArgs(launchContext));
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
   args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
+  for (const o of postToolHookOverrides(`${shellQuote(process.execPath)} ${shellQuote(PR_FOOTER_HOOK_PATH)}`)) args.push('-c', o);
   args.push(...launchAddDirArgs(launchContext));
   for (const d of addDirs) args.push('--add-dir', d);
   args.push(...codexMcpConfigArgs());
