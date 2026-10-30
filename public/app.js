@@ -2569,17 +2569,13 @@ function openModelMenu(sessionId, x, y) {
   ], x, y);
 }
 
-// The task tile's kebab menu — the header's action buttons collapsed into one menu,
-// reusing the same mountMenu primitive as the card/pane menus. `taskId` is the bucket
-// id (a real task id or ADHOC_ID). Distinct from openTaskMenu (the cell right-click
-// menu with New session/New TODO/Rename): this is the header kebab, view actions plus
-// memory/delete. The adhoc tile can't be renamed/deleted and has no memory, so it gets
-// only the view actions (Focus/Minimise/Sort). Sort is a keepOpen toggle with a tick,
-// like autoFixMenuItem.
+// The task tile's kebab menu combines view actions and extension task actions.
+// Archive is available only for real tasks. Sort stays open as a ticked toggle.
 function openTaskActionsMenu(taskId, x, y) {
   const isAdhoc = taskId === ADHOC_ID;
   const task = isAdhoc ? null : latestTasks.tasks.find((t) => t.id === taskId);
   if (!isAdhoc && !task) return;
+  const extItems = extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
   const sortOn = activitySortedTasks.has(taskId);
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
@@ -2591,9 +2587,8 @@ function openTaskActionsMenu(taskId, x, y) {
         const slot = e.currentTarget.querySelector('.context-menu-trailing');
         if (slot) slot.innerHTML = now ? CHECK_ICON : '';
       } },
+    ...(extItems.length || !isAdhoc ? [{ sep: true }, ...extItems] : []),
     ...(isAdhoc ? [] : [
-      { sep: true },
-      ...extTaskMenuItems(taskId, false),
       { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTask(taskId, task.name) },
     ]),
   ];

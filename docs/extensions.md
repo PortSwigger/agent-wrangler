@@ -1184,8 +1184,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   adhoc }`, never the DOM cell.** `slots.taskMenuItems(task, graph, api)` shares
   `menuItems`'s whole body (`valueMenuItems`), so the item shape, escaping and
   guards cannot drift between the two. It feeds the tile's right-click menu
-  (`app.js openTaskMenu`) and the header menu (`openTaskActionsMenu`) for named
-  tasks; Unassigned receives these extra actions in its right-click menu. The right-click
+  (`app.js openTaskMenu`) and the header menu (`openTaskActionsMenu`) for both
+  named tasks and Unassigned. Extensions can opt out of Unassigned by returning
+  `[]` when `task.adhoc` is true. The right-click
   menu carries core's Minimise too; `extTaskMenuItems` drops the `Minimise` item
   contributed by the `minimise-task` extension (matched on extension id and label,
   in both menus) so that extension still loads without a duplicate. The no-task
