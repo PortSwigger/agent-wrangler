@@ -167,6 +167,8 @@ export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
 let subagentsExpandedByDefault = false; // server config flag, carried on every graph push
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
+let manageAgyIntegration = false;
+let trustAgyLaunchCwd = false;
 let trustClaudeLaunchCwd = true; // likewise
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
@@ -846,6 +848,8 @@ function applyGraph(graph) {
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
   trustClaudeLaunchCwd = graph.trustClaudeLaunchCwd !== false;
+  manageAgyIntegration = graph.manageAgyIntegration === true;
+  trustAgyLaunchCwd = graph.trustAgyLaunchCwd === true;
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
@@ -6585,6 +6589,8 @@ initSettings({
     get: (id) => {
       if (id === 'subagentsExpandedByDefault') return subagentsExpandedByDefault;
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
+      if (id === 'manageAgyIntegration') return manageAgyIntegration;
+      if (id === 'trustAgyLaunchCwd') return trustAgyLaunchCwd;
       if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
@@ -6611,6 +6617,12 @@ initSettings({
       } else if (id === 'trustCodexLaunchCwd') {
         trustCodexLaunchCwd = Boolean(value);
         send({ type: 'set-trust-codex-launch-cwd', enabled: trustCodexLaunchCwd });
+      } else if (id === 'manageAgyIntegration') {
+        manageAgyIntegration = Boolean(value);
+        send({ type: 'set-manage-agy-integration', enabled: manageAgyIntegration });
+      } else if (id === 'trustAgyLaunchCwd') {
+        trustAgyLaunchCwd = Boolean(value);
+        send({ type: 'set-trust-agy-launch-cwd', enabled: trustAgyLaunchCwd });
       } else if (id === 'trustClaudeLaunchCwd') {
         trustClaudeLaunchCwd = Boolean(value);
         send({ type: 'set-trust-claude-launch-cwd', enabled: trustClaudeLaunchCwd });

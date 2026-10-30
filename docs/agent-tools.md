@@ -147,3 +147,7 @@ Board TODOs are separate from session checklists. Their descriptions can be pass
 | Tool | Extension | Purpose |
 | --- | --- | --- |
 | `adversarial_review_process` | Adversarial PR review | Return the review process an adversarial PR reviewer follows (the one configured in Settings, or the built-in default) and the fixed rules for reporting back. The `adversarial-pr-review` skill tells the reviewer to call it first. |
+
+## Antigravity targets
+
+`spawn_session` and scheduled dispatch accept `agent: "agy"` when **Manage agy integration** is enabled and the local plugin is ready. Use `model: "gemini-3.8-flash", effort: "medium"`; Claude-on-agy models accept no effort. `read_session_transcript` reads normalized agy history, including the saved fork prefix. agy does not support Remote Control or nonlocal runtimes. See [Antigravity](antigravity.md).

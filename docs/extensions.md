@@ -1961,3 +1961,7 @@ rewrites `cm-style` for a theme that has gone, so a browser shows Dark until it
 returns. The client also raises a one-time `api.ui.notify` card for a browser
 whose saved theme is `jurassic-park` while nothing offers it, linking the
 community extension that theme moved to.
+
+## Antigravity integration
+
+Local `agy` cards receive extension launch environment, real-path grants, the enabled skill catalog and registered MCP tools through an identity-scoped native plugin. Exact registered tool names determine approval; text in tool arguments never grants it. The Logins extension and nonlocal runtimes do not support agy. See [Antigravity integration footprint](antigravity.md#integration-footprint).

@@ -53,7 +53,7 @@ export function visibleSubAgents(subAgents, { showFinished, now }) {
 // plain circle (.subagent-row.running colours it, see styles.css) — carrying its
 // own running/completed tooltip since there's no verbal "run"/"done" word.
 export function subagentRowHtml(sa, sid) {
-  const cost = typeof sa.usd === 'number' && sa.usd > 0 ? `$${sa.usd.toFixed(2)}` : '';
+  const cost = typeof sa.usd === 'number' && sa.usd > 0 ? `${sa.estimated ? '~' : ''}$${sa.usd.toFixed(2)}` : '';
   const costTitle = typeof sa.advisorUsd === 'number' && sa.advisorUsd > 0
     ? ` title="$${sa.advisorUsd.toFixed(2)} on advisor consults"`
     : '';

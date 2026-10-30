@@ -1,5 +1,5 @@
 const modelsOf = (a) => a?.models || [];
-export const effortsOf = (a, m) => (m?.efforts?.length ? (a?.efforts || []).filter((e) => m.efforts.includes(e.value)) : a?.efforts || []);
+export const effortsOf = (a, m) => (Array.isArray(m?.efforts) ? m.efforts.map((value) => (a?.efforts || []).find((e) => e.value === value) || { value, label: value }) : a?.efforts || []);
 
 const rows = (data) => Object.values(data.models).flatMap((m) => Object.values(m).flatMap((e) => Object.values(e)));
 const spans = new WeakMap();

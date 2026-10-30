@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+import { manageAgyIntegration, trustAgyLaunchCwd } from './config-store.js';
+import { syncAgyPlugin, agyIntegrationState } from './agy-plugin.js';
+import { acceptAgyHook } from './agy-hooks.js';
+import { refreshAgyModels } from './agents/agy-catalog.js';
+import { activeTools } from './mcp/tools/index.js';
 // First, before any other module runs: captures the install-scoped signals
 // (AW_SUPERVISED, AW_INSTALL_MANAGER, AW_GIT_UPDATES, ...) and removes them from
 // process.env, so no tmux server or child process started later inherits them.
@@ -29,7 +34,7 @@ import { createSnoozeWakeSweeper } from './snooze-wake-runner.js';
 import { createFullSweepGuard } from './poll-guard.js';
 import { createRebuildCoalescer } from './rebuild-coalescer.js';
 import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
-import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
+import { discoverClaudeSessions, setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
@@ -974,7 +979,23 @@ const mcpRequestHandler = createMcpRequestHandler({
 // /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
 // extensions alone — so a disabled extension's client is a 404, never served.
 const server = createHttpServer({
-  port: PORT, mcpRequestHandler, prAttachHandler, fileHandler, extFileHandler,
+  port: PORT, mcpRequestHandler, prAttachHandler,
+  agyHookHandler: async (req, res) => {
+    try {
+      let body = '';
+      for await (const chunk of req) { body += chunk; if (body.length > 65536) { res.writeHead(413).end(); return; } }
+      let identified = false;
+      const accepted = await acceptAgyHook(JSON.parse(body), {
+        onIdentity: () => { identified = true; },
+        map: sessionManager.map,
+        rootPid: async (entry) => (await discoverClaudeSessions([entry.socket || ''])).find((d) => d.tmuxName === entry.tmux && (d.socket || '') === (entry.socket || ''))?.claudePid,
+        save: () => sessionManager._save(),
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ accepted, identified, tools: accepted ? activeTools().map((t) => t.name) : [] }));
+      if (accepted) rebuild().catch(() => {});
+    } catch { res.writeHead(400).end(); }
+  }, fileHandler, extFileHandler,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
   extensionThemes: () => themeSources(ext.themeDirs),
 });
@@ -1065,6 +1086,9 @@ async function rebuildOnce() {
   graph.subagentsExpandedByDefault = subagentsExpandedByDefault();
   graph.trustCodexLaunchCwd = trustCodexLaunchCwd();
   graph.trustClaudeLaunchCwd = trustClaudeLaunchCwd();
+  graph.manageAgyIntegration = manageAgyIntegration();
+  graph.trustAgyLaunchCwd = trustAgyLaunchCwd();
+  graph.agyIntegration = agyIntegrationState();
   graph.childFullViewByDefault = childFullViewByDefault();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.archiveReviewEnabled = archiveReviewEnabled();
@@ -1203,6 +1227,7 @@ controlWss.on('connection', (ws) => {
     // reads ctx.ext.list. An extension's handler is invoked with its façade.
     ext: extBag,
     hostApiFor,
+    broadcastAgents,
     rebuild,
     runSchedule: runScheduleNow,
     graph: () => lastGraph,
@@ -1375,6 +1400,7 @@ async function main() {
   watchAutoEffortSources(broadcastAgents);
   startPriceCatalogRefresh();
   startCodexCatalogRefresh();
+  setInterval(() => { if (manageAgyIntegration() && agyIntegrationState().ready) refreshAgyModels().then((changed) => { if (changed) broadcastAgents(); }); }, 60 * 60 * 1000).unref();
 
   // A failed bind must end the process. Without this listener the error reaches
   // the last-resort uncaughtException guard above, which only logs — leaving a
@@ -1389,6 +1415,7 @@ async function main() {
   server.once('error', onListenError);
   server.listen(PORT, HOST, () => {
     server.off('error', onListenError);
+    if (manageAgyIntegration()) syncAgyPlugin().then(async (state) => { if (state.ready) await refreshAgyModels(); broadcastAgents(); rebuild().catch(() => {}); }).catch(() => {});
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;
     const url = `http://${host}:${PORT}`;

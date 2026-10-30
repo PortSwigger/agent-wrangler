@@ -65,6 +65,8 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
     const socket = socketFor(id);
     const entry = sessionManager.entryFor?.(id);
     const launchedAt = entry?.relaunchedAt ?? entry?.createdAt;
+    if (entry?.agyLaunchWarning || entry?.agyForkPending) return { mode: 'error', outcome: 'rejected', error: entry.agyLaunchWarning || 'Antigravity fork identity is pending.' };
+    const guarded = adapterFor(entry?.agent).terminal.guardEverySend;
     const starting = Number.isFinite(launchedAt) && Date.now() - launchedAt < STARTUP_WINDOW_MS;
     // The first message after a long idle often lands while the agent is
     // auto-compacting, and a prompt pasted into a compacting pane is lost with no
@@ -75,8 +77,8 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
     if (compaction === 'timeout') {
       return { mode: 'error', outcome: 'rejected', error: 'The agent is still compacting its context, so the message was not sent. Send it again once compaction finishes.' };
     }
-    if (starting) {
-      if (!await waitForComposerReady(target, socket, entry?.agent, { requireEmpty: false })) {
+    if (starting || guarded) {
+      if (!await waitForComposerReady(target, socket, entry?.agent, { requireEmpty: guarded ? !wantClear : false })) {
         return { mode: 'error', outcome: 'rejected', error: 'The agent is still starting, so the message was not sent. Send it again once the terminal is ready.' };
       }
     } else if (compaction === 'finished') await waitForComposerReady(target, socket, entry?.agent);
@@ -99,9 +101,12 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   // which is their live id). A wrangler-created worktree dir may have been cleaned up
   // post-archive; recreate it since there's no interactive prompt here (the transcript
   // lives under ~/.claude, so the conversation still resumes), falling back to home.
-  let dir = await resolveResumeDir(entry.liveSessionId || id, { entryCwd: entry.cwd });
+  let dir = await (adapterFor(entry.agent).hookIdentity ? adapterFor(entry.agent).history.resolveResumeDir(entry.liveSessionId || id, { entryCwd: entry.cwd }) : resolveResumeDir(entry.liveSessionId || id, { entryCwd: entry.cwd }));
   if (!dir || !fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {
+      if (adapterFor(entry.agent).hookIdentity) return { mode: 'error', outcome: 'rejected', error: 'Antigravity workspace is unavailable; recreate it before resuming.' };
+      dir = os.homedir();
+    }
   }
 
   // ---- SYNCHRONOUS COMMIT BLOCK: no await between this re-check and resume(). ----
@@ -131,6 +136,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
     if (!intentCarriesMessage) {
       const tmux = res?.tmux ?? tmuxFor(id);
       const socket = sessionManager.entryFor(id)?.socket ?? '';
+      if (sessionManager.entryFor(id)?.agyLaunchWarning || sessionManager.entryFor(id)?.agyForkPending) return { mode: 'error', outcome: 'rejected', error: 'Antigravity launch policy or fork identity is not confirmed.' };
       if (!tmux) return { mode: 'error', error: 'Session resumed but produced no live pane to deliver the message into.' };
       // HOLD the paste until the woken TUI has painted its composer. resume() only
       // guarantees the pty was spawned, and pasting into that window loses the

@@ -47,6 +47,7 @@ jobs:
         run: npm install -g @openai/codex@0.160.1
         continue-on-error: true
 
+      # Refreshes Anthropic, OpenAI and first-party Gemini API prices. No agy CLI is installed or run.
       - run: npm run gen:catalog
 
       - run: npm run gen:models

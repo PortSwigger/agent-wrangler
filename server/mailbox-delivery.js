@@ -17,6 +17,7 @@ export async function deliverMailNotification(to, text, deps) {
   const mcpReadyTimeoutMs = deps.mcpReadyTimeoutMs ?? MCP_READY_TIMEOUT_MS;
   const mcpReadyPollMs = deps.mcpReadyPollMs ?? MCP_READY_POLL_MS;
   const entry = sessionManager.entryFor(to);
+  if (entry?.agyLaunchWarning || entry?.agyForkPending) return { mode: 'deferred', reason: 'Antigravity launch policy or fork identity pending' };
   if (!entry || entry.archivedAt) return { mode: 'skip' };
 
   const target = tmuxFor(to);
@@ -26,6 +27,7 @@ export async function deliverMailNotification(to, text, deps) {
     return wakeDormant(to, entry, deps);
   }
 
+  if (adapterFor(entry.agent).hookIdentity && mcpSeenAt(to) <= (entry.relaunchedAt || entry.createdAt || 0)) return { mode: 'deferred', reason: 'current Antigravity process MCP handshake pending' };
   const beforeSend = async () => {
     const relaunchedAt = entry.relaunchedAt;
     const relaunchAge = Date.now() - relaunchedAt;
@@ -44,7 +46,10 @@ async function wakeDormant(to, entry, deps) {
   const { sessionManager, tmuxFor } = deps;
   let dir = await resolveResumeDir(entry.liveSessionId || to, { entryCwd: entry.cwd });
   if (!dir || !fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {
+      if (adapterFor(entry.agent).hookIdentity) return { mode: 'deferred', reason: 'Antigravity workspace unavailable' };
+      dir = os.homedir();
+    }
   }
   const fresh = sessionManager.entryFor(to);
   if (!fresh || fresh.archivedAt) return { mode: 'skip' };

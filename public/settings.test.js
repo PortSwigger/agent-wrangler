@@ -26,6 +26,8 @@ test('each registered setting appears in exactly one tab', () => {
     'defaultSessionCwd',
     'defaultRuntime',
     'autoFixPrChecksDefault',
+    'manageAgyIntegration',
+    'trustAgyLaunchCwd',
     'trustCodexLaunchCwd',
     'trustClaudeLaunchCwd',
     'archiveReviewEnabled',

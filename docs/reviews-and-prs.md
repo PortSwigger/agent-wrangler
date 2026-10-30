@@ -167,3 +167,7 @@ not wait indefinitely or replace the handoff with polling.
 **Auto-merge when checks pass** is an off-by-default session option and Workflow launch setting. It
 uses authenticated `gh` to merge the attached session PR when it becomes mergeable
 (`passing`), including the required checks and review gates.
+
+## Review with Antigravity
+
+Independent review selects the first available provider different from the source in **Claude → Codex → Antigravity** order. Antigravity is available only after its opt-in local integration is ready. If no different provider is available, the review flow explains the missing alternative. agy API-equivalent cost is always estimated. See [Antigravity](antigravity.md).
