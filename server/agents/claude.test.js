@@ -65,6 +65,23 @@ test('claude passes --remote-control <name> on launch and resume only when asked
   assert.doesNotMatch(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }), /--remote-control/);
 });
 
+test('claude passes --disallowed-tools on launch, resume and fork only when asked', () => {
+  const disallowedTools = ['AskUserQuestion', 'mcp__x__y'];
+  for (const cmd of [
+    claude.buildLaunch({ sessionId: 'SID', intent: 'go', disallowedTools }),
+    claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE', disallowedTools }),
+    claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC', disallowedTools }),
+  ]) assert.match(cmd, /'--disallowed-tools' 'AskUserQuestion mcp__x__y'/);
+  for (const cmd of [
+    claude.buildLaunch({ sessionId: 'SID' }),
+    claude.buildLaunch({ sessionId: 'SID', disallowedTools: [] }),
+    claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }),
+    claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC' }),
+  ]) assert.doesNotMatch(cmd, /--disallowed-tools/);
+  // The prompt still lands after `--`, not swallowed by the variadic flag.
+  assert.match(claude.buildLaunch({ sessionId: 'SID', intent: 'go', disallowedTools }), / -- 'go'$/);
+});
+
 test('claude leaves auto-compaction unset when a session has no threshold', () => {
   assert.doesNotMatch(claude.buildLaunch({ sessionId: 'SID' }), /--autocompact/);
   assert.doesNotMatch(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }), /--autocompact/);
