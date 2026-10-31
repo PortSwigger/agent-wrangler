@@ -131,3 +131,7 @@ A new install-scoped signal must be added to `INSTALL_SCOPED_ENV` in `server/ins
 - Point `AW_NODE` and `AW_INSTALL_ROOT` at upgrade-stable paths (`opt/`, never a versioned `Cellar/` path).
 - Restart the service straight after an upgrade repoints `AW_INSTALL_ROOT`, so the running server
   and its sessions' hook and skills don't stay on different versions (see [Session paths](#session-paths)).
+
+## Antigravity plugin entrypoints
+
+Opt-in Antigravity installs its native plugin after listen. The plugin wrapper requires `AW_SESSION_ID`, resolves entrypoints from stable `AW_INSTALL_ROOT` using `AW_NODE`, and exits harmlessly when the installation is unavailable. Its only other possible provider-global write is the separately enabled launch-folder trust setting. Package installation and disabled startup do not write `~/.gemini`. See [Antigravity](antigravity.md).

@@ -61,6 +61,18 @@ test('POST /pr-model reaches its handler; a cross-origin POST is refused', async
   assert.equal(cross.status, 403);
 });
 
+test('stateless MCP declines optional GET streams and session deletion without static fallback', async () => {
+  for (const method of ['GET', 'DELETE']) {
+    const response = await fetch(`${base}/mcp?fixture=1`, { method });
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.get('allow'), 'POST');
+  }
+  const post = await fetch(`${base}/mcp`, { method: 'POST' });
+  assert.equal(post.status, 200);
+  const cross = await fetch(`${base}/mcp`, { method: 'POST', headers: { Origin: 'https://example.com' } });
+  assert.equal(cross.status, 403);
+});
+
 test('serves an enabled extension client module from its public/ dir, no-store', async () => {
   const res = await fetch(`${base}/ext/checklist/index.js`);
   assert.equal(res.status, 200);

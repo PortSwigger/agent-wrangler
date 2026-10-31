@@ -116,7 +116,7 @@ test('priceFor prefers the longest matching id', () => {
 
 test('reduceLitellm survives non-object input and rows', () => {
   for (const raw of [null, 'x', 42, [], [litellmRow('openai', 1, 1)]]) {
-    assert.deepEqual(reduceLitellm(raw), { anthropic: {}, openai: {} });
+    assert.deepEqual(reduceLitellm(raw), { anthropic: {}, openai: {}, gemini: {} });
   }
   const out = reduceLitellm({ a: null, b: 'str', c: [1, 2], d: 7, 'gpt-ok-1': litellmRow('openai', 1, 2) });
   assert.deepEqual(Object.keys(out.openai), ['gpt-ok-1']);
@@ -155,7 +155,7 @@ test('reduceEntry ignores a long-context tier with an unbounded threshold', () =
 });
 
 test('priceFor never resolves an Object.prototype member', () => {
-  _setFetchedForTest({ anthropic: {}, openai: {} });
+  _setFetchedForTest({ anthropic: {}, openai: {}, gemini: {} });
   for (const m of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
     const r = priceFor('anthropic', m);
     assert.ok(r === null || typeof r.input === 'number', m);
@@ -206,4 +206,28 @@ test('a malformed body is reported without echoing its text', async () => {
     console.error = origErr;
   }
   assert.ok(msgs.every((m) => !m.includes('SECRET')));
+});
+
+test('Gemini rates accept only first-party rows and never invent Anthropic cache-write prices', () => {
+  const rows = reduceLitellm({
+    'gemini/gemini-3.8-flash': { litellm_provider: 'gemini', mode: 'chat', input_cost_per_token: 0.000001, output_cost_per_token: 0.000002, cache_read_input_token_cost: 0.0000001 },
+    'vertex_ai/gemini-3.8-flash': { litellm_provider: 'vertex_ai', mode: 'chat', input_cost_per_token: 9, output_cost_per_token: 9 },
+    'reseller/gemini-3.8-flash': { litellm_provider: 'gemini', mode: 'chat', input_cost_per_token: 1e-6, output_cost_per_token: 1e-6 },
+  });
+  assert.deepEqual(Object.keys(rows.gemini), ['gemini-3.8-flash']);
+  assert.equal(rows.gemini['gemini-3.8-flash'].cacheWrite5m, 0);
+  assert.equal(rows.gemini['gemini-3.8-flash'].cacheRead, 0.1);
+});
+
+
+test('a provider-specific truncated Gemini refresh preserves the last-good table', async () => {
+  const before = { input: 7, output: 8, cacheRead: 1 };
+  _setFetchedForTest({ gemini: { 'gemini-fixture': before } });
+  const feed = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`gpt-fixture-${i}`, litellmRow('openai', 1, 2)]));
+  feed['gemini/gemini-fixture'] = litellmRow('gemini', 1, 2);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-prices-'));
+  try {
+    await refreshPriceCatalog({ fetchImpl: async () => ({ ok: true, text: async () => JSON.stringify(feed) }), cachePath: path.join(dir, 'cache.json') });
+    assert.equal(priceFor('gemini', 'gemini-fixture').input, 7);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

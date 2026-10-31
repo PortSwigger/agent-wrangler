@@ -842,6 +842,24 @@ test('buildGraph: an apiError from a discovered live session carries a structure
   assert.equal(node.waitingReason, 'api-error');
 });
 
+test('buildGraph: Antigravity startup warning is labelled setup and real permission prompts still require a reply', async () => {
+  const entry = { sessionId: 'agy-startup', agent: 'agy', cwd: '/nonexistent/repo', agyLaunchWarning: 'Antigravity native startup is pending.' };
+  const mgr = makeDiscoveredManager(entry, 'ag_startup');
+  const discover = async () => [{ tmuxName: 'ag_startup', socket: '', claudePid: 9999, agent: 'agy', cwd: entry.cwd }];
+  const runtimeResolver = () => ({ analyze: async () => ({}) });
+  let pane = '────────────────────────────\n> \n────────────────────────────\n? for shortcuts      auto   Gemini 3.8 Flash · medium';
+  const capture = async () => pane;
+  const node = (await buildGraph(mgr, async () => ({}), { discover, runtimeResolver, capture })).sessions[0];
+  assert.equal(node.status, 'needs-you');
+  assert.equal(node.waitingReason, 'agent-startup');
+  assert.equal(workerStatusWord(node, { justFinished: new Set() }), 'setup');
+  pane += '\nAllow calling this tool?';
+  const permission = (await buildGraph(mgr, async () => ({}), { discover, runtimeResolver, capture })).sessions[0];
+  assert.equal(permission.waitingReason, null);
+  assert.equal(permission.waitingFor, 'Allow calling this tool?');
+  assert.equal(workerStatusWord(permission, { justFinished: new Set() }), 'reply');
+});
+
 test('buildGraph: a login api-error from a discovered live session is api-error-blocking', async () => {
   const entry = { sessionId: 'err-login', agent: 'claude', cwd: '/nonexistent/repo', liveSessionId: 'L1' };
   const mgr = makeDiscoveredManager(entry, 'cc_errlogin');

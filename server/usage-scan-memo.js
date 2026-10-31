@@ -1,3 +1,4 @@
+import { priceCatalogVersion } from './price-catalog.js';
 // One process-wide memo of scanAllDaily's result, its own module rather than a
 // private in the usage control handler so a second consumer (per-card pricing is
 // coming) shares it instead of keeping a cache of its own: two caches would mean two
@@ -20,8 +21,9 @@ let cache = null; // { at, inflight, scan? } — inflight is set on entry, scan 
 // disk reads, memory, and event-loop stall by N.
 export async function cachedScan(scanFn) {
   const now = Date.now();
-  if (cache && now - cache.at < CACHE_TTL_MS) return cache.scan || cache.inflight;
-  const entry = { at: now, inflight: scanFn() };
+  const prices = priceCatalogVersion();
+  if (cache && cache.prices === prices && now - cache.at < CACHE_TTL_MS) return cache.scan || cache.inflight;
+  const entry = { at: now, prices, inflight: scanFn() };
   cache = entry;
   try {
     entry.scan = await entry.inflight; // resolve replaces inflight with the value; TTL still measured from scan start

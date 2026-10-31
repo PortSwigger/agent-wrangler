@@ -4,6 +4,7 @@ import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearComposer as defaultClearComposer } from './tmux-scraper.js';
 import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted, waitForCompactionEnd as defaultWaitForCompactionEnd, pasteImages as defaultPasteImages } from './pane-ready.js';
 import { adapterFor } from './agents/index.js';
+import { agyNativeReady } from './agy-startup.js';
 
 const STARTUP_WINDOW_MS = 60000;
 
@@ -64,7 +65,10 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   if (target) {
     const socket = socketFor(id);
     const entry = sessionManager.entryFor?.(id);
+    if (entry?.agent === 'agy' && !(deps.agyNativeReady ?? agyNativeReady)(entry)) return { mode: 'error', outcome: 'rejected', error: 'Antigravity native tools are not ready. Message retained; inspect the terminal and /mcp manager.' };
     const launchedAt = entry?.relaunchedAt ?? entry?.createdAt;
+    if (entry?.agyLaunchWarning || entry?.agyForkPending) return { mode: 'error', outcome: 'rejected', error: entry.agyLaunchWarning || 'Antigravity fork identity is pending.' };
+    const guarded = adapterFor(entry?.agent).terminal.guardEverySend;
     const starting = Number.isFinite(launchedAt) && Date.now() - launchedAt < STARTUP_WINDOW_MS;
     // The first message after a long idle often lands while the agent is
     // auto-compacting, and a prompt pasted into a compacting pane is lost with no
@@ -75,11 +79,12 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
     if (compaction === 'timeout') {
       return { mode: 'error', outcome: 'rejected', error: 'The agent is still compacting its context, so the message was not sent. Send it again once compaction finishes.' };
     }
-    if (starting) {
-      if (!await waitForComposerReady(target, socket, entry?.agent, { requireEmpty: false })) {
+    if (starting || guarded) {
+      if (!await waitForComposerReady(target, socket, entry?.agent, { requireEmpty: guarded ? !wantClear : false })) {
         return { mode: 'error', outcome: 'rejected', error: 'The agent is still starting, so the message was not sent. Send it again once the terminal is ready.' };
       }
     } else if (compaction === 'finished') await waitForComposerReady(target, socket, entry?.agent);
+    if (entry?.agent === 'agy' && (sessionManager.entryFor(id) !== entry || !(deps.agyNativeReady ?? agyNativeReady)(entry))) return { mode: 'error', outcome: 'rejected', error: 'Antigravity native readiness changed. Message retained; no input was sent.' };
     await attach(target, socket, entry?.agent);
     await sendText(target, text, socket);
     if (compaction === 'finished' && !await ensureSubmitted(target, socket, { text, agent: entry?.agent })) {
@@ -99,9 +104,12 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   // which is their live id). A wrangler-created worktree dir may have been cleaned up
   // post-archive; recreate it since there's no interactive prompt here (the transcript
   // lives under ~/.claude, so the conversation still resumes), falling back to home.
-  let dir = await resolveResumeDir(entry.liveSessionId || id, { entryCwd: entry.cwd });
+  let dir = await (adapterFor(entry.agent).hookIdentity ? adapterFor(entry.agent).history.resolveResumeDir(entry.liveSessionId || id, { entryCwd: entry.cwd }) : resolveResumeDir(entry.liveSessionId || id, { entryCwd: entry.cwd }));
   if (!dir || !fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {
+      if (adapterFor(entry.agent).hookIdentity) return { mode: 'error', outcome: 'rejected', error: 'Antigravity workspace is unavailable; recreate it before resuming.' };
+      dir = os.homedir();
+    }
   }
 
   // ---- SYNCHRONOUS COMMIT BLOCK: no await between this re-check and resume(). ----
@@ -126,11 +134,18 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   // to the CLI as a launch argument, which has no composer for a path to be
   // absorbed into — the images would simply be dropped, silently.
   const intentCarriesMessage = owned && !imagePaths.length && !wantClear && adapterFor(fresh.agent).resumeCarriesIntent;
+  const queueAgyIntent = owned && fresh.agent === 'agy' && !wantClear;
   try {
-    const res = await sessionManager.resume(id, dir, { intent: text, reason });
+    const res = await sessionManager.resume(id, dir, { intent: text, reason, ...(queueAgyIntent ? { queueIntent: true, imagePaths } : {}) });
+    if (queueAgyIntent) {
+      if (res?.intentOutcome === 'unknown' || res?.intentOutcome === 'sending') return { mode: 'error', outcome: 'unknown', error: 'Antigravity wake message submission is uncertain. Inspect the terminal before retrying.' };
+      return { mode: 'dormant', outcome: res?.intentOutcome === 'submitted' ? 'submitted' : 'queued' };
+    }
     if (!intentCarriesMessage) {
       const tmux = res?.tmux ?? tmuxFor(id);
       const socket = sessionManager.entryFor(id)?.socket ?? '';
+      if (fresh.agent === 'agy' && !(deps.agyNativeReady ?? agyNativeReady)(sessionManager.entryFor(id))) return { mode: 'error', outcome: 'rejected', error: 'Antigravity native tools are not ready. Wake message retained; inspect the terminal and /mcp manager.' };
+      if (sessionManager.entryFor(id)?.agyLaunchWarning || sessionManager.entryFor(id)?.agyForkPending) return { mode: 'error', outcome: 'rejected', error: 'Antigravity launch policy or fork identity is not confirmed.' };
       if (!tmux) return { mode: 'error', error: 'Session resumed but produced no live pane to deliver the message into.' };
       // HOLD the paste until the woken TUI has painted its composer. resume() only
       // guarantees the pty was spawned, and pasting into that window loses the
@@ -147,6 +162,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
       if (!await waitForComposerReady(tmux, socket, fresh.agent)) {
         return { mode: 'dormant', outcome: 'unknown', error: 'Woke the session but its terminal input is not ready — check the terminal before sending again.' };
       }
+      if (fresh.agent === 'agy' && !(deps.agyNativeReady ?? agyNativeReady)(sessionManager.entryFor(id))) return { mode: 'error', outcome: 'rejected', error: 'Antigravity native readiness changed. Wake message retained; no input was sent.' };
       await attach(tmux, socket, fresh.agent);
       await sendText(tmux, text, socket);
       // Then confirm the send actually became a turn, repairing a dropped CR with a

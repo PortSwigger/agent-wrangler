@@ -192,3 +192,7 @@ The complete list is under **Settings → Shortcuts**. Common shortcuts are:
 
 Shortcuts added by enabled extensions are listed under each extension's name in
 **Settings → Shortcuts**.
+
+## Antigravity sessions
+
+Enable **Settings → Automation → Manage agy integration** (off by default) for experimental local Antigravity dispatch. The separate trust-folder setting also defaults off. Dispatch, resume, interactive fork, mail, chat, search and estimated usage are covered in the [Antigravity guide](antigravity.md), including terminal recovery and the required human acceptance checks.

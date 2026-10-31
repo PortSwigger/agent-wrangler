@@ -321,6 +321,12 @@ function renderSummary() {
       return out;
     }, { estimatedUsd: 0, advisorUsd: 0, advisorTokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 } })
     : d.totals;
+  if (state.data?.totals?.unpricedTokens > 0 && !state.filter) {
+    const note = document.createElement('span');
+    note.textContent = `${fmtTokens(state.data.totals.unpricedTokens)} tokens have no known API price; dollars exclude them`;
+    note.className = 'usage-estimate-note';
+    box.appendChild(note);
+  }
   if (selectedTotals.estimatedUsd > 0 && !state.filter) {
     const est = document.createElement('div');
     est.className = 'usage-est';

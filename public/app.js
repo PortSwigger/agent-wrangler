@@ -47,7 +47,7 @@ import {
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
   anyModalOpen as anyModalOpenIn,
 } from './util.js';
-import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
+import { STATUS_WORDS, needsYouWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
@@ -167,6 +167,8 @@ export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
 let subagentsExpandedByDefault = false; // server config flag, carried on every graph push
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
+let manageAgyIntegration = false;
+let trustAgyLaunchCwd = false;
 let trustClaudeLaunchCwd = true; // likewise
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
@@ -825,8 +827,7 @@ function barWord(s) {
   // suggest the same "go answer a prompt in the terminal" affordance as a real
   // permission prompt or OAuth screen (see workerStatusWord in cards.js, same
   // vocabulary).
-  if (s.status === 'needs-you' && s.waitingReason === 'api-error') return 'error';
-  if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
+  if (s.status === 'needs-you') return needsYouWord(s);
   if (unread.has(s.sessionId)) return 'unread';
   if (justFinished.has(s.sessionId)) return 'done';
   return STATUS_WORDS[displayStatus(s)] || '?';
@@ -847,6 +848,8 @@ function applyGraph(graph) {
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
   trustClaudeLaunchCwd = graph.trustClaudeLaunchCwd !== false;
+  manageAgyIntegration = graph.manageAgyIntegration === true;
+  trustAgyLaunchCwd = graph.trustAgyLaunchCwd === true;
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
@@ -6583,6 +6586,8 @@ initSettings({
     get: (id) => {
       if (id === 'subagentsExpandedByDefault') return subagentsExpandedByDefault;
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
+      if (id === 'manageAgyIntegration') return manageAgyIntegration;
+      if (id === 'trustAgyLaunchCwd') return trustAgyLaunchCwd;
       if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
@@ -6610,6 +6615,12 @@ initSettings({
       } else if (id === 'trustCodexLaunchCwd') {
         trustCodexLaunchCwd = Boolean(value);
         send({ type: 'set-trust-codex-launch-cwd', enabled: trustCodexLaunchCwd });
+      } else if (id === 'manageAgyIntegration') {
+        manageAgyIntegration = Boolean(value);
+        send({ type: 'set-manage-agy-integration', enabled: manageAgyIntegration });
+      } else if (id === 'trustAgyLaunchCwd') {
+        trustAgyLaunchCwd = Boolean(value);
+        send({ type: 'set-trust-agy-launch-cwd', enabled: trustAgyLaunchCwd });
       } else if (id === 'trustClaudeLaunchCwd') {
         trustClaudeLaunchCwd = Boolean(value);
         send({ type: 'set-trust-claude-launch-cwd', enabled: trustClaudeLaunchCwd });

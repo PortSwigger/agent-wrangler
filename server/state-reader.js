@@ -553,7 +553,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       hasBackgroundShell,
       rawStatus: s.status || null,
       waitingFor: apiError ? apiError.waitingFor : (s.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : null,
+      waitingReason: apiError ? apiError.waitingReason : (s.waitingReason || null),
       kind: s.kind || worker?.dispatch?.source || 'unknown',
       cwd,
       branch: await branchFor(cwd),
@@ -659,7 +659,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // absent (no regression for sessions without a hook-written file).
     const runtime = runtimeResolver(appEntry?.runtime);
     const live = (runtime.readLive ? await runtime.readLive({ entry: appEntry, tmuxName: d.tmuxName, socket: d.socket }) : null)
-      || adapter.readLive({ pid: d.claudePid, cwd: d.cwd })
+      || adapter.readLive({ pid: d.claudePid, cwd: d.cwd, entry: appEntry })
       || (adapter.presetsSessionId
         ? null
         : { liveSid: appEntry?.liveSessionId || await adapter.discoverLiveId({ cwd: fcwd, launchedAt: 0, mintedAfter: discoveryFloor(appEntry) }), status: 'unknown', name: null, waitingFor: null });
@@ -672,7 +672,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     const costSid = live?.liveSid || appEntry?.liveSessionId;
     const enr = await applyRuntimeCost(runtime, { entry: appEntry, liveSid: costSid },
       (runtime.analyze ? await runtime.analyze({ entry: appEntry, liveSid: costSid }) : null)
-        || await adapter.analyze(costSid || realSid, { since: usageSince(appEntry) }));
+        || await adapter.analyze(costSid || realSid, { since: usageSince(appEntry), ...(adapter.hookIdentity ? { entry: appEntry } : {}) }));
     // A recognized live status wins (Claude's mapped status, or Codex's). Else
     // surface a reported-but-unrecognized status as 'unknown', and only scrape when
     // nothing was reported (Codex has no status file → live.rawStatus is absent).
@@ -693,6 +693,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // can go stale for as long as a detached background job runs, well past the
     // pane's own idle prompt — trust the pane over it. `live.status` above is
     // already mapped, so `rawStatus` is the only way to tell 'shell' from 'busy'.
+    if (adapter.hookIdentity && classifyPane(paneText, agentId).status === 'needs-you' && (live?.pendingTool !== false || !/permission|calling this tool|Run this command/i.test(classifyPane(paneText, agentId).waitingFor || ''))) { status = 'needs-you'; scrapeWaitingFor = classifyPane(paneText, agentId).waitingFor; }
     if (live?.rawStatus === 'shell' && classifyPane(paneText, agentId).status === 'idle') status = 'idle';
     // See the managed-session pass above: a dropped API connection ends the turn
     // without a permission request, so surface it as needs-you rather than idle.
@@ -729,8 +730,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       status,
       hasBackgroundShell,
       rawStatus: null,
-      waitingFor: apiError ? apiError.waitingFor : (live?.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : null,
+      waitingFor: apiError ? apiError.waitingFor : (scrapeWaitingFor || live?.waitingFor || null),
+      waitingReason: apiError ? apiError.waitingReason : (scrapeWaitingFor ? null : live?.waitingReason || null),
       kind: 'tmux',
       cwd: fcwd,
       branch: await branchFor(fcwd),
@@ -741,10 +742,10 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       model: appEntry?.model || null,
       effort: appEntry?.effort || null,
       permissionMode: appEntry?.permissionMode || null,
-      currentModel: enr?.currentModel ?? null,
-      modelPill: modelPillFor(agentId, enr?.currentModel, appEntry?.model),
+      currentModel: live?.model || enr?.currentModel || null,
+      modelPill: modelPillFor(agentId, live?.model || enr?.currentModel, appEntry?.model),
       autoCompactTokens: appEntry?.autoCompactTokens || null,
-      modelContextWindow: maxContextWindowFor(agentId, enr?.currentModel, appEntry?.model),
+      modelContextWindow: maxContextWindowFor(agentId, live?.model || enr?.currentModel, appEntry?.model),
       snooze: appEntry?.snooze || null,
       runtime: appEntry?.runtime || null,
       workflow: parentFields.workflow,
@@ -806,7 +807,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // (which for them is the live id). Mirrors the Codex branch.
     const runtime = runtimeResolver(entry.runtime);
     const enrichment = await applyRuntimeCost(runtime, { entry, liveSid: entry.liveSessionId || sid }, (runtime.analyze ? await runtime.analyze({ entry, liveSid: entry.liveSessionId || sid }) : null)
-      || await graphAnalysis(agentId, entry.liveSessionId || sid, { since: usageSince(entry) }));
+      || await graphAnalysis(agentId, entry.liveSessionId || sid, { since: usageSince(entry), ...(adapterFor(agentId).hookIdentity ? { entry } : {}) }));
     const label = sessionLabel({
       agent: agentId,
       names: [entry.name, entry.lastLabel],

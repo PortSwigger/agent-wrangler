@@ -38,7 +38,7 @@ const MIME = {
 // (enabled extensions only, each with the themes it has switched off), so a
 // disabled extension's or switched-off theme drops out of /api/styles and its
 // assets 404.
-export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, prModelHandler, fileHandler, extFileHandler, extensionAssets = () => null, extensionThemes = () => [] }) {
+export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, prModelHandler, agyHookHandler, fileHandler, extFileHandler, extensionAssets = () => null, extensionThemes = () => [] }) {
   return http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
     if (urlPath === '/') urlPath = '/index.html';
@@ -46,7 +46,13 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, prM
     // The explicit <link rel=icon> in index.html is what's actually used.
     if (urlPath === '/favicon.ico') urlPath = '/favicon.svg';
 
+    if (urlPath === '/mcp' && req.method !== 'POST') {
+      res.writeHead(405, { Allow: 'POST' }).end('method not allowed');
+      return;
+    }
+
     const postHandlers = { '/mcp': mcpRequestHandler, '/pr-attach': prAttachHandler, '/pr-model': prModelHandler };
+    if (agyHookHandler) postHandlers['/agy-hook'] = agyHookHandler;
     if (req.method === 'POST' && Object.hasOwn(postHandlers, urlPath)) {
       // Same CSRF gate as the WS upgrade: a cross-origin POST still fires spawn even
       // when CORS blocks the reply. Absent Origin = a non-browser client (MCP client,

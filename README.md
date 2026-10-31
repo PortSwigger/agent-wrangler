@@ -1,16 +1,16 @@
 # Agent Wrangler
 
-Agent Wrangler is the command center and control plane for every Claude Code and OpenAI Codex
-session you run — one board to dispatch, monitor, and step straight into any session's live terminal.
+Agent Wrangler is the command center and control plane for Claude Code, OpenAI Codex and opt-in Antigravity CLI
+sessions you run — one board to dispatch, monitor, and step straight into any session's live terminal.
 It's also the channel agents use to coordinate with each other: spawning other agents and whole
 multi-agent workflows, handing off work, and messaging one another directly — so a fleet of agents can
 get on with it without you relaying every message by hand. It runs entirely on your own machine, under
 your control. Codex is offered as an agent automatically when the `codex` binary is on your `PATH`;
-otherwise it behaves exactly as a Claude-only board.
+Antigravity (`agy`) is experimental and requires Settings → Manage agy integration; see the [Antigravity guide](docs/antigravity.md).
 
 ## Highlights
 
-- **One board for every session** — dispatch, monitor, and jump into any Claude Code or Codex
+- **One board for every session** — dispatch, monitor, and jump into any supported agent
   session's live terminal from a single screen, whether you launched it here or elsewhere.
 - **A control plane for agents, not just for you** — sessions can spawn other agents and orchestrate
   whole multi-agent workflows, hand tasks off to each other, and send one another messages directly —

@@ -38,6 +38,7 @@ const CAPTURE_LINES = 60;
 export function createPaneDeferral({
   tmuxFor, socketFor, agentFor = () => 'claude',
   statusFor = () => null,
+  readinessFor = () => true,
   sendText = defaultSendText,
   capture = defaultCapture,
   classify = defaultClassify,
@@ -61,6 +62,7 @@ export function createPaneDeferral({
   // reason is for a log line only; every non-null answer defers.
   async function blocker(id, tmux, socket, deferWhileWorking = false, allowWhileWorking = false) {
     try {
+      if (!readinessFor(id)) return 'native tool readiness pending';
       const agent = agentFor(id);
       // PR notices can reach an active turn. Mail retains its agent-specific
       // timing policy, but both routes require clear input and no dialog.

@@ -36,7 +36,7 @@ export const messageHandler = {
     // reported as not-ok so the view keeps the draft and says so, rather than
     // clearing the composer on a send that may have stranded in the pane.
     if (result.outcome === 'unknown') replyResult(false, result.error, result.mode, 'unknown');
-    else replyResult(true, null, result.mode);
+    else replyResult(true, null, result.mode, result.outcome);
     if (result.mode === 'dormant') {
       try { await ctx.rebuild?.(); } catch {}
     }

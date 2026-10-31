@@ -287,3 +287,11 @@ export function defaultRuntime(cfg = readConfig()) {
   const id = typeof cfg.defaultRuntime === 'string' ? cfg.defaultRuntime.trim() : '';
   return id || 'local';
 }
+
+export function manageAgyIntegration(cfg = readConfig()) {
+  return cfg.manageAgyIntegration === true;
+}
+
+export function trustAgyLaunchCwd(cfg = readConfig()) {
+  return cfg.trustAgyLaunchCwd === true;
+}
