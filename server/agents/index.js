@@ -33,6 +33,10 @@ export function supportsRemoteControl(id) {
   return allAgents().find((a) => a.id === id)?.supportsRemoteControl === true;
 }
 
+export function supportsDisallowedTools(id) {
+  return allAgents().find((a) => a.id === id)?.supportsDisallowedTools === true;
+}
+
 // The exact model id a session runs now: its transcript's live model, else its
 // launch model as a full id (the adapter's `modelId` resolves an alias, opus →
 // claude-opus-5-5; without one the launch value already is an id). Null when

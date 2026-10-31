@@ -172,6 +172,15 @@ function remoteControlArgs(remoteControl) {
   return remoteControl?.name ? ['--remote-control', remoteControl.name] : [];
 }
 
+// `--disallowed-tools <names>` for a session spawned with `disallowedTools`.
+// Stored on the entry, so launch, fork and every resume pass it: a host that
+// removes a tool (e.g. AskUserQuestion in an unwatched pane) must not get it
+// back after an idle-suspend or a mail wake. One space-joined value, like the
+// headless launch, so the variadic flag cannot swallow the next argument.
+function disallowedToolsArgs(disallowedTools) {
+  return disallowedTools?.length ? ['--disallowed-tools', disallowedTools.join(' ')] : [];
+}
+
 const MODELS = [
   { value: 'fable', family: 'fable', pillLabel: 'fable', transcriptPrefixes: ['claude-fable-'], contextWindow: 1_000_000 },
   { value: 'opus', family: 'opus', pillLabel: 'opus', transcriptPrefixes: ['claude-opus-'], default: true, contextWindow: 1_000_000 },
@@ -269,6 +278,7 @@ export const claude = {
   },
   reviewPriority: 10,
   supportsRemoteControl: true,
+  supportsDisallowedTools: true,
   headlessArchiveReview: true,
   label: 'Claude',
   tmuxPrefix: 'cc_',
@@ -309,7 +319,7 @@ export const claude = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)claude(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, permissionMode, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills, remoteControl }) {
+  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, permissionMode, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills, remoteControl, disallowedTools }) {
     // The conversation runs under its own live id (distinct from the card id) so the
     // card id is never also a conversation id. Memory/identity stays on the card id.
     // Falls back to the card id when no live id is supplied (legacy callers).
@@ -319,10 +329,11 @@ export const claude = {
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     for (const d of addDirs) args.push('--add-dir', d);
     args.push(...remoteControlArgs(remoteControl));
+    args.push(...disallowedToolsArgs(disallowedTools));
     return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildResume({ sessionId, resumeId, addDirs = [], effort, permissionMode, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills, remoteControl }) {
+  buildResume({ sessionId, resumeId, addDirs = [], effort, permissionMode, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills, remoteControl, disallowedTools }) {
     // Plain --resume continues the conversation in place under its own id (no
     // --fork-session), so the live id stays equal to resumeId and the transcript
     // grows rather than duplicating. Safe because resume() kills the old tmux first.
@@ -334,10 +345,11 @@ export const claude = {
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     args.push(...remoteControlArgs(remoteControl));
+    args.push(...disallowedToolsArgs(disallowedTools));
     return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildFork({ sessionId, liveSessionId, sourceId, addDirs = [], model, effort, permissionMode, autoCompactTokens, intent = '', launchContext, disabledSkills }) {
+  buildFork({ sessionId, liveSessionId, sourceId, addDirs = [], model, effort, permissionMode, autoCompactTokens, intent = '', launchContext, disabledSkills, disallowedTools }) {
     // Branch the source conversation into a *new* id we choose (liveSessionId), so
     // the fork's conversation is known at launch and lives under its board id — no
     // phantom, so the fork is resumable. Memory/identity stays on the card id.
@@ -348,6 +360,7 @@ export const claude = {
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
+    args.push(...disallowedToolsArgs(disallowedTools));
     return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, launchContext, disabledSkills }));
   },
 

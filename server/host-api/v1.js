@@ -9,7 +9,7 @@ import { imageAvailable, claimExtImages, keepStagedPaste, readKeptPaste, removeK
 import { collectLaunchContext } from '../launch-context.js';
 import { deliverFirstPrompt } from '../dispatch-runner.js';
 import { requestOrigin } from '../request-origin.js';
-import { supportsRemoteControl } from '../agents/index.js';
+import { supportsRemoteControl, supportsDisallowedTools } from '../agents/index.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -123,6 +123,27 @@ function checkRemoteControl(remoteControl, agent = 'claude') {
   return { remoteControl: { name: name.trim() } };
 }
 
+// `['AskUserQuestion', ...]` -> the tool names the session launches without,
+// passed as `--disallowed-tools` on its launch, fork and every resume. Plain
+// tool names only (built-ins and `mcp__server__tool`), never permission rules:
+// a rule like `Bash(rm:*)` would make this a sandbox, which it is not. Claude
+// only, refused for any other agent like remoteControl, since an option that
+// is silently dropped reads as a tool that is gone when it is not. Duplicates
+// collapse; an empty array is no option.
+const TOOL_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/;
+const MAX_DISALLOWED_TOOLS = 64;
+function checkDisallowedTools(disallowedTools, agent = 'claude') {
+  if (disallowedTools === undefined || disallowedTools === null) return {};
+  if (!Array.isArray(disallowedTools)) spawnError('disallowedTools must be an array of tool names');
+  if (disallowedTools.length > MAX_DISALLOWED_TOOLS) spawnError(`disallowedTools holds at most ${MAX_DISALLOWED_TOOLS} entries (got ${disallowedTools.length})`);
+  for (const t of disallowedTools) {
+    if (typeof t !== 'string' || !TOOL_NAME.test(t)) spawnError(`disallowedTools entries must be tool names like AskUserQuestion or mcp__server__tool (got ${JSON.stringify(t)})`);
+  }
+  if (!disallowedTools.length) return {};
+  if (!supportsDisallowedTools(agent)) spawnError(`Agent "${agent}" does not support disallowedTools.`);
+  return { disallowedTools: [...new Set(disallowedTools)] };
+}
+
 function isPlainObject(value) {
   if (!value || typeof value !== 'object') return false;
   const proto = Object.getPrototypeOf(value);
@@ -182,10 +203,11 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
     // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
     spawn: async ({
       cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
-      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext, remoteControl,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext, remoteControl, disallowedTools,
     } = {}) => {
       const worktreeOpts = spawnWorktree(worktree);
       const remoteControlOpt = checkRemoteControl(remoteControl, agent);
+      const disallowedToolsOpt = checkDisallowedTools(disallowedTools, agent);
       const addDirsOpt = checkAddDirs(addDirs);
       const extOpt = checkExt(ext);
       const imageNames = checkImages(id, images);
@@ -205,6 +227,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         ...addDirsOpt,
         ...extOpt,
         ...remoteControlOpt,
+        ...disallowedToolsOpt,
         // Dispatch's own default is off, so `false` is simply no override.
         ...(autoMergeOnPass === undefined ? {} : { autoMergeOnPass }),
         // `taskId` is the WHOLE task binding, and it has to be one option

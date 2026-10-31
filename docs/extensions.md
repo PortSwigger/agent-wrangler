@@ -1550,6 +1550,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   also exposes it as `remote_control: "Phone"`. The board dialog, workflows,
   scheduling and handoff do not offer it. A manifest using the host option
   declares `^1.55.0`.
+- **`host.sessions.spawn({ disallowedTools: ['AskUserQuestion'] })` launches a
+  Claude session without those tools** (1.58.0). The launch passes
+  `--disallowed-tools <names>`, and the list is stored on the entry so every
+  relaunch passes it again: resume, idle-suspend wake, mail wake, snooze wake,
+  a relaunch after an update, and a fork (which inherits it, since a fork of an
+  unwatched session is no more watched). Use it for a session whose pane nobody
+  watches, where a tool that waits on the terminal would block it. Entries are
+  plain tool names (`AskUserQuestion`, `mcp__server__tool`), at most 64;
+  duplicates collapse and an empty array is no option. Permission rules such as
+  `Bash(rm:*)`, a non-array, or any agent other than Claude are refused by name
+  before anything launches. An older server ignores the option and launches
+  with every tool, so a manifest relying on it declares `^1.58.0`.
 - **`adversarial-review`'s shape is a SKILL plus a
   TOOL on purpose.** A SKILL.md is static, so it cannot carry the human's
   configured process; Claude's `` !`cmd` `` injection would, but Codex reads
