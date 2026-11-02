@@ -212,3 +212,14 @@ test('an unreadable capture is never reported as empty', () => {
   assert.equal(paneComposerIsEmpty(null), false);
   assert.equal(paneComposerIsEmpty(`${E}[39msome output with no composer`), false);
 });
+
+test('a blank first composer line does not hide a multiline draft', () => {
+  const pane = [FRAME, composer(''), '  Review this draft before sending.', FRAME].join('\n');
+  assert.equal(paneComposerIsEmpty(pane), false);
+});
+
+test('prompt marks inside a draft cannot masquerade as an empty composer', () => {
+  for (const body of ['Review this draft ❯', 'Review this draft\n  ❯']) {
+    assert.equal(paneComposerIsEmpty([FRAME, composer(body), FRAME].join('\n')), false);
+  }
+});
