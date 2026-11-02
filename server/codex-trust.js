@@ -74,6 +74,7 @@ export function hasDuplicateHeader(text) {
 // that as a launch failure, not swallow it.
 export function ensureCodexTrust(dirPath) {
   if (!dirPath) return;
+  dirPath = fs.realpathSync(dirPath);
   const file = configPath();
   const header = headerFor(dirPath);
   let text = '';
