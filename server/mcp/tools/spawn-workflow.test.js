@@ -197,3 +197,16 @@ test('spawn_workflow refuses a model the chosen agent does not offer', async () 
   assert.match(out.content[0].text, /Unknown model "opus" for agent "codex"/);
   assert.equal(d.calls.dispatch.length, 0);
 });
+
+for (const [flags, caller, expected] of [
+  [{ nest: true }, 'CARD1', { to: 'CARD1' }],
+  [{ notify_status: true }, 'CARD1', { to: 'CARD1' }],
+  [{}, 'CARD1', undefined],
+  [{ nest: true, notify_status: true }, null, undefined],
+]) {
+  test('spawn-workflow status subscription ' + JSON.stringify([flags, caller]), async () => {
+    const d = deps();
+    await spawnWorkflowTool.handler({ deps: d, caller }, { issue: 'x', ...flags });
+    assert.deepEqual(d.calls.dispatch[0].statusNotify, expected);
+  });
+}

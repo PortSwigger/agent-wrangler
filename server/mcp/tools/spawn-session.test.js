@@ -525,3 +525,16 @@ test('spawn_session Remote Control refuses default Claude with missing capabilit
     adapter.supportsRemoteControl = prev;
   }
 });
+
+for (const [flags, caller, expected] of [
+  [{ nest: true }, 'CARD1', { to: 'CARD1' }],
+  [{ notify_status: true }, 'CARD1', { to: 'CARD1' }],
+  [{}, 'CARD1', undefined],
+  [{ nest: true, notify_status: true }, null, undefined],
+]) {
+  test('spawn-session status subscription ' + JSON.stringify([flags, caller]), async () => {
+    const d = deps();
+    await spawnSessionTool.handler({ deps: d, caller }, { intent: 'x', ...flags });
+    assert.deepEqual(d.calls.dispatch[0].statusNotify, expected);
+  });
+}

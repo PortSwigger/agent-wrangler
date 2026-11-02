@@ -43,6 +43,8 @@ export const spawnWorkflowTool = {
     agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the run (--add-dir).'),
     auto_compact_tokens: z.number().int().min(50000).max(1000000).optional().describe('Optional immutable auto-compaction threshold / working context budget in tokens (50000–1000000; 50000 is Codex-only).'),
+    nest: z.boolean().optional().describe('Nest the new session under your card and subscribe to status notices.'),
+    notify_status: z.boolean().optional().describe('Notify you when this session goes idle without reporting to you, needs a person, goes quiet mid-turn, or exits. Implied by nest: true.'),
     into: z.string().optional().describe(
       'Task id to put the run on, sourced from list_tasks. An id not sourced from list_tasks '
       + 'silently lands the run in Unassigned instead of erroring. Defaults to your current '
@@ -62,6 +64,7 @@ export const spawnWorkflowTool = {
       // tagging — and the worktree is forced on with an auto-suffixed branch
       // seeded from the raw issue, exactly as the /ws workflow dispatch does.
       buildDispatch: () => ({
+        parentSession: (args.nest && caller) || undefined,
         intent: workflowLaunchPrompt(rawIssue),
         worktree: true,
         worktreeBranch: slugFromIntent(rawIssue),

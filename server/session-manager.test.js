@@ -3729,3 +3729,16 @@ for (const action of ['dispatch', 'resume', 'fork']) {
     assert.equal(launches, 0);
   });
 }
+test('status subscriptions survive resume but not fork', () => {
+  const prev = { statusNotify: { to: 'parent', since: 123 } };
+  assert.deepEqual(resumeEntry(prev, { now: 999 }).statusNotify, prev.statusNotify);
+  assert.equal(forkEntry({ parentEntry: prev }).statusNotify, undefined);
+});
+
+test('dispatch persists statusNotify with the launch time', async () => {
+  const sm = smForDispatch();
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', statusNotify: { to: 'parent' } });
+  const entry = sm.map.get(sessionId);
+  assert.deepEqual(entry.statusNotify, { to: 'parent', since: entry.createdAt });
+  assert.ok(Number.isFinite(entry.statusNotify.since));
+});
