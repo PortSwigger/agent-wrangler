@@ -58,7 +58,7 @@ export function createStatusWatcher() {
           states.delete(id);
           continue;
         }
-        if (effective === 'unknown' && previous.status === 'idle') continue;
+        if (effective === 'unknown') continue;
         if (effective !== previous.status) {
           previous.notified.clear();
           previous.idleSince = effective === 'idle' ? now : null;

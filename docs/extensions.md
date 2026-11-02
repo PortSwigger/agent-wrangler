@@ -1683,7 +1683,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   or `gone`. `waitingFor` is the board summary or `null`. Idle-held is the 60-second
   hold after working, excluding background shells. Child mail affects the spawner
   notice wording; it suppresses neither the notice nor this event. Events occur
-  once per episode, and the first rebuild after restart only seeds the watcher.
+  once per episode; unknown readings preserve the last known episode. The first
+  rebuild after restart only seeds the watcher.
 - **`activate({ host })` / `deactivate({ host })`** (1.17.0) manifest functions run when the
   extension turns on or off; a throwing `activate` quarantines it.
 - **`host.memory.*`** (1.17.0) is provided by the task-memory extension. While it is off,

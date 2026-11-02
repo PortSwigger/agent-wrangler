@@ -160,16 +160,18 @@ test('a resumed exited card can start new episodes', () => {
   assert.equal(f.tick(3, { status: 'needs-you' })[0].kind, 'needs-you');
 });
 
-test('unknown leaves needs-you and working episodes', () => {
+test('unknown preserves needs-you and quiet episodes until a known transition', () => {
   const f = fixture();
   f.tick(0, { status: 'working' });
-  f.tick(1, { status: 'needs-you' });
-  f.tick(2, { status: 'unknown' });
-  assert.equal(f.tick(3, { status: 'needs-you' })[0]?.kind, 'needs-you');
-  f.tick(4, { status: 'working', lastActivity: 0 });
-  f.tick(QUIET_MS, { status: 'working', lastActivity: 0 });
-  f.tick(QUIET_MS + 1, { status: 'unknown' });
-  assert.equal(f.tick(QUIET_MS + 2, { status: 'working', lastActivity: 0 })[0]?.kind, 'quiet');
+  assert.equal(f.tick(1, { status: 'needs-you' })[0]?.kind, 'needs-you');
+  assert.deepEqual(f.tick(2, { status: 'unknown' }), []);
+  assert.deepEqual(f.tick(3, { status: 'needs-you' }), []);
+  f.tick(4);
+  assert.equal(f.tick(5, { status: 'needs-you' })[0]?.kind, 'needs-you');
+  f.tick(6, { status: 'working', lastActivity: 0 });
+  assert.equal(f.tick(QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.kind, 'quiet');
+  assert.deepEqual(f.tick(QUIET_MS + 1, { status: 'unknown' }), []);
+  assert.deepEqual(f.tick(QUIET_MS + 2, { status: 'working', lastActivity: 0 }), []);
 });
 
 test('resume starts a fresh quiet interval even when transcript activity is old', () => {
@@ -233,4 +235,28 @@ test('an earlier work period report is not claimed for the following idle episod
   tick(62000, 'working');
   tick(63000, 'idle');
   assert.equal(tick(123000, 'idle')[0]?.reported, false);
+});
+
+
+test('unknown readings preserve mail attribution for the working period', () => {
+  const watcher = createStatusWatcher();
+  const tick = (now, status) => watcher.tick([node({ status })], () => ({ statusNotify: { to: 'p', since: 0 } }), {
+    now, mailSince: (_from, _to, since) => 500 >= since,
+  });
+  tick(0, 'working');
+  assert.deepEqual(tick(1000, 'unknown'), []);
+  assert.deepEqual(tick(2000, 'working'), []);
+  tick(3000, 'idle');
+  assert.equal(tick(63000, 'idle')[0]?.reported, true);
+});
+
+test('resume still rearms quiet detection while the status is unknown', () => {
+  const f = fixture();
+  f.tick(0, { status: 'working', lastActivity: 0 });
+  assert.equal(f.tick(QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.kind, 'quiet');
+  const resumed = QUIET_MS * 2;
+  f.entry({ relaunchedAt: resumed });
+  assert.deepEqual(f.tick(resumed, { status: 'unknown' }), []);
+  assert.deepEqual(f.tick(resumed + 1, { status: 'working', lastActivity: 0 }), []);
+  assert.equal(f.tick(resumed + QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.quietMs, QUIET_MS);
 });
