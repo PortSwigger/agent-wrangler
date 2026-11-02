@@ -150,8 +150,13 @@ export function paneComposerIsEmpty(paneText, agent = 'claude', { allowWhileWork
     if (!allowWhileWorking && paneHasWorkingStatus(paneText)) return false;
     return codexComposerIsEmpty(paneText);
   }
-  const line = paneText.split('\n').filter((l) => l.includes(PROMPT_MARK)).pop();
-  if (!line) return false;
+  const lines = paneText.split('\n');
+  const rules = lines.map((line, i) => /^─{10,}$/.test(visible(line)) ? i : -1).filter((i) => i >= 0);
+  const body = rules.length >= 2 ? lines.slice(rules.at(-2) + 1, rules.at(-1)) : lines;
+  const mark = body.findIndex((line) => visible(line).startsWith(PROMPT_MARK));
+  if (mark === -1 || (rules.length >= 2 && body.slice(0, mark).some(visible))) return false;
+  if (body.slice(mark + 1).some(visible)) return false;
+  const line = body[mark];
   const after = line.slice(line.indexOf(PROMPT_MARK) + PROMPT_MARK.length);
   // Drop faint runs before judging: ghost text occupies the composer visually
   // but is not content — pressing Enter on it does submit it, but it is not

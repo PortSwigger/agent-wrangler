@@ -163,6 +163,10 @@ input to be ready, including during an active turn. If a draft, dialog or unread
 terminal prevents delivery, the chat reports the uncertainty and keeps your message
 available to retry.
 
+Automated terminal notifications (mail and PR/check nudges) wait while the composer holds an unsent
+draft, including multiline text. Once it is clear, Wrangler submits the notification automatically.
+Claude mail delivered through its messaging socket does not touch the terminal composer.
+
 **Open terminal** creates an independent shell; it does not replace or interrupt the agent terminal.
 
 ## Snooze, suspend, archive, and search

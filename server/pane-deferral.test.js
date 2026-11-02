@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createPaneDeferral, MAX_PENDING_PER_CARD } from './pane-deferral.js';
+import { sendText } from './tmux-scraper.js';
 
 const E = '\x1b';
 // The composer as capturePaneStyled renders it: an SGR-prefixed `❯` line whose
@@ -358,3 +359,24 @@ test('a throwing onDefer hook does not change the delivery outcome', async () =>
   assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'x', onDefer: () => { throw new Error('boom'); } }), 'deferred');
   assert.deepEqual(pd.pending('c1'), ['x']);
 });
+
+for (const draft of ['\n  Review this draft before sending.', 'Review this draft ❯', 'Review this draft\n  ❯']) {
+  test(`multiline or quoted-marker draft defers notifications without Enter: ${JSON.stringify(draft)}`, async () => {
+    const frame = `${E}[38;5;244m${'─'.repeat(100)}`;
+    let pane = [frame, composer(draft), frame, `${E}[39m  ⏵⏵ auto mode on`].join('\n');
+    const commands = [];
+    const pd = createPaneDeferral({
+      ...deps({ pane: () => pane }),
+      sendText: (name, text, socket) => sendText(name, text, socket, async (sock, args) => {
+        commands.push(args);
+      }, { wait: async () => {} }),
+    });
+    assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 checks failing' }), 'deferred');
+    assert.deepEqual(await pd.drain(), []);
+    assert.deepEqual(commands, []);
+    pane = [frame, composer(''), frame].join('\n');
+    assert.deepEqual(await pd.drain(), ['c1']);
+    assert.equal(commands.filter((args) => args.includes('Enter')).length, 1);
+    assert.deepEqual(pd.pending('c1'), []);
+  });
+}
