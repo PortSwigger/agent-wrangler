@@ -3649,3 +3649,23 @@ for (const agent of ['claude', 'codex']) {
     });
   }
 }
+
+for (const action of ['dispatch', 'resume', 'fork']) {
+  test(`${action} surfaces Codex trust errors without launching`, async () => {
+    const sm = smForDispatch();
+    const error = new Error('Cannot resolve project trust directory');
+    sm._ensureCodexTrust = () => { throw error; };
+    let launches = 0;
+    sm._newSession = async () => { launches++; };
+    sm.killForSession = async () => [];
+    const parentEntry = { agent: 'codex', cwd: os.tmpdir(), liveSessionId: 'live-trust' };
+    sm.map.set('card-trust-error', parentEntry);
+    const launch = {
+      dispatch: () => sm.dispatch({ agent: 'codex', cwd: os.tmpdir(), intent: 'x' }),
+      resume: () => sm.resume('card-trust-error', os.tmpdir()),
+      fork: () => sm.fork({ sourceId: 'live-trust', parentId: 'card-trust-error', parentEntry, cwd: os.tmpdir() }),
+    };
+    await assert.rejects(launch[action], (err) => err === error);
+    assert.equal(launches, 0);
+  });
+}
