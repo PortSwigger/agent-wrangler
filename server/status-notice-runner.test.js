@@ -28,7 +28,7 @@ test('runner delivers one coalesced notice per subscriber and publishes unsubscr
   await f.runner.run({ sessions: [] }, 123);
   assert.equal(f.sent.length, 2);
   assert.equal(f.sent[0].to, 'p');
-  assert.match(f.sent[0].body, /Child c.*\n- Child d/);
+  assert.match(f.sent[0].body, /"Child c".*\n- "Child d"/);
   assert.equal(f.published.length, 4);
   assert.equal(f.published[0][0], 'session-status:needs-you');
 });

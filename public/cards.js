@@ -248,7 +248,7 @@ export function mailBlockedHtml(s) {
 
 function statusNoticeBlockedHtml(s) {
   if (!s.statusNoticeBlocked) return '';
-  const text = 'Status notice waiting: clear the prompt box or dialog to receive it';
+  const text = 'Status notice waiting to be delivered';
   return `<span class="card-tag mail-blocked" title="${esc(text)}">${text}</span>`;
 }
 
