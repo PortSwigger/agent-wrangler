@@ -1,3 +1,5 @@
+import { lastActiveAt } from './session-manager.js';
+
 export const IDLE_HOLD_MS = 60000;
 export const QUIET_MS = 900000;
 
@@ -23,6 +25,8 @@ export function createStatusWatcher() {
           }
           exited.delete(id);
         }
+        const launchAt = lastActiveAt({ relaunchedAt: entry?.relaunchedAt, createdAt: entry?.createdAt });
+        const activeAt = lastActiveAt({ lastActivity: node?.lastActivity, relaunchedAt: entry?.relaunchedAt, createdAt: entry?.createdAt });
         let previous = states.get(id);
         const to = entry ? entry.statusNotify?.to ?? null : previous?.to ?? null;
         const child = node ? {
@@ -35,10 +39,12 @@ export function createStatusWatcher() {
         if (!previous) {
           if (exitReason && baseline) { exited.add(id); continue; }
           previous = { status: baseline ? effective : 'unknown', idleSince: effective === 'idle' ? now : null,
-            workingSeen: effective === 'working', notified: new Set(), child, to };
+            workingSeen: effective === 'working', notified: new Set(), child, to, launchAt };
           states.set(id, previous);
           if (baseline) continue;
         }
+        if (previous.launchAt !== launchAt) previous.notified.delete('quiet');
+        previous.launchAt = launchAt;
         previous.child = child;
         previous.to = to;
         if (exitReason) {
@@ -59,10 +65,10 @@ export function createStatusWatcher() {
           previous.notified.add('idle');
           events.push({ ...event, kind: 'idle', idleMs: now - previous.idleSince,
             reported: to !== null && mailSince(id, to, previous.idleSince) });
-        } else if (effective === 'working' && status === 'working' && Number.isFinite(node?.lastActivity)
-          && now - node.lastActivity >= QUIET_MS && !previous.notified.has('quiet')) {
+        } else if (effective === 'working' && status === 'working' && Number.isFinite(activeAt)
+          && now - activeAt >= QUIET_MS && !previous.notified.has('quiet')) {
           previous.notified.add('quiet');
-          events.push({ ...event, kind: 'quiet', quietMs: now - node.lastActivity });
+          events.push({ ...event, kind: 'quiet', quietMs: now - activeAt });
         }
         previous.workingSeen ||= effective === 'working';
         previous.status = effective;

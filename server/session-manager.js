@@ -176,8 +176,8 @@ export function suspendEnabled(config = {}) {
 // than a short grace period: the relaunch is real activity, and a session someone
 // resumed and has not typed into yet must not evaporate while they read it.
 // Deliberately NOT folded into the graph's own `lastActivity` — that field is the
-// conversation's age, which is what the board means by "idle 3h"; only the suspend
-// decision wants the relaunch counted.
+// conversation's age, which is what the board means by "idle 3h"; suspend and
+// quiet-notice timers also count relaunches.
 export function lastActiveAt(c) {
   const stamps = [c?.lastActivity, c?.relaunchedAt, c?.createdAt].filter((t) => typeof t === 'number');
   return stamps.length ? Math.max(...stamps) : null;

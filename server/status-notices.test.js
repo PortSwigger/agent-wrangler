@@ -171,3 +171,39 @@ test('unknown leaves needs-you and working episodes', () => {
   f.tick(QUIET_MS + 1, { status: 'unknown' });
   assert.equal(f.tick(QUIET_MS + 2, { status: 'working', lastActivity: 0 })[0]?.kind, 'quiet');
 });
+
+test('resume starts a fresh quiet interval even when transcript activity is old', () => {
+  const f = fixture();
+  f.tick(0, { status: 'working', lastActivity: 0 });
+  const resumed = QUIET_MS * 2;
+  f.entry({ statusNotify: { to: 'p', since: 0 }, relaunchedAt: resumed });
+  assert.deepEqual(f.tick(resumed, { status: 'working', lastActivity: 0 }), []);
+  assert.deepEqual(f.tick(resumed + QUIET_MS - 1, { status: 'working', lastActivity: 0 }), []);
+  assert.equal(f.tick(resumed + QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.quietMs, QUIET_MS);
+});
+
+test('new transcript activity after resume restarts the quiet interval', () => {
+  const resumed = QUIET_MS * 2;
+  const f = fixture({ relaunchedAt: resumed });
+  f.tick(resumed, { status: 'working', lastActivity: 0 });
+  const written = resumed + 1000;
+  assert.deepEqual(f.tick(resumed + QUIET_MS, { status: 'working', lastActivity: written }), []);
+  assert.equal(f.tick(written + QUIET_MS, { status: 'working', lastActivity: written })[0]?.quietMs, QUIET_MS);
+});
+
+test('a launch without transcript activity can go quiet after the launch interval', () => {
+  const f = fixture({ createdAt: 1000 });
+  f.tick(1000, { status: 'working' });
+  assert.deepEqual(f.tick(1000 + QUIET_MS - 1, { status: 'working' }), []);
+  assert.equal(f.tick(1000 + QUIET_MS, { status: 'working' })[0]?.quietMs, QUIET_MS);
+});
+
+test('a resume rearms quiet notices after a previous quiet episode', () => {
+  const f = fixture();
+  f.tick(0, { status: 'working', lastActivity: 0 });
+  assert.equal(f.tick(QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.kind, 'quiet');
+  const resumed = QUIET_MS * 2;
+  f.entry({ relaunchedAt: resumed });
+  assert.deepEqual(f.tick(resumed, { status: 'working', lastActivity: 0 }), []);
+  assert.equal(f.tick(resumed + QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.quietMs, QUIET_MS);
+});
