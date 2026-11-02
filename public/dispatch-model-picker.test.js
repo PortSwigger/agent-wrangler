@@ -83,6 +83,34 @@ test('programmatic section changes do not scroll the dialog', () => {
   assert.deepEqual(h.scrolls, []);
 });
 
+test('Escape dismisses the benchmark sources before it can cancel the launch dialog', () => {
+  const h = pickerHarness({ agent: 'claude', model: 'opus', effort: 'high' });
+  const sources = h.root.querySelector('.model-front-sources');
+  sources.open = true;
+  let prevented = false, stopped = false;
+  const escape = { key: 'Escape', preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } };
+  h.root.listeners.keydown(escape);
+  assert.equal(sources.open, false);
+  assert.equal(prevented, true);
+  assert.equal(stopped, true);
+  prevented = stopped = false;
+  h.root.listeners.keydown(escape);
+  assert.equal(prevented, false);
+  assert.equal(stopped, false);
+  assert.deepEqual(h.selections, []);
+});
+
+test('benchmark sources stay open for inside clicks and dismiss on outside clicks', () => {
+  const h = pickerHarness({ agent: 'claude', model: 'opus', effort: 'high' });
+  const sources = h.root.querySelector('.model-front-sources');
+  sources.open = true;
+  h.root.ownerDocument.listeners.pointerdown({ target: sources });
+  assert.equal(sources.open, true);
+  h.root.ownerDocument.listeners.pointerdown({ target: h.sections[0] });
+  assert.equal(sources.open, false);
+  assert.deepEqual(h.selections, []);
+});
+
 test('reopening and reloading retain the last chooser section alongside an outside model', () => {
   for (const index of [1, 2]) {
     const values = new Map();
@@ -144,6 +172,8 @@ test('front selection synchronizes both views and clears outside-selection notic
   assert.equal(h.nodes.get('[role="slider"]').attrs['aria-valuenow'], '2');
   assert.equal(h.nodes.get('.model-front-slider-note').hidden, true);
   assert.equal(h.nodes.get('.model-front-graph-note').hidden, true);
+  assert.equal(h.nodes.get('.model-front-slider-note').textContent, '');
+  assert.equal(h.nodes.get('.model-front-graph-note').textContent, '');
   assert.deepEqual(h.selections, []);
 });
 
@@ -173,6 +203,7 @@ test('missing benchmarks preserve empty metric rows under one shared overlay', a
   const { benchmarkReadout } = await import('./dispatch-model-picker.js');
   const html = benchmarkReadout(null);
   assert.match(html, /No benchmark data available/);
+  assert.match(html, /for this setting/);
   for (const label of ['Quality', 'Cost', 'Time']) assert.match(html, new RegExp(`<span>${label}</span>`));
   assert.match(html, /aria-hidden="true"/);
   assert.equal((html.match(/model-front-benchmark-overlay/g) || []).length, 1);

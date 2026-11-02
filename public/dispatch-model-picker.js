@@ -81,7 +81,7 @@ export function benchmarkReadout(score) {
     const fill = known && Number.isFinite(width) ? `<i style="width:${clamp(width)}%"></i>` : '';
     return `<div class="model-front-bar"><span>${label}</span><span class="model-front-meter">${fill}</span><strong>${known ? format(value) : measured ? 'Unavailable' : ''}</strong></div>`;
   }).join('');
-  return `<div class="model-front-metrics${measured ? '' : ' unmeasured'}"><div class="model-front-bars"${measured ? '' : ' aria-hidden="true"'}>${bars}</div>${measured ? '' : '<div class="model-front-benchmark-overlay"><strong>No benchmark data available</strong><span>Quality, cost and time estimates aren’t available for this model.</span></div>'}</div>`;
+  return `<div class="model-front-metrics${measured ? '' : ' unmeasured'}"><div class="model-front-bars"${measured ? '' : ' aria-hidden="true"'}>${bars}</div>${measured ? '' : '<div class="model-front-benchmark-overlay"><strong>No benchmark data available</strong><span>Quality, cost and time estimates aren’t available for this setting.</span></div>'}</div>`;
 }
 
 export function createDispatchModelPicker({ root, agents, read, select, storage }) {
@@ -96,6 +96,7 @@ export function createDispatchModelPicker({ root, agents, read, select, storage 
   const credit = root.querySelector('.model-front-credit');
   const readout = root.querySelector('.model-front-readout');
   const notice = root.querySelector('.model-front-notice');
+  const sources = root.querySelector('.model-front-sources');
   credit.textContent = front.data.credit;
   let state, noticeTarget, revealSection, revealTimer;
   let lastSection = readDispatchModelSection(storage);
@@ -121,8 +122,17 @@ export function createDispatchModelPicker({ root, agents, read, select, storage 
   }
   document.addEventListener('pointerdown', (e) => {
     if (noticeTarget && !notice.contains(e.target) && !noticeTarget.contains(e.target)) hideNotice();
+    if (sources.open && !sources.contains(e.target)) sources.open = false;
   });
-  root.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideNotice(); });
+  root.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    hideNotice();
+    if (sources.open) {
+      sources.open = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
   root.addEventListener('click', (e) => {
     const summary = e.target.closest('.model-front-section > summary');
     if (!summary) return;
@@ -137,7 +147,7 @@ export function createDispatchModelPicker({ root, agents, read, select, storage 
     if (e.target.matches('.model-front-section')) {
       hideNotice();
       preview.textContent = '';
-      if (!e.target.open) root.querySelector('.model-front-sources').open = false;
+      if (!e.target.open) sources.open = false;
       if (e.target.open && e.target === revealSection) {
         const section = e.target;
         const reduced = view.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -209,7 +219,7 @@ export function createDispatchModelPicker({ root, agents, read, select, storage 
     for (const selector of ['.model-front-slider-note', '.model-front-graph-note']) {
       const note = root.querySelector(selector);
       note.hidden = state.handle >= 0;
-      note.textContent = state.stops.length ? 'Your selected model is outside the recommended set.' : 'No recommended models are available. Choose a model in All models.';
+      note.textContent = note.hidden ? '' : state.stops.length ? 'Your selected model is outside the recommended set.' : 'No recommended models are available. Choose a model in All models.';
     }
     stops.innerHTML = state.stops.map((p, i) => `<button type="button" class="model-front-stop" data-stop="${i}" aria-label="${esc(pickName(available, p))}" title="${esc(pickName(available, p))}" style="left:${i / Math.max(1, state.stops.length - 1) * 100}%;--pick-colour:${pickColour(p)}">${providerLogo(p.agent)}</button>`).join('');
     slider.innerHTML = `<span class="model-front-track"></span><span class="model-front-handle" style="left:${Math.max(0, state.handle) / Math.max(1, state.stops.length - 1) * 100}%"></span>`;
@@ -232,7 +242,7 @@ export function createDispatchModelPicker({ root, agents, read, select, storage 
     revealSection = null;
     hideNotice();
     preview.textContent = '';
-    root.querySelector('.model-front-sources').open = false;
+    sources.open = false;
     root.querySelectorAll('.model-front-section').forEach((section) => { section.open = section.dataset.modelSection === lastSection; });
   }
   return { sync, reset };
