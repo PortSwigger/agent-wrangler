@@ -1,6 +1,21 @@
 import { effortsOf } from './model-front.js';
 
 const KEY = 'aw-dispatch-pick';
+const SECTION_KEY = 'aw-dispatch-model-section';
+const MODEL_SECTIONS = ['recommended', 'graph', 'all'];
+
+export function readDispatchModelSection(storage) {
+  try {
+    const section = storage?.getItem(SECTION_KEY);
+    if (MODEL_SECTIONS.includes(section)) return section;
+  } catch {}
+  return 'recommended';
+}
+
+export function saveDispatchModelSection(storage, section) {
+  if (!MODEL_SECTIONS.includes(section)) return;
+  try { storage?.setItem(SECTION_KEY, section); } catch {}
+}
 
 export function readDispatchPick(storage) {
   try { return JSON.parse(storage?.getItem(KEY) || 'null'); } catch { return null; }

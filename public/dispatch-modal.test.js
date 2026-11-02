@@ -81,7 +81,13 @@ test('the `advanced` anchor host is the last thing in the Advanced options body'
   assert.ok(body >= 0 && body < autoMerge && autoMerge < host, 'advanced host belongs inside the body, after the auto-merge row');
 });
 
-test('Any model holds both backing selects, with the extension model anchor outside the picker', () => {
+test('All models holds both backing selects, with the extension model anchor outside the picker', () => {
+  const picker = dispatch.indexOf('id="m-model-picker"');
+  const readout = dispatch.indexOf('class="model-front-readout"');
+  const firstSection = dispatch.indexOf('<details class="model-front-section');
+  assert.ok(picker < readout && readout < firstSection);
+  assert.equal((dispatch.match(/name="dispatch-model-chooser"/g) || []).length, 3);
+  assert.match(dispatch, /class="model-front-section model-front-recommended"[^>]* open>/);
   const any = dispatch.indexOf('id="m-any-model"');
   const model = dispatch.indexOf('id="m-model"');
   const effort = dispatch.indexOf('id="m-effort"');
