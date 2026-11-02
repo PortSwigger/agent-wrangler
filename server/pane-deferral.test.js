@@ -417,7 +417,8 @@ test('a queued idle-only Claude notice does not hold PR notices back during a tu
   await pd.deliverOrDefer({ id: 'c1', text: 'child notice', deferWhileWorking: true });
   await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 merged' });
   status = 'working';
-  pane = `${composer()}\n✻ Thinking (5s · esc to interrupt)`;
+  const frame = `${E}[38;5;244m${'─'.repeat(100)}`;
+  pane = [frame, composer(), frame, '✻ Thinking (5s · esc to interrupt)'].join('\n');
   assert.deepEqual(await pd.drain(), ['c1']);
   assert.deepEqual(d.sent.map((s) => s.text), ['PR #1 merged']);
   assert.deepEqual(pd.pending('c1'), ['child notice']);
