@@ -1,8 +1,212 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MODEL_FRONT } from './model-front-api.js';
-import { pickerState, curveStep } from './dispatch-model-picker.js';
+import { pickerState, curveStep, createDispatchModelPicker } from './dispatch-model-picker.js';
 const agents = Object.entries(MODEL_FRONT.data.models).map(([id, models]) => ({ id, label: id === 'claude' ? 'Claude' : 'Codex', models: Object.keys(models).map((value) => ({ value, label: value })), efforts: [...new Set(Object.values(models).flatMap(Object.keys))].map((value) => ({ value, label: value })) }));
+
+function pickerHarness(initialPick, available = agents, reducedMotion = false, storage) {
+  const element = () => ({
+    listeners: {}, attrs: {}, dataset: {}, hidden: false, open: false, textContent: '', innerHTML: '',
+    classList: { values: new Set(), toggle(name, on) { if (on) this.values.add(name); else this.values.delete(name); } },
+    addEventListener(type, fn) { this.listeners[type] = fn; },
+    setAttribute(key, value) { this.attrs[key] = value; },
+    removeAttribute(key) { delete this.attrs[key]; },
+    contains(target) { return target === this; },
+  });
+  const nodes = new Map();
+  const sections = [element(), element(), element()];
+  const timers = [], scrolls = [];
+  sections.forEach((section, index) => {
+    section.dataset.modelSection = ['recommended', 'graph', 'all'][index];
+    section.matches = (selector) => selector === '.model-front-section';
+    section.scrollIntoView = (options) => scrolls.push({ section, options });
+  });
+  nodes.set('.model-front-recommended', sections[0]);
+  const view = {
+    matchMedia: () => ({ matches: reducedMotion }),
+    setTimeout(fn, delay) { timers.push({ fn, delay }); return timers.length - 1; },
+    clearTimeout(id) { if (timers[id]) timers[id].cancelled = true; },
+  };
+  const root = { ...element(), ownerDocument: { ...element(), activeElement: null, defaultView: view },
+    querySelector(selector) { if (!nodes.has(selector)) nodes.set(selector, element()); return nodes.get(selector); },
+    querySelectorAll(selector) { assert.equal(selector, '.model-front-section'); return sections; },
+  };
+  root.querySelector('.model-front-recommended').open = true;
+  let pick = initialPick;
+  const selections = [];
+  const picker = createDispatchModelPicker({ root, storage, agents: () => available, read: () => pick, select: (next) => { selections.push(next); pick = next; } });
+  picker.sync();
+  const clickSection = (section) => {
+    const summary = { parentElement: section };
+    root.listeners.click({ target: { closest: () => summary } });
+    section.open = !section.open;
+    root.listeners.toggle({ target: section });
+  };
+  return { picker, root, nodes, sections, selections, timers, scrolls, clickSection, read: () => pick, set: (next) => { pick = next; picker.sync(); } };
+}
+
+test('opening a chooser scrolls it into view after expansion without selecting a model', () => {
+  const h = pickerHarness({ agent: 'claude', model: 'opus', effort: 'high' });
+  h.clickSection(h.sections[1]);
+  assert.deepEqual(h.scrolls, []);
+  assert.ok(h.timers[0].delay > 0);
+  h.timers[0].fn();
+  assert.deepEqual(h.scrolls, [{ section: h.sections[1], options: { behavior: 'smooth', block: 'nearest' } }]);
+  assert.deepEqual(h.selections, []);
+});
+
+test('a closed or reset chooser never performs a pending reveal', () => {
+  const h = pickerHarness({ agent: 'claude', model: 'opus', effort: 'high' });
+  h.clickSection(h.sections[1]);
+  h.clickSection(h.sections[1]);
+  h.timers[0].fn();
+  assert.deepEqual(h.scrolls, []);
+  h.clickSection(h.sections[2]);
+  h.picker.reset();
+  h.timers.at(-1).fn();
+  assert.deepEqual(h.scrolls, []);
+});
+
+test('reduced-motion users reveal the expanded section without smooth scrolling', () => {
+  const h = pickerHarness({ agent: 'claude', model: 'opus', effort: 'high' }, agents, true);
+  h.clickSection(h.sections[1]);
+  assert.equal(h.timers[0].delay, 0);
+  h.timers[0].fn();
+  assert.equal(h.scrolls[0].options.behavior, 'instant');
+});
+
+test('programmatic section changes do not scroll the dialog', () => {
+  const h = pickerHarness({ agent: 'claude', model: 'opus', effort: 'high' });
+  h.sections[1].open = true;
+  h.root.listeners.toggle({ target: h.sections[1] });
+  assert.deepEqual(h.timers, []);
+  assert.deepEqual(h.scrolls, []);
+});
+
+test('reopening and reloading retain the last chooser section alongside an outside model', () => {
+  for (const index of [1, 2]) {
+    const values = new Map();
+    const storage = { getItem: (key) => values.get(key), setItem: (key, value) => values.set(key, value) };
+    const pick = { agent: 'claude', model: 'unmeasured', effort: 'high' };
+    const h = pickerHarness(pick, agents, false, storage);
+    h.clickSection(h.sections[index]);
+    h.picker.reset();
+    assert.deepEqual(h.sections.map((section) => section.open), [0, 1, 2].map((i) => i === index));
+    assert.deepEqual(h.read(), pick);
+    assert.deepEqual(h.selections, []);
+    const reloaded = pickerHarness(pick, agents, false, storage);
+    reloaded.root.listeners.toggle({ target: reloaded.sections[0] });
+    reloaded.picker.reset();
+    assert.equal(reloaded.sections[index].open, true);
+    assert.equal(reloaded.sections[0].open, false);
+    assert.deepEqual(reloaded.scrolls, []);
+    assert.deepEqual(reloaded.selections, []);
+  }
+});
+
+test('unavailable browser storage still remembers the section while the page stays open', () => {
+  const storage = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('full'); } };
+  const h = pickerHarness({ agent: 'claude', model: 'opus', effort: 'high' }, agents, false, storage);
+  h.clickSection(h.sections[2]);
+  h.picker.reset();
+  assert.equal(h.sections[2].open, true);
+  assert.equal(h.sections[0].open, false);
+});
+
+test('outside recommendations keeps the selection without a slider handle or selected graph point', () => {
+  for (const pick of [
+    { agent: 'claude', model: 'sonnet', effort: 'high' },
+    { agent: 'claude', model: 'unmeasured', effort: 'high' },
+    { agent: 'claude', model: 'opus', effort: '' },
+  ]) {
+    const h = pickerHarness(pick);
+    assert.deepEqual(h.read(), pick);
+    assert.deepEqual(h.selections, []);
+    assert.ok(h.nodes.get('.model-front-slider').classList.values.has('no-handle'));
+    assert.doesNotMatch(h.nodes.get('.model-front-plot').innerHTML, /aria-pressed="true"/);
+    for (const selector of ['.model-front-slider-note', '.model-front-graph-note']) {
+      assert.equal(h.nodes.get(selector)?.hidden, false);
+      assert.match(h.nodes.get(selector)?.textContent || '', /outside the recommended set/);
+    }
+    if (pick.model === 'sonnet') {
+      assert.match(h.nodes.get('.model-front-readout').innerHTML, /\$[\d.]+ \/ task/);
+      assert.doesNotMatch(h.nodes.get('.model-front-readout').innerHTML, /model-front-benchmark-overlay/);
+    }
+  }
+});
+
+test('front selection synchronizes both views and clears outside-selection notices', () => {
+  const h = pickerHarness({ agent: 'claude', model: 'unmeasured', effort: 'high' });
+  const pick = MODEL_FRONT.frontOf(agents)[2];
+  h.set(pick);
+  assert.equal(h.nodes.get('.model-front-slider').classList.values.has('no-handle'), false);
+  assert.match(h.nodes.get('.model-front-plot').innerHTML, /data-point="2"[^>]*aria-pressed="true"/);
+  assert.equal(h.nodes.get('[role="slider"]').attrs['aria-valuenow'], '2');
+  assert.equal(h.nodes.get('.model-front-slider-note').hidden, true);
+  assert.equal(h.nodes.get('.model-front-graph-note').hidden, true);
+  assert.deepEqual(h.selections, []);
+});
+
+test('reset defaults to the recommended section without changing the selected model', () => {
+  const pick = { agent: 'claude', model: 'unmeasured', effort: 'high' };
+  const h = pickerHarness(pick);
+  h.sections.forEach((section) => { section.open = true; });
+  h.nodes.get('.model-front-recommended').open = false;
+  h.picker.reset();
+  assert.deepEqual(h.sections.map((section) => section.open), [true, false, false]);
+  assert.equal(h.nodes.get('.model-front-recommended').open, true);
+  assert.equal(h.nodes.get('.model-front-notice').hidden, true);
+  assert.deepEqual(h.read(), pick);
+  assert.deepEqual(h.selections, []);
+});
+
+test('an empty recommended set does not replace the selected model on slider input', () => {
+  const pick = { agent: 'custom', model: 'unmeasured', effort: '' };
+  const h = pickerHarness(pick, []);
+  h.nodes.get('[role="slider"]').listeners.keydown({ key: 'ArrowRight', preventDefault() {} });
+  assert.deepEqual(h.read(), pick);
+  assert.deepEqual(h.selections, []);
+  assert.equal(h.nodes.get('[role="slider"]').attrs['aria-disabled'], 'true');
+});
+
+test('missing benchmarks preserve empty metric rows under one shared overlay', async () => {
+  const { benchmarkReadout } = await import('./dispatch-model-picker.js');
+  const html = benchmarkReadout(null);
+  assert.match(html, /No benchmark data available/);
+  for (const label of ['Quality', 'Cost', 'Time']) assert.match(html, new RegExp(`<span>${label}</span>`));
+  assert.match(html, /aria-hidden="true"/);
+  assert.equal((html.match(/model-front-benchmark-overlay/g) || []).length, 1);
+  assert.doesNotMatch(html, /<i |NaN|undefined|0 \/ 100|\$0\.00/);
+});
+
+test('partial benchmarks show known metrics and mark individual missing values unavailable', async () => {
+  const { benchmarkReadout } = await import('./dispatch-model-picker.js');
+  const html = benchmarkReadout({ quality: 0, usd: null, minutes: 12, time: 30 });
+  assert.match(html, /0 \/ 100/);
+  assert.match(html, /12\.0 min/);
+  assert.equal((html.match(/Unavailable/g) || []).length, 1);
+  assert.doesNotMatch(html, /model-front-benchmark-overlay|NaN|\$0\.00/);
+});
+
+test('zero cost and time remain measured values and non-finite values are unavailable', async () => {
+  const { benchmarkReadout } = await import('./dispatch-model-picker.js');
+  const html = benchmarkReadout({ quality: NaN, usd: 0, minutes: 0, cost: -Infinity, time: 0 });
+  assert.match(html, /\$0\.00 \/ task/);
+  assert.match(html, /0\.0 min/);
+  assert.equal((html.match(/Unavailable/g) || []).length, 1);
+  assert.doesNotMatch(html, /model-front-benchmark-overlay|NaN|Infinity/);
+});
+
+test('selecting a scored model clears the no-benchmark overlay and restores all metrics', () => {
+  const h = pickerHarness({ agent: 'claude', model: 'unmeasured', effort: 'high' });
+  assert.match(h.nodes.get('.model-front-readout').innerHTML, /No benchmark data available/);
+  h.set({ agent: 'codex', model: 'gpt-6.1-sol', effort: 'medium' });
+  const html = h.nodes.get('.model-front-readout').innerHTML;
+  assert.match(html, /55 \/ 100/);
+  assert.match(html, /\$1\.14 \/ task/);
+  assert.match(html, /36\.8 min/);
+  assert.doesNotMatch(html, /model-front-benchmark-overlay|Unavailable/);
+});
 
 test('slider includes every front point while the plotted curve excludes faster-only points', () => {
   const front = MODEL_FRONT.frontOf(agents);

@@ -380,25 +380,38 @@
         <div class="dispatch-field" id="m-model-row">
           <label>Model</label>
           <div id="m-model-picker">
-            <div class="model-front-scale"><span>Cheapest</span><span>Best quality</span></div>
-            <div class="model-front-slider" role="group" aria-label="Model curve stops"><div class="model-front-control" role="slider" tabindex="0" aria-label="Model quality and cost" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></div><div class="model-front-stops"></div></div>
-            <div class="model-front-plot"></div>
-            <div class="model-front-legend"><span>Logo: provider · Colour: model</span><span>◎ Selected</span><span class="model-front-unavailable-key">Grey: unavailable</span></div>
-            <div class="model-front-key" role="group" aria-label="Provider and model colour key"></div>
-            <div class="model-front-preview" aria-live="polite"></div>
-            <p class="model-front-credit"></p>
-            <div class="model-front-notice" id="model-front-unavailable-tooltip" role="tooltip" hidden></div>
             <div class="model-front-readout" aria-live="polite"></div>
+            <details class="model-front-section model-front-recommended" name="dispatch-model-chooser" data-model-section="recommended" open>
+              <summary>Recommended models</summary>
+              <div class="model-front-section-content">
+                <div class="model-front-scale"><span>Cheapest</span><span>Best quality</span></div>
+                <div class="model-front-slider" role="group" aria-label="Model curve stops"><div class="model-front-control" role="slider" tabindex="0" aria-label="Model quality and cost" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-describedby="m-slider-note"></div><div class="model-front-stops"></div></div>
+                <p class="model-front-slider-note model-front-outside" id="m-slider-note" hidden></p>
+              </div>
+            </details>
+            <details class="model-front-section" name="dispatch-model-chooser" data-model-section="graph">
+              <summary>Cost &amp; quality graph</summary>
+              <div class="model-front-section-content">
+                <p class="model-front-graph-note model-front-outside" hidden></p>
+                <div class="model-front-plot"></div>
+                <div class="model-front-legend"><span>Logo: provider · Colour: model</span><span>◎ Selected</span><span class="model-front-unavailable-key">Grey: unavailable</span><details class="model-front-sources"><summary aria-label="Benchmark sources" title="Benchmark sources">ⓘ</summary><p class="model-front-credit"></p></details></div>
+                <div class="model-front-key" role="group" aria-label="Provider and model colour key"></div>
+              </div>
+            </details>
+            <details class="model-front-section" id="m-any-model" name="dispatch-model-chooser" data-model-section="all">
+              <summary>All models</summary>
+              <div class="model-front-section-content">
+                <label for="m-model">Agent / model</label>
+                <select id="m-model"></select>
+                <div class="dispatch-field" id="m-effort-row">
+                  <label>Effort</label>
+                  <select id="m-effort"></select>
+                </div>
+              </div>
+            </details>
+            <div class="model-front-preview" aria-live="polite"></div>
+            <div class="model-front-notice" id="model-front-unavailable-tooltip" role="tooltip" hidden></div>
           </div>
-          <details class="model-front-any" id="m-any-model">
-            <summary>Any model</summary>
-            <label>Agent / model</label>
-            <select id="m-model"></select>
-            <div class="dispatch-field" id="m-effort-row">
-              <label>Effort</label>
-              <select id="m-effort"></select>
-            </div>
-          </details>
         </div>
         <div class="ext-dispatch-slot" data-at="model"></div>
       </div>
