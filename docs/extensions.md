@@ -1685,7 +1685,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   without requiring `sessions:read`. Idle-held is the 60-second hold after working,
   excluding background shells. Child mail affects the spawner
   notice wording; it suppresses neither the notice nor this event. Events occur
-  once per episode; unknown readings preserve the last known episode. The first
+  once per episode; unknown readings preserve the last known episode. Quiet timing uses
+  the latest launch, transcript activity or observed transition into working, so returning
+  from an approval wait starts a fresh 15-minute interval. The first
   rebuild after restart only seeds the watcher.
 - **`activate({ host })` / `deactivate({ host })`** (1.17.0) manifest functions run when the
   extension turns on or off; a throwing `activate` quarantines it.

@@ -111,7 +111,8 @@ test('quiet after QUIET_MS of working with stale lastActivity, once per episode'
   assert.equal(f.tick(QUIET_MS, { status: 'working', lastActivity: 0 })[0].quietMs, QUIET_MS);
   assert.deepEqual(f.tick(QUIET_MS + 1, { status: 'working', lastActivity: 0 }), []);
   f.tick(QUIET_MS + 2);
-  assert.equal(f.tick(QUIET_MS + 3, { status: 'working', lastActivity: 0 })[0].kind, 'quiet');
+  assert.deepEqual(f.tick(QUIET_MS + 3, { status: 'working', lastActivity: 0 }), []);
+  assert.equal(f.tick(QUIET_MS * 2 + 3, { status: 'working', lastActivity: 0 })[0]?.kind, 'quiet');
 });
 
 test('missing activity never yields quiet', () => {
@@ -169,9 +170,9 @@ test('unknown preserves needs-you and quiet episodes until a known transition', 
   f.tick(4);
   assert.equal(f.tick(5, { status: 'needs-you' })[0]?.kind, 'needs-you');
   f.tick(6, { status: 'working', lastActivity: 0 });
-  assert.equal(f.tick(QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.kind, 'quiet');
-  assert.deepEqual(f.tick(QUIET_MS + 1, { status: 'unknown' }), []);
-  assert.deepEqual(f.tick(QUIET_MS + 2, { status: 'working', lastActivity: 0 }), []);
+  assert.equal(f.tick(QUIET_MS + 6, { status: 'working', lastActivity: 0 })[0]?.kind, 'quiet');
+  assert.deepEqual(f.tick(QUIET_MS + 7, { status: 'unknown' }), []);
+  assert.deepEqual(f.tick(QUIET_MS + 8, { status: 'working', lastActivity: 0 }), []);
 });
 
 test('resume starts a fresh quiet interval even when transcript activity is old', () => {
@@ -286,3 +287,64 @@ test('a restored child without a graph node retains its identity on another arch
   assert.equal(event.child.sessionId, 'c');
   assert.equal(event.child.label, 'Restored child');
 });
+
+
+for (const status of ['working', 'unknown']) {
+  test(`a restart baseline of ${status} excludes pre-restart mail`, () => {
+    for (const [mailAt, reported] of [[5000, false], [101000, true]]) {
+      const watcher = createStatusWatcher();
+      const tick = (now, status) => watcher.tick([node({ status })], () => ({ createdAt: 1000, statusNotify: { to: 'p' } }), {
+        now, mailSince: (_from, _to, since) => mailAt >= since,
+      });
+      tick(100000, status);
+      tick(102000, 'working');
+      tick(104000, 'idle');
+      assert.equal(tick(164000, 'idle')[0]?.reported, reported);
+    }
+  });
+}
+
+for (const status of ['needs-you', 'idle']) {
+  test(`returning from ${status} restarts the quiet timer despite old transcript activity`, () => {
+    const f = fixture({ createdAt: 0 });
+    f.tick(0, { status: 'working', lastActivity: 0 });
+    f.tick(1000, { status, lastActivity: 0 });
+    f.tick(QUIET_MS * 2, { status, lastActivity: 0 });
+    const returned = QUIET_MS * 2 + 4000;
+    assert.deepEqual(f.tick(returned, { status: 'working', lastActivity: 0 }), []);
+    assert.deepEqual(f.tick(returned + QUIET_MS - 1, { status: 'working', lastActivity: 0 }), []);
+    assert.equal(f.tick(returned + QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.quietMs, QUIET_MS);
+  });
+}
+
+test('approval pauses preserve earlier mail until new work starts after idle', () => {
+  const watcher = createStatusWatcher();
+  const tick = (now, status) => watcher.tick([node({ status })], () => ({ statusNotify: { to: 'p' } }), {
+    now, mailSince: (_from, _to, since) => 3000 >= since,
+  });
+  tick(0, 'working');
+  tick(5000, 'needs-you');
+  tick(6000, 'working');
+  tick(7000, 'idle');
+  assert.equal(tick(67000, 'idle')[0]?.reported, true);
+  tick(68000, 'needs-you');
+  tick(69000, 'working');
+  tick(70000, 'idle');
+  assert.equal(tick(130000, 'idle')[0]?.reported, false);
+});
+
+for (const status of ['working', 'idle']) {
+  test(`a relaunch while ${status} preserves earlier mail for the idle notice`, () => {
+    const watcher = createStatusWatcher();
+    const entry = { createdAt: 0, statusNotify: { to: 'p' } };
+    const tick = (now, status) => watcher.tick([node({ status })], () => entry, {
+      now, mailSince: (_from, _to, since) => 10000 >= since,
+    });
+    tick(0, 'working');
+    tick(20000, status);
+    entry.relaunchedAt = 30000;
+    tick(30000, status);
+    tick(40000, 'idle');
+    assert.equal(tick(100000, 'idle')[0]?.reported, true);
+  });
+}

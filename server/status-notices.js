@@ -40,14 +40,13 @@ export function createStatusWatcher() {
           if (exitReason && baseline) { exited.add(id); continue; }
           previous = { status: baseline ? effective : 'unknown', idleSince: effective === 'idle' ? now : null,
             workingSeen: baseline && effective === 'working',
-            workingSince: effective === 'working' ? launchAt ?? entry?.statusNotify?.since ?? now : null,
+            workingSince: baseline ? now : launchAt ?? entry?.statusNotify?.since ?? now, workingAt: null,
             notified: new Set(), child, to, launchAt };
           states.set(id, previous);
           if (baseline) continue;
         }
         if (previous.launchAt !== launchAt) {
           previous.notified.delete('quiet');
-          previous.workingSince = launchAt;
         }
         previous.launchAt = launchAt;
         previous.child = child;
@@ -61,9 +60,11 @@ export function createStatusWatcher() {
         if (effective === 'unknown') continue;
         if (effective !== previous.status) {
           previous.notified.clear();
+          if (previous.status === 'idle') previous.workingSince = now;
           previous.idleSince = effective === 'idle' ? now : null;
-          if (effective === 'working') previous.workingSince = previous.workingSeen || previous.status !== 'unknown' ? now : launchAt ?? entry?.statusNotify?.since ?? now;
+          if (effective === 'working') previous.workingAt = now;
         }
+        const quietAt = Math.max(activeAt ?? -Infinity, previous.workingAt ?? -Infinity);
         const event = { to, child };
         if (effective === 'needs-you' && previous.status !== 'needs-you') {
           events.push({ ...event, kind: 'needs-you' });
@@ -71,10 +72,10 @@ export function createStatusWatcher() {
           previous.notified.add('idle');
           events.push({ ...event, kind: 'idle', idleMs: now - previous.idleSince,
             reported: to !== null && mailSince(id, to, previous.workingSince ?? previous.idleSince) });
-        } else if (effective === 'working' && status === 'working' && Number.isFinite(activeAt)
-          && now - activeAt >= QUIET_MS && !previous.notified.has('quiet')) {
+        } else if (effective === 'working' && status === 'working' && Number.isFinite(quietAt)
+          && now - quietAt >= QUIET_MS && !previous.notified.has('quiet')) {
           previous.notified.add('quiet');
-          events.push({ ...event, kind: 'quiet', quietMs: now - activeAt });
+          events.push({ ...event, kind: 'quiet', quietMs: now - quietAt });
         }
         previous.workingSeen ||= effective === 'working';
         previous.status = effective;

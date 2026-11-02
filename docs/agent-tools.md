@@ -61,7 +61,8 @@ Notices begin `[Agent Wrangler] Status notice`, coalesce children observed in on
 and arrive directly rather than through `read_mail`. An idle notice includes unread mail
 waiting for the child and up to 200 characters of its last assistant message when readable.
 Child mail does not suppress the idle notice: it mentions mail from that working period or
-idle hold, including mail the subscriber already read.
+idle hold, including mail the subscriber already read. Approval pauses and relaunches preserve
+that mail window until new work after idle. Returning to working restarts the quiet timer.
 These are observations: read the child's transcript or message it before assuming it finished.
 See [board behavior](board-and-sessions.md#status-notices-to-spawners) for delivery and lifecycle.
 
