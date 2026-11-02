@@ -559,6 +559,27 @@ test('persistent schedule notification navigates only when View session is click
   assert.equal(app.views.CARD1, 'terminal');
 });
 
+for (const name of [undefined, '', 'Untitled schedule']) {
+  test(`schedule notification uses the target title for unnamed schedule (${JSON.stringify(name)})`, () => {
+    const app = scheduledFocusHarness([{ sessionId: 'CARD1', label: 'Check release build', managed: true }]);
+    app.onScheduleFired({ name, sessionId: 'CARD1' });
+    assert.equal(app.notices[0].opts.title, 'Scheduled "Check release build" started');
+    assert.deepEqual(app.selected, []);
+  });
+}
+
+test('schedule notification keeps an explicit name when the target has a title', () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', label: 'Check release build', managed: true }]);
+  app.onScheduleFired({ name: 'Morning work', sessionId: 'CARD1' });
+  assert.equal(app.notices[0].opts.title, 'Scheduled "Morning work" started');
+});
+
+test('unnamed schedule notification identifies a target absent from board state', () => {
+  const app = scheduledFocusHarness();
+  app.onScheduleFired({ name: 'Untitled schedule', sessionId: 'CARD1' });
+  assert.equal(app.notices[0].opts.title, 'Scheduled "CARD1" started');
+});
+
 for (const [label, sessions] of [
   ['dispatch', []],
   ['existing-session', [{ sessionId: 'NEW1', managed: false }]],

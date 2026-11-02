@@ -14,6 +14,8 @@ The dialog places task controls on the left and the model picker on the right, s
 narrow screens. **Intent / first prompt** starts at twelve rows and can be resized vertically.
 **Schedule a session** uses the same layout, with timing and action controls on the task side.
 Choose **Existing session** to show the target session and optional message instead of launch controls.
+When a schedule starts, its notification shows the schedule name. For an unnamed schedule, it shows
+the target session's title, falling back to its session id if the title is not available yet.
 
 The model section plots measured quality against cost per task on a log scale. Drag the slider or
 use its arrow keys to move through the quality/cost curve, cheapest to best. Click a chart point to
