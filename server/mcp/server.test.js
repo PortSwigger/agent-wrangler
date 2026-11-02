@@ -52,7 +52,7 @@ async function connect(deps, caller, opts) {
 test('buildMcpServer advertises the registered tools in tools/list', async () => {
   const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ ext: NO_EXT }) });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'cancel_schedule', 'create_terminal', 'detach_session', 'get_links', 'get_model_front', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'read_session_transcript', 'remove_links', 'rename_session', 'restore_session', 'restore_task', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'workflow_phase']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'cancel_schedule', 'create_terminal', 'detach_session', 'get_links', 'get_model_front', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'read_session_transcript', 'remove_links', 'rename_session', 'restore_session', 'restore_task', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'update_schedule', 'workflow_phase']);
   await server.close();
 });
 
@@ -243,4 +243,22 @@ test('SDK boundary forwards Remote Control for explicit/default Claude including
   } finally {
     await server.close();
   }
+});
+
+test('update_schedule is callable over MCP and validates patches without writes', async () => {
+  let updated = 0;
+  const stored = { id: 'sch_existing', name: 'Check', enabled: true, when: { kind: 'once', runAt: '2035-01-01T00:00:00.000Z' }, action: { kind: 'session', sessionId: 'CARD1', message: 'Original' }, nextRunAt: '2035-01-01T00:00:00.000Z' };
+  const { client, server } = await connect({ ...fakeDeps(), scheduleStore: { schedules: [stored], update: (id, patch) => { updated++; return { ...stored, ...patch }; } }, rebuild: async () => {} }, 'CARD1');
+  try {
+    for (const arguments_ of [{}, { id: stored.id, name: 2 }, { id: stored.id, kind: 'other' }, { id: stored.id, auto_compact_tokens: 1 }, { id: stored.id, at: 'invalid' }]) {
+      assert.equal((await client.callTool({ name: 'update_schedule', arguments: arguments_ })).isError, true);
+    }
+    assert.equal(updated, 0);
+    const result = await client.callTool({ name: 'update_schedule', arguments: { id: stored.id, name: 'Edited' } });
+    assert.equal(result.isError, undefined);
+    assert.equal(result.structuredContent.id, stored.id);
+    assert.equal(result.structuredContent.name, 'Edited');
+    assert.equal(result.structuredContent.nextRunAt, stored.nextRunAt);
+    assert.equal(updated, 1);
+  } finally { await client.close(); await server.close(); }
 });

@@ -101,6 +101,7 @@ same provider and lifecycle limits.
 | Tool | Purpose |
 | --- | --- |
 | `schedule_session` | Create a one-off or cron schedule that launches a new session, resumes a dormant one, or messages a live one. |
+| `update_schedule` | Edit a schedule by id, retaining omitted values. Uses the `schedule_session` fields; `at` or `cron` replaces timing and `tz` alone edits a cron timezone. Timing edits recompute `nextRunAt`; name and action edits preserve it. Returns the existing id and updated summary, or an error for an unknown id or invalid patch. |
 | `cancel_schedule` | Delete a schedule by id (from `schedule_session`) — retract a pending one-off or stop a cron. One-offs delete themselves after firing. |
 | `create_terminal` | Open a plain shell in the caller's directory and optionally prefill, but never execute, one command. |
 
