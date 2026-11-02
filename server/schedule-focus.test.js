@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { ScheduleStore } from './schedule-store.js';
+import { sessionLabel } from './state-reader.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,12 +23,15 @@ for (const [label, action, expectedFocus] of [
     const scheduleStore = new ScheduleStore(path.join(dir, 'schedules.json'));
     const schedule = scheduleStore.create({ when: { kind: 'once', runAt: '2026-10-10T09:00:00Z' }, action }, Date.now());
     const messages = [];
-    const fire = new Function('scheduleStore', 'performScheduleAction', 'broadcast', `${declaration}; return fireSchedule;`)(
+    const entry = action.kind === 'dispatch' ? { intent: 'Check release build' } : { name: 'Release worker' };
+    const fire = new Function('scheduleStore', 'performScheduleAction', 'broadcast', 'sessionManager', 'sessionLabel', `${declaration}; return fireSchedule;`)(
       scheduleStore, async () => ({ sessionId: 'CARD1' }), (msg) => messages.push(msg),
+      { entryFor: () => entry }, sessionLabel,
     );
     await fire(schedule.id, { manual: true });
     assert.equal(messages[0].type, 'schedule-fired');
     assert.equal(messages[0].sessionId, 'CARD1');
+    assert.equal(messages[0].label, action.kind === 'dispatch' ? 'Check release build' : 'Release worker');
     assert.equal(messages[0].focus, expectedFocus);
     assert.equal(scheduleStore.snapshot().schedules[0].enabled, true);
   });
@@ -44,4 +48,21 @@ test('failed focused schedule broadcasts only an error', async (t) => {
   );
   await fire(schedule.id);
   assert.deepEqual(messages, [{ type: 'schedule-error', id: schedule.id, name: schedule.name, message: 'Target gone' }]);
+});
+
+test('successful schedule remains successful when its stored agent cannot supply a title', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-schedule-label-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const scheduleStore = new ScheduleStore(path.join(dir, 'schedules.json'));
+  const schedule = scheduleStore.create({ when: { kind: 'once', runAt: '2026-10-10T09:00:00Z' }, action: { kind: 'session', sessionId: '12345678-abcd' } }, Date.now());
+  const messages = [];
+  const fire = new Function('scheduleStore', 'performScheduleAction', 'broadcast', 'sessionManager', 'sessionLabel', `${declaration}; return fireSchedule;`)(
+    scheduleStore, async () => ({ sessionId: '12345678-abcd' }), (msg) => messages.push(msg),
+    { entryFor: () => ({ agent: 'retired-provider', name: 'Old worker' }) }, sessionLabel,
+  );
+  await fire(schedule.id, { manual: true });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].type, 'schedule-fired');
+  assert.equal(messages[0].label, '12345678');
+  assert.equal(scheduleStore.snapshot().schedules[0].lastSessionId, '12345678-abcd');
 });

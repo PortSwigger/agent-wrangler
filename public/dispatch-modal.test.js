@@ -565,6 +565,41 @@ test('persistent schedule notification navigates only when View session is click
   assert.equal(app.views.CARD1, 'terminal');
 });
 
+for (const name of [undefined, '', 'Untitled schedule']) {
+  test(`schedule notification uses the target title for unnamed schedule (${JSON.stringify(name)})`, () => {
+    const app = scheduledFocusHarness([{ sessionId: 'CARD1', label: 'Check release build', managed: true }]);
+    app.onScheduleFired({ name, sessionId: 'CARD1' });
+    assert.equal(app.notices[0].opts.title, 'Scheduled "Check release build" started');
+    assert.deepEqual(app.selected, []);
+  });
+}
+
+test('schedule notification keeps an explicit name when the target has a title', () => {
+  const app = scheduledFocusHarness([{ sessionId: 'CARD1', label: 'Check release build', managed: true }]);
+  app.onScheduleFired({ name: 'Morning work', sessionId: 'CARD1', label: 'Release worker' });
+  assert.equal(app.notices[0].opts.title, 'Scheduled "Morning work" started');
+});
+
+test('unnamed dispatch notification uses the supplied title before board state arrives', () => {
+  const app = scheduledFocusHarness();
+  app.onScheduleFired({ name: 'Untitled schedule', sessionId: 'NEW1', label: 'Check release build' });
+  assert.equal(app.notices[0].opts.title, 'Scheduled "Check release build" started');
+});
+
+for (const label of ['12345678', 'Older worker title']) {
+  test(`unnamed schedule notification prefers its board title over server label ${JSON.stringify(label)}`, () => {
+    const app = scheduledFocusHarness([{ sessionId: 'CARD1', label: 'Current worker title', managed: true }]);
+    app.onScheduleFired({ name: 'Untitled schedule', sessionId: 'CARD1', label });
+    assert.equal(app.notices[0].opts.title, 'Scheduled "Current worker title" started');
+  });
+}
+
+test('unnamed schedule notification identifies a target absent from board state', () => {
+  const app = scheduledFocusHarness();
+  app.onScheduleFired({ name: 'Untitled schedule', sessionId: '12345678-1234-1234-1234-123456789abc' });
+  assert.equal(app.notices[0].opts.title, 'Scheduled "12345678" started');
+});
+
 for (const [label, sessions] of [
   ['dispatch', []],
   ['existing-session', [{ sessionId: 'NEW1', managed: false }]],
