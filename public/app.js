@@ -17,10 +17,11 @@ import {
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised, refinePerRow,
 } from './layout.js';
-import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption, sessionGroups } from './workflow.js';
+import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption, sessionGroups, MAX_SPINE_INDENT } from './workflow.js';
 import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.js';
 import { cascadeSummary, cascadeDialogBody, worktreeStillInUse, containerStillInUse } from './archive-cascade.js';
 import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-picker.js';
+import { nestTargetsFor, childDropAction, mergeSessionOrder, gridSlotAt, subtreeEnd, childSlotAt } from './session-drag.js';
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
@@ -1200,6 +1201,73 @@ let autoEditTaskId = null;
 let dragActive = false;
 let draggedCard = null;
 let placeholderEl = null;
+// The card whose Nest zone a session drag is over: dropping now nests the
+// dragged session under it. The zones (addNestZones) sit apart from the
+// reorder area, so reordering and nesting never compete for the same spot.
+let nestTargetEl = null;
+// True after the cursor was last over a Nest zone, until it is over some other
+// card: crossing the gap between two stacked zones then leaves the placeholder
+// where it is, so the cards don't shift under the cursor.
+let nestLane = false;
+// Placeholder sizes (shapePlaceholder): a dragged child's own row height, a
+// full top-level card's height (a child dragged out lands as one), and the
+// dragged unit's own height.
+let childRowHeight = 0;
+let topLevelCardHeight = 0;
+let dragUnitHeight = 0;
+// While a Nest zone is hovered the placeholder previews the nest: it moves
+// into the target's spine (or `previewSpine`, a temporary spine, when the
+// target has none yet), and the old slot closes, so spacing matches the
+// result. `previewReturn` is where the placeholder goes back to when the
+// preview ends. `nestZoneRect` is the zone's rect when the preview began:
+// closing the old slot can shift the target, so the preview holds for as long
+// as the cursor stays in that rect, rather than flickering off and on.
+let previewSpine = null;
+// A dragged spine row's own descendants: the rows below it in its spine that
+// move with it (nesting has no depth limit), hidden for the drag like the row.
+// `subtreeHeight` is their drawn height plus the gaps between them, which the
+// placeholder adds so it previews the whole subtree, not one row.
+let draggedSubtree = [];
+let subtreeHeight = 0;
+// The dragged session's own card height (its card inside a group), the shape
+// it keeps as a full-view child.
+let dragCardHeight = 0;
+// A bare top-level card being previewed as a parent is wrapped, with its
+// temporary spine, in this `.child-group`, the same unit a real parent with
+// children renders as. In a multi-column body each direct child is its own
+// grid cell, so an unwrapped spine would land in the next column instead of
+// under the card.
+let previewGroup = null;
+let previewReturn = null;
+let nestZoneRect = null;
+// The insert line a multi-column task shows instead of a moving gap
+// (updateInsertLine).
+let insertLineEl = null;
+// Per-drag caches for the dragover hot path (it fires every few dozen ms):
+// the sessions the dragged one may nest under, and each body's column check.
+// Both hold for the whole drag, as nothing re-renders mid-drag. Reset at
+// dragstart (beginDragCaches) and dragend.
+let dragNestTargets = new Set();
+let dragMultiColumn = new Map();
+let dragColumnGap = new Map();
+// The cursor position of the last session dragover handled. The browser keeps
+// firing dragover while the cursor is held still; with nothing re-rendering
+// mid-drag, an unchanged position can change nothing, so those are skipped.
+let lastDragPoint = null;
+
+function beginDragCaches(sessionId) {
+  dragNestTargets = nestTargetsFor(sessionId, latestSessions, assignedTaskId);
+  dragMultiColumn = new Map();
+  dragColumnGap = new Map();
+  lastDragPoint = null;
+}
+
+function endDragCaches() {
+  dragNestTargets = new Set();
+  dragMultiColumn = new Map();
+  dragColumnGap = new Map();
+  lastDragPoint = null;
+}
 
 let taskDragActive = false;
 let draggedTaskId = null;
@@ -1220,6 +1288,312 @@ function ensurePlaceholder() {
 }
 function removePlaceholder() {
   if (placeholderEl && placeholderEl.parentNode) placeholderEl.parentNode.removeChild(placeholderEl);
+}
+function setNestTarget(card) {
+  if (nestTargetEl === card) return;
+  nestTargetEl?.classList.remove('nest-target');
+  nestTargetEl = card;
+  card?.classList.add('nest-target');
+}
+
+// The id a session drag unit stands for: a nested child row carries
+// data-child-sid, every top-level unit data-sid.
+function dragUnitSid(el) {
+  return el.dataset.childSid || el.dataset.sid;
+}
+
+// During a session drag, give every card and spine row the dragged session
+// could nest under (dragNestTargets: same task, not its own descendants) a Nest
+// zone: a labelled drop target on its right-hand side. Nesting has no depth
+// limit, so a child row is a target too. The zones go when the board
+// re-renders at dragend.
+function addNestZones(grid) {
+  for (const card of grid.querySelectorAll('.task-body .session-card, .task-body .worker-row[data-child-sid]')) {
+    if (draggedCard?.contains(card) || !dragNestTargets.has(card.dataset.sid)) continue;
+    const zone = document.createElement('div');
+    // In a multi-column body a card's left and right halves pick the insert
+    // slot, so its Nest zone sits in the middle instead of on the right. A
+    // compact row's zone is a slimmer fit for its height.
+    const row = card.classList.contains('worker-row') ? ' row' : '';
+    zone.className = `${isMultiColumn(card.closest('.task-body')) ? 'nest-zone center' : 'nest-zone'}${row}`;
+    zone.innerHTML = `${ATTACH_ICON}<span>Nest</span>`;
+    card.appendChild(zone);
+  }
+}
+
+// A full top-level card's height in `body` (the tallest drawn there, else the
+// row's own height), for a child dragged out to a top-level slot.
+function topLevelHeightIn(body, fallback) {
+  const cards = body.querySelectorAll(':scope > .session-card:not(.dragging-hidden), :scope > .child-group > .session-card, :scope > .workflow-box > .session-card');
+  return Math.max(fallback, ...[...cards].map((c) => c.offsetHeight));
+}
+
+// Whether a task body lays its cards out in more than one column (focus
+// mode's grid). There a moving gap would reflow every later card into the
+// next column, so the drag shows an insert line instead.
+function isMultiColumn(body) {
+  if (dragMultiColumn.has(body)) return dragMultiColumn.get(body);
+  const cs = getComputedStyle(body);
+  const multi = cs.display === 'grid' && cs.gridTemplateColumns.trim().split(/\s+/).length > 1;
+  dragMultiColumn.set(body, multi);
+  return multi;
+}
+
+// Put the placeholder in `parent` before `ref` (null appends), unless it is
+// there already. Returns whether it moved, so a dragover that lands on the
+// same slot (most of them) writes nothing to the DOM and forces no layout.
+function placePlaceholder(parent, ref) {
+  if (ref === placeholderEl) return false;
+  if (placeholderEl.parentNode === parent && placeholderEl.nextSibling === ref) return false;
+  parent.insertBefore(placeholderEl, ref);
+  return true;
+}
+
+// A task body's top-level drag units, in reading order.
+function topUnits(body) {
+  return [...body.querySelectorAll(':scope > .session-card, :scope > .workflow-box, :scope > .child-group')];
+}
+
+// The height the dragged session will have as a child: its own row's, if it
+// is one already; else a full card's if it will show in full view (its own
+// setting, or the new-child default the server stamps on attach), else a
+// compact row's.
+function childShapeHeight() {
+  if (draggedCard?.dataset.childSid) return childRowHeight;
+  const s = latestSessions.find((x) => x.sessionId === dragUnitSid(draggedCard));
+  const full = s?.childFullView === true || (s?.childFullView === undefined && childFullViewByDefault);
+  if (full) return dragCardHeight;
+  return document.querySelector('#grid .worker-row')?.offsetHeight || 30;
+}
+
+// The spine rows of `spine` a drop can land among, with their place in the
+// subtree (cards.js childDragAttrs): the dragged row and its subtree are
+// hidden, and the placeholder is not a row.
+function spineRowsIn(spine) {
+  return [...spine.querySelectorAll(':scope > [data-child-sid]:not(.dragging-hidden)')].map((el) => {
+    const rect = el.getBoundingClientRect();
+    return { el, parent: el.dataset.parentSid, depth: Number(el.dataset.depth) || 0, top: rect.top, bottom: rect.bottom };
+  });
+}
+
+// Put the placeholder in `spine` before row `index` of `rows` (rows.length
+// appends), as a child of `parentSid` at `depth`. Returns whether anything
+// changed.
+function placeInSpine(spine, rows, index, parentSid, depth) {
+  const moved = placePlaceholder(spine, rows[index]?.el || null);
+  const indent = String(Math.min(depth, MAX_SPINE_INDENT));
+  if (!moved && placeholderEl.dataset.parentSid === parentSid && placeholderEl.dataset.indent === indent) return false;
+  placeholderEl.dataset.parentSid = parentSid;
+  placeholderEl.dataset.indent = indent;
+  return true;
+}
+
+// Give the placeholder the shape the dragged session will have where it now
+// sits. In a spine it is a child: a row (or full-view card) with the spine's
+// connector. Among the top-level cards it is a full card (a dragged child
+// becomes one) or the dragged unit's own size, and in a multi-column body it
+// hides behind the insert line. Worked out afresh after every move, so it
+// never keeps a stale shape from an earlier spot.
+function shapePlaceholder() {
+  if (!placeholderEl?.parentNode || !draggedCard) return;
+  const inSpine = !!placeholderEl.parentNode.closest('.child-spine, .workflow-spine');
+  const body = placeholderEl.closest('.task-body');
+  const line = !inSpine && !!body && isMultiColumn(body);
+  placeholderEl.classList.toggle('in-spine', inSpine);
+  placeholderEl.classList.toggle('as-line', line);
+  if (inSpine) placeholderEl.style.setProperty('--indent', placeholderEl.dataset.indent || '0');
+  else {
+    delete placeholderEl.dataset.parentSid;
+    delete placeholderEl.dataset.indent;
+    placeholderEl.style.removeProperty('--indent');
+  }
+  // A dragged row brings its subtree: as a child it stays rows under it, and
+  // promoted it becomes a card with those rows as its spine (8px below the
+  // card, where rows sit 6px apart).
+  const h = inSpine ? childShapeHeight() + subtreeHeight
+    : draggedCard.dataset.childSid ? topLevelCardHeight + (subtreeHeight ? subtreeHeight + 2 : 0)
+      : dragUnitHeight;
+  placeholderEl.style.height = `${h}px`;
+  updateInsertLine(line ? body : null);
+}
+
+// Draw the multi-column insert line in the gap at the placeholder's slot:
+// before the unit after it, else after the last unit. Hidden for null.
+function updateInsertLine(body) {
+  if (!body) { insertLineEl?.remove(); insertLineEl = null; return; }
+  const units = topUnits(body);
+  let next = placeholderEl.nextElementSibling;
+  while (next && !units.includes(next)) next = next.nextElementSibling;
+  let prev = placeholderEl.previousElementSibling;
+  while (prev && !units.includes(prev)) prev = prev.previousElementSibling;
+  const ref = next || prev;
+  if (!ref) { updateInsertLine(null); return; }
+  const rect = ref.getBoundingClientRect();
+  if (!dragColumnGap.has(body)) dragColumnGap.set(body, parseFloat(getComputedStyle(body).columnGap) || 12);
+  const gap = dragColumnGap.get(body);
+  const x = next ? rect.left - gap / 2 : rect.right + gap / 2;
+  if (!insertLineEl) {
+    insertLineEl = document.createElement('div');
+    insertLineEl.className = 'insert-line';
+    document.body.appendChild(insertLineEl);
+  }
+  insertLineEl.style.left = `${x - 1.5}px`;
+  insertLineEl.style.top = `${rect.top}px`;
+  insertLineEl.style.height = `${rect.height}px`;
+}
+
+// The session whose spine `spine` is: a plain parent's .child-group, a
+// workflow run's box, or the target of a temporary nest-preview spine.
+function spineParentSid(spine) {
+  return spine.dataset.parentSid || spine.closest('.child-group, .workflow-box')?.dataset.sid || null;
+}
+
+// Show what nesting under `card` will do: move the placeholder to the end of
+// its subtree, shaped as the child it will be, closing the old slot. `card` is
+// a top-level card, or a row in a spine (a compact .worker-row, or the card
+// inside a full-view row): then the placeholder goes after that row's own
+// subtree, one indent step in. A top-level card with no spine yet (a bare
+// card, a solo or collapsed workflow) gets a temporary one right after it.
+function enterNestPreview(card, zone) {
+  const sid = card.dataset.sid;
+  if (previewReturn && placeholderEl.dataset.nestFor === sid) return;
+  exitNestPreview();
+  previewReturn = {
+    parent: placeholderEl.parentNode, next: placeholderEl.nextSibling,
+    parentSid: placeholderEl.dataset.parentSid, indent: placeholderEl.dataset.indent,
+  };
+  nestZoneRect = zone.getBoundingClientRect();
+  placeholderEl.dataset.nestFor = sid;
+  const inSpine = card.closest('.child-spine, .workflow-spine');
+  if (inSpine) {
+    const rowEl = card.closest('[data-child-sid]');
+    const rows = spineRowsIn(inSpine);
+    const i = rows.findIndex((r) => r.el === rowEl);
+    placeInSpine(inSpine, rows, i < 0 ? rows.length : subtreeEnd(rows, i), sid, (i < 0 ? 0 : rows[i].depth) + 1);
+    shapePlaceholder();
+    return;
+  }
+  const host = card.closest('.child-group, .workflow-box');
+  const group = host && host.dataset.sid === sid ? host : null;
+  let into = group?.querySelector(':scope > .child-spine, :scope > .workflow-spine') || null;
+  if (!into) {
+    previewSpine = document.createElement('div');
+    previewSpine.className = 'child-spine';
+    previewSpine.dataset.parentSid = sid;
+    if (!host && card.parentNode.classList.contains('task-body')) {
+      // data-sid keeps it counted as the card's unit (bucketOrderFromDom,
+      // topUnits) while the card sits inside it.
+      previewGroup = document.createElement('div');
+      previewGroup.className = 'child-group';
+      previewGroup.dataset.sid = sid;
+      card.before(previewGroup);
+      previewGroup.append(card, previewSpine);
+    } else card.after(previewSpine);
+    into = previewSpine;
+  }
+  // A top-level card's spine is its whole subtree, so its end is the spine's.
+  placeInSpine(into, [], 0, sid, 0);
+  shapePlaceholder();
+}
+
+// End a nest preview: the placeholder goes back to the slot it held.
+function exitNestPreview() {
+  if (!previewReturn) return;
+  delete placeholderEl.dataset.nestFor;
+  // Unwrap first: the slot to return to may sit right before the card.
+  if (previewGroup) {
+    const card = previewGroup.querySelector(':scope > .session-card');
+    if (card) previewGroup.before(card);
+    previewGroup.remove();
+    previewGroup = null;
+  }
+  previewSpine?.remove();
+  previewSpine = null;
+  const { parent, next, parentSid, indent } = previewReturn;
+  if (next && next.parentNode === parent) parent.insertBefore(placeholderEl, next);
+  else parent.appendChild(placeholderEl);
+  if (parentSid) { placeholderEl.dataset.parentSid = parentSid; placeholderEl.dataset.indent = indent; }
+  previewReturn = null;
+  nestZoneRect = null;
+  shapePlaceholder();
+}
+
+function inRect(rect, x, y) {
+  return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+}
+
+// The child spine under a drag of a nested child that will take it, or null:
+// its own spine (a reorder among its siblings), or another top-level parent's
+// spine it could nest under (a move to that parent, among its direct children,
+// at the slot it's dropped in; a deeper parent is reached by its Nest zone).
+// Only a child drag uses spines: a top-level card dragged past a parent's
+// spine reorders as usual and nests only through a Nest zone.
+function spineDropTarget(e, cell) {
+  if (!draggedCard?.dataset.childSid) return null;
+  const spine = e.target.closest?.('.child-spine, .workflow-spine');
+  if (!spine || !cell.contains(spine)) return null;
+  if (spine === draggedCard.parentNode) return spine;
+  return dragNestTargets.has(spineParentSid(spine)) ? spine : null;
+}
+
+// Whether `sessionId` is a workflow worker: its orchestrator's run tracks it,
+// so it can't be promoted (see the Promote menu item).
+function isWorkerSid(sessionId) {
+  const byId = new Map(latestSessions.map((x) => [x.sessionId, x]));
+  return !!byId.get(sessionId) && isWorkflowWorker(byId.get(sessionId), byId);
+}
+
+// Promote a dragged child, or refuse with a toast when it's a workflow worker
+// (the server refuses that too, so the drop would only snap back silently).
+// Returns whether the move can go ahead.
+function promoteDraggedChild(sessionId) {
+  if (isWorkerSid(sessionId)) {
+    toast('A workflow worker stays with its run. Drag it within its spine to reorder it.', true);
+    return false;
+  }
+  promoteSession(sessionId);
+  return true;
+}
+
+// Before a dragged nested child moves to another task, promote it, so it
+// doesn't keep a parent link to a session it no longer sits with.
+function releaseChildForMove(sessionId) {
+  if (!latestSessions.find((x) => x.sessionId === sessionId)?.parentSession) return true;
+  return promoteDraggedChild(sessionId);
+}
+
+// Place a dragged child's placeholder in `spine` at viewport-Y `y`: among its
+// own siblings in its own spine, or among the spine owner's direct children in
+// another. With no other sibling to sit beside, it keeps its own slot.
+// Returns whether anything changed.
+function placeChildInSpine(spine, y) {
+  const own = spine === draggedCard.parentNode;
+  const parentSid = own ? draggedCard.dataset.parentSid : spineParentSid(spine);
+  const depth = own ? Number(draggedCard.dataset.depth) || 0 : 0;
+  const rows = spineRowsIn(spine);
+  const slot = childSlotAt(rows, parentSid, y);
+  if (slot == null) {
+    if (!own) return placeInSpine(spine, rows, rows.length, parentSid, depth);
+    const moved = placePlaceholder(spine, draggedCard);
+    placeholderEl.dataset.parentSid = parentSid;
+    placeholderEl.dataset.indent = String(Math.min(depth, MAX_SPINE_INDENT));
+    return moved;
+  }
+  return placeInSpine(spine, rows, slot, parentSid, depth);
+}
+
+// The bucket's new session order after a drop at the placeholder: every
+// top-level unit followed by its children, in DOM order (querySelectorAll
+// returns a parent before its descendants), with the dragged session at the
+// placeholder's slot and its hidden source skipped. Children are included so
+// their order inside a spine is stored too, not reset by a top-level reorder.
+function bucketOrderFromDom(body, draggedSid, previous) {
+  const order = [];
+  for (const node of body.querySelectorAll(':scope > .session-card, :scope > .workflow-box, :scope > .child-group, [data-child-sid], .session-placeholder')) {
+    if (node === placeholderEl) order.push(draggedSid);
+    else if (node !== draggedCard) order.push(dragUnitSid(node));
+  }
+  return mergeSessionOrder(order, previous);
 }
 
 // The card the placeholder should sit *before* for a given cursor Y — the first
@@ -2740,14 +3114,20 @@ function wireGridDnd(el) {
   // drag in that task. A snoozed row carries the same data-sid + draggable
   // contract, so it gets identical wiring — its drop reassigns via task-assign and
   // the card stays snoozed (snooze lives on the mapping entry, untouched by assign).
-  el.querySelectorAll('.session-card[draggable="true"], .workflow-box[draggable="true"], .child-group[draggable="true"], .snoozed-row[draggable="true"]').forEach((card) => {
+  // A nested child (a spine's .worker-row or .spine-full-row, data-child-sid) is
+  // its own drag unit too: stopPropagation keeps the enclosing group from
+  // starting a drag of the parent. It reorders within its spine, moves to
+  // another parent (its spine or its Nest zone), or, dropped among the
+  // top-level cards, is promoted.
+  el.querySelectorAll('.session-card[draggable="true"], .workflow-box[draggable="true"], .child-group[draggable="true"], .snoozed-row[draggable="true"], [data-child-sid][draggable="true"]').forEach((card) => {
     card.addEventListener('dragstart', (e) => {
       if (e.target.closest('.link-chip')) { e.preventDefault(); return; }
       e.stopPropagation();
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'session', sessionId: card.dataset.sid }));
+      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'session', sessionId: dragUnitSid(card) }));
       draggedCard = card;
       dragActive = true;
+      beginDragCaches(dragUnitSid(card));
       armNewTask(true); // reveal the "drop to create" landing area immediately
       // Defer one tick: the native drag image (the floating card) is
       // snapshotted synchronously now, so the card must still look intact. Then
@@ -2755,14 +3135,50 @@ function wireGridDnd(el) {
       setTimeout(() => {
         if (draggedCard !== card || !card.parentNode) return;
         const ph = ensurePlaceholder();
-        ph.style.height = `${card.offsetHeight}px`;
+        const body = card.closest('.task-body');
+        dragUnitHeight = card.offsetHeight;
+        childRowHeight = card.dataset.childSid ? card.offsetHeight : 0;
+        topLevelCardHeight = body ? topLevelHeightIn(body, card.offsetHeight) : card.offsetHeight;
+        // The session's own card (a group's lead card), and the rows that move
+        // with it: a row's descendants follow it in its spine, deeper than it; a
+        // group's are its whole spine.
+        dragCardHeight = card.matches('.session-card') ? card.offsetHeight
+          : card.querySelector(':scope > .session-card, :scope > .workflow-box > .session-card, .session-card')?.offsetHeight || card.offsetHeight;
+        draggedSubtree = [];
+        if (card.dataset.childSid) {
+          const depth = Number(card.dataset.depth) || 0;
+          for (let r = card.nextElementSibling; r && r.dataset.childSid && (Number(r.dataset.depth) || 0) > depth; r = r.nextElementSibling) draggedSubtree.push(r);
+        }
+        const subtreeRows = card.dataset.childSid ? draggedSubtree : [...card.querySelectorAll('[data-child-sid]')];
+        subtreeHeight = subtreeRows.reduce((sum, r) => sum + r.offsetHeight + 6, 0);
+        // A top-level card in a multi-column body stays in place, dimmed: hiding
+        // it would reflow every later card into the next column.
+        const dim = !card.dataset.childSid && body && isMultiColumn(body);
         card.parentNode.insertBefore(ph, card);
-        card.classList.add('dragging-hidden');
+        if (card.dataset.childSid) {
+          ph.dataset.parentSid = card.dataset.parentSid;
+          ph.dataset.indent = String(Math.min(Number(card.dataset.depth) || 0, MAX_SPINE_INDENT));
+        }
+        card.classList.add(dim ? 'drag-source' : 'dragging-hidden');
+        for (const r of draggedSubtree) r.classList.add('dragging-hidden');
+        shapePlaceholder();
+        // The placeholder and Nest zones only exist from here on, so a dragover
+        // handled before this tick must not let the same position be skipped.
+        lastDragPoint = null;
+        addNestZones(el);
       }, 0);
     });
     card.addEventListener('dragend', () => {
-      card.classList.remove('dragging-hidden');
+      card.classList.remove('dragging-hidden', 'drag-source');
+      for (const r of draggedSubtree) r.classList.remove('dragging-hidden');
+      draggedSubtree = [];
+      subtreeHeight = 0;
+      exitNestPreview();
       removePlaceholder();
+      updateInsertLine(null);
+      endDragCaches();
+      setNestTarget(null);
+      nestLane = false;
       draggedCard = null;
       dragActive = false;
       armNewTask(false);
@@ -2805,7 +3221,7 @@ function wireGridDnd(el) {
       g.classList.remove('drop');
       let p;
       try { p = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
-      if (p.kind === 'session') createTask(p.sessionId);
+      if (p.kind === 'session' && releaseChildForMove(p.sessionId)) createTask(p.sessionId);
     });
   });
 
@@ -2818,6 +3234,32 @@ function wireGridDnd(el) {
       // A task reorder is driven by the #grid handler above; the cell just stays
       // out of the way (no drop-target highlight) and lets the event bubble.
       if (taskDragActive) return;
+      // Held still: nothing to recompute (preventDefault above still accepts the
+      // drop). See lastDragPoint.
+      if (dragActive) {
+        if (lastDragPoint && lastDragPoint.x === e.clientX && lastDragPoint.y === e.clientY && lastDragPoint.cell === cell) return;
+        lastDragPoint = { x: e.clientX, y: e.clientY, cell };
+      }
+      // Still inside the Nest zone's rect from when its preview began: hold the
+      // preview, whatever the shifted cards now put under the cursor.
+      if (nestZoneRect && inRect(nestZoneRect, e.clientX, e.clientY)) { cell.classList.remove('drop-target'); return; }
+      // Over a card's Nest zone: that card is the only affordance, and the
+      // placeholder previews the nest in its spine. Checked before the
+      // activity-sort bail below, since nesting needs no manual order.
+      const zone = e.target.closest?.('.nest-zone');
+      const nest = zone && cell.contains(zone) ? zone.closest('.worker-row, .session-card') : null;
+      // In a gap straight after a Nest zone (e.g. between two stacked zones):
+      // hold the preview and its target, until the cursor is over a card.
+      const overCard = e.target.closest?.('.session-card, .worker-row, .spine-full-row, .snoozed-row, .session-placeholder');
+      if (!nest && nestLane && !overCard) return;
+      nestLane = !!nest;
+      setNestTarget(nest);
+      if (nest) {
+        cell.classList.remove('drop-target');
+        if (placeholderEl?.parentNode && cell.contains(draggedCard)) enterNestPreview(nest, zone);
+        return;
+      }
+      exitNestPreview();
       // Same-task reorder in progress (the hidden source lives in this cell):
       // the placeholder is the only affordance, so skip the cell highlight and
       // slide it to the slot the cursor points at. An activity-sorted bucket owns
@@ -2825,17 +3267,41 @@ function wireGridDnd(el) {
       if (placeholderEl && cell.contains(draggedCard)) {
         const bucket = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
         if (activitySortedTasks.has(bucket)) return;
-        const body = cell.querySelector('.task-body');
-        if (body) {
-          const after = dragAfterElement(body, e.clientY);
-          if (after) body.insertBefore(placeholderEl, after);
-          else body.appendChild(placeholderEl);
+        // Over a child spine that takes the dragged session: its own (reorder
+        // among siblings) or another parent's (move to that parent, at this
+        // slot). Anywhere else among the cards is a top-level slot.
+        const spine = spineDropTarget(e, cell);
+        if (spine) {
+          if (placeChildInSpine(spine, e.clientY)) shapePlaceholder();
+          return;
         }
+        const body = cell.querySelector('.task-body');
+        if (body && isMultiColumn(body)) {
+          // Pick the slot by where the cursor is across the row as well as down
+          // it (gridSlotAt); the placeholder hides behind the insert line, so
+          // nothing reflows mid-drag.
+          const units = topUnits(body);
+          const slot = gridSlotAt(units.map((u) => u.getBoundingClientRect()), e.clientX, e.clientY);
+          const unit = slot && units[slot.index];
+          if (unit && placePlaceholder(body, slot.after ? unit.nextSibling : unit)) shapePlaceholder();
+        } else if (body && placePlaceholder(body, dragAfterElement(body, e.clientY))) shapePlaceholder();
         return;
       }
       cell.classList.add('drop-target');
     });
-    cell.addEventListener('dragleave', (e) => { if (!cell.contains(e.relatedTarget)) cell.classList.remove('drop-target'); });
+    cell.addEventListener('dragleave', (e) => {
+      // Some browsers give no relatedTarget for a move between elements inside
+      // the tile, so the cursor still being over the tile also counts as not
+      // leaving it.
+      if (cell.contains(e.relatedTarget) || inRect(cell.getBoundingClientRect(), e.clientX, e.clientY)) return;
+      cell.classList.remove('drop-target');
+      if (nestTargetEl && cell.contains(nestTargetEl)) setNestTarget(null);
+      // Left the tile: a nest preview (and the gap-holding nest lane) ends here,
+      // and so does the insert line (a drop elsewhere reassigns, not reorders).
+      nestLane = false;
+      exitNestPreview();
+      if (placeholderEl?.classList.contains('as-line')) updateInsertLine(null);
+    });
     cell.addEventListener('drop', (e) => {
       if (extDragActive()) return;
       e.preventDefault();
@@ -2844,6 +3310,18 @@ function wireGridDnd(el) {
       try { p = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
       const isNoTask = cell.dataset.entity === 'no-task';
       const taskId = cell.dataset.taskid;
+      // Dropped on a card's Nest zone: nest under it (the same attach the
+      // "Attach to…" menu sends; the server re-checks every rule). The nest
+      // preview put the placeholder in its spine, so the reorder path below
+      // stores the new child last among its siblings, where the preview drew
+      // it. An activity-sorted bucket has no manual order, so it only attaches.
+      const nestSid = (nestTargetEl || e.target.closest?.('.nest-zone')?.closest('.worker-row, .session-card'))?.dataset.sid;
+      setNestTarget(null);
+      const nestBucket = isNoTask ? ADHOC_ID : taskId;
+      if (p.kind === 'session' && nestSid && (activitySortedTasks.has(nestBucket) || !previewReturn)) {
+        attachSession(p.sessionId, nestSid);
+        return;
+      }
       if (p.kind === 'session') {
         // Same bucket (a task, or Ad-hoc for unassigned sessions) → reorder: build
         // the new order by walking the DOM, dropping the dragged session in at the
@@ -2856,22 +3334,32 @@ function wireGridDnd(el) {
         if (bucket && sameBucket && activitySortedTasks.has(bucket)) return;
         if (bucket && sameBucket && placeholderEl) {
           const body = cell.querySelector('.task-body');
-          const order = [];
-          for (const node of body.children) {
-            if (node === placeholderEl) order.push(p.sessionId);
-            // A workflow box, or a .child-group wrapping a parent-with-children, is
-            // a direct child standing in for its top-level session; its
-            // workers/child-spine live nested inside and are never separate order
-            // entries. Without the .child-group branch, a parent-with-children has
-            // no data-sid at this level and silently drops out of `order` on every
-            // drag in its task — it then ranks Infinity (orderSessions) and sinks to
-            // the bottom regardless of where it's actually dropped.
-            else if (node !== draggedCard && (node.classList.contains('session-card') || node.classList.contains('workflow-box') || node.classList.contains('child-group'))) order.push(node.dataset.sid);
-          }
+          // A workflow box, or a .child-group wrapping a parent-with-children, is
+          // a direct child standing in for its top-level session. Without the
+          // .child-group match, a parent-with-children has no data-sid at this
+          // level and silently drops out of `order` on every drag in its task — it
+          // then ranks Infinity (orderSessions) and sinks to the bottom regardless
+          // of where it's actually dropped.
+          const order = bucketOrderFromDom(body, p.sessionId, latestTasks.sessionOrder?.[bucket]);
+          // Landed in another parent's spine → nest there; a child landed among
+          // the top-level cards → promote it. Either goes before the order lands.
+          const inSpine = placeholderEl.parentNode?.closest?.('.child-spine, .workflow-spine');
+          const newParent = inSpine ? placeholderEl.dataset.parentSid || spineParentSid(inSpine) : null;
+          const action = childDropAction({
+            spineParent: newParent,
+            currentParent: latestSessions.find((x) => x.sessionId === p.sessionId)?.parentSession || null,
+            drawnAsChild: draggedCard?.dataset.childSid === p.sessionId,
+          });
+          if (action === 'attach') attachSession(p.sessionId, newParent);
+          else if (action === 'promote' && !promoteDraggedChild(p.sessionId)) return;
+          // Optimistic, like the order below: dragend re-renders before the
+          // server's graph lands, and would briefly draw the old parent link.
+          const live = action && latestSessions.find((x) => x.sessionId === p.sessionId);
+          if (live) live.parentSession = action === 'attach' ? newParent : undefined;
           latestTasks.sessionOrder = latestTasks.sessionOrder || {};
           latestTasks.sessionOrder[bucket] = order; // optimistic; server confirms on next graph
           send({ type: 'task-reorder-sessions', taskId: bucket, order });
-        } else send({ type: 'task-assign', sessionId: p.sessionId, taskId: isNoTask ? null : taskId });
+        } else if (releaseChildForMove(p.sessionId)) send({ type: 'task-assign', sessionId: p.sessionId, taskId: isNoTask ? null : taskId });
       }
       // Task drops are handled by the #grid drop handler (commits at the current
       // slot wherever the cursor lands).

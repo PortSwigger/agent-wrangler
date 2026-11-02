@@ -442,14 +442,22 @@ function spineStyle(spine, throb = '') {
   if (!spine?.indent) return throb;
   return throb ? throb.replace(' style="', ` style="--indent:${spine.indent};`) : ` style="--indent:${spine.indent}"`;
 }
+// A spine row is its own drag unit (app.js wireGrid): data-child-sid marks it,
+// and data-depth / data-parent-sid carry its place in the subtree, so a drag
+// can tell its siblings and its descendants (the rows that move with it) from
+// the page alone. A row with no `spine` (a bare call) is a direct child.
+function childDragAttrs(s, spine) {
+  return ` data-child-sid="${esc(s.sessionId)}" data-depth="${spine?.depth ?? 0}" data-parent-sid="${esc(s.parentSession || '')}" draggable="true"`;
+}
 function spineGuidesHtml(spine) {
   return (spine?.guides || []).map((up) => `<span class="spine-guide" style="--up:${up}" aria-hidden="true"></span>`).join('');
 }
 
 // One worker on its run's spine: a status dot (coloured by state, same vocabulary
 // as the card bar, carried as its tooltip), the worker's name, and cost. Carries
-// data-sid so a click opens it like any card; not independently draggable — it
-// rides with its run, reordered only by dragging the whole workflow box. Mirrors
+// data-sid so a click opens it like any card, and is its own drag unit
+// (childDragAttrs): reordered among its siblings, moved to another parent, or
+// promoted, its own subtree moving with it. Mirrors
 // sessionCardHtml's `selected` ring so a focused child session reads exactly like
 // a focused top-level one. Automatic completion keeps only the status dot;
 // manual unread and attention/snooze alarms retain their halos (see styles.css).
@@ -474,8 +482,12 @@ export function workerRowHtml(s, ctx, spine) {
     : '';
   // Keep fresh mail visible when a child is collapsed into its parent's spine.
   const mailBadge = mailBadgeHtml(s);
-  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}${spineClass(spine)}" data-sid="${esc(s.sessionId)}" title="${esc(s.label)}" role="button" tabindex="0"${spineStyle(spine, throbDelayStyle(state))}>${spineGuidesHtml(spine)}
-    <span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
+  // A child that is itself a workflow run keeps the workflow look in a spine:
+  // the violet box (`wf-child`) with the workflow symbol leading the row.
+  const wf = isWorkflowRun(s);
+  const wfIco = wf ? `<span class="wf-ico" title="Workflow">${WORKFLOW_ICON}</span>` : '';
+  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}${wf ? ' wf-child' : ''}${spineClass(spine)}" data-sid="${esc(s.sessionId)}"${childDragAttrs(s, spine)} title="${esc(s.label)}" role="button" tabindex="0"${spineStyle(spine, throbDelayStyle(state))}>${spineGuidesHtml(spine)}
+    ${wfIco}<span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
     ${mailBadge}
     <span class="worker-meta">${costEl}${metaLinks}</span>
@@ -498,12 +510,19 @@ export function workerRowHtml(s, ctx, spine) {
 // default) instead draws it as an ordinary top-level card, wrapped in a bare
 // `.spine-full-row` div purely so it can carry the same elbow connector a
 // `.worker-row` draws (see styles.css) without borrowing that class's own
-// background/border/padding. Still non-draggable (`nested: true`) — the
-// enclosing `.child-group`/`.workflow-box` wrapper is the actual drag unit.
+// background/border/padding. The card itself is non-draggable (`nested: true`);
+// the `.spine-full-row` wrapper is the child's drag unit, the same as a
+// `.worker-row` (childDragAttrs), so dragging it never drags the parent group.
+// A full-view child that is a workflow run gets the same violet box as its
+// compact row, the workflow symbol beside the card and the card's violet frame
+// (`wf`), without the top-level box's "Workflow" header.
 function childRowHtml(row, ctx, { focusMode } = {}) {
   const c = row.session;
   if (!ctx.isChildFullView(c)) return workerRowHtml(c, ctx, row);
-  return `<div class="spine-full-row${spineClass(row)}"${spineStyle(row)}>${spineGuidesHtml(row)}${sessionCardHtml(c, ctx, { expanded: focusMode, nested: true })}</div>`;
+  if (isWorkflowRun(c)) {
+    return `<div class="spine-full-row wf-child${spineClass(row)}"${childDragAttrs(c, row)}${spineStyle(row)}>${spineGuidesHtml(row)}<span class="wf-ico" title="Workflow">${WORKFLOW_ICON}</span>${sessionCardHtml(c, ctx, { expanded: focusMode, wf: true })}</div>`;
+  }
+  return `<div class="spine-full-row${spineClass(row)}"${childDragAttrs(c, row)}${spineStyle(row)}>${spineGuidesHtml(row)}${sessionCardHtml(c, ctx, { expanded: focusMode, nested: true })}</div>`;
 }
 
 export function workflowBoxHtml(orch, rows, ctx, { focusMode, nested } = {}) {
