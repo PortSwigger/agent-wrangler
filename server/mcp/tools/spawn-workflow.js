@@ -4,7 +4,7 @@ import { performSpawn, errorResult } from './spawn-common.js';
 import { workflowLaunchPrompt } from '../../workflow.js';
 import { slugFromIntent } from '../../worktree.js';
 
-// Kick off a brand-new TOP-LEVEL autopilot issue→PR run (an orchestrator), as
+// Kick off a brand-new autopilot issue→PR run (an orchestrator), as
 // opposed to spawn_session which hands current work off to a peer. Mirrors the
 // workflow branch of the /ws `dispatch` handler (server/control/handlers/
 // dispatch.js): wrap the raw issue into a skill-naming launch prompt, force a
@@ -25,7 +25,7 @@ export const spawnWorkflowTool = {
     + 'issue-to-pr skill, in its own fresh git worktree. Use this to kick off autopilot on an '
     + 'issue — NOT to hand off your current work (that is spawn_session). Pass the issue (a Jira '
     + 'key, a GitHub issue URL/number, or a free-text description) in `issue`. The run is always '
-    + 'top-level even when you start it from another session. Returns the new session id and its '
+    + 'top-level by default; nest: true nests it under you. Returns the new session id and its '
     + 'label — prefer the label when telling the user about it, but labels aren\'t guaranteed '
     + 'unique (see the `session-hierarchy` skill), so if more than one session is in view pair it '
     + 'with a short id.',
