@@ -409,3 +409,23 @@ test('Codex mail rechecks for a new draft after waiting for MCP readiness', asyn
   });
   assert.deepEqual(d.sent, []);
 });
+
+test('Claude terminal mail defers a blank-first-line draft, then automatically delivers after it clears', async () => {
+  const d = socketDeps({ agent: 'claude', socket: null });
+  const frame = `\x1b[38;5;244m${'─'.repeat(100)}`;
+  let pane = [frame, '\x1b[39m❯ ', '  Review this draft before sending.', frame].join('\n');
+  d.paneDeferral = createPaneDeferral({
+    tmuxFor: d.tmuxFor, socketFor: d.socketFor,
+    capture: async () => pane,
+    sendText: async (name, text, socket) => { d.sent.push({ name, text, socket }); },
+  });
+  const notification = composeMailNotification([{}]);
+  assert.deepEqual(await deliverMailNotification('CARD1', notification, d), {
+    mode: 'deferred', reason: 'composer not confirmed empty',
+  });
+  assert.deepEqual(d.sent, []);
+  assert.equal(d.paneDeferral.pendingCount(), 0);
+  pane = [frame, '\x1b[39m❯ ', frame].join('\n');
+  assert.deepEqual(await deliverMailNotification('CARD1', notification, d), { mode: 'live' });
+  assert.deepEqual(d.sent, [{ name: 'cc_one', text: notification, socket: '/s/a' }]);
+});
