@@ -49,7 +49,7 @@ benchmark requests.
 - **Checklist:** the human and agent edit the same per-session list.
 - **Task memory:** durable Markdown shared across all sessions on a task.
 - **Links:** Jira and GitHub context displayed on cards and task headings.
-- **Mail:** durable peer-to-peer messages; Codex can receive notifications during active turns; Claude uses its messaging socket when available. Terminal notifications protect drafts and dialogs, and Claude's terminal fallback waits until idle; dormant recipients keep mail unread until resumed, unless the "Let mail wake dormant sessions" setting is on (snoozed and archived sessions are never woken).
+- **Mail:** durable peer-to-peer messages; Codex can receive notifications during active turns; Claude uses its messaging socket when available. Terminal notifications protect drafts and dialogs, and Claude's terminal fallback waits until idle; dormant recipients keep mail unread until resumed, unless the "Let mail and status notices wake dormant sessions" setting is on (snoozed and archived sessions are never woken).
 - **Hierarchy:** sessions can be nested for presentation without changing who originally spawned them.
 
 Use these board-visible surfaces instead of burying coordination state in a transcript.

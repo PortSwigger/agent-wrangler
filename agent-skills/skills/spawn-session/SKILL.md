@@ -180,6 +180,9 @@ A notice is an observation, not the child's report. Read the transcript or
 `send_message` the child before assuming it finished. Live Claude gets notices
 over its messaging socket when available; terminal delivery waits for clear
 input and no dialog, and Claude's terminal fallback waits until idle. A dormant
-subscriber is woken without the mail-wake setting. Snoozed subscribers receive
-nothing; an archived subscriber loses its subscriptions. Subscriptions survive
-resume, end when the child exits, and are not inherited by forks.
+subscriber is woken only when **Let mail and status notices wake dormant sessions**
+is enabled (off by default). With it off, dormant status notices are skipped,
+not saved for later delivery; mail remains unread. The setting does not affect
+live delivery. Snoozed subscribers receive nothing; an archived subscriber loses
+its subscriptions. Subscriptions survive resume, end when the child exits, and
+are not inherited by forks.

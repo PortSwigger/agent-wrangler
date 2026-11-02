@@ -448,8 +448,9 @@ test('deliverNotice uses the live Claude socket and Codex pane transport', async
 });
 
 for (const [agent, joining] of [['claude', false], ['claude', true], ['codex', false]]) {
-  test(`deliverNotice wakes dormant ${agent} (joining=${joining}) without the mail setting`, async () => {
+  test(`deliverNotice wakes dormant ${agent} (joining=${joining}) when waking is enabled`, async () => {
     const d = deps({ entries: { CARD1: { agent, cwd: os.tmpdir() } } });
+    d.wakesDormant = () => true;
     d.sessionManager.isResuming = () => joining;
     assert.equal((await deliverNotice('CARD1', '[Agent Wrangler] notice', d)).mode, 'dormant');
     assert.equal(d.resumed[0][2].intent, '[Agent Wrangler] notice');
@@ -495,6 +496,7 @@ test('a deferred Claude fallback notice waits until idle on every drain', async 
 
 test('deliverNotice propagates a dormant resume failure', async () => {
   const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.wakesDormant = () => true;
   d.sessionManager.isResuming = () => false;
   d.sessionManager.resume = async () => { throw new Error('resume failed'); };
   await assert.rejects(deliverNotice('CARD1', 'notice', d), /resume failed/);
@@ -526,5 +528,30 @@ test('a queued status notice is discarded if its subscriber snoozes before the p
   delete entry.snooze;
   pane = '\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m';
   await d.paneDeferral.drain();
+  assert.deepEqual(d.sent, []);
+});
+
+for (const agent of ['claude', 'codex']) {
+  test(`the shared wake setting gates dormant ${agent} status notices and mail`, async () => {
+    const d = deps({ entries: { CARD1: { agent, cwd: os.tmpdir() } } });
+    let enabled = false;
+    d.wakesDormant = () => enabled;
+    assert.equal((await deliverNotice('CARD1', 'notice', d)).mode, 'skip');
+    assert.equal((await deliverMailNotification('CARD1', 'mail', d)).mode, 'deferred');
+    assert.deepEqual(d.resumed, []);
+    assert.deepEqual(d.sent, []);
+    enabled = true;
+    assert.equal((await deliverNotice('CARD1', 'notice', d)).mode, 'dormant');
+    assert.equal((await deliverMailNotification('CARD1', 'mail', d)).mode, 'deferred');
+    assert.equal(d.resumed.length, 2);
+    assert.equal(d.resumed[0][2].reason, 'status-notice');
+    assert.equal(d.resumed[1][2].reason, 'mail');
+  });
+}
+
+test('status notices do not wake dormant subscribers when the setting is absent', async () => {
+  const d = deps({ entries: { CARD1: { agent: 'claude', cwd: os.tmpdir() } } });
+  assert.equal((await deliverNotice('CARD1', 'notice', d)).mode, 'skip');
+  assert.deepEqual(d.resumed, []);
   assert.deepEqual(d.sent, []);
 });

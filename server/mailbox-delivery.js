@@ -44,7 +44,10 @@ export async function deliverNotice(to, text, deps) {
   const entry = deps.sessionManager.entryFor(to);
   if (!entry || entry.archivedAt || entry.snooze) return { mode: 'skip' };
   const target = deps.tmuxFor(to);
-  if (!target) return wakeDormant(to, entry, deps, text);
+  if (!target) {
+    if (!deps.wakesDormant?.()) return { mode: 'skip' };
+    return wakeDormant(to, entry, deps, text);
+  }
   return sendNotice(to, entry, target, text, deps.socketFor(to), deps);
 }
 
