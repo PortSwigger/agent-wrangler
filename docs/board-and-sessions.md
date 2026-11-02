@@ -82,6 +82,22 @@ attachable terminal only after being resumed through the board.
 Tasks are board columns for related sessions. Drag cards between tasks; moving a parent also moves its
 nested descendants.
 
+While you drag a session, each card and child row it can nest under shows a **Nest** zone on its
+right-hand side. Its own descendants never do.
+Drop on the zone to make the session that card's child. Dropping anywhere else reorders cards as usual.
+The dashed placeholder shows the shape the board will take: a child row under the target while you hover
+its Nest zone, or a full card when a child is about to become a top-level session.
+
+When a task shows its cards in more than one column (focus mode), the dragged card stays in place,
+dimmed, and a blue line shows where it will land. The left or right half of the card under the cursor
+picks the side, and the Nest zone sits in the middle of the card.
+
+Child rows can be dragged too: up or down among their siblings to reorder them, into another
+top-level parent's children or onto any row's or card's Nest zone to move them there, or out among the
+top-level cards to promote them. A dragged row takes its own children with it.
+Workflow workers can be reordered but stay with their run. A workflow run nested under another session
+keeps its violet box and workflow symbol.
+
 Each task also has:
 
 - **TODOs:** add, complete, reorder, and collapse task-level work items. TODOs are an optional builtin extension (`todos`, on by default); turning it off in Settings → Extensions removes the zone, tools, and skill without deleting stored TODOs.

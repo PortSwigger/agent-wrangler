@@ -1491,6 +1491,24 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 /* The orchestrator card reads as the run's lead: a violet-tinted frame + faint
    ring. Yield entirely to an alarm state (needs-you / just-finished / snooze) so
    their rings still win. */
+/* A workflow run nested as another session's child (cards.js workerRowHtml /
+   childRowHtml): the same violet box as a top-level run, with the workflow
+   symbol leading and the name and status pushed right after it. */
+/* Scoped under the spine so it outranks the alarm states' transparent border
+   (.worker-row.needs-you etc.): the box stays violet, the ring still shows. */
+.child-spine > .worker-row.wf-child, .workflow-spine > .worker-row.wf-child {
+  border-color: color-mix(in srgb, var(--wf) 45%, transparent);
+  background: color-mix(in srgb, var(--wf) 9%, var(--surface));
+}
+.worker-row.wf-child:hover { background: color-mix(in srgb, var(--wf) 15%, var(--surface)); }
+.spine-full-row.wf-child {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--wf) 45%, transparent);
+  background: color-mix(in srgb, var(--wf) 9%, var(--surface));
+}
+.spine-full-row.wf-child > .wf-ico { padding-top: 6px; }
+.spine-full-row.wf-child > .session-card { flex: 1 1 auto; min-width: 0; }
 .session-card.wf-orchestrator:not(.needs-you):not(.just-finished):not(.snooze-alarm) {
   border-color: color-mix(in srgb, var(--wf) 42%, var(--border-muted));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--wf) 16%, transparent);
@@ -2021,7 +2039,70 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 /* While reordering, the dragged card is hidden and a single dashed placeholder
    (sized to the card) slides to the slot it would land in. */
 .session-card.dragging-hidden, .snoozed-row.dragging-hidden,
-.workflow-box.dragging-hidden, .child-group.dragging-hidden { display: none; }
+.workflow-box.dragging-hidden, .child-group.dragging-hidden,
+.worker-row.dragging-hidden, .spine-full-row.dragging-hidden { display: none; }
+/* During a session drag, each card the session can nest under shows a Nest
+   zone on its right-hand side (app.js addNestZones), apart from the area that
+   reorders. Dropping on it nests; .nest-target marks the one under the cursor. */
+.nest-zone {
+  position: absolute; top: 4px; right: 4px; bottom: 4px; width: 36%;
+  z-index: 2;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px dashed var(--blue); border-radius: 6px;
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+  color: var(--blue); font-size: 12px; font-weight: 600;
+}
+.nest-zone svg { width: 14px; height: 14px; pointer-events: none; }
+.nest-zone span { pointer-events: none; }
+/* In a multi-column task the card's halves pick the insert slot, so the zone
+   sits in the middle (app.js addNestZones). */
+.nest-zone.center { left: 30%; right: 30%; width: auto; }
+/* A compact spine row is a nest target too (nesting has no depth limit); its
+   zone is slimmer to fit the row. */
+.nest-zone.row { top: 2px; bottom: 2px; font-size: 11px; }
+.session-card.nest-target, .worker-row.nest-target { outline: 2px solid var(--blue); outline-offset: 2px; }
+/* A multi-column drag leaves the source in place, dimmed, and shows where it
+   will land with an insert line in the gap instead of a moving placeholder,
+   which would reflow every later card into the next column. */
+.session-card.drag-source, .workflow-box.drag-source, .child-group.drag-source { opacity: 0.4; }
+.session-placeholder.as-line { display: none; }
+.insert-line {
+  position: fixed; width: 3px; border-radius: 2px;
+  background: var(--blue); pointer-events: none; z-index: 50;
+}
+/* A placeholder in a spine previews a child: same corner radius and elbow
+   connector as a .worker-row (geometry copied from .worker-row::before/::after). */
+.session-placeholder.in-spine {
+  position: relative; border-radius: 7px;
+  /* Steps right with the row it previews (see .worker-row's --indent). */
+  margin-left: calc(var(--indent, 0) * var(--spine-step, 28px));
+}
+.session-placeholder.in-spine::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: -6px;
+  width: 11px;
+  height: calc(50% + 6px);
+  border-left: 2px solid var(--line-color);
+  border-bottom: 2px solid var(--line-color);
+  pointer-events: none;
+}
+.session-placeholder.in-spine:first-child::before { top: -9px; height: calc(50% + 9px); }
+.session-placeholder.in-spine:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  bottom: -6px;
+  width: 2px;
+  background: var(--line-color);
+  pointer-events: none;
+}
+.session-card.nest-target .nest-zone {
+  border-style: solid;
+  background: color-mix(in srgb, var(--blue) 24%, var(--surface));
+}
 .session-placeholder {
   border: 1px dashed var(--blue);
   border-radius: 8px;

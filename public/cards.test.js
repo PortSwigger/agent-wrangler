@@ -319,6 +319,28 @@ test('workerRowHtml: carries data-sid and the status word as the dot tooltip, no
   assert.doesNotMatch(html, /worker-status/);
 });
 
+test('workerRowHtml: a workflow-run child gets the violet wf-child box with the workflow symbol leading the row', () => {
+  const html = workerRowHtml(sess({ label: 'w', workflow: { phase: 'build' } }), ctx());
+  assert.match(html, /worker-row [^"]*wf-child/);
+  assert.ok(html.indexOf('wf-ico') < html.indexOf('worker-dot'), 'symbol comes before the status dot and name');
+  assert.doesNotMatch(html, />Workflow</);
+  assert.doesNotMatch(workerRowHtml(sess({ label: 'w' }), ctx()), /wf-child|wf-ico/);
+});
+
+test('renderTileCards: a full-view workflow-run child keeps the violet box and frame, without the Workflow header', () => {
+  const parent = sess({ sessionId: 'p1', label: 'parent' });
+  const child = sess({ sessionId: 'c1', label: 'run', parentSession: 'p1', childFullView: true, workflow: { phase: 'plan' } });
+  const html = renderTileCards([parent, child], ctx({ isChildFullView: (s) => s.childFullView === true }));
+  assert.match(html, /class="spine-full-row wf-child" data-child-sid="c1" data-depth="0" data-parent-sid="p1" draggable="true"><span class="wf-ico"/);
+  assert.match(html, /session-card [^"]*wf-orchestrator[^"]*" data-sid="c1"/);
+  assert.doesNotMatch(html, /wf-title/);
+});
+
+test('workerRowHtml: is its own drag unit, tagged with data-child-sid so app.js tells it from a top-level card', () => {
+  const html = workerRowHtml(sess({ label: 'w' }), ctx());
+  assert.match(html, /data-child-sid="s1" data-depth="0" data-parent-sid="" draggable="true"/);
+});
+
 test('workerRowHtml: renders a trailing worker-ring element as the halo — not row-level outline/box-shadow, which the join line paints over', () => {
   const html = workerRowHtml(sess({ label: 'w', status: 'working' }), ctx());
   assert.match(html, /<span class="worker-ring" aria-hidden="true"><\/span>\s*<\/div>$/);
@@ -535,8 +557,10 @@ test('renderTileCards: a "full view" child (ctx.isChildFullView) draws a real .s
   const c1Row = html.split('\n').find((line) => line.includes('data-sid="c1"'));
   assert.match(c1Row, /session-card/);
   assert.doesNotMatch(c1Row, /worker-row/);
-  // Non-draggable — the enclosing .child-group is the actual drag unit.
+  // The card is non-draggable; its .spine-full-row wrapper is the child's own
+  // drag unit, so dragging it moves the child, not the whole parent group.
   assert.match(c1Row, /session-card [^"]*" data-sid="c1" draggable="false"/);
+  assert.match(html, /class="spine-full-row" data-child-sid="c1" data-depth="0" data-parent-sid="p1" draggable="true"/);
 });
 
 test('renderTileCards: a full-view child falls back to a compact row via the server-wide default when no per-session override is set', () => {
