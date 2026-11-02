@@ -15,29 +15,37 @@ narrow screens. **Intent / first prompt** starts at twelve rows and can be resiz
 **Schedule a session** uses the same layout, with timing and action controls on the task side.
 Choose **Existing session** to show the target session and optional message instead of launch controls.
 
-The model section plots measured quality against cost per task on a log scale. Drag the slider or
-use its arrow keys to move through the quality/cost curve, cheapest to best. Click a chart point to
-choose any available front setting, including points that earn their place only by being faster;
-these hide the slider handle. Quality, Cost and Time bars show the selected setting, and the verdict
-compares all three against settings your installed agents offer. Red rings mark unavailable settings;
-click a ring to see what is missing. A red selected diamond and **Below the front** verdict name an
-available setting that is at least as good.
+The selected model, effort and Quality, Cost and Time bars stay above three collapsible sections.
+**Recommended models** opens by default on first use: drag its slider or use the arrow keys to
+choose a recommended setting, cheapest to best. **Cost & quality graph** plots measured quality
+against cost per task on a log scale; click an available point to select it. Both views include
+settings recommended for their speed as well as their quality and cost. **All models** holds the
+full agent/model and effort dropdowns, including settings outside the recommendations.
+
+Opening a section does not change the selection. The dialog remembers the last section you opened
+in this browser, including across page reloads. Settings outside the recommended set show a notice
+without highlighting a slider stop or graph point. Their known measurements remain visible. When
+no benchmark data is available, a message overlays empty metric tracks; partially measured settings
+show their known values and mark individual missing estimates **Unavailable**. The verdict beside
+the model name compares quality, cost and time against settings your installed agents offer; hover
+a truncated name or verdict to read it in full.
 
 Dots and slider stops share stable colours for each provider/model, named in the key below the
 chart. Hover or focus a dot or stop to read its model and effort without selecting it; activate it
-to select. Selection has an outer ring, unavailable settings have hollow rings, and below-front
-picks have a diamond and a written warning, so the states remain distinct without colour.
+to select. Selection has an outer ring; unavailable settings are grey and clicking one explains
+what is missing without changing the selection.
 
 The dialog remembers your last explicit agent, model and effort in this browser, including
-**Auto**, when you use the slider, chart, **Any model** or a quick-launch button. Cancelling,
+**Auto**, when you use the slider, chart, **All models** or a quick-launch button. Cancelling,
 closing and reloading keep that choice. Saved schedules and values supplied by extensions take
 precedence without replacing your preference; forks inherit their source session's settings.
 If a remembered agent or model is unavailable, the dialog uses a live default. Unsupported
 remembered effort falls back to **Auto**.
 
-Expand **Any model** for the agent/model and effort dropdowns. **Auto** uses the effort reported by
-the agent; without a reported effort or benchmark row, the pick is unscored. Source credit sits under
-the chart. **Advanced options** starts collapsed and holds auto-compaction and runtime controls.
+**Auto** uses the effort reported by the agent; without a reported effort or benchmark row, the
+pick is unscored. The chart's **ⓘ** button opens its benchmark sources. Sections expand and scroll
+into view when opened, respecting reduced-motion settings. **Advanced options** starts collapsed
+and holds auto-compaction and runtime controls.
 
 Optional launch controls include:
 
