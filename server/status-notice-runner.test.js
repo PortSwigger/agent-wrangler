@@ -135,3 +135,58 @@ test('idle notices include the child unread count and final assistant text', asy
   await createStatusNoticeRunner(f.deps).run({ sessions: [] });
   assert.match(f.sent[0].body, /Unread mail waiting for it: 1. Last said: "done"/);
 });
+
+test('overlapping runs serialize each subscriber without blocking other subscribers', async () => {
+  const events = [event('c')];
+  const f = fixture(events);
+  const started = [];
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  f.deps.deliver = async (to) => {
+    started.push(to);
+    if (started.length === 1) await blocked;
+    return { mode: 'live' };
+  };
+  const runner = createStatusNoticeRunner(f.deps);
+  const first = runner.run({ sessions: [] });
+  await new Promise(setImmediate);
+  events.push(event('d', 'q'));
+  const second = runner.run({ sessions: [] });
+  try {
+    await new Promise(setImmediate);
+    assert.deepEqual(started, ['p', 'q']);
+    assert.equal(f.published.length, 3);
+  } finally {
+    release();
+    await Promise.all([first, second]);
+  }
+  assert.deepEqual(started, ['p', 'q', 'p']);
+});
+
+for (const mode of ['live', 'deferred', 'dormant']) {
+  test(`only an actual dormant wake requests a rebuild (${mode})`, async () => {
+    const f = fixture([event('c')]);
+    const woke = [];
+    f.deps.deliver = async () => ({ mode });
+    f.deps.onWoken = async (to) => { woke.push(to); };
+    await createStatusNoticeRunner(f.deps).run({ sessions: [] });
+    assert.deepEqual(woke, mode === 'dormant' ? ['p'] : []);
+  });
+}
+
+test('board rebuild proceeds while status notice delivery is pending', async () => {
+  const source = fs.readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+  const invocation = source.split('\n').find((line) => line.includes('statusNotices.run(graph)'));
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  let broadcast = false;
+  const run = new Function('statusNotices', 'graph', 'logError', `return (async () => { ${invocation}; return true; })();`);
+  const rebuilding = run({ run: () => pending }, {}, () => {}).then(() => { broadcast = true; });
+  try {
+    await new Promise(setImmediate);
+    assert.equal(broadcast, true);
+  } finally {
+    release();
+    await rebuilding;
+  }
+});

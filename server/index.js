@@ -863,6 +863,7 @@ const statusNotices = createStatusNoticeRunner({
   deliver: (to, text) => deliverNotice(to, text, mailDeliveryDeps),
   pending: (id) => paneDeferral.pending(id).some((text) => text.startsWith('[Agent Wrangler] Status notice')),
   log: logError,
+  onWoken: () => rebuild(),
 });
 const fireMailSettlesTick = createMailSettleSweeper({
   ...mailDeliveryDeps, mailStore, deferrals: mailDeferrals,
@@ -1130,7 +1131,7 @@ async function rebuildOnce() {
   for (const s of diffNeedsYou(graph.sessions)) {
     broadcast({ type: 'notify', session: { sessionId: s.sessionId, label: s.label, waitingFor: s.waitingFor } });
   }
-  try { await statusNotices.run(graph); } catch (error) { logError('[status-notice]', error); }
+  statusNotices.run(graph).catch((error) => logError('[status-notice]', error));
   for (const session of graph.sessions) session.statusNoticeBlocked = statusNotices.blocked(session.sessionId);
   // The wire graph, not `lastGraph`: history is omitted while unchanged, which is
   // almost every tick. See history-gate.js — and note the connect path above sends

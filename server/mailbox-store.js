@@ -386,6 +386,10 @@ export class MailboxStore {
     return [...box.messages].sort((a, b) => a.at - b.at).map((m) => ({ ...m }));
   }
 
+  sentSince(from, to, sinceMs) {
+    return this.boxes.get(to)?.messages.some((m) => m.from === from && m.at >= sinceMs) ?? false;
+  }
+
   // { unread, notifiedAt, amber, senders } for the board's mail pill: the count
   // and amber boolean drive the pill itself, `senders` (deduped, in message
   // order, identity-less senders dropped — see composeMailNotification for why)
@@ -402,10 +406,6 @@ export class MailboxStore {
   // pending and fall back to the oldest unread message's own timestamp — the
   // same fallback already used for "never notified at all" (a dormant wake
   // whose resume failed — no Phase-1 deliveryFailed tracking, see the spec).
-  sentSince(from, to, sinceMs) {
-    return this.boxes.get(to)?.messages.some((m) => m.from === from && m.at >= sinceMs) ?? false;
-  }
-
   unreadInfo(to, now = Date.now()) {
     const box = this.boxes.get(to);
     const unread = box ? box.messages.filter((m) => m.state === 'unread') : [];
