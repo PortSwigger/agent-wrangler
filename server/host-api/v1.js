@@ -32,15 +32,22 @@ import { supportsRemoteControl, supportsDisallowedTools } from '../agents/index.
 
 const sessionsRead = ({ core }) => ({
   sessions: {
-    list: () => core.sessionManager.activeEntries()
-      .map((e) => projectSession(e, e.sessionId, { taskId: core.taskStore.taskFor(e.sessionId)?.id ?? null })),
+    list: () => {
+      const nodes = new Map((core.graph?.()?.sessions ?? []).map((s) => [s.sessionId, s]));
+      return core.sessionManager.activeEntries()
+        .map((e) => projectSession(e, e.sessionId, { taskId: core.taskStore.taskFor(e.sessionId)?.id ?? null, node: nodes.get(e.sessionId) }));
+    },
     get: (id) => {
       const e = core.sessionManager.entryFor(id);
-      return e ? projectSession(e, id, { taskId: core.taskStore.taskFor(id)?.id ?? null }) : null;
+      const node = core.graph?.()?.sessions?.find((s) => s.sessionId === id) ?? null;
+      return e ? projectSession(e, id, { taskId: core.taskStore.taskFor(id)?.id ?? null, node }) : null;
     },
-    forTask: (taskId) => core.sessionManager.activeEntries()
-      .filter((e) => core.taskStore.taskFor(e.sessionId)?.id === taskId)
-      .map((e) => projectSession(e, e.sessionId, { taskId })),
+    forTask: (taskId) => {
+      const nodes = new Map((core.graph?.()?.sessions ?? []).map((s) => [s.sessionId, s]));
+      return core.sessionManager.activeEntries()
+        .filter((e) => core.taskStore.taskFor(e.sessionId)?.id === taskId)
+        .map((e) => projectSession(e, e.sessionId, { taskId, node: nodes.get(e.sessionId) }));
+    },
   },
 });
 

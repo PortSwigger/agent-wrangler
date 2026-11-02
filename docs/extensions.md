@@ -1663,7 +1663,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (later extensions are not asked); `warnings` toast on the board and the
   launch goes ahead. A hook that throws or takes over 60s is logged and
   skipped. Resume and fork never fire it. `server/session-prepare.js`.
-- **Session status projections** (`sessions:read`, 1.58.0): `host.sessions.get(id)`,
+- **Session status projections** (`sessions:read`, 1.59.0): `host.sessions.get(id)`,
   `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
   `hasBackgroundShell` from the latest board graph. Without a graph node, status
   and waitingReason are `null`, and the booleans are `false`. Conversation ids
@@ -1674,7 +1674,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension hears nothing. `emit` publishes `ext:<id>:<name>` (forced), so an
   extension cannot forge a core event. Core event: `archive-review:completed
   { sid, taskId, markdown }` (the review is skipped when nobody listens).
-  Since 1.58.0, `session-status:needs-you`, `session-status:idle-held`,
+  Since 1.59.0, `session-status:needs-you`, `session-status:idle-held`,
   `session-status:quiet` and `session-status:exited` publish
   `{ sid, kind, at, waitingFor, idleMs, quietMs, exitReason }` for every session,
   including those without spawner subscriptions. `kind` matches the event suffix;

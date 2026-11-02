@@ -37,7 +37,7 @@ export function worktreeSummary(wt) {
 
 // `taskId` is passed in rather than read off the entry: the session→task link
 // lives in task-store, not in the mapping, and this stays a pure projection.
-export function projectSession(entry, id, { taskId = null } = {}) {
+export function projectSession(entry, id, { taskId = null, node = null } = {}) {
   const e = entry || {};
   return deepFreeze({
     sessionId: id ?? null,
@@ -50,6 +50,10 @@ export function projectSession(entry, id, { taskId = null } = {}) {
     name: e.name ?? '',
     lastLabel: e.lastLabel ?? '',
     taskId,
+    status: node?.status ?? null,
+    dormant: Boolean(node && !node.managed && !node.exitOutput),
+    waitingReason: node?.waitingReason ?? null,
+    hasBackgroundShell: Boolean(node?.hasBackgroundShell),
     archived: Boolean(e.archivedAt),
     archivedAt: e.archivedAt ?? null,
     snoozedUntil: e.snooze?.until ?? null,

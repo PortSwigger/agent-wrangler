@@ -82,8 +82,31 @@ test('idle hold is suppressed by mail from the child to the subscriber, includin
   await tick(121000, 'idle');
   assert.deepEqual(f.sent, []);
   assert.equal(f.published.length, 1);
+  assert.deepEqual(f.published[0], ['session-status:idle-held', {
+    sid: 'c', kind: 'idle-held', at: 61000, waitingFor: null,
+    idleMs: 60000, quietMs: undefined, exitReason: undefined,
+  }]);
   assert.equal(fs.readFileSync(f.deps.mailStore.file, 'utf8'), before);
 });
+
+for (const [kind, suffix, fields] of [
+  ['idle', 'idle-held', { idleMs: 61000 }],
+  ['needs-you', 'needs-you', {}],
+  ['quiet', 'quiet', { quietMs: 900000 }],
+  ['exited', 'exited', { exitReason: 'archived' }],
+]) {
+  test(`runner publishes ${suffix} for an unsubscribed session with the documented payload`, async () => {
+    const e = event('unsubscribed', null, kind);
+    e.child.waitingFor = 'Approve command';
+    const f = fixture([{ ...e, ...fields }]);
+    await f.runner.run({ sessions: [] }, 123);
+    assert.deepEqual(f.published, [[`session-status:${suffix}`, {
+      sid: 'unsubscribed', kind: suffix, at: 123, waitingFor: 'Approve command',
+      idleMs: undefined, quietMs: undefined, exitReason: undefined, ...fields,
+    }]]);
+    assert.deepEqual(f.sent, []);
+  });
+}
 
 test('a held notice surfaces after two minutes and clears when its queue drains', async () => {
   const f = fixture([event('c')]);

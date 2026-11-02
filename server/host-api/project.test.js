@@ -32,6 +32,28 @@ test('the worktree is a summary, not the stored object', () => {
   assert.deepEqual(Object.keys(p.worktree).sort(), ['branch', 'path', 'repoRoot']);
 });
 
+test('projectSession carries graph status fields without conversation ids', () => {
+  const node = { status: 'needs-you', managed: true, waitingReason: 'permission', hasBackgroundShell: true };
+  const p = projectSession(entry(), 'card-1', { node });
+  assert.equal(p.status, 'needs-you');
+  assert.equal(p.dormant, false);
+  assert.equal(p.waitingReason, 'permission');
+  assert.equal(p.hasBackgroundShell, true);
+  assert.equal('liveSessionId' in p, false);
+  assert.equal('priorLiveSessionIds' in p, false);
+  assert.ok(Object.isFrozen(p));
+});
+
+test('projectSession distinguishes dormant nodes, exited nodes and absent graph data', () => {
+  assert.equal(projectSession(entry(), 'c', { node: { status: 'idle', managed: false } }).dormant, true);
+  assert.equal(projectSession(entry(), 'c', { node: { managed: false, exitOutput: 'done' } }).dormant, false);
+  const p = projectSession(entry(), 'c');
+  assert.equal(p.status, null);
+  assert.equal(p.dormant, false);
+  assert.equal(p.waitingReason, null);
+  assert.equal(p.hasBackgroundShell, false);
+});
+
 test('a projection is frozen all the way down and mutating it cannot reach the source', () => {
   const src = entry();
   const p = projectSession(src, 'card-1');

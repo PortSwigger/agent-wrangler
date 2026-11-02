@@ -25,8 +25,9 @@ export function createStatusNoticeRunner(deps) {
       }
       const groups = new Map();
       for (const event of events) {
-        deps.events?.emit(`session-status:${event.kind}`, {
-          sid: event.child.sessionId, kind: event.kind, at: now,
+        const kind = event.kind === 'idle' ? 'idle-held' : event.kind;
+        deps.events?.emit(`session-status:${kind}`, {
+          sid: event.child.sessionId, kind, at: now,
           waitingFor: event.child.waitingFor ?? null,
           idleMs: event.idleMs, quietMs: event.quietMs, exitReason: event.exitReason,
         });

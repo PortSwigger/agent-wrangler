@@ -859,6 +859,7 @@ const mailDeferrals = createDeferralTracker();
 const mailDeliveryDeps = { sessionManager, tmuxFor, socketFor, paneDeferral, wakesDormant: mailWakesDormant };
 const statusNotices = createStatusNoticeRunner({
   watcher: createStatusWatcher(), mailStore, sessionManager,
+  events: coreEvents,
   deliver: (to, text) => deliverNotice(to, text, mailDeliveryDeps),
   pending: (id) => paneDeferral.pending(id).some((text) => text.startsWith('[Agent Wrangler] Status notice')),
   log: logError,
