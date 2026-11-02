@@ -163,7 +163,8 @@ Live Claude subscribers receive notices over the messaging socket when available
 fallback waits for a clear composer and no dialog; Codex can receive a notice during a turn,
 while Claude's terminal fallback waits until idle. A notice held for two minutes shows a
 **Status notice waiting** tag on the card. Dormant subscribers wake with the notice, independently
-of **Let mail wake dormant sessions**. Snoozed and archived subscribers receive nothing.
+of **Let mail wake dormant sessions**. Snoozed and archived subscribers receive nothing;
+notices skipped during snooze are discarded rather than delivered when the snooze ends.
 Subscriptions survive resume, are not inherited by forks, and end when the child exits or the
 subscriber is archived or missing. A server restart seeds observations without sending notices.
 

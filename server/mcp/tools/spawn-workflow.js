@@ -44,7 +44,7 @@ export const spawnWorkflowTool = {
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the run (--add-dir).'),
     auto_compact_tokens: z.number().int().min(50000).max(1000000).optional().describe('Optional immutable auto-compaction threshold / working context budget in tokens (50000–1000000; 50000 is Codex-only).'),
     nest: z.boolean().optional().describe('Nest the new session under your card and subscribe to status notices.'),
-    notify_status: z.boolean().optional().describe('Notify you when this session goes idle without reporting to you, needs a person, goes quiet mid-turn, or exits. Implied by nest: true.'),
+    notify_status: z.boolean().optional().describe('Notify you when this session is idle for a minute after working, needs a person, goes quiet mid-turn, or exits. Implied by nest: true.'),
     into: z.string().optional().describe(
       'Task id to put the run on, sourced from list_tasks. An id not sourced from list_tasks '
       + 'silently lands the run in Unassigned instead of erroring. Defaults to your current '

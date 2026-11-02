@@ -385,8 +385,8 @@ test('a queued notification is dropped when the recipient becomes ineligible', a
   let eligible = true;
   let pane = composer('draft');
   const d = deps({ pane: () => pane });
-  const pd = createPaneDeferral({ ...d, canDeliver: () => eligible });
-  await pd.deliverOrDefer({ id: 'c1', text: 'notice' });
+  const pd = createPaneDeferral(d);
+  await pd.deliverOrDefer({ id: 'c1', text: 'notice', canDeliver: () => eligible });
   eligible = false;
   pane = composer();
   assert.deepEqual(await pd.drain(), []);
@@ -398,12 +398,12 @@ test('a queued recipient becoming ineligible during pane capture is not pasted',
   let eligible = true;
   let draining = false;
   const d = deps();
-  const pd = createPaneDeferral({ ...d, canDeliver: () => eligible, capture: async () => {
+  const pd = createPaneDeferral({ ...d, capture: async () => {
     if (!draining) return composer('draft');
     eligible = false;
     return composer();
   } });
-  await pd.deliverOrDefer({ id: 'c1', text: 'notice' });
+  await pd.deliverOrDefer({ id: 'c1', text: 'notice', canDeliver: () => eligible });
   draining = true;
   assert.deepEqual(await pd.drain(), []);
   assert.deepEqual(d.sent, []);
@@ -473,4 +473,20 @@ test('a readiness hook changing the composer protects every queued delivery poli
   assert.deepEqual(await pd.drain(), []);
   assert.deepEqual(d.sent, []);
   assert.deepEqual(pd.pending('c1'), ['PR #1 merged', 'notice']);
+});
+
+
+test('dropping a status notice during snooze preserves queued PR nudges', async () => {
+  let snoozed = false;
+  let pane = composer('draft');
+  const d = deps({ pane: () => pane });
+  const pd = createPaneDeferral(d);
+  await pd.deliverOrDefer({ id: 'c1', text: 'child idle', canDeliver: () => !snoozed });
+  await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 checks failing' });
+  snoozed = true;
+  assert.deepEqual(await pd.drain(), []);
+  assert.deepEqual(pd.pending('c1'), ['PR #1 checks failing']);
+  pane = composer();
+  assert.deepEqual(await pd.drain(), ['c1']);
+  assert.deepEqual(d.sent.map((s) => s.text), ['PR #1 checks failing']);
 });

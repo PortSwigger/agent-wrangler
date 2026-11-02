@@ -1680,8 +1680,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   including those without spawner subscriptions. `kind` matches the event suffix;
   `at` is the rebuild time in milliseconds. `idleMs`, `quietMs` and `exitReason`
   are set for their corresponding kind only; exitReason is `exited`, `archived`
-  or `gone`. `waitingFor` is the board summary or `null`. Idle-held is the 60-second
-  hold after working, excluding background shells. Child mail affects the spawner
+  or `gone`. `waitingFor` is the board summary or `null`; it can contain scraped
+  approval or prompt text. The `events` capability grants access to these payloads
+  without requiring `sessions:read`. Idle-held is the 60-second hold after working,
+  excluding background shells. Child mail affects the spawner
   notice wording; it suppresses neither the notice nor this event. Events occur
   once per episode; unknown readings preserve the last known episode. The first
   rebuild after restart only seeds the watcher.

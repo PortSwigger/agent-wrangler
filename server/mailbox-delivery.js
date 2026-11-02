@@ -50,6 +50,10 @@ export async function deliverNotice(to, text, deps) {
 
 async function sendNotice(to, entry, target, text, socket, deps) {
   let reason = null;
+  const canDeliver = () => {
+    const current = deps.sessionManager.entryFor(to);
+    return Boolean(current && !current.archivedAt && !current.snooze);
+  };
   const beforeSend = async () => {
     const since = entry.relaunchedAt;
     const timeout = deps.mcpReadyTimeoutMs ?? MCP_READY_TIMEOUT_MS;
@@ -57,11 +61,10 @@ async function sendNotice(to, entry, target, text, socket, deps) {
     if (typeof since === 'number' && Date.now() - since >= 0 && Date.now() - since <= timeout && seen(to) <= since) {
       await waitForMcpReady(to, since, seen, timeout, deps.mcpReadyPollMs ?? MCP_READY_POLL_MS);
     }
-    const current = deps.sessionManager.entryFor(to);
-    return Boolean(current && !current.archivedAt && !current.snooze);
+    return canDeliver();
   };
   const result = await liveTransport(to, entry, target, text, socket, deps.paneDeferral, beforeSend,
-    (r) => { reason = r; }, deps, true);
+    (r) => { reason = r; }, deps, true, canDeliver);
   const current = deps.sessionManager.entryFor(to);
   if (result === 'skip' || !current || current.archivedAt || current.snooze) return { mode: 'skip' };
   return result === 'deferred' ? { mode: 'deferred', reason } : { mode: 'live' };
@@ -103,7 +106,7 @@ async function wakeDormant(to, entry, deps, notice = null) {
 // socket, or a failed send falls back to the pane paste, gated by paneDeferral so
 // it can never land in the middle of a prompt. beforeSend (the MCP-ready wait
 // after a relaunch) runs before either.
-async function liveTransport(id, entry, tmux, text, socket, paneDeferral, beforeSend, onDefer, deps, queueOnDefer = false) {
+async function liveTransport(id, entry, tmux, text, socket, paneDeferral, beforeSend, onDefer, deps, queueOnDefer = false, canDeliver) {
   if (adapterFor(entry.agent).terminal.socketMail) {
     const target = (deps.findSocket ?? defaultFindSocket)(entry.liveSessionId || id);
     if (target) {
@@ -120,7 +123,7 @@ async function liveTransport(id, entry, tmux, text, socket, paneDeferral, before
   // Codex accepts guidance during a turn, but the paste still needs clear input
   // and no dialog. Claude's paste fallback continues to wait until idle.
   return paneDeferral.deliverOrDefer({
-    id, text, tmux, socket, deferWhileWorking: true, allowWhileWorking: adapterFor(entry.agent).terminal.allowWhileWorking, queueOnDefer, beforeSend, onDefer,
+    id, text, tmux, socket, deferWhileWorking: true, allowWhileWorking: adapterFor(entry.agent).terminal.allowWhileWorking, queueOnDefer, beforeSend, onDefer, canDeliver,
   });
 }
 

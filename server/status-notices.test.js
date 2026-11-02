@@ -260,3 +260,29 @@ test('resume still rearms quiet detection while the status is unknown', () => {
   assert.deepEqual(f.tick(resumed + 1, { status: 'working', lastActivity: 0 }), []);
   assert.equal(f.tick(resumed + QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.quietMs, QUIET_MS);
 });
+
+
+test('a child seeded idle starts a fresh mail window when it next works', () => {
+  const watcher = createStatusWatcher();
+  const tick = (now, status) => watcher.tick([node({ status })], () => ({ createdAt: 1000, statusNotify: { to: 'p' } }), {
+    now, mailSince: (_from, _to, since) => 5000 >= since,
+  });
+  tick(100000, 'idle');
+  tick(200000, 'working');
+  tick(300000, 'idle');
+  assert.equal(tick(360000, 'idle')[0]?.reported, false);
+});
+
+test('a restored child without a graph node retains its identity on another archive', () => {
+  const f = fixture();
+  f.tick(0, { status: 'working' });
+  f.entry({ archivedAt: 1 });
+  assert.equal(f.tick(1, null)[0]?.kind, 'exited');
+  f.entry({ name: 'Restored child' });
+  assert.deepEqual(f.tick(2, null), []);
+  f.entry({ archivedAt: 3, name: 'Restored child' });
+  const [event] = f.tick(3, null);
+  assert.equal(event.kind, 'exited');
+  assert.equal(event.child.sessionId, 'c');
+  assert.equal(event.child.label, 'Restored child');
+});

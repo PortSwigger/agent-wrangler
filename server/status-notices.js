@@ -32,7 +32,7 @@ export function createStatusWatcher() {
         const child = node ? {
           sessionId: id, label: node.label, status: node.status,
           waitingFor: node.waitingFor ?? null, exitOutput: node.exitOutput ?? null,
-        } : previous?.child;
+        } : previous?.child ?? { sessionId: id, label: entry?.name ?? id };
         const status = node?.managed === false && !node.exitOutput ? 'idle'
           : node?.status ?? 'unknown';
         const effective = status === 'idle' && node?.hasBackgroundShell ? 'working' : status;
@@ -62,7 +62,7 @@ export function createStatusWatcher() {
         if (effective !== previous.status) {
           previous.notified.clear();
           previous.idleSince = effective === 'idle' ? now : null;
-          if (effective === 'working') previous.workingSince = previous.workingSeen ? now : launchAt ?? entry?.statusNotify?.since ?? now;
+          if (effective === 'working') previous.workingSince = previous.workingSeen || previous.status !== 'unknown' ? now : launchAt ?? entry?.statusNotify?.since ?? now;
         }
         const event = { to, child };
         if (effective === 'needs-you' && previous.status !== 'needs-you') {

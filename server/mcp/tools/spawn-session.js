@@ -63,7 +63,7 @@ export const spawnSessionTool = {
       + 'git-dir is granted automatically. Each entry must be an existing directory; ~ expands.',
     ),
     auto_compact_tokens: z.number().int().min(50000).max(1000000).optional().describe('Optional auto-compaction threshold / working context budget in tokens (50000–1000000; 50000 is Codex-only). Immutable for the session and inherited by forks.'),
-    notify_status: z.boolean().optional().describe('Notify you when this session goes idle without reporting to you, needs a person, goes quiet mid-turn, or exits. Implied by nest: true.'),
+    notify_status: z.boolean().optional().describe('Notify you when this session is idle for a minute after working, needs a person, goes quiet mid-turn, or exits. Implied by nest: true.'),
     into: z.string().optional().describe(
       'Task id to put the new session on, sourced from list_tasks. An id not sourced from '
       + 'list_tasks silently lands the session in Unassigned instead of erroring. Defaults to '

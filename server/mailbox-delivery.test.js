@@ -508,3 +508,23 @@ test('a subscriber archived during socket readiness receives no notice', async (
   assert.equal((await deliverNotice('CARD1', 'notice', d)).mode, 'skip');
   assert.deepEqual(d.socketSent, []);
 });
+
+
+test('a queued status notice is discarded if its subscriber snoozes before the pane clears', async () => {
+  const entry = { agent: 'codex' };
+  const d = deps({ live: { CARD1: { tmux: 'cc_one' } }, entries: { CARD1: entry } });
+  let pane = '\x1b[1m›\x1b[0m draft';
+  d.paneDeferral = createPaneDeferral({
+    tmuxFor: d.tmuxFor, socketFor: d.socketFor, agentFor: () => 'codex',
+    capture: async () => pane,
+    sendText: async (_tmux, text) => d.sent.push(text),
+  });
+  assert.equal((await deliverNotice('CARD1', 'notice', d)).mode, 'deferred');
+  entry.snooze = { until: Date.now() + 10000 };
+  assert.deepEqual(await d.paneDeferral.drain(), []);
+  assert.deepEqual(d.paneDeferral.pending('CARD1'), []);
+  delete entry.snooze;
+  pane = '\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m';
+  await d.paneDeferral.drain();
+  assert.deepEqual(d.sent, []);
+});
