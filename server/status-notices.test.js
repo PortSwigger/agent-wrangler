@@ -11,10 +11,31 @@ function fixture(entry = { statusNotify: { to: 'p', since: 0 } }) {
   return { watcher, tick, mail: () => { reported = true; }, entry: (e) => { current = e; } };
 }
 
-test('first tick seeds and emits nothing, including newly discovered sessions', () => {
+test('first tick seeds and emits nothing', () => {
   const f = fixture();
   assert.deepEqual(f.tick(0, { status: 'needs-you' }), []);
   assert.deepEqual(f.tick(100000), []);
+});
+
+test('a new child first seen needing help after the restart baseline notifies immediately', () => {
+  const f = fixture();
+  f.tick(0, null);
+  const [event] = f.tick(1, { status: 'needs-you', waitingFor: 'Trust this folder' });
+  assert.equal(event.kind, 'needs-you');
+  assert.equal(event.to, 'p');
+  assert.equal(event.child.waitingFor, 'Trust this folder');
+  assert.deepEqual(f.tick(2, { status: 'needs-you' }), []);
+});
+
+test('newly discovered startup idle stays silent and an already exited child reports once', () => {
+  const f = fixture();
+  f.tick(0, null);
+  assert.deepEqual(f.tick(1), []);
+  assert.deepEqual(f.tick(120001), []);
+  const exited = fixture();
+  exited.tick(0, null);
+  assert.equal(exited.tick(1, { exitOutput: 'done' })[0].kind, 'exited');
+  assert.deepEqual(exited.tick(2, { exitOutput: 'done' }), []);
 });
 
 test('idle notice after the hold once the child has worked, once per episode', () => {

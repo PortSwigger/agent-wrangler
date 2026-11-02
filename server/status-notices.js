@@ -4,9 +4,12 @@ export const QUIET_MS = 900000;
 export function createStatusWatcher() {
   const states = new Map();
   const exited = new Set();
+  let seeded = false;
   return {
     forget(id) { states.delete(id); },
     tick(sessions, entryFor, { now, mailSince = () => false }) {
+      const baseline = !seeded;
+      seeded = true;
       const nodes = new Map(sessions.map((s) => [s.sessionId, s]));
       const events = [];
       for (const id of new Set([...states.keys(), ...nodes.keys(), ...exited])) {
@@ -20,7 +23,7 @@ export function createStatusWatcher() {
           }
           exited.delete(id);
         }
-        const previous = states.get(id);
+        let previous = states.get(id);
         const to = entry ? entry.statusNotify?.to ?? null : previous?.to ?? null;
         const child = node ? {
           sessionId: id, label: node.label, status: node.status,
@@ -30,10 +33,11 @@ export function createStatusWatcher() {
           : node?.status ?? 'unknown';
         const effective = status === 'idle' && node?.hasBackgroundShell ? 'working' : status;
         if (!previous) {
-          if (exitReason) { exited.add(id); continue; }
-          states.set(id, { status: effective, idleSince: effective === 'idle' ? now : null,
-            workingSeen: effective === 'working', notified: new Set(), child, to });
-          continue;
+          if (exitReason && baseline) { exited.add(id); continue; }
+          previous = { status: baseline ? effective : 'unknown', idleSince: effective === 'idle' ? now : null,
+            workingSeen: effective === 'working', notified: new Set(), child, to };
+          states.set(id, previous);
+          if (baseline) continue;
         }
         previous.child = child;
         previous.to = to;

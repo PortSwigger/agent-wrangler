@@ -408,3 +408,68 @@ test('a queued recipient becoming ineligible during pane capture is not pasted',
   assert.deepEqual(await pd.drain(), []);
   assert.deepEqual(d.sent, []);
 });
+
+test('a queued idle-only Claude notice does not hold PR notices back during a turn', async () => {
+  let status = 'needs-you';
+  let pane = composer('draft');
+  const d = deps({ pane: () => pane });
+  const pd = createPaneDeferral({ ...d, statusFor: () => status });
+  await pd.deliverOrDefer({ id: 'c1', text: 'child notice', deferWhileWorking: true });
+  await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 merged' });
+  status = 'working';
+  pane = `${composer()}\n✻ Thinking (5s · esc to interrupt)`;
+  assert.deepEqual(await pd.drain(), ['c1']);
+  assert.deepEqual(d.sent.map((s) => s.text), ['PR #1 merged']);
+  assert.deepEqual(pd.pending('c1'), ['child notice']);
+  status = 'idle';
+  pane = composer();
+  await pd.drain();
+  assert.deepEqual(d.sent.map((s) => s.text), ['PR #1 merged', 'child notice']);
+});
+
+test('queued Codex notices retain permission to drain during a turn', async () => {
+  let pane = `${E}[1m›${E}[0m draft`;
+  const d = deps({ pane: () => pane, agent: 'codex' });
+  const pd = createPaneDeferral({ ...d, statusFor: () => 'working' });
+  await pd.deliverOrDefer({ id: 'c1', text: 'notice', deferWhileWorking: true, allowWhileWorking: true });
+  pane = `${E}[1m•${E}[0m Working (5s • esc to interrupt)\n${codexComposer()}`;
+  assert.deepEqual(await pd.drain(), ['c1']);
+  assert.deepEqual(d.sent.map((s) => s.text), ['notice']);
+});
+
+test('queued notices retain their readiness gate and recheck the composer after it', async () => {
+  let pane = composer('draft');
+  let ready = false;
+  let draftOnReady = false;
+  let checks = 0;
+  const d = deps({ pane: () => pane });
+  const pd = createPaneDeferral(d);
+  await pd.deliverOrDefer({ id: 'c1', text: 'notice', beforeSend: async () => {
+    checks++;
+    if (draftOnReady) pane = composer('new draft');
+    return ready;
+  } });
+  pane = composer();
+  assert.deepEqual(await pd.drain(), []);
+  assert.equal(checks, 1);
+  ready = true;
+  draftOnReady = true;
+  assert.deepEqual(await pd.drain(), []);
+  draftOnReady = false;
+  pane = composer();
+  assert.deepEqual(await pd.drain(), ['c1']);
+  assert.deepEqual(d.sent.map((s) => s.text), ['notice']);
+});
+
+test('a readiness hook changing the composer protects every queued delivery policy', async () => {
+  let pane = composer('draft');
+  const d = deps({ pane: () => pane });
+  const pd = createPaneDeferral(d);
+  await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 merged' });
+  await pd.deliverOrDefer({ id: 'c1', text: 'notice', deferWhileWorking: true,
+    beforeSend: async () => { pane = composer('new draft'); } });
+  pane = composer();
+  assert.deepEqual(await pd.drain(), []);
+  assert.deepEqual(d.sent, []);
+  assert.deepEqual(pd.pending('c1'), ['PR #1 merged', 'notice']);
+});

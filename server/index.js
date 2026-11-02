@@ -166,7 +166,7 @@ const taskStore = new TaskStore();
 // leaf rule means nothing under server/extensions/** can import them — see
 // server/extensions/index.js). Handed to host-api/, never reached for, which is
 // why the extension stores are instantiated HERE and not beside the loader.
-const extCore = { sessionManager, taskStore };
+const extCore = { sessionManager, taskStore, graph: () => lastGraph };
 // extId -> the per-extension `host` façade (host-api/index.js), populated once
 // the board primitives below exist. Declared here so every seam bound during
 // boot — session hooks, the skill gate, the tool filter — can close over the

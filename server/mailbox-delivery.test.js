@@ -477,6 +477,22 @@ test('deliverNotice retains a gated paste until the composer clears', async () =
   assert.deepEqual(delivered, ['[Agent Wrangler] notice']);
 });
 
+test('a deferred Claude fallback notice waits until idle on every drain', async () => {
+  let status = 'working';
+  const d = socketDeps({ agent: 'claude', socket: null });
+  d.paneDeferral = createPaneDeferral({
+    tmuxFor: d.tmuxFor, socketFor: d.socketFor, agentFor: () => 'claude', statusFor: () => status,
+    capture: async () => status === 'working' ? '\x1b[39m❯ \n✻ Thinking (5s · esc to interrupt)' : '\x1b[39m❯ ',
+    sendText: async (_name, text) => d.sent.push(text),
+  });
+  assert.equal((await deliverNotice('CARD1', 'notice', d)).mode, 'deferred');
+  assert.deepEqual(await d.paneDeferral.drain(), []);
+  assert.deepEqual(d.sent, []);
+  status = 'idle';
+  assert.deepEqual(await d.paneDeferral.drain(), ['CARD1']);
+  assert.deepEqual(d.sent, ['notice']);
+});
+
 test('deliverNotice propagates a dormant resume failure', async () => {
   const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
   d.sessionManager.isResuming = () => false;
