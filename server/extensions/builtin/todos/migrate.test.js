@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { TodoStore } from './store.js';
-import { migrateFromTasks } from './migrate.js';
-import { createTodoStore } from './index.js';
+import { migrateFromTasks, stripLegacyTodos } from './migrate.js';
+import { createTodoStore, stripLegacySweep } from './index.js';
 import { tmpDir } from './test-helpers.js';
 
 const legacy = { t1: [{ id: 'td_1', text: 'one', createdAt: 1 }], adhoc: [{ id: 'td_2', text: 'two', description: 'd', createdAt: 2 }], bad: 'x' };
@@ -17,16 +17,36 @@ function setup(tasks) {
   return { dir, tasksFile, file };
 }
 
-test('imports todos from tasks.json, marks migrated, leaves tasks.json untouched', () => {
-  const { tasksFile, file } = setup({ tasks: [], todos: legacy });
-  const before = fs.readFileSync(tasksFile, 'utf8');
+test('imports todos from tasks.json, marks migrated and leaves tasks.json untouched until the sweep strips it', () => {
+  const { tasksFile, file } = setup({ tasks: [{ id: 't1', name: 'T' }], order: ['t1'], todos: legacy });
   const store = new TodoStore(file);
   assert.equal(migrateFromTasks(store, { tasksFile }), 'imported');
   assert.deepEqual(Object.keys(store.snapshot().todos).sort(), ['adhoc', 't1']);
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(onDisk.migrated, true);
   assert.equal(onDisk.todos.adhoc[0].description, 'd');
+  assert.deepEqual(JSON.parse(fs.readFileSync(tasksFile, 'utf8')).todos, legacy);
+  stripLegacySweep({ host: { stores: { todos: store } } });
+  assert.deepEqual(JSON.parse(fs.readFileSync(tasksFile, 'utf8')), { tasks: [{ id: 't1', name: 'T' }], order: ['t1'] });
+  assert.equal(store.legacyStrip, null);
+});
+
+test('a refused duplicate instance (no sweep) never rewrites tasks.json', () => {
+  const { tasksFile, file } = setup({ tasks: [], todos: legacy });
+  const before = fs.readFileSync(tasksFile, 'utf8');
+  createTodoStore({}, { file, tasksFile });
   assert.equal(fs.readFileSync(tasksFile, 'utf8'), before);
+});
+
+test('stripLegacyTodos re-reads the file and leaves missing, corrupt and todos-less files alone', () => {
+  const { dir, tasksFile } = setup({ tasks: [{ id: 'later' }], todos: legacy });
+  assert.equal(stripLegacyTodos({ tasksFile }), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(tasksFile, 'utf8')), { tasks: [{ id: 'later' }] });
+  assert.equal(stripLegacyTodos({ tasksFile }), false);
+  assert.equal(stripLegacyTodos({ tasksFile: path.join(dir, 'missing.json') }), false);
+  fs.writeFileSync(tasksFile, '{not json');
+  assert.equal(stripLegacyTodos({ tasksFile }), false);
+  assert.equal(fs.readFileSync(tasksFile, 'utf8'), '{not json');
 });
 
 test('is idempotent: a marked todos.json is never re-imported, so edits and deletions stick', () => {
