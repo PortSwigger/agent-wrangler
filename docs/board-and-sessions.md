@@ -15,7 +15,7 @@ narrow screens. **Intent / first prompt** starts at twelve rows and can be resiz
 **Schedule a session** uses the same layout, with timing and action controls on the task side.
 Choose **Existing session** to show the target session and optional message instead of launch controls.
 When a schedule starts, its notification shows the schedule name. For an unnamed schedule, it shows
-the target session's title, falling back to its session id if the title is not available yet.
+the target session's title, falling back to its short session id if no title is available.
 
 The model section plots measured quality against cost per task on a log scale. Drag the slider or
 use its arrow keys to move through the quality/cost curve, cheapest to best. Click a chart point to

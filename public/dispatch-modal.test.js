@@ -570,14 +570,20 @@ for (const name of [undefined, '', 'Untitled schedule']) {
 
 test('schedule notification keeps an explicit name when the target has a title', () => {
   const app = scheduledFocusHarness([{ sessionId: 'CARD1', label: 'Check release build', managed: true }]);
-  app.onScheduleFired({ name: 'Morning work', sessionId: 'CARD1' });
+  app.onScheduleFired({ name: 'Morning work', sessionId: 'CARD1', label: 'Release worker' });
   assert.equal(app.notices[0].opts.title, 'Scheduled "Morning work" started');
+});
+
+test('unnamed dispatch notification uses the supplied title before board state arrives', () => {
+  const app = scheduledFocusHarness();
+  app.onScheduleFired({ name: 'Untitled schedule', sessionId: 'NEW1', label: 'Check release build' });
+  assert.equal(app.notices[0].opts.title, 'Scheduled "Check release build" started');
 });
 
 test('unnamed schedule notification identifies a target absent from board state', () => {
   const app = scheduledFocusHarness();
-  app.onScheduleFired({ name: 'Untitled schedule', sessionId: 'CARD1' });
-  assert.equal(app.notices[0].opts.title, 'Scheduled "CARD1" started');
+  app.onScheduleFired({ name: 'Untitled schedule', sessionId: '12345678-1234-1234-1234-123456789abc' });
+  assert.equal(app.notices[0].opts.title, 'Scheduled "12345678" started');
 });
 
 for (const [label, sessions] of [

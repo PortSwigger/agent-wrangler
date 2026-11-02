@@ -769,7 +769,9 @@ async function fireSchedule(id, { manual = false } = {}) {
     // A one-off that fired cleanly has nothing left to show; delete it so agents'
     // self-scheduled wake-ups don't pile up as dead rows. A failed one stays (below).
     if (!manual && snap.when.kind === 'once') scheduleStore.delete(id);
-    broadcast({ type: 'schedule-fired', id, name: snap.name, sessionId, focus: snap.action.kind === 'session' && snap.action.focus === true });
+    const e = sessionManager.entryFor(sessionId);
+    const label = sessionLabel({ agent: e?.agent, names: [e?.name, e?.lastLabel], intent: e?.intent, cwd: e?.cwd, fallback: sessionId.slice(0, 8) });
+    broadcast({ type: 'schedule-fired', id, name: snap.name, sessionId, label, focus: snap.action.kind === 'session' && snap.action.focus === true });
   } catch (err) {
     scheduleStore.markFired(id, { at, sessionId: null }, now, { advance: !manual });
     broadcast({ type: 'schedule-error', id, name: snap.name, message: String(err?.message || err) });
