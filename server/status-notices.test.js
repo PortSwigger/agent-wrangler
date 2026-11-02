@@ -7,7 +7,7 @@ function fixture(entry = { statusNotify: { to: 'p', since: 0 } }) {
   const watcher = createStatusWatcher();
   let current = entry;
   let reported = false;
-  const tick = (now, over = {}) => watcher.tick(over === null ? [] : [node(over)], () => current, { now, mailSince: (c, p, since) => reported && c === 'c' && p === 'p' && since === 1000 });
+  const tick = (now, over = {}) => watcher.tick(over === null ? [] : [node(over)], () => current, { now, mailSince: (c, p, since) => reported && c === 'c' && p === 'p' && since === 0 });
   return { watcher, tick, mail: () => { reported = true; }, entry: (e) => { current = e; } };
 }
 
@@ -59,14 +59,14 @@ test('no idle notice before the child has worked', () => {
   assert.deepEqual(f.tick(120000), []);
 });
 
-test('idle hold is suppressed by mail from the child to the subscriber, but remains observable', () => {
+test('idle hold records mail from the child to the subscriber without suppressing the event', () => {
   const f = fixture();
   f.tick(0, { status: 'working' });
   f.tick(1000);
   f.mail();
   const events = f.tick(61000);
   assert.equal(events[0].reported, true);
-  assert.deepEqual(events.filter((e) => !e.reported), []);
+  assert.equal(events.length, 1);
   assert.deepEqual(f.tick(121000), []);
 });
 
@@ -206,4 +206,31 @@ test('a resume rearms quiet notices after a previous quiet episode', () => {
   f.entry({ relaunchedAt: resumed });
   assert.deepEqual(f.tick(resumed, { status: 'working', lastActivity: 0 }), []);
   assert.equal(f.tick(resumed + QUIET_MS, { status: 'working', lastActivity: 0 })[0]?.quietMs, QUIET_MS);
+});
+
+
+test('idle notice detects mail from the preceding working period, excluding older mail', () => {
+  for (const mailAt of [500, 51000, -1]) {
+    const watcher = createStatusWatcher();
+    const entry = { statusNotify: { to: 'p', since: 0 } };
+    const tick = (now, status) => watcher.tick([node({ status })], () => entry, {
+      now, mailSince: (from, to, since) => from === 'c' && to === 'p' && mailAt >= since,
+    });
+    tick(0, 'working');
+    tick(1000, 'idle');
+    assert.equal(tick(61000, 'idle')[0]?.reported, mailAt >= 0);
+  }
+});
+
+test('an earlier work period report is not claimed for the following idle episode', () => {
+  const watcher = createStatusWatcher();
+  const tick = (now, status) => watcher.tick([node({ status })], () => ({ statusNotify: { to: 'p', since: 0 } }), {
+    now, mailSince: (_from, _to, since) => 500 >= since,
+  });
+  tick(0, 'working');
+  tick(1000, 'idle');
+  assert.equal(tick(61000, 'idle')[0]?.reported, true);
+  tick(62000, 'working');
+  tick(63000, 'idle');
+  assert.equal(tick(123000, 'idle')[0]?.reported, false);
 });

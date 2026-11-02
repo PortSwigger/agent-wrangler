@@ -49,7 +49,9 @@ A `[Agent Wrangler] Status notice` is not mail and never appears in `read_mail`.
 It is Wrangler's observation of a session you spawned with `nest: true` or
 `notify_status: true`, sent directly over the messaging socket or pasted through
 the terminal gate. It can lag the board by one rebuild. Read the child's transcript
-or message it before assuming an idle observation means it finished. A dormant
+or message it before assuming an idle observation means it finished. Child mail
+does not suppress an idle notice; the notice mentions mail from that working
+period or idle hold even if it is already read. A dormant
 subscriber is woken for a status notice regardless of the mail-wake setting;
 snoozed and archived subscribers receive nothing.
 

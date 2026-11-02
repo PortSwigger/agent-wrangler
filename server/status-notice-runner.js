@@ -37,7 +37,6 @@ export function createStatusNoticeRunner(deps) {
           if (sessionManager.entryFor(event.child.sessionId)?.statusNotify) sessionManager.clearStatusNotify(event.child.sessionId);
           continue;
         }
-        if (event.reported) continue;
         if (!groups.has(event.to)) groups.set(event.to, []);
         groups.get(event.to).push(event);
       }

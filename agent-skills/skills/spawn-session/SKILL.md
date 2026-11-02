@@ -168,11 +168,13 @@ plain spawns do not subscribe. After spawning, end your turn and wait for the
 child's mail or a status notice. Never `sleep` or poll `list_sessions` to wait.
 
 Agent Wrangler sends you a `[Agent Wrangler] Status notice` when the child is
-idle for a minute without having mailed you, needs a person, goes quiet for
+idle for a minute, needs a person, goes quiet for
 15 minutes mid-turn, or exits. Startup idle does not count until the child has
 worked, and a background shell keeps it out of the idle hold. Notices are sent
 directly, not through mail or `read_mail`. An idle notice includes the child's
-unread-mail count and, when readable, its last assistant words.
+unread-mail count and, when readable, its last assistant words. Child mail does
+not suppress the notice; it mentions mail from the current working period or
+idle hold, including mail you have already read.
 
 A notice is an observation, not the child's report. Read the transcript or
 `send_message` the child before assuming it finished. Live Claude gets notices

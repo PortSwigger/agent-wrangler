@@ -21,7 +21,9 @@ export function composeStatusNotice(events, detail) {
     const info = detail.get(child.sessionId);
     let text;
     if (kind === 'idle') {
-      text = `idle for ${formatIdleFor(event.idleMs)} with no report to you. Unread mail waiting for it: ${info?.unread ?? 0}.`;
+      text = `idle for ${formatIdleFor(event.idleMs)}`;
+      text += event.reported ? '. Mail from this session is already in your mailbox.' : ' with no mail recorded from this work period.';
+      text += ` Unread mail waiting for it: ${info?.unread ?? 0}.`;
       if (info?.lastSaid) text += ` Last said: ${JSON.stringify(clipLastSaid(info.lastSaid))}`;
     } else if (kind === 'needs-you') {
       text = child.waitingFor ? `needs you — ${JSON.stringify(clipLastSaid(child.waitingFor))}` : 'needs you.';

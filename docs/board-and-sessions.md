@@ -147,10 +147,11 @@ and cannot. **Attach to…** and **Promote to full session** change nesting, not
 A session can subscribe to sessions it launches with `spawn_session` or `spawn_workflow`:
 `notify_status: true` opts in, and `nest: true` implies it. Plain spawns and board dispatches
 have no subscription. The subscriber hears when a child needs a person, is idle for one minute
-without mailing it, goes quiet for 15 minutes while working, or exits or is archived.
+after working, goes quiet for 15 minutes while working, or exits or is archived.
 The quiet timer starts from the latest launch or transcript activity, whichever is later.
 Idle notices start only after the child has worked; background shells keep an idle child out
-of the hold. Child mail during the idle hold suppresses that episode's idle notice.
+of the hold. Child mail does not suppress the notice: it mentions mail from the preceding
+working period or idle hold, including mail the subscriber already read.
 
 The `[Agent Wrangler] Status notice` is an observation of the board, not peer mail or a report
 that the child finished. It never appears in `read_mail`. Each rebuild coalesces the subscriber's

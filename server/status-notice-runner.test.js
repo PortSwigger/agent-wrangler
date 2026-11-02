@@ -65,7 +65,7 @@ test('a delivery error is logged, not thrown, until delivery succeeds', async ()
   assert.equal(f.logs.length, 2);
 });
 
-test('idle hold is suppressed by mail from the child to the subscriber, including read mail', async (t) => {
+for (const mailAt of [500, 51000]) for (const read of [false, true]) test(`idle notice still arrives with child mail (${mailAt}, read=${read})`, async (t) => {
   const f = fixture([]);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-status-runner-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -74,13 +74,16 @@ test('idle hold is suppressed by mail from the child to the subscriber, includin
   const runner = createStatusNoticeRunner(f.deps);
   const tick = (now, status) => runner.run({ sessions: [{ sessionId: 'c', label: 'Child c', managed: true, status }] }, now);
   await tick(0, 'working');
+  if (mailAt < 1000) f.deps.mailStore.append('p', { from: 'c', body: 'report' }, mailAt);
   await tick(1000, 'idle');
-  f.deps.mailStore.append('p', { from: 'c', body: 'report' }, 51000);
-  f.deps.mailStore.drain('p');
+  if (mailAt >= 1000) f.deps.mailStore.append('p', { from: 'c', body: 'report' }, mailAt);
+  if (read) f.deps.mailStore.drain('p');
   const before = fs.readFileSync(f.deps.mailStore.file, 'utf8');
   await tick(61000, 'idle');
   await tick(121000, 'idle');
-  assert.deepEqual(f.sent, []);
+  assert.equal(f.sent.length, 1);
+  assert.match(f.sent[0].body, /Mail from this session is already in your mailbox/);
+  assert.doesNotMatch(f.sent[0].body, /no report|no mail/);
   assert.equal(f.published.length, 1);
   assert.deepEqual(f.published[0], ['session-status:idle-held', {
     sid: 'c', kind: 'idle-held', at: 61000, waitingFor: null,

@@ -39,11 +39,16 @@ export function createStatusWatcher() {
         if (!previous) {
           if (exitReason && baseline) { exited.add(id); continue; }
           previous = { status: baseline ? effective : 'unknown', idleSince: effective === 'idle' ? now : null,
-            workingSeen: effective === 'working', notified: new Set(), child, to, launchAt };
+            workingSeen: baseline && effective === 'working',
+            workingSince: effective === 'working' ? launchAt ?? entry?.statusNotify?.since ?? now : null,
+            notified: new Set(), child, to, launchAt };
           states.set(id, previous);
           if (baseline) continue;
         }
-        if (previous.launchAt !== launchAt) previous.notified.delete('quiet');
+        if (previous.launchAt !== launchAt) {
+          previous.notified.delete('quiet');
+          previous.workingSince = launchAt;
+        }
         previous.launchAt = launchAt;
         previous.child = child;
         previous.to = to;
@@ -57,6 +62,7 @@ export function createStatusWatcher() {
         if (effective !== previous.status) {
           previous.notified.clear();
           previous.idleSince = effective === 'idle' ? now : null;
+          if (effective === 'working') previous.workingSince = previous.workingSeen ? now : launchAt ?? entry?.statusNotify?.since ?? now;
         }
         const event = { to, child };
         if (effective === 'needs-you' && previous.status !== 'needs-you') {
@@ -64,7 +70,7 @@ export function createStatusWatcher() {
         } else if (effective === 'idle' && previous.workingSeen && now - previous.idleSince >= IDLE_HOLD_MS && !previous.notified.has('idle')) {
           previous.notified.add('idle');
           events.push({ ...event, kind: 'idle', idleMs: now - previous.idleSince,
-            reported: to !== null && mailSince(id, to, previous.idleSince) });
+            reported: to !== null && mailSince(id, to, previous.workingSince ?? previous.idleSince) });
         } else if (effective === 'working' && status === 'working' && Number.isFinite(activeAt)
           && now - activeAt >= QUIET_MS && !previous.notified.has('quiet')) {
           previous.notified.add('quiet');

@@ -53,13 +53,15 @@ These benchmarks measure doing a coding task; they do not measure review quality
 ## Status notices from spawned sessions
 
 Pass `notify_status: true` to either spawn tool to hear when the session needs a person,
-is idle for 60 seconds without reporting to you, writes nothing for 15 minutes while working,
+is idle for 60 seconds after working, writes nothing for 15 minutes while working,
 or exits. `nest: true` implies the subscription; ordinary spawns and board dispatches do not.
 End your turn after spawning and wait for mail or a notice, rather than sleeping or polling.
 
 Notices begin `[Agent Wrangler] Status notice`, coalesce children observed in one rebuild,
 and arrive directly rather than through `read_mail`. An idle notice includes unread mail
 waiting for the child and up to 200 characters of its last assistant message when readable.
+Child mail does not suppress the idle notice: it mentions mail from that working period or
+idle hold, including mail the subscriber already read.
 These are observations: read the child's transcript or message it before assuming it finished.
 See [board behavior](board-and-sessions.md#status-notices-to-spawners) for delivery and lifecycle.
 
