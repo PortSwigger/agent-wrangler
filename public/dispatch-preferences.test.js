@@ -42,3 +42,22 @@ test('browser storage remembers explicit choices including Auto across independe
   assert.equal(readDispatchPick(denied), null);
   assert.doesNotThrow(() => saveDispatchPick(denied, saved));
 });
+
+test('model chooser sections survive independent storage reads with safe defaults', async () => {
+  const { readDispatchModelSection, saveDispatchModelSection } = await import('./dispatch-preferences.js');
+  const values = new Map();
+  const storage = { getItem: (key) => values.get(key), setItem: (key, value) => values.set(key, value) };
+  assert.equal(readDispatchModelSection(storage), 'recommended');
+  for (const section of ['graph', 'all', 'recommended']) {
+    saveDispatchModelSection(storage, section);
+    assert.equal(readDispatchModelSection(storage), section);
+  }
+  saveDispatchModelSection(storage, 'all');
+  saveDispatchModelSection(storage, 'unknown');
+  assert.equal(readDispatchModelSection(storage), 'all');
+  values.set('aw-dispatch-model-section', 'unknown');
+  assert.equal(readDispatchModelSection(storage), 'recommended');
+  const denied = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('full'); } };
+  assert.equal(readDispatchModelSection(denied), 'recommended');
+  assert.doesNotThrow(() => saveDispatchModelSection(denied, 'all'));
+});
