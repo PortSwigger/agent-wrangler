@@ -982,9 +982,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 - **`todos` is the reference builtin for task-keyed data**: store (`todos.json`), WS handlers, MCP tools, a graph key, `onTaskDelete`,
   a shipped skill, a one-time migration from `tasks.json`, and a client that fills
   `task.body` (below). Disabling it removes the zone, tools and skill and tiles size as
-  if there were no TODOs; `todos.json` is never deleted. The core `tasks.json` keeps
-  its legacy `todos` field as an opaque pass-through for one release (so a downgrade
-  or a failed migration retry still finds it); drop it afterwards.
+  if there were no TODOs; `todos.json` is never deleted. The migration
+  moves the data: once `todos.json` is written, the legacy `todos` field is removed
+  from `tasks.json` by the extension's `strip-legacy` sweep, which only starts after
+  the instance lock so a refused duplicate never rewrites the owner's file. A failed import leaves the field in place and is retried next
+  boot. Core keeps an opaque pass-through of the field only until the file no longer
+  has it; drop that pass-through once the migration has shipped for a release.
 - **`onTaskDelete({ taskId, host })` (1.15.0) is a manifest hook for data keyed by
   task id.** The `task-delete` control handler removes the task from core first
   (`TaskStore.deleteTask`, which unassigns its sessions), then
