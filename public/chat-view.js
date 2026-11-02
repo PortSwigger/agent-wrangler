@@ -56,8 +56,8 @@ export function echoMatchesEvent(echo, event) {
   // Mounting reads a window of history, which may hold an older prompt with the
   // same words ("yes", "continue") — only one recorded after the send is ours.
   if (Number.isFinite(event.ts) && event.ts < echo.sentAt - 2000) return false;
-  let text = flatten(event.text);
-  const sent = flatten(echo.text);
+  let text = flatten(event.text).replace(/^! +/, '!');
+  const sent = flatten(echo.text).replace(/^! +/, '!');
   if (text === sent) return Boolean(text) || echo.images.length === 0 || (Array.isArray(event.images) && event.images.length > 0);
   // The TUI prepends one `[Image #N]` marker per attachment, so at most that many
   // leading markers are dropped; any the human typed themselves stay in the prose.
