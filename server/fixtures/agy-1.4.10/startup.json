@@ -1,0 +1,29 @@
+{
+  "version": "1.4.10",
+  "startupTrace": [
+    {
+      "step": 30,
+      "kind": "log",
+      "message": "Not reloading plugin MCP servers: cannot get the signed-in user: error getting token source: You are not logged into Antigravity."
+    },
+    {
+      "step": 45,
+      "toolCall": {
+        "name": "run_command",
+        "args": { "CommandLine": "\"$AW_NODE\" -e 'createAgyMcpBridge();'" }
+      }
+    },
+    { "step": 48, "kind": "shell-output", "message": "Listing tools... Tools count: 38; rename_session succeeded through shell bridge" },
+    { "step": 50, "kind": "shell-output", "message": "read_mail succeeded through shell bridge" }
+  ],
+  "nativeHook": {
+    "toolCall": {
+      "name": "call_mcp_tool",
+      "args": { "ServerName": "fixture-server", "ToolName": "fixture_read", "Arguments": {} }
+    }
+  },
+  "nativePluginNamespace": {
+    "expected": "agent-wrangler_agent-wrangler",
+    "basis": "Documented plugin-name_server-name contract; installed-version human confirmation pending"
+  }
+}

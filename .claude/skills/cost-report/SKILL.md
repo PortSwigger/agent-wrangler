@@ -7,8 +7,8 @@ description: Use when asked to report, audit, or break down agent-wrangler token
 
 ## Overview
 
-`scripts/cost-report.mjs` recomputes spend straight from the on-disk Claude and
-Codex transcripts under `~/.claude/projects` (and `~/.codex/sessions`), so the
+`scripts/cost-report.mjs` recomputes spend straight from the on-disk provider transcripts under `~/.claude/projects`, `~/.codex/sessions`, and
+`~/.gemini/antigravity-cli/brain`, so the
 numbers are correct regardless of the board's cached state. It cross-references
 `~/.agent-wrangler/mappings.json` (sessions) and `tasks.json` (task assignments)
 to attribute each session to a task, and prices tokens via the repo's
@@ -69,3 +69,5 @@ for further processing (including a `byType` block).
 - The `(unassigned)` row is sessions with no task (or `adhoc`).
 - UTC month boundaries; pass an explicit `YYYY-MM` to avoid ambiguity near month
   ends in other timezones.
+
+Antigravity uses per-step timestamps and raw input/output/cache-read tokens. Its known-vendor API rates come from the bundled/last-good price catalog; every priced agy row is an estimate. Unknown models show tokens only, and stitched parent history is excluded from child spend. See [Antigravity usage](../../../docs/antigravity.md#history-and-estimated-usage).

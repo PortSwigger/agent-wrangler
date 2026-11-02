@@ -12,23 +12,27 @@ import { execFileSync } from 'node:child_process';
 import { LITELLM_URL, fetchLitellm, reduceLitellm } from '../server/price-catalog.js';
 import { reduceCodexCatalog } from '../server/agents/codex-catalog.js';
 
-const PRICE_SNAPSHOT = new URL('../server/price-catalog.snapshot.json', import.meta.url);
-const CODEX_SNAPSHOT = new URL('../server/agents/codex-models.snapshot.json', import.meta.url);
+const outputArg = process.argv.indexOf('--output-dir');
+const output = outputArg > 0 ? process.argv[outputArg + 1] : null;
+const PRICE_SNAPSHOT = output ? `${output}/price-catalog.snapshot.json` : new URL('../server/price-catalog.snapshot.json', import.meta.url);
+const CODEX_SNAPSHOT = output ? `${output}/codex-models.snapshot.json` : new URL('../server/agents/codex-models.snapshot.json', import.meta.url);
 
 const i = process.argv.indexOf('--litellm');
 const raw = i > 0
   ? JSON.parse(fs.readFileSync(process.argv[i + 1], 'utf8'))
   : await fetchLitellm();
 const reduced = reduceLitellm(raw);
-const rows = (c) => Object.keys(c.anthropic).length + Object.keys(c.openai).length;
+const rows = (c) => Object.keys(c.anthropic).length + Object.keys(c.openai).length + Object.keys(c.gemini || {}).length;
 if (rows(reduced) < 10) {
   console.error(`price snapshot NOT refreshed: upstream reduced to only ${rows(reduced)} rows`);
   process.exit(1);
 }
 const previous = (() => { try { return JSON.parse(fs.readFileSync(PRICE_SNAPSHOT, 'utf8')); } catch { return {}; } })();
+if (Object.keys(reduced.gemini).length * 2 < Object.keys(previous.gemini || {}).length) reduced.gemini = {};
 const prices = {
   anthropic: { ...previous.anthropic, ...reduced.anthropic },
   openai: { ...previous.openai, ...reduced.openai },
+  gemini: { ...previous.gemini, ...reduced.gemini },
 };
 // Sorted keys so a refresh diffs as the rows that actually changed.
 const sorted = (o) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
@@ -36,8 +40,9 @@ fs.writeFileSync(PRICE_SNAPSHOT, `${JSON.stringify({
   source: LITELLM_URL,
   anthropic: sorted(prices.anthropic),
   openai: sorted(prices.openai),
+  gemini: sorted(prices.gemini),
 }, null, 1)}\n`);
-console.log(`price snapshot: ${Object.keys(prices.anthropic).length} anthropic, ${Object.keys(prices.openai).length} openai rows`);
+console.log(`price snapshot: ${Object.keys(prices.anthropic).length} anthropic, ${Object.keys(prices.openai).length} openai, ${Object.keys(prices.gemini).length} gemini rows`);
 
 try {
   const out = execFileSync('codex', ['debug', 'models'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -54,4 +59,4 @@ try {
 }
 
 // Fresh process for the skill table, so it reads the snapshots just written.
-execFileSync(process.execPath, [new URL('./gen-skill-models.mjs', import.meta.url).pathname], { stdio: 'inherit' });
+if (!output) execFileSync(process.execPath, [new URL('./gen-skill-models.mjs', import.meta.url).pathname], { stdio: 'inherit' });

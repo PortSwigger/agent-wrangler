@@ -1098,6 +1098,27 @@ test('an api-error needs-you does not block Send once the composer has text', as
   assert.equal(byId.get('chat-send').disabled, false);
 });
 
+test('startup holds a chat draft without asking for a reply and a real permission prompt restores prompt guidance', async () => {
+  const { view, byId, input, sent } = await mountView();
+  view.mount('s1');
+  input.value = 'saved human draft';
+  view.setStatus('needs-you', 'Antigravity native startup is pending.', 'agent-startup');
+  assert.equal(input.disabled, true);
+  assert.equal(byId.get('chat-send').disabled, true);
+  assert.match(input.placeholder, /setup/i);
+  assert.doesNotMatch(input.placeholder, /answer|prompt/i);
+  send(input);
+  assert.equal(sent.filter((m) => m.type === 'message').length, 0);
+  assert.equal(input.value, 'saved human draft');
+  view.setStatus('needs-you', 'Allow calling this tool?');
+  assert.match(input.placeholder, /Answer the prompt/);
+  assert.equal(input.disabled, true);
+  view.setStatus('idle');
+  assert.equal(input.value, 'saved human draft');
+  assert.equal(input.disabled, false);
+  assert.equal(byId.get('chat-send').disabled, false);
+});
+
 test('clearing needs-you re-enables the composer and hides the bar', async () => {
   const { view, byId, input } = await mountView();
   view.mount('s1');

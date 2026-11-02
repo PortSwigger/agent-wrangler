@@ -45,6 +45,18 @@ test('message: dormant target is woken and the message rides the resume intent; 
   assert.equal(c.calls.reply.length, 0);
 });
 
+test('message: Antigravity wake is acknowledged as retained and queued, without a fallback paste', async () => {
+  const dir = realDir();
+  try {
+    const c = ctx({ entries: { CARD1: { cwd: dir, agent: 'agy', liveSessionId: 'native-root' } } });
+    await messageHandler.handler({ sessionId: 'CARD1', text: 'wake task', requestId: 'agy-wake' }, c);
+    assert.deepEqual(c.calls.sent, []);
+    assert.deepEqual(c.calls.reply, [{ type: 'message-result', requestId: 'agy-wake', sessionId: 'CARD1', ok: true, outcome: 'queued', mode: 'dormant' }]);
+    assert.equal(c.calls.resumed.length, 1);
+    assert.equal(c.calls.resumed[0].opts.intent, 'wake task');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('message: archived target replies with an error, never resumed', async () => {
   const dir = realDir();
   const c = ctx({ entries: { CARD1: { cwd: dir, archivedAt: Date.now() } } });

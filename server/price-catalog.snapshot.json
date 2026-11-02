@@ -1149,5 +1149,232 @@
    "cacheWrite1h": 4,
    "cacheRead": 0.5
   }
+ },
+ "gemini": {
+  "gemini-2.5-computer-use-preview-10-2025": {
+   "input": 1.25,
+   "output": 10,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 1.25,
+   "long": {
+    "threshold": 200000,
+    "input": 2.5,
+    "output": 15,
+    "cacheRead": 1.25
+   }
+  },
+  "gemini-2.5-flash": {
+   "input": 0.3,
+   "output": 2.5,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.03
+  },
+  "gemini-2.5-flash-lite": {
+   "input": 0.1,
+   "output": 0.4,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.01
+  },
+  "gemini-2.5-pro": {
+   "input": 1.25,
+   "output": 10,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.125,
+   "long": {
+    "threshold": 200000,
+    "input": 2.5,
+    "output": 15,
+    "cacheRead": 0.25
+   }
+  },
+  "gemini-2.5-pro-preview-tts": {
+   "input": 1,
+   "output": 20,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.125
+  },
+  "gemini-3-flash-preview": {
+   "input": 0.5,
+   "output": 3,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.05
+  },
+  "gemini-3.1-flash-lite": {
+   "input": 0.25,
+   "output": 1.5,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.025
+  },
+  "gemini-3.1-flash-lite-preview": {
+   "input": 0.25,
+   "output": 1.5,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.025
+  },
+  "gemini-3.1-pro-preview": {
+   "input": 2,
+   "output": 12,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.2,
+   "long": {
+    "threshold": 200000,
+    "input": 4,
+    "output": 18,
+    "cacheRead": 0.4
+   }
+  },
+  "gemini-3.1-pro-preview-customtools": {
+   "input": 2,
+   "output": 12,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.2,
+   "long": {
+    "threshold": 200000,
+    "input": 4,
+    "output": 18,
+    "cacheRead": 0.4
+   }
+  },
+  "gemini-3.5-flash": {
+   "input": 1.5,
+   "output": 9,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.15
+  },
+  "gemini-3.5-flash-lite": {
+   "input": 0.3,
+   "output": 2.5,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.03
+  },
+  "gemini-3.6-flash": {
+   "input": 0.75,
+   "output": 3.75,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.075
+  },
+  "gemini-3.7-flash": {
+   "input": 0.75,
+   "output": 3.75,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.075
+  },
+  "gemini-3.8-flash": {
+   "input": 0.75,
+   "output": 3.75,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.075
+  },
+  "gemini-4-argon": {
+   "input": 2,
+   "output": 10,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.1
+  },
+  "gemini-exp-1114": {
+   "input": 0,
+   "output": 0,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0,
+   "long": {
+    "threshold": 128000,
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0
+   }
+  },
+  "gemini-exp-1206": {
+   "input": 0.3,
+   "output": 2.5,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.03
+  },
+  "gemini-flash-latest": {
+   "input": 0.75,
+   "output": 3.75,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.075
+  },
+  "gemini-flash-lite-latest": {
+   "input": 0.3,
+   "output": 2.5,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.03
+  },
+  "gemini-gemma-2-27b-it": {
+   "input": 0.35,
+   "output": 1.05,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.35
+  },
+  "gemini-gemma-2-9b-it": {
+   "input": 0.35,
+   "output": 1.05,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.35
+  },
+  "gemini-omni-1.1-flash": {
+   "input": 1.5,
+   "output": 9,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 1.5
+  },
+  "gemini-omni-flash-preview": {
+   "input": 1.5,
+   "output": 9,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 1.5
+  },
+  "gemini-pro-latest": {
+   "input": 2,
+   "output": 12,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.2,
+   "long": {
+    "threshold": 200000,
+    "input": 4,
+    "output": 18,
+    "cacheRead": 0.4
+   }
+  },
+  "gemini-robotics-er-2-preview": {
+   "input": 1,
+   "output": 5,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 0.1
+  },
+  "gemini-robotics-er-2-streaming-preview": {
+   "input": 1,
+   "output": 5,
+   "cacheWrite5m": 0,
+   "cacheWrite1h": 0,
+   "cacheRead": 1
+  }
  }
 }

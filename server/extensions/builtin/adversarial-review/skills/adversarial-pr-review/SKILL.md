@@ -29,7 +29,7 @@ limit, so the reviewer lands under you whether you are top-level or already nest
 
 Call `get_model_front` with `reviewFor` set to your source provider. Use its
 `reviewAgent`: the available provider with the lowest declared review priority,
-excluding the source (Claude before Codex). Availability ordering does not matter.
+excluding the source (Claude before Codex before Antigravity). Availability ordering does not matter.
 If it is null, report that no independent provider is available; do not launch a
 same-provider reviewer.
 

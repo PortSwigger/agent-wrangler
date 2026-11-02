@@ -58,9 +58,10 @@ async function openSegments(files) {
   let end = 0;
   try {
     for (const [index, file] of files.entries()) {
-      const size = (await fsp.stat(file)).size;
+      const stat = await fsp.stat(file);
+      const size = stat.size;
       const handle = await fsp.open(file, 'r');
-      const segment = { file, handle, start: end, end: end + size, separator: false };
+      const segment = { file, handle, mtimeMs: stat.mtimeMs, size, start: end, end: end + size, separator: false };
       segments.push(segment);
       if (index < files.length - 1 && size) {
         const last = Buffer.alloc(1);
@@ -278,7 +279,7 @@ export const chatHandler = {
     // Move the epoch before clamping `sinceOffset`, so the client discards this
     // reply and rebuilds instead of repeatedly polling from a stale position.
     const cached = scannerCache.get(convId);
-    if (adapter.history.continuations && cached?.segments && chainRebased(cached.segments, segments)) {
+    if (adapter.history.continuations && cached?.segments && (chainRebased(cached.segments, segments) || (adapter.history.mutable && cached.agySignature !== segments.map((s) => `${s.size}:${s.mtimeMs}`).join('|')))) {
       scannerCache.delete(convId);
       bumpEpoch(convId);
     }
@@ -383,7 +384,7 @@ export const chatHandler = {
         // Only the FINAL attempt's scanner is ever cached; the discarded attempts'
         // scanners are garbage, and caching one would hand a follow-up poll a
         // pending map built from a range it isn't resuming.
-        if (scanner) touchCache(convId, { scanner, offset, agent, segments: segments.map(({ file, start, end, separator }) => ({ file, start, end, separator })) });
+        if (scanner) touchCache(convId, { scanner, offset, agent, agySignature: segments.map((s) => `${s.size}:${s.mtimeMs}`).join('|'), segments: segments.map(({ file, start, end, separator }) => ({ file, start, end, separator })) });
         // Bumped before the reply is built so this very reply carries the new
         // value: the client is told to rebuild in the same message that would
         // otherwise have appended events the rewind just killed.

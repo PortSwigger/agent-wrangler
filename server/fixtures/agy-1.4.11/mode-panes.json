@@ -1,0 +1,5 @@
+{
+  "source": "Sanitised composer and footer from the human startup screenshot; ANSI styling is a fixture variant.",
+  "acceptEdits": "────────────────────────────────────────────────────────────────────────────\n> Accept-edits mode: file edits auto-approved (shift+tab to cycle)\n────────────────────────────────────────────────────────────────────────────\n? for shortcuts                    accept-edits · Gemini 3.8 Flash · medium",
+  "autoStyled": "────────────────────────────────────────────────────────────────────────────\n> \n────────────────────────────────────────────────────────────────────────────\n? for shortcuts                    \u001b[32mauto\u001b[0m · Gemini 3.8 Flash · medium"
+}

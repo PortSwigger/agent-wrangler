@@ -58,3 +58,7 @@ Use these board-visible surfaces instead of burying coordination state in a tran
 
 Extensions may add skills and tools while enabled. Disabling **Per-session checklist** in
 **Settings → Extensions** removes its four tools and the `checklist` skill after sessions resume. Disabling **Task memory** removes the `task-memory` skill and its `AW_TASK_MEMORY` variable from new launches.
+
+## Antigravity
+
+Ask “Start an Antigravity session in ~/projects/example with Gemini Flash at Medium effort” after enabling **Manage agy integration**. Use `agent: "agy"` with `spawn_session`; the launch must use the local runtime and Default login. Mail and on-demand skills use the identity-scoped plugin. See [Antigravity setup and limits](antigravity.md).

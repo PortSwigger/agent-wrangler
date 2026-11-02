@@ -48,3 +48,11 @@ process.env.CLAUDE_CONFIG_DIR = claudeDir;
 process.on('exit', () => {
   fs.rmSync(claudeDir, { recursive: true, force: true });
 });
+
+const agyTestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-agy-home-'));
+process.env.HOME = agyTestHome;
+const agyBin = path.join(agyTestHome, 'bin');
+fs.mkdirSync(agyBin);
+fs.writeFileSync(path.join(agyBin, 'agy'), '#!/bin/sh\necho "Real agy execution forbidden in tests" >&2\nexit 97\n', { mode: 0o755 });
+process.env.PATH = `${agyBin}:${process.env.PATH}`;
+process.on('exit', () => fs.rmSync(agyTestHome, { recursive: true, force: true }));

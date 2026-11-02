@@ -1,3 +1,12 @@
+import { agyCliVersion } from './agents/agy-catalog.js';
+import { agyIntegrationReady } from './agy-plugin.js';
+import { prepareAgyPane, advanceAgyStartup } from './agy-lifecycle.js';
+import { createAgyStartup, agyNativeReady } from './agy-startup.js';
+import { ensureSubmitted, pasteImages } from './pane-ready.js';
+import { ensureAgyTrust } from './agy-trust.js';
+import { trustAgyLaunchCwd } from './config-store.js';
+import { readAgySteps, freezeAgyFork } from './agents/agy-history.js';
+import { capturePaneStyled, sendKeys, sendText } from './tmux-scraper.js';
 import { permissionModeError, runtimePermissionModeError } from './agents/permission-mode.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -433,6 +442,8 @@ export class SessionManager {
     // Seam (like _newSession/_save) so a test can observe/stub the one call in
     // dispatch/resume/fork that touches a real machine-global dotfile
     // (~/.codex/config.toml) instead of this class's own owned state.
+    this._agyReady = agyIntegrationReady;
+    this._prepareAgyPane = prepareAgyPane;
     this._ensureCodexTrust = ensureCodexTrust;
     this._ensureClaudeTrust = ensureClaudeTrust; // same seam, for ~/.claude.json
     this._mirrorWorktreeTrust = mirrorWorktreeTrust; // a worktree inherits its repo's Claude trust
@@ -485,6 +496,41 @@ export class SessionManager {
   // Called after the launch context is collected, so a launch whose context
   // points CLAUDE_CONFIG_DIR at a login's own config gets the same trust there.
   // A default launch makes exactly the two calls it always has.
+  _assertProviderLaunch(adapter, runtime = 'local') {
+    if (!adapter.hookIdentity) return;
+    if (runtime !== 'local') throw new Error('Antigravity supports local sessions only.');
+    if (!this._agyReady()) throw new Error(adapter.unavailableMessage);
+  }
+
+  async _finishProviderLaunch(adapter, sessionId, { fork = false } = {}) {
+    if (!adapter.hookIdentity) return;
+    this._agyStartupInFlight ||= new Set();
+    if (this._agyStartupInFlight.has(sessionId)) return;
+    const entry = this.map.get(sessionId);
+    if (!entry?.agyStartup) return;
+    entry.agentVersion = agyCliVersion() || undefined;
+    this._agyStartupInFlight.add(sessionId);
+    try {
+      await advanceAgyStartup({ entry, capture: capturePaneStyled, keys: sendKeys, send: sendText, confirm: ensureSubmitted, paste: pasteImages,
+        ...this._agyPaneIO,
+        prepare: this._prepareAgyPane, save: () => this._save(), timeoutMs: 1,
+        current: () => this.map.get(sessionId) === entry && !entry.archivedAt && !entry.snooze,
+      });
+    } catch (error) {
+      entry.agyLaunchWarning = `Antigravity startup failed: ${error.message}. Task and mail are retained.`;
+      this._save();
+    } finally {
+      this._agyStartupInFlight.delete(sessionId);
+    }
+  }
+
+  advanceProviderStartups() {
+    for (const [id, entry] of this.map) {
+      if (entry.agent !== 'agy' || !entry.agyStartup || !entry.tmux || entry.archivedAt || entry.snooze || this.dead.has(entry.tmux)) continue;
+      if (entry.agyLaunchWarning || !agyNativeReady(entry) || entry.agyPendingIntent?.state === 'pending') void this._finishProviderLaunch(adapterFor(entry.agent), id);
+    }
+  }
+
   async _trustClaudeLaunch(dir, launchContext) {
     this._ensureClaudeTrust(SESSIONS_DIR);
     await this._mirrorWorktreeTrust(dir);
@@ -1119,7 +1165,7 @@ export class SessionManager {
 
   // Resume an existing session's conversation in a fresh, attachable tmux
   // session (used for sessions not already running in tmux).
-  async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified', automatic = false } = {}) {
+  async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified', automatic = false, queueIntent = false, imagePaths = [] } = {}) {
     const prev = this.map.get(sessionId);
     // A runtime that can't be resumed (or one whose extension is gone) refuses
     // HERE, before the kill below: a held pane may be the only thing keeping a
@@ -1129,6 +1175,12 @@ export class SessionManager {
     const agent = prev?.agent ?? 'claude';
     if (prev?.remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
     const adapter = adapterFor(agent);
+    this._assertProviderLaunch(adapter, prev?.runtime || 'local');
+    let agyPendingIntent = prev?.agyPendingIntent;
+    if (adapter.hookIdentity && queueIntent && (intent || imagePaths.length)) {
+      if (agyPendingIntent && agyPendingIntent.state !== 'submitted') throw new Error('Antigravity already retains a task. Resolve its startup or uncertain submission before sending another wake message.');
+      agyPendingIntent = { text: intent, imagePaths, state: 'pending' };
+    }
     const runtime = runtimeFor(prev?.runtime);
     // Read what we're waking BEFORE the kill destroys the evidence: a resume off a
     // dead pane means something crashed, off an absent one means it was suspended
@@ -1137,7 +1189,9 @@ export class SessionManager {
     const pane = paneStateOf(prev?.tmux, this.alive, this.dead);
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
-    let dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+    const requestedDir = cwd || (adapter.hookIdentity ? prev?.cwd : null);
+    if (adapter.hookIdentity && (!requestedDir || !fs.existsSync(requestedDir))) throw new Error('Antigravity resume requires its saved workspace; recreate it before resuming.');
+    let dir = requestedDir && fs.existsSync(requestedDir) ? requestedDir : os.homedir();
     let freshAfterUpdate = false;
     if (adapterFor(agent).launch.recoverMissingConversation && !prev?.liveSessionId && !prev?.forkedFrom && this.dead.has(prev?.tmux)) {
       const exitedTmux = prev.tmux;
@@ -1215,11 +1269,14 @@ export class SessionManager {
     });
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
+    if (adapterFor(agent).launch.trust === 'agy') ensureAgyTrust(dir, { enabled: trustAgyLaunchCwd() });
     if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
     const addDirs = await withGitDirAddDirs(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
+    const agyStartup = adapter.hookIdentity ? createAgyStartup(prev?.agyStartup) : undefined;
     const inner = adapter[freshAfterUpdate ? 'buildLaunch' : 'buildResume']({
+      launchId: agyStartup?.launchId,
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, permissionMode: prev?.permissionMode, autoCompactTokens: prev?.autoCompactTokens,
       worktree: prev?.worktree || null,
       addDirs,
@@ -1240,6 +1297,7 @@ export class SessionManager {
     });
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext });
     const launchedAt = Date.now();
+    if (adapter.hookIdentity) this.map.set(sessionId, { ...prev, tmux, socket: this.socket, agyLive: undefined, agyStartup, agyPendingIntent, agyLaunchWarning: 'Antigravity native startup is pending.' });
     const paneId = await this._newSession(tmux, dir, launchCmd, this.socket);
     if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt }) || undefined;
     // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
@@ -1254,6 +1312,7 @@ export class SessionManager {
     // install's socket — so a legacy default-socket session migrates here.
     this.map.set(sessionId, {
       ...resumeEntry(prev, { short, tmux, cwd: dir, agent, resumeId, socket: this.socket, now: launchedAt }),
+      ...(adapter.hookIdentity ? { agyLive: this.map.get(sessionId)?.agyLive, agyStartup, agyLaunchWarning: 'Antigravity native startup is pending.', agyPendingIntent, agyForkPending: prev?.agyForkPending, agyFork: prev?.agyFork, agyChildIds: prev?.agyChildIds } : {}),
       ...(freshAfterUpdate ? { intent: prev?.intent || '' } : {}),
       paneId: paneId || undefined,
       launchedCodeVersion: this.codeVersion || undefined,
@@ -1262,13 +1321,14 @@ export class SessionManager {
     // Here, not in resume(): that wrapper coalesces concurrent callers onto one
     // in-flight promise, so a hook there would fire twice for one relaunch (the
     // same reason the log line below lives here).
+    await this._finishProviderLaunch(adapter, sessionId);
     await this._fireExtHooks('onResume', { sessionId, entry: this.map.get(sessionId), reason });
     await this.refreshAlive();
     // Logged here rather than in resume(): that wrapper hands a second concurrent
     // caller the in-flight promise, so a line there would report one relaunch twice
     // under two different reasons. _doResume runs once per actual relaunch.
     log(`[session] resumed ${sessionId} (tmux ${tmux}) — reason=${reason}, pane was ${pane}`);
-    return { tmux };
+    return { tmux, ...(adapter.hookIdentity && queueIntent ? { intentOutcome: this.map.get(sessionId)?.agyPendingIntent?.state } : {}) };
   }
 
   // Fork an existing conversation into a *new* board identity. Unlike resume()
@@ -1288,9 +1348,14 @@ export class SessionManager {
     if (refusal) throw new Error(refusal);
     const agent = parentEntry?.agent ?? 'claude';
     const adapter = adapterFor(agent);
+    this._assertProviderLaunch(adapter, parentEntry?.runtime || 'local');
+    const forkSteps = adapter.interactiveFork ? await readAgySteps(sourceId) : null;
+    if (adapter.interactiveFork && !forkSteps?.length) throw new Error('Antigravity fork requires a recorded parent step.');
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
-    const dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+    const requestedDir = cwd || (adapter.hookIdentity ? parentEntry?.cwd : null);
+    if (adapter.hookIdentity && (!requestedDir || !fs.existsSync(requestedDir))) throw new Error('Antigravity fork requires its saved workspace; recreate it before forking.');
+    const dir = requestedDir && fs.existsSync(requestedDir) ? requestedDir : os.homedir();
     const sessionId = crypto.randomUUID(); // fresh CARD id (mapping key), NOT the source id
     // The fork's live conversation gets its own id, distinct from the card id. A
     // preset agent (Claude) is handed it via --session-id so the conversation lives
@@ -1306,6 +1371,7 @@ export class SessionManager {
     });
     const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
+    if (adapterFor(agent).launch.trust === 'agy') ensureAgyTrust(dir, { enabled: trustAgyLaunchCwd() });
     if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
     const addDirs = await withGitDirAddDirs(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
@@ -1315,7 +1381,9 @@ export class SessionManager {
     // `parentId` too: onFork (which could copy the parent's stored policy) only
     // fires after this launch, so the parent's card id is how an extension finds it.
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._extCodexPolicy({ phase: 'fork', sessionId, entry: parentEntry, parentId }) : undefined;
+    const agyStartup = adapter.hookIdentity ? createAgyStartup() : undefined;
     const inner = adapter.buildFork({
+      launchId: agyStartup?.launchId,
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
       addDirs,
       launchContext,
@@ -1326,21 +1394,24 @@ export class SessionManager {
       inner, cwd: dir, sessionId, parentId, worktree: parentEntry?.worktree, launchContext,
     });
     const launchedAt = Date.now();
+    if (adapter.hookIdentity) this.map.set(sessionId, { agent, cwd: dir, tmux, socket: this.socket, agyStartup, agyPendingIntent: prompt ? { text: prompt, state: 'pending' } : undefined, agyLaunchWarning: 'Antigravity native startup is pending.', agyForkPending: await freezeAgyFork(sessionId, sourceId, forkSteps.at(-1).step_index) });
     const paneId = await this._newSession(tmux, dir, launchCmd, this.socket);
     const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt });
     // No killForSession — the parent's mapping and tmux are deliberately left alone.
     const early = this.map.get(sessionId);
     const entry = { ...early, ...forkEntry({ short, tmux, cwd: dir, parentEntry, parentId, name, createdAt: launchedAt }) };
+    if (adapter.hookIdentity) entry.effort = parentEntry?.effort ?? null;
     if (!name.trim() && early?.name) {
       entry.name = early.name;
       delete entry.nameInherited;
     }
-    entry.liveSessionId = liveSessionId || undefined;
+    entry.liveSessionId = liveSessionId || early?.liveSessionId || undefined;
     entry.socket = this.socket;
     entry.paneId = paneId || undefined;
     entry.launchedCodeVersion = this.codeVersion || undefined;
     this.map.set(sessionId, entry);
     this._save();
+    await this._finishProviderLaunch(adapter, sessionId, { fork: adapter.interactiveFork });
     await this._fireExtHooks('onFork', { sessionId, parentId, entry });
     await this.refreshAlive();
     return { sessionId, tmux };
@@ -1583,6 +1654,7 @@ export class SessionManager {
   // already enforces on repoint via cardForLive, applied here at first discovery.
   async _resolveLiveId(adapter, { sessionId, cwd, launchedAt }) {
     if (adapter.presetsSessionId) return sessionId;
+    if (adapter.hookIdentity) return this.map.get(sessionId)?.liveSessionId || null;
     const mintedAfter = launchedAt - 2000;
     for (let i = 0; i < 20; i++) {
       const excludeIds = new Set([...this.map.values()].map((e) => e.liveSessionId).filter(Boolean));
@@ -1852,9 +1924,11 @@ export class SessionManager {
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false, offBoard, remoteControl } = {}) {
+    if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
+    this._assertProviderLaunch(adapterFor(agent), runtime);
     permissionMode ??= 'auto';
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);
@@ -1969,6 +2043,7 @@ export class SessionManager {
     });
     const ownLaunch = ownLaunchRefusal(rt, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
+    if (adapterFor(agent).launch.trust === 'agy') ensureAgyTrust(cwd, { enabled: trustAgyLaunchCwd() });
     if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(cwd, launchContext);
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
@@ -1982,13 +2057,15 @@ export class SessionManager {
     // the only way a first prompt can carry images (dispatch-runner.js). A launch
     // argument has no composer for an image path to be absorbed into.
     const launchIntent = deferIntent ? '' : intent;
+    const agyStartup = adapter.hookIdentity ? createAgyStartup() : undefined;
     const inner = builds
       ? await rt.buildLaunch({ phase: 'dispatch', intent: launchIntent, cwd, sessionId, model, ext: ext || null })
       : await rt.wrapLaunch({
-        inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, permissionMode, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy, remoteControl }),
+        inner: adapter.buildLaunch({ sessionId, launchId: agyStartup?.launchId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, permissionMode, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy, remoteControl }),
         cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext,
       });
     const launchedAt = Date.now();
+    if (adapter.hookIdentity) this.map.set(sessionId, { agent, cwd, tmux, socket: this.socket, createdAt: launchedAt, agyStartup, agyPendingIntent: launchIntent ? { text: launchIntent, state: 'pending' } : undefined, agyLaunchWarning: 'Antigravity native startup is pending.' });
     const paneId = await this._newSession(tmux, cwd, inner, this.socket);
 
     const liveSessionId = builds ? undefined : presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt });
@@ -2016,6 +2093,7 @@ export class SessionManager {
     const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
+    await this._finishProviderLaunch(adapter, sessionId);
     await this._fireExtHooks('onDispatch', { sessionId, entry });
     await this.refreshAlive();
     return { sessionId, tmux, cwd };

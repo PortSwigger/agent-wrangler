@@ -1,3 +1,4 @@
+import { priceCatalogVersion } from './price-catalog.js';
 import { adapterFor } from './agents/index.js';
 // Time-bucketed spend/usage aggregation for the Usage dashboard. Recomputes from
 // the on-disk Claude/Codex transcripts (never the board's cached per-session
@@ -654,7 +655,7 @@ async function codexFamilySignature(sessionId, family, codexSessionsDir, findRol
       }
     }
   }
-  return parts.join(',') + `|v${CODEX_ANALYSIS_VERSION}`;
+  return parts.join(',') + `|v${CODEX_ANALYSIS_VERSION}|prices${priceCatalogVersion()}`;
 }
 
 async function analyzeCodexCached(analyzeCodex, findRolloutChain, sessionKey, file, codexSessionsDir, index) {
@@ -804,7 +805,7 @@ export function rollup(scan, opts = {}) {
   const { start, end, buckets, clamped } = win;
   const blankByType = () => Object.fromEntries(TYPES.map((t) => [t, { usd: 0, tokens: blankTokens() }]));
   const blankUsageBucket = () => ({
-    total: { usd: 0, estimatedUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens() },
+    total: { usd: 0, estimatedUsd: 0, unpricedTokens: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens() },
     byTask: {},
     byModel: {},
     byType: blankByType(),
@@ -819,7 +820,7 @@ export function rollup(scan, opts = {}) {
   const taskSpend = new Map();
   const modelNames = new Map();
   const modelSpend = new Map();
-  const totals = { usd: 0, estimatedUsd: 0, subAgentUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens() };
+  const totals = { usd: 0, estimatedUsd: 0, unpricedTokens: 0, subAgentUsd: 0, advisorUsd: 0, advisorTokens: blankTokens(), tokens: blankTokens() };
   let estimatedIncluded = false;
 
   const addBag = (target, task, bag) => {
@@ -827,6 +828,7 @@ export function rollup(scan, opts = {}) {
     cell.usd += bag.usd; cell.estimatedUsd += bag.estimatedUsd; addTokens(cell.tokens, bag.tokens);
     for (const [model, mb] of Object.entries(bag.byModel || {})) {
       const mcell = (target.byModel[model] ||= { usd: 0, estimatedUsd: 0, tokens: blankTokens() });
+      mcell.unpriced = mcell.unpriced || mb.unpriced || false;
       mcell.usd += mb.usd; mcell.estimatedUsd += mb.estimatedUsd; addTokens(mcell.tokens, mb.tokens);
     }
     const cbt = bag.costByType || {};
@@ -834,6 +836,7 @@ export function rollup(scan, opts = {}) {
       target.byType[t].usd += cbt[t] || 0;
       target.byType[t].tokens[t] += bag.tokens[t] || 0;
     }
+    target.total.unpricedTokens += bag.unpricedTokens || 0;
     target.total.usd += bag.usd; target.total.estimatedUsd += bag.estimatedUsd; addTokens(target.total.tokens, bag.tokens);
     target.total.advisorUsd += bag.advisorUsd || 0;
     addTokens(target.total.advisorTokens, bag.advisorTokens || blankTokens());
@@ -855,6 +858,7 @@ export function rollup(scan, opts = {}) {
       addBag(bkt, s.task, bag);
       const provider = bag.provider || 'anthropic';
       addBag(bkt.providers[provider] ||= blankUsageBucket(), s.task, bag);
+      totals.unpricedTokens += bag.unpricedTokens || 0;
       totals.usd += bag.usd; totals.estimatedUsd += bag.estimatedUsd;
       totals.subAgentUsd += bag.subAgentUsd;
       // `|| 0`: a bag built before advisorUsd existed (an unmigrated fixture/cache

@@ -18,7 +18,7 @@ information about the task itself, not a channel for briefing another session.
 
 ## Choosing the agent, model and effort
 
-`agent` defaults to `claude`; pass `codex` to launch a Codex session instead.
+`agent` defaults to `claude`; pass `codex` for Codex or `agy` for opt-in local Antigravity. Antigravity defaults to Gemini 3.8 Flash at Medium effort; Claude-on-agy models accept no effort flag.
 
 Call `get_model_front` when choosing a model and effort for the task. It lists
 launchable settings that nothing beats on quality, cost and time together, with
@@ -66,6 +66,13 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `gpt-5.6-luna` — GPT-5.6-Luna · Older fast and efficient model
 - `gpt-5.5` — GPT-5.5 · Legacy coding model
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
+
+**Antigravity** (`agent: "agy"`):
+- `gemini-3.8-flash` — Gemini 3.8 Flash (default) · effort: low, medium, high (default medium)
+- `claude-sonnet-4-6` — Claude Sonnet 4.6 · no effort flag
+- `claude-opus-4-6-thinking` — Claude Opus 4.6 Thinking · no effort flag
+- `gpt-oss-120b` — GPT OSS 120B · effort: medium (default medium)
+- `effort`: `low`, `medium`, `high`
 
 The running wrangler's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
 

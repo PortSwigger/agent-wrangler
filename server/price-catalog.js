@@ -18,7 +18,7 @@ export const LITELLM_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/ma
 export const CACHE_PATH = path.join(DATA_DIR, 'price-catalog.json');
 const SNAPSHOT_PATH = new URL('./price-catalog.snapshot.json', import.meta.url);
 const REFRESH_MS = 12 * 60 * 60 * 1000;
-const PROVIDERS = ['anthropic', 'openai'];
+const PROVIDERS = ['anthropic', 'openai', 'gemini'];
 const MODES = new Set(['chat', 'responses']);
 // A fetch that reduces to fewer rows than this is a broken or truncated upstream
 // file, not a real catalog — keep what we have rather than adopt it.
@@ -45,17 +45,17 @@ const isRate = (x) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x
 // Missing cache rates default to Anthropic's standard multipliers (5m write 1.25x,
 // 1h write 2x, read 0.1x). `long` is the rate for a whole request whose prompt
 // exceeds `threshold` tokens.
-export function reduceEntry(e) {
+export function reduceEntry(e, provider = 'anthropic') {
   if (!isRecord(e)) return null;
   const input = perM(e.input_cost_per_token);
   const output = perM(e.output_cost_per_token);
   if (input === undefined || output === undefined) return null;
-  const cacheRead = perM(e.cache_read_input_token_cost) ?? input * 0.1;
+  const cacheRead = perM(e.cache_read_input_token_cost) ?? (provider === 'gemini' ? input : input * 0.1);
   const rate = {
     input,
     output,
-    cacheWrite5m: perM(e.cache_creation_input_token_cost) ?? input * 1.25,
-    cacheWrite1h: perM(e.cache_creation_input_token_cost_above_1hr) ?? input * 2,
+    cacheWrite5m: perM(e.cache_creation_input_token_cost) ?? (provider === 'gemini' ? 0 : input * 1.25),
+    cacheWrite1h: perM(e.cache_creation_input_token_cost_above_1hr) ?? (provider === 'gemini' ? 0 : input * 2),
     cacheRead,
   };
   for (const key of Object.keys(e)) {
@@ -81,21 +81,24 @@ export function reduceLitellm(raw) {
   if (!isRecord(raw)) return out;
   for (const [id, e] of Object.entries(raw)) {
     if (!isRecord(e) || !PROVIDERS.includes(e.litellm_provider) || !MODES.has(e.mode)) continue;
-    const rate = reduceEntry(e);
-    if (rate) out[e.litellm_provider][id.toLowerCase()] = rate;
+    const provider = e.litellm_provider;
+    const normalized = provider === 'gemini' ? id.replace(/^gemini\//, '') : id;
+    if (provider === 'gemini' && !/^gemini-[a-z0-9.-]+$/.test(normalized)) continue;
+    const rate = reduceEntry(e, provider);
+    if (rate) out[provider][normalized.toLowerCase()] = rate;
   }
-  return Object.fromEntries(PROVIDERS.map((p) => [p, cleanTable(out[p])]));
+  return Object.fromEntries(PROVIDERS.map((p) => [p, cleanTable(out[p], p)]));
 }
 
 // One stored rate, re-checked field by field; missing cache-write rates take the
 // same defaults reduceEntry uses. Null when it isn't a usable rate.
-function cleanRate(r) {
+function cleanRate(r, provider) {
   if (!isRecord(r) || !isRate(r.input) || !isRate(r.output) || !isRate(r.cacheRead)) return null;
   const rate = {
     input: r.input,
     output: r.output,
-    cacheWrite5m: isRate(r.cacheWrite5m) ? r.cacheWrite5m : r.input * 1.25,
-    cacheWrite1h: isRate(r.cacheWrite1h) ? r.cacheWrite1h : r.input * 2,
+    cacheWrite5m: isRate(r.cacheWrite5m) ? r.cacheWrite5m : (provider === 'gemini' ? 0 : r.input * 1.25),
+    cacheWrite1h: isRate(r.cacheWrite1h) ? r.cacheWrite1h : (provider === 'gemini' ? 0 : r.input * 2),
     cacheRead: r.cacheRead,
   };
   const l = r.long;
@@ -108,14 +111,14 @@ function cleanRate(r) {
 
 // id → rate with only well-formed ids (first-party only: no "bedrock/…" routes,
 // no "__proto__"/"constructor"-shaped keys) and a bounded row count.
-function cleanTable(t) {
+function cleanTable(t, provider) {
   const out = {};
   if (!isRecord(t)) return out;
   let n = 0;
   for (const [id, r] of Object.entries(t)) {
     if (n >= MAX_ROWS_PER_PROVIDER) break;
     if (!ID_RE.test(id) || Object.hasOwn(out, id)) continue;
-    const rate = cleanRate(r);
+    const rate = cleanRate(r, provider);
     if (rate) { out[id] = rate; n += 1; }
   }
   return out;
@@ -123,7 +126,7 @@ function cleanTable(t) {
 
 function cleanCatalog(cat) {
   if (!isRecord(cat)) return null;
-  const out = Object.fromEntries(PROVIDERS.map((p) => [p, cleanTable(cat[p])]));
+  const out = Object.fromEntries(PROVIDERS.map((p) => [p, cleanTable(cat[p], p)]));
   if (typeof cat.fetchedAt === 'string') out.fetchedAt = cat.fetchedAt;
   return out;
 }
@@ -307,6 +310,9 @@ export async function refreshPriceCatalog({ fetchImpl = globalThis.fetch, url = 
     logWarn(`[agent-wrangler] price catalog refresh ignored: only ${rowCount(reduced)} rows`);
     return false;
   }
+  const geminiRows = Object.keys(reduced.gemini).length;
+  if (geminiRows * 2 < Object.keys(tables.gemini).length) reduced.gemini = { ...tables.gemini };
+  for (const p of PROVIDERS) reduced[p] = { ...fetched?.[p], ...reduced[p] };
   const next = { fetchedAt: new Date().toISOString(), source: url, ...reduced };
   try {
     fs.mkdirSync(path.dirname(cachePath), { recursive: true });
@@ -336,4 +342,8 @@ export function startPriceCatalogRefresh() {
 export function _setFetchedForTest(cat) {
   fetched = cleanCatalog(cat);
   rebuild();
+}
+
+export function exactPriceFor(provider, model) {
+  return tables[provider]?.[String(model || '').toLowerCase()] || null;
 }

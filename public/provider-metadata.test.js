@@ -18,5 +18,5 @@ test('board search, model controls and notifications use provider metadata', () 
   assert.equal(needsYouTitle({ agent: 'fixture' }), 'Fixture Agent needs you');
   assert.equal(needsYouTitle({ agent: 'unknown' }), 'unknown needs you');
   assert.equal(needsYouTitle({}), 'Claude needs you');
-  assert.deepEqual(billingProviderChoices().map((p) => p.label), ['All providers', 'Anthropic', 'OpenAI', 'Fixture API']);
+  assert.deepEqual(billingProviderChoices().map((p) => p.label), ['All providers', 'Anthropic', 'OpenAI', 'Gemini', 'Fixture API']);
 });

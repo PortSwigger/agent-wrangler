@@ -35,6 +35,8 @@ import { keybindings } from './keybindings.js';
 const STORE_PREFIX = 'cm-setting-';
 
 export const SETTINGS = [
+  { id: 'manageAgyIntegration', type: 'toggle', scope: 'server', label: 'Manage agy integration', help: 'Opt in to local Antigravity dispatch. Installs an identity-scoped plugin in ~/.gemini/config/plugins at runtime. Off removes the managed plugin. Native integration is experimental; validate it with the human acceptance runner.', default: false },
+  { id: 'trustAgyLaunchCwd', type: 'toggle', scope: 'server', label: 'Skip Antigravity trust-folder prompts', help: 'Opt in to trust entries for each Antigravity launch folder in ~/.gemini/antigravity-cli/settings.json. Other settings are preserved. Off leaves trust prompts for you to answer in the terminal.', default: false },
   {
     id: 'flipNavHotkeys',
     type: 'toggle',
@@ -177,7 +179,7 @@ export const SETTINGS_TABS = [
   {
     id: 'automation',
     label: 'Automation',
-    settingIds: ['autoFixPrChecksDefault', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
+    settingIds: ['manageAgyIntegration', 'trustAgyLaunchCwd', 'autoFixPrChecksDefault', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
   },
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },

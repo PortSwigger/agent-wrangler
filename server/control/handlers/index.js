@@ -1,3 +1,4 @@
+import { manageAgyIntegrationHandler, trustAgyLaunchCwdHandler } from './manage-agy-integration.js';
 import { dispatchHandler } from './dispatch.js';
 import { validateWorktreeHandler } from './validate-worktree.js';
 import { browseFoldersHandler } from './browse-folders.js';
@@ -91,6 +92,8 @@ export const CONTROL_HANDLERS = [
   subagentsExpandedByDefaultHandler,
   trustCodexLaunchCwdHandler,
   trustClaudeLaunchCwdHandler,
+  manageAgyIntegrationHandler,
+  trustAgyLaunchCwdHandler,
   archiveReviewEnabledHandler,
   mailWakesDormantHandler,
   prModelFooterHandler,

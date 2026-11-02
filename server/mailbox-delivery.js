@@ -1,5 +1,6 @@
 import { adapterFor } from './agents/index.js';
 import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
+import { agyNativeReady } from './agy-startup.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import crypto from 'node:crypto';
@@ -17,6 +18,7 @@ export async function deliverMailNotification(to, text, deps) {
   const mcpReadyTimeoutMs = deps.mcpReadyTimeoutMs ?? MCP_READY_TIMEOUT_MS;
   const mcpReadyPollMs = deps.mcpReadyPollMs ?? MCP_READY_POLL_MS;
   const entry = sessionManager.entryFor(to);
+  if (entry?.agyLaunchWarning || entry?.agyForkPending) return { mode: 'deferred', reason: 'Antigravity launch policy or fork identity pending' };
   if (!entry || entry.archivedAt) return { mode: 'skip' };
 
   const target = tmuxFor(to);
@@ -26,7 +28,9 @@ export async function deliverMailNotification(to, text, deps) {
     return wakeDormant(to, entry, deps);
   }
 
+  if (entry.agent === 'agy' && (!(deps.agyNativeReady ?? agyNativeReady)(entry) || entry.agyLaunchWarning || entry.agyForkPending)) return { mode: 'deferred', reason: 'current Antigravity native tool readiness pending' };
   const beforeSend = async () => {
+    if (entry.agent === 'agy') return (deps.agyNativeReady ?? agyNativeReady)(entry) && !entry.agyLaunchWarning && !entry.agyForkPending;
     const relaunchedAt = entry.relaunchedAt;
     const relaunchAge = Date.now() - relaunchedAt;
     if (typeof relaunchedAt === 'number' && relaunchAge >= 0 && relaunchAge <= mcpReadyTimeoutMs
@@ -44,7 +48,10 @@ async function wakeDormant(to, entry, deps) {
   const { sessionManager, tmuxFor } = deps;
   let dir = await resolveResumeDir(entry.liveSessionId || to, { entryCwd: entry.cwd });
   if (!dir || !fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {
+      if (adapterFor(entry.agent).hookIdentity) return { mode: 'deferred', reason: 'Antigravity workspace unavailable' };
+      dir = os.homedir();
+    }
   }
   const fresh = sessionManager.entryFor(to);
   if (!fresh || fresh.archivedAt) return { mode: 'skip' };

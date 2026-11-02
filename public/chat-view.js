@@ -720,7 +720,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
 
   function submit() {
     const text = input.value.trim();
-    if (!sessionId || lastGate || pendingMessages.has(sessionId) || (!text && !attachments.length)) return;
+    if (!sessionId || lastGate || blockedByNeedsYou() || pendingMessages.has(sessionId) || (!text && !attachments.length)) return;
     // The EXISTING human message path: live → paste into the pane, dormant →
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
@@ -1438,7 +1438,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       // stop inviting input until the dialog is answered — and revert cleanly once
       // it isn't, since this runs on every render in both directions.
       box?.setAttribute('data-blocked', blocked ? '1' : '0');
-      input.placeholder = lastGate ? lastGate.reason : (blocked ? 'Answer the prompt in the terminal first…' : 'Send a prompt…');
+      input.placeholder = lastGate ? lastGate.reason : (blocked
+        ? (waitingReason === 'agent-startup' ? 'Agent setup is pending…' : 'Answer the prompt in the terminal first…')
+        : 'Send a prompt…');
       input.disabled = blocked;
       // A disabled input still retains its value, so without this a prompt typed
       // before the block started stays sendable via a click — defeating the guard.

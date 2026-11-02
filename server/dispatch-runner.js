@@ -1,4 +1,4 @@
-import { launchTargetError } from './agents/index.js';
+import { adapterFor, launchTargetError } from './agents/index.js';
 import { autoCompactTokensError } from './session-manager.js';
 import { workflowLaunchPrompt } from './workflow.js';
 import { slugFromIntent } from './worktree.js';
@@ -19,8 +19,13 @@ export async function deliverFirstPrompt({ tmux, socket = '', agent, text, image
     log = (m) => console.error(m),
   } = deps;
   try {
-    await waitReady(tmux, socket, agent);
-    if (!await paste(tmux, socket, agent, imagePaths)) log(`[dispatch] an image in the first prompt may not have attached in ${tmux}`);
+    const guarded = adapterFor(agent).terminal.guardEverySend;
+    const ready = await waitReady(tmux, socket, agent);
+    if (guarded && !ready) { log(`[dispatch] input is not ready in ${tmux}; first prompt retained on the card`); return; }
+    if (!await paste(tmux, socket, agent, imagePaths)) {
+      log(`[dispatch] an image in the first prompt may not have attached in ${tmux}`);
+      if (guarded) return;
+    }
     await send(tmux, text, socket);
     // An image-only prompt leaves just `[Image #1]` in the composer, so that is
     // what the submit check looks for when there is no prose to find.
@@ -104,7 +109,11 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     const imagePaths = claimStagedPastes(sessionId, agent, imageNames);
     // Not awaited: the dialog closes on the dispatch ack, and the TUI can take
     // seconds to boot. Returned so a test can wait for it.
-    firstPrompt = deliver({ tmux, socket: sessionManager.entryFor(sessionId)?.socket ?? '', agent, text: intent, imagePaths });
+    if (agent === 'agy') {
+      sessionManager.entryFor(sessionId).agyPendingIntent = { text: intent, imagePaths, state: 'pending' };
+      sessionManager._save();
+      firstPrompt = sessionManager._finishProviderLaunch(adapterFor(agent), sessionId);
+    } else firstPrompt = deliver({ tmux, socket: sessionManager.entryFor(sessionId)?.socket ?? '', agent, text: intent, imagePaths });
   }
   // Optional task targeting: assign is a no-op if the task was deleted between
   // saving and firing, so the session just falls back to Ad hoc.

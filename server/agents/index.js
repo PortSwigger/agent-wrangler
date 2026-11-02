@@ -1,8 +1,9 @@
 import { claude } from './claude.js';
 import { codex } from './codex.js';
+import { agy } from './agy.js';
 import { logWarn } from '../log.js';
 
-const allAgents = () => [claude, codex];
+const allAgents = () => [claude, codex, agy];
 
 export function createAgentRegistry(adapters) {
   const values = typeof adapters === 'function' ? adapters : () => adapters;
@@ -248,7 +249,7 @@ export function modelChoicesText() {
 // skill keeps a table after all — generated, never hand-copied.
 export function modelTableMarkdown() {
   return allAgents().map((a) => {
-    const rows = a.models.map((m) => `- \`${m.value}\` — ${m.label}${m.default ? ' (default)' : ''}`);
+    const rows = a.models.map((m) => `- \`${m.value}\` — ${m.label}${m.default ? ' (default)' : ''}${Array.isArray(m.efforts) ? (m.efforts.length ? ` · effort: ${m.efforts.join(', ')}${m.defaultEffort ? ` (default ${m.defaultEffort})` : ''}` : ' · no effort flag') : ''}`);
     // Efforts ride the same generated block rather than a second one: they are
     // per-adapter vocabulary picked at the same moment as the model, and a
     // hand-written list here is exactly the drift this generator exists to stop.

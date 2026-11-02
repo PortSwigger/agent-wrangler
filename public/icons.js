@@ -152,7 +152,8 @@ export const MERGE_ICON =
 // violet --wf accent carries it. CSS (.wf-ico) sizes it.
 export const WORKFLOW_ICON =
   '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="2"></circle><circle cx="12.5" cy="3.5" r="2"></circle><circle cx="12.5" cy="12.5" r="2"></circle><path d="M5.2 7 11 4.2M5.2 9 11 11.8" stroke="currentColor" stroke-width="1.3" fill="none"></path></svg>';
-const AGENT_ICONS = { claude: CLAUDE_ICON, codex: CODEX_ICON };
+const AGY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 2 21h5l5-10 5 10h5L12 2Z"/></svg>';
+const AGENT_ICONS = { claude: CLAUDE_ICON, codex: CODEX_ICON, agy: AGY_ICON };
 // A mapping entry with no `agent` is Claude (the registry default); any unknown
 // agent falls back to the generic chip rather than masquerading as Claude.
 export function agentIcon(agent) {

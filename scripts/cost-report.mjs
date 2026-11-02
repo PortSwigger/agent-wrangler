@@ -293,8 +293,9 @@ sessions.length = 0;
 sessions.push(...deduped);
 
 // ---- aggregate ----------------------------------------------------------
-function blankAgg() { return { cost: 0, sessions: 0, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, total: 0 } }; }
+function blankAgg() { return { unpriced: false, cost: 0, sessions: 0, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, total: 0 } }; }
 function addAgg(agg, s) {
+  agg.unpriced ||= s.usd == null;
   agg.cost += s.usd; agg.sessions += 1;
   for (const k of ['input', 'output', 'cacheWrite', 'cacheRead', 'total']) agg.tokens[k] += s.tokens[k];
 }
@@ -323,13 +324,16 @@ for (const s of sessions) {
     const agg = byModel.get(model);
     // Cost/tokens per model from this session's per-model split when available.
     if (s.totals[model]) {
-      agg.cost += adapterFor(s.agent).usage.costUsd({ [model]: s.totals[model] });
+      const modelUsd = adapterFor(s.agent).usage.costUsd({ [model]: s.totals[model] });
+      agg.unpriced ||= modelUsd == null;
+      agg.cost += modelUsd;
       const t = s.totals[model];
       agg.tokens.input += t.input; agg.tokens.output += t.output;
       agg.tokens.cacheWrite += (t.cacheWrite5m || 0) + (t.cacheWrite1h || 0); agg.tokens.cacheRead += t.cacheRead || 0;
       agg.tokens.total += t.input + t.output + (t.cacheWrite5m || 0) + (t.cacheWrite1h || 0) + (t.cacheRead || 0);
     } else {
-      agg.cost += s.usd;
+      agg.unpriced ||= s.usd == null;
+  agg.cost += s.usd;
       for (const k of ['input', 'output', 'cacheWrite', 'cacheRead', 'total']) agg.tokens[k] += s.tokens[k];
     }
     agg.sessions += 1;
@@ -350,7 +354,7 @@ const report = {
 
 if (JSON_OUT) { console.log(JSON.stringify(report, null, 2)); process.exit(0); }
 
-const usd = (n) => `$${n.toFixed(2)}`;
+const usd = (n) => n == null ? 'tokens only' : `$${n.toFixed(2)}`;
 const k = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : `${n}`);
 const pad = (s, w) => String(s).padEnd(w);
 const lpad = (s, w) => String(s).padStart(w);
@@ -377,7 +381,7 @@ for (const t of report.byTask) {
 console.log(`\n  By model${' '.repeat(12)}cost     sess    in       out      cacheW   cacheR`);
 console.log(`  ${'-'.repeat(72)}`);
 for (const m of report.byModel) {
-  console.log(`  ${pad(m.name.slice(0, 18), 19)}${lpad(usd(m.cost), 8)}${lpad(m.sessions, 7)}  ${lpad(k(m.tokens.input), 7)}  ${lpad(k(m.tokens.output), 7)}  ${lpad(k(m.tokens.cacheWrite), 7)}  ${lpad(k(m.tokens.cacheRead), 7)}`);
+  console.log(`  ${pad(m.name.slice(0, 18), 19)}${lpad(usd(m.unpriced ? null : m.cost), 8)}${lpad(m.sessions, 7)}  ${lpad(k(m.tokens.input), 7)}  ${lpad(k(m.tokens.output), 7)}  ${lpad(k(m.tokens.cacheWrite), 7)}  ${lpad(k(m.tokens.cacheRead), 7)}`);
 }
 
 const claudeCost = grand.cost - estimatedCost;

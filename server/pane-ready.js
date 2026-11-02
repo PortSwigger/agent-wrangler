@@ -161,7 +161,9 @@ export function composerHoldsText(paneText, agent = 'claude', text = '') {
   if (typeof paneText !== 'string' || !paneText) return false;
   const probe = String(text).split('\n')[0].trim().slice(0, 40);
   if (!probe) return false;
-  const mark = adapterFor(agent).terminal.composerMark;
+  const terminal = adapterFor(agent).terminal;
+  if (terminal.composerHoldsText) return terminal.composerHoldsText(paneText, text);
+  const mark = terminal.composerMark;
   const line = stripAnsi(paneText).split('\n').filter((l) => l.includes(mark)).pop();
   return Boolean(line) && line.includes(probe);
 }

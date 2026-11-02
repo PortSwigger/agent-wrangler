@@ -19,6 +19,11 @@ import { isWorkflowRun, sessionGroups } from './workflow.js';
 import { formatAutoCompactTokens } from './auto-compact-presets.js';
 
 export const STATUS_WORDS = { working: 'busy', 'needs-you': 'reply', idle: 'idle', job: 'job' };
+export function needsYouWord(s) {
+  if (s.waitingReason === 'agent-startup') return 'setup';
+  if (s.waitingReason === 'api-error') return 'error';
+  return STATUS_WORDS['needs-you'];
+}
 
 // Sub-agents finished within this window still show under the default "Recent" filter
 // (a starting point — not tuned against real usage yet).
@@ -53,7 +58,7 @@ export function visibleSubAgents(subAgents, { showFinished, now }) {
 // plain circle (.subagent-row.running colours it, see styles.css) — carrying its
 // own running/completed tooltip since there's no verbal "run"/"done" word.
 export function subagentRowHtml(sa, sid) {
-  const cost = typeof sa.usd === 'number' && sa.usd > 0 ? `$${sa.usd.toFixed(2)}` : '';
+  const cost = typeof sa.usd === 'number' && sa.usd > 0 ? `${sa.estimated ? '~' : ''}$${sa.usd.toFixed(2)}` : '';
   const costTitle = typeof sa.advisorUsd === 'number' && sa.advisorUsd > 0
     ? ` title="$${sa.advisorUsd.toFixed(2)} on advisor consults"`
     : '';
@@ -424,8 +429,7 @@ export function workerStatusWord(s, ctx) {
   // An api-error needs-you is retryable by sending another message — the
   // generic 'reply' word wrongly implies the same "go answer a prompt in the
   // terminal" affordance as a permission prompt or OAuth screen.
-  if (s.status === 'needs-you' && s.waitingReason === 'api-error') return 'error';
-  if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
+  if (s.status === 'needs-you') return needsYouWord(s);
   if (ctx.justFinished.has(s.sessionId)) return 'done';
   return STATUS_WORDS[displayStatus(s)] || s.status || '';
 }

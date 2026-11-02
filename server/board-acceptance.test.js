@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
+import { chromium } from 'playwright-core';
 
 // The board is only really "working" if a browser can load it, and two blank-dashboard
 // regressions shipped through a green CI in one afternoon (a deleted element the module
@@ -15,11 +16,9 @@ import WebSocket from 'ws';
 // first one: #92 also deleted the .diff-row/.diff-cell-empty rules, which produce no
 // error at all, just a silently unstyled side-by-side view.
 //
-// So this drives REAL headless Chrome over the DevTools Protocol. No new dependency:
-// `ws` is already a runtime dep, and CDP is just JSON over a socket. Deliberately not
-// Playwright/puppeteer — neither earns a browser download plus a dep for one smoke test,
-// and jsdom can't do this at all (no layout engine, and app.js touches WebSocket/xterm
-// at import).
+// Playwright launches installed headless Chrome; the assertions use bounded CDP
+// requests over ws. playwright-core downloads no browser. Real layout and the
+// app's WebSocket/xterm imports are exercised in the browser.
 //
 // Runs against an ISOLATED instance (its own AW_DATA_DIR, so it can never see or touch
 // the live board's tmux sessions — see the run-dev skill) and SKIPS when no Chrome is
@@ -69,27 +68,14 @@ async function waitFor(fn, { tries = 80, every = 250 } = {}) {
 // Chrome picks its own debug port and writes it to DevToolsActivePort — reading it back
 // avoids racing another process for a hard-coded one.
 async function launchChrome(chromePath, profile) {
-  const proc = spawn(chromePath, [
-    '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-    '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--window-size=1400,900',
-    'about:blank',
-  ], { stdio: ['ignore', 'ignore', 'pipe'] });
-  // Keep startup failures visible in CI. A missing port file alone cannot tell us
-  // whether Chrome crashed, could not spawn, or stayed alive without opening CDP.
-  let stderr = '', stopped = null;
-  proc.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-16_384); });
-  proc.on('error', (error) => { stopped = `could not start: ${error.message}`; });
-  proc.on('exit', (code, signal) => { stopped = `exited (${signal ? `signal ${signal}` : `code ${code}`})`; });
-  const portFile = join(profile, 'DevToolsActivePort');
-  const port = await waitFor(() => {
-    // waitFor swallows read errors while the file is being created. Return a
-    // sentinel on process failure so we can report it immediately after polling.
-    if (stopped) return 'stopped';
-    const line = readFileSync(portFile, 'utf8').split('\n')[0].trim();
-    return line ? Number(line) : null;
+  const context = await chromium.launchPersistentContext(profile, {
+    executablePath: chromePath, headless: true,
+    viewport: { width: 1400, height: 900 },
+    args: ['--remote-debugging-port=0'],
   });
-  return { proc, port: port === 'stopped' ? null : port,
-    diagnosis: () => `Chrome ${stopped || 'never reported a DevTools port (still running)'}${stderr ? `\n${stderr}` : ''}` };
+  const port = Number(readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]);
+  return { proc: { kill: () => context.close() }, port,
+    diagnosis: () => 'Chrome did not report a DevTools port' };
 }
 
 test('the board loads in a real browser with no console errors', { timeout: 180_000 }, async (t) => {
@@ -136,7 +122,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     assert.ok(launched.port, launched.diagnosis());
 
     const target = await waitFor(async () => {
-      const r = await fetch(`http://127.0.0.1:${launched.port}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' });
+      const r = await fetch(`http://127.0.0.1:${launched.port}/json/new?about:blank`, { method: 'PUT' });
       return r.ok ? r.json() : null;
     });
     assert.ok(target?.webSocketDebuggerUrl, 'could not open a Chrome tab');
@@ -222,7 +208,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     await ack('Page.enable');
     const navigated = await ack('Page.navigate', { url });
     assert.ok(!navigated.result?.errorText,
-      `Page.navigate failed: ${navigated.result?.errorText} — the tab may still show the page /json/new opened`);
+      `Page.navigate failed: ${navigated.result?.errorText} — the tab may still show about:blank`);
     // The board renders off its first control-WS graph push, not DOMContentLoaded, and
     // #grid is empty in the HTML — so a child inside it means the client has rendered the
     // grid at all, which on this test's path (fresh data dir, no location hash) only
@@ -486,7 +472,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
   } finally {
     try { ws?.close(); } catch {}
-    try { chrome?.kill(); } catch {}
+    try { await chrome?.kill(); } catch {}
     try { server?.kill(); } catch {}
     await sleep(500);
     // Cleanup must never fail the test — Chrome writes to its profile as it exits.

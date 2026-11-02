@@ -134,7 +134,7 @@ async function runUpdate({ onProgress, rebuild = false, sources: given = null } 
     const prev = rebuild ? null : meta.sources[s.file];
     if (!prev) {
       jobs.push({ ...s, from: 0, docIdx: -1 });
-    } else if (s.size < prev.consumed) {
+    } else if (s.size < prev.consumed || (s.agent === 'agy' && (s.size !== prev.size || s.mtimeMs !== prev.mtimeMs))) {
       // Rewritten or truncated — the indexed bytes no longer describe this file.
       if (meta.docs[prev.docIdx] && !meta.docs[prev.docIdx].dead) {
         meta.docs[prev.docIdx].dead = true;
