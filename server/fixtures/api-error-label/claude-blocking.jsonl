@@ -1,0 +1,3 @@
+{"type":"user","uuid":"prompt","message":{"role":"user","content":"Summarize the example project."}}
+{"type":"assistant","uuid":"error","parentUuid":"prompt","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"Login expired \u00b7 Please run /login"}]},"isApiErrorMessage":true,"error":"authentication_failed"}
+{"type":"system","subtype":"turn_duration","durationMs":1200}

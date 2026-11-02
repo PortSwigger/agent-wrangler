@@ -1386,3 +1386,18 @@ test('parseStoredEchoes drops expired and malformed entries and marks the rest q
   assert.equal(parseStoredEchoes('{}', now).size, 0);
   assert.equal(parseStoredEchoes(serializeEchoes(out), now).get('a')[0].text, 'fresh');
 });
+
+test('blocking API errors keep the terminal action and disabled composer until recovery', async () => {
+  const { view, byId, input } = await mountView();
+  view.mount('s1');
+  view.setStatus('needs-you', 'Login expired · Please run /login', 'api-error-blocking');
+  const bar = byId.get('chat-notice-bar');
+  assert.equal(bar.hidden, false);
+  assert.match(bar.children[0].textContent, /Login expired/);
+  assert.doesNotMatch(bar.children[0].textContent, /retry/);
+  assert.equal(bar.children[1].textContent, 'Terminal →');
+  assert.equal(input.disabled, true);
+  view.setStatus('idle');
+  assert.equal(bar.hidden, true);
+  assert.equal(input.disabled, false);
+});
