@@ -5824,7 +5824,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   if (rtSel.value !== wantRuntime) rtSel.value = 'local';
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   document.getElementById('m-advanced-options').open = false;
-  document.getElementById('m-any-model').open = false;
+  dispatchModelPicker?.reset();
   populateEffortSelect();
   if (schedule) {
     const effort = document.getElementById('m-effort');
@@ -6723,6 +6723,7 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
 document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; rememberDispatchPick(); syncDispatchExtFields(); });
 dispatchModelPicker = createDispatchModelPicker({
   root: document.getElementById('m-model-picker'),
+  storage: (() => { try { return localStorage; } catch { return null; } })(),
   agents: () => availableAgents,
   read: () => {
     const model = document.getElementById('m-model');

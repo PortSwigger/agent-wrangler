@@ -1,6 +1,7 @@
 import { agentIcon } from './icons.js';
 import { MODEL_FRONT as front } from './model-front-api.js';
 import { samePick, onFront, effortsOf, costAt } from './model-front.js';
+import { readDispatchModelSection, saveDispatchModelSection } from './dispatch-preferences.js';
 
 export function pickName(agents, p) {
   const agent = agents.find((a) => a.id === p.agent);
@@ -66,10 +67,26 @@ export function curveStep(state, direction) {
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const providerLogo = (agent, attributes = '') => agentIcon(agent).replace('<svg ', `<svg class="model-front-logo" aria-hidden="true" focusable="false" ${attributes} `);
 const clamp = (n) => Math.max(0, Math.min(100, n));
-const y = (p) => 240 - p.quality * 2.1;
+const y = (p) => 160 - p.quality * 1.3;
 
-export function createDispatchModelPicker({ root, agents, read, select }) {
+export function benchmarkReadout(score) {
+  const metrics = [
+    ['Quality', score?.quality, score?.quality, (v) => `${v.toFixed(0)} / 100`],
+    ['Cost', score?.usd, score?.cost, (v) => `$${v.toFixed(2)} / task`],
+    ['Time', score?.minutes, score?.time, (v) => `${v.toFixed(1)} min`],
+  ];
+  const measured = metrics.some(([, value]) => Number.isFinite(value));
+  const bars = metrics.map(([label, value, width, format]) => {
+    const known = Number.isFinite(value);
+    const fill = known && Number.isFinite(width) ? `<i style="width:${clamp(width)}%"></i>` : '';
+    return `<div class="model-front-bar"><span>${label}</span><span class="model-front-meter">${fill}</span><strong>${known ? format(value) : measured ? 'Unavailable' : ''}</strong></div>`;
+  }).join('');
+  return `<div class="model-front-metrics${measured ? '' : ' unmeasured'}"><div class="model-front-bars"${measured ? '' : ' aria-hidden="true"'}>${bars}</div>${measured ? '' : '<div class="model-front-benchmark-overlay"><strong>No benchmark data available</strong><span>Quality, cost and time estimates aren’t available for this setting.</span></div>'}</div>`;
+}
+
+export function createDispatchModelPicker({ root, agents, read, select, storage }) {
   const document = root.ownerDocument;
+  const view = document.defaultView;
   const track = root.querySelector('.model-front-slider');
   const slider = root.querySelector('[role="slider"]');
   const stops = root.querySelector('.model-front-stops');
@@ -79,8 +96,10 @@ export function createDispatchModelPicker({ root, agents, read, select }) {
   const credit = root.querySelector('.model-front-credit');
   const readout = root.querySelector('.model-front-readout');
   const notice = root.querySelector('.model-front-notice');
+  const sources = root.querySelector('.model-front-sources');
   credit.textContent = front.data.credit;
-  let state, noticeTarget;
+  let state, noticeTarget, revealSection, revealTimer;
+  let lastSection = readDispatchModelSection(storage);
   function hideNotice() {
     noticeTarget?.removeAttribute('aria-describedby');
     noticeTarget = null;
@@ -103,8 +122,41 @@ export function createDispatchModelPicker({ root, agents, read, select }) {
   }
   document.addEventListener('pointerdown', (e) => {
     if (noticeTarget && !notice.contains(e.target) && !noticeTarget.contains(e.target)) hideNotice();
+    if (sources.open && !sources.contains(e.target)) sources.open = false;
   });
-  root.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideNotice(); });
+  root.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    hideNotice();
+    if (sources.open) {
+      sources.open = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+  root.addEventListener('click', (e) => {
+    const summary = e.target.closest('.model-front-section > summary');
+    if (!summary) return;
+    view.clearTimeout(revealTimer);
+    revealSection = summary.parentElement.open ? null : summary.parentElement;
+    if (revealSection) {
+      lastSection = revealSection.dataset.modelSection;
+      saveDispatchModelSection(storage, lastSection);
+    }
+  });
+  root.addEventListener('toggle', (e) => {
+    if (e.target.matches('.model-front-section')) {
+      hideNotice();
+      preview.textContent = '';
+      if (!e.target.open) sources.open = false;
+      if (e.target.open && e.target === revealSection) {
+        const section = e.target;
+        const reduced = view.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        revealTimer = view.setTimeout(() => {
+          if (section.open && section === revealSection) section.scrollIntoView({ behavior: reduced ? 'instant' : 'smooth', block: 'nearest' });
+        }, reduced ? 0 : 220);
+      }
+    }
+  }, true);
   const choose = (p) => { if (p) { select(p); sync(); } };
   slider.addEventListener('keydown', (e) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
@@ -141,7 +193,7 @@ export function createDispatchModelPicker({ root, agents, read, select }) {
     if (!dot) return;
     if (dot.dataset.unavailable === 'true') {
       showNotice(dot);
-    } else choose(dot.dataset.point === 'selected' ? state.pick : state.front[Number(dot.dataset.point)]);
+    } else choose(state.front[Number(dot.dataset.point)]);
   }
   plot.addEventListener('click', plotPick);
   plot.addEventListener('keydown', (e) => {
@@ -155,7 +207,7 @@ export function createDispatchModelPicker({ root, agents, read, select }) {
     const focusUnavailable = focused?.dataset.unavailable;
     const available = agents(), pick = read();
     state = pickerState(available, pick);
-    const range = costRange([...state.front, ...state.unavailable, ...(state.score && state.beaten ? [state.score] : [])]);
+    const range = costRange([...state.front, ...state.unavailable]);
     const lower = costAt(range[0], front.data), upper = costAt(range[1], front.data);
     const x = (p) => 42 + (p.cost - lower) / (upper - lower) * 488;
     slider.setAttribute('aria-valuemin', '0');
@@ -164,20 +216,34 @@ export function createDispatchModelPicker({ root, agents, read, select }) {
     slider.setAttribute('aria-valuetext', `${pickName(available, pick)}. ${state.verdict}`);
     slider.setAttribute('aria-disabled', String(!state.stops.length));
     track.classList.toggle('no-handle', state.handle < 0);
+    for (const selector of ['.model-front-slider-note', '.model-front-graph-note']) {
+      const note = root.querySelector(selector);
+      note.hidden = state.handle >= 0;
+      note.textContent = note.hidden ? '' : state.stops.length ? 'Your selected model is outside the recommended set.' : 'No recommended models are available. Choose a model in All models.';
+    }
     stops.innerHTML = state.stops.map((p, i) => `<button type="button" class="model-front-stop" data-stop="${i}" aria-label="${esc(pickName(available, p))}" title="${esc(pickName(available, p))}" style="left:${i / Math.max(1, state.stops.length - 1) * 100}%;--pick-colour:${pickColour(p)}">${providerLogo(p.agent)}</button>`).join('');
     slider.innerHTML = `<span class="model-front-track"></span><span class="model-front-handle" style="left:${Math.max(0, state.handle) / Math.max(1, state.stops.length - 1) * 100}%"></span>`;
     key.innerHTML = modelKey(available, [...state.front, ...state.unavailable, pick]).map((m) => `<span><i style="--pick-colour:${m.colour}" aria-hidden="true">${providerLogo(m.agent)}</i>${esc(m.label)}</span>`).join('');
     const dot = (p, i, unavailable) => {
-      const name = pickName(available, p), selected = samePick(state.pick, p), below = i === 'selected';
-      const status = unavailable ? ' — unavailable' : below ? ' — below front' : '';
-      return `<g role="button" tabindex="0" data-point="${i}" data-unavailable="${unavailable}" aria-label="${esc(name)}${status}" aria-pressed="${selected}" style="--pick-colour:${pickColour(p)}" class="model-front-point${unavailable ? ' unavailable' : ''}${selected ? ' selected' : ''}${below ? ' below' : ''}">${unavailable ? '' : `<title>${esc(name)}: quality ${p.quality}, $${p.usd.toFixed(2)}, ${p.minutes.toFixed(1)} min${status}</title>`}<circle class="point-hit" cx="${x(p)}" cy="${y(p)}" r="12"/><circle class="point-mark" cx="${x(p)}" cy="${y(p)}" r="9"/>${providerLogo(p.agent, `x="${x(p) - 8}" y="${y(p) - 8}" width="16" height="16"`)}${selected ? `<circle class="point-selection" cx="${x(p)}" cy="${y(p)}" r="12"/>` : ''}</g>`;
+      const name = pickName(available, p), selected = !unavailable && samePick(state.pick, p);
+      const status = unavailable ? ' — unavailable' : '';
+      return `<g role="button" tabindex="0" data-point="${i}" data-unavailable="${unavailable}" aria-label="${esc(name)}${status}" aria-pressed="${selected}" style="--pick-colour:${pickColour(p)}" class="model-front-point${unavailable ? ' unavailable' : ''}${selected ? ' selected' : ''}">${unavailable ? '' : `<title>${esc(name)}: quality ${p.quality}, $${p.usd.toFixed(2)}, ${p.minutes.toFixed(1)} min${status}</title>`}<circle class="point-hit" cx="${x(p)}" cy="${y(p)}" r="12"/><circle class="point-mark" cx="${x(p)}" cy="${y(p)}" r="9"/>${providerLogo(p.agent, `x="${x(p) - 8}" y="${y(p) - 8}" width="16" height="16"`)}${selected ? `<circle class="point-selection" cx="${x(p)}" cy="${y(p)}" r="12"/>` : ''}</g>`;
     };
-    plot.innerHTML = `<svg viewBox="0 0 540 282" aria-label="Quality against log cost" role="group">${[0, 20, 40, 60, 80, 100].map((q) => `<path class="model-front-grid" d="M42 ${y({ quality: q })}H530"/><text x="32" y="${y({ quality: q }) + 4}" text-anchor="end">${q}</text>`).join('')}<text x="42" y="15">Quality ↑</text><text x="530" y="278" text-anchor="end">Cost per task (log scale) →</text>${costTicks(range).map((tick) => `<text x="${x(tick)}" y="257" text-anchor="middle">${tick.label}</text>`).join('')}<polyline class="model-front-curve" points="${state.curve.map((p) => `${x(p)},${y(p)}`).join(' ')}"/>${state.unavailable.map((p, i) => dot(p, i, true)).join('')}${state.front.map((p, i) => dot(p, i, false)).join('')}${state.score && state.beaten ? dot({ ...state.pick, ...state.score }, 'selected', false) : ''}</svg>`;
+    plot.innerHTML = `<svg viewBox="0 0 540 202" aria-label="Quality against log cost" role="group">${[0, 40, 80, 100].map((q) => `<path class="model-front-grid" d="M42 ${y({ quality: q })}H530"/><text x="32" y="${y({ quality: q }) + 4}" text-anchor="end">${q}</text>`).join('')}<text x="42" y="15">Quality ↑</text><text x="530" y="198" text-anchor="end">Cost per task (log scale) →</text>${costTicks(range).map((tick) => `<text x="${x(tick)}" y="177" text-anchor="middle">${tick.label}</text>`).join('')}<polyline class="model-front-curve" points="${state.curve.map((p) => `${x(p)},${y(p)}`).join(' ')}"/>${state.unavailable.map((p, i) => dot(p, i, true)).join('')}${state.front.map((p, i) => dot(p, i, false)).join('')}</svg>`;
     const s = state.score;
-    const bar = (label, value, width) => `<div class="model-front-bar"><span>${label}</span><span class="model-front-meter"><i style="width:${clamp(width)}%"></i></span><strong>${value}</strong></div>`;
-    readout.innerHTML = `<div class="model-front-name">${esc(pickName(available, pick))}</div>${!pick.effort && s ? `<div class="model-front-auto">Auto → ${esc(state.pick.effort)}</div>` : ''}${s ? bar('Quality', `${s.quality.toFixed(0)} / 100`, s.quality) + bar('Cost', `$${s.usd.toFixed(2)} / task`, s.cost) + bar('Time', `${s.minutes.toFixed(1)} min`, s.time) : '<p>Quality, cost and time are not measured for this pick.</p>'}<div class="model-front-verdict${state.beaten ? ' below' : !s ? ' unscored' : ''}">${esc(state.verdict)}</div>`;
+    const name = esc(pickName(available, pick));
+    const verdict = s || !state.pick.effort ? `<span class="model-front-verdict${state.beaten ? ' below' : !s ? ' unscored' : ''}" title="${esc(state.verdict)}">${esc(state.verdict)}</span>` : '';
+    readout.innerHTML = `<div class="model-front-readout-label">Selected model</div><div class="model-front-header"><div class="model-front-name" title="${name}">${name}${!pick.effort && s ? `<span class="model-front-auto">Auto → ${esc(state.pick.effort)}</span>` : ''}</div>${verdict}</div>${benchmarkReadout(s)}`;
     if (focusStop != null) stops.querySelector(`[data-stop="${focusStop}"]`)?.focus({ preventScroll: true });
     else if (focusPoint != null) plot.querySelector(`[data-point="${focusPoint}"][data-unavailable="${focusUnavailable}"]`)?.focus({ preventScroll: true });
   }
-  return { sync };
+  function reset() {
+    view.clearTimeout(revealTimer);
+    revealSection = null;
+    hideNotice();
+    preview.textContent = '';
+    sources.open = false;
+    root.querySelectorAll('.model-front-section').forEach((section) => { section.open = section.dataset.modelSection === lastSection; });
+  }
+  return { sync, reset };
 }
