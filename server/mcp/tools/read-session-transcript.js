@@ -89,7 +89,8 @@ export const readSessionTranscriptTool = {
     if (!entry) return errorResult(`No session with id ${args.sessionId}.`);
     const agent = entry.agent ?? 'claude';
     const adapter = adapterFor(agent);
-    const dir = adapter.history.directory(deps);
+    const historyOptions = { projectsDir: deps.projectsDir, codexSessionsDir: deps.codexSessionsDir };
+    const dir = adapter.history.directory(historyOptions);
 
     const transcriptPath = await adapter.transcriptPath(entry.liveSessionId || entry.sessionId, dir);
     if (!transcriptPath) return errorResult(`Session ${args.sessionId} has no transcript on disk yet.`);
@@ -101,7 +102,7 @@ export const readSessionTranscriptTool = {
 
     try {
       const summary = adapter.history.forEachLine
-        ? await summariseStream(await adapter.history.findFiles(entry.liveSessionId || entry.sessionId, deps), adapter)
+        ? await summariseStream(await adapter.history.findFiles(entry.liveSessionId || entry.sessionId, historyOptions), adapter)
         : summariseTranscript(await fsp.readFile(transcriptPath, 'utf8'), agent);
       const { total, omitted, messages } = summary;
       return transcriptResult({ args, entry, agent, transcriptPath, earlierTranscriptPaths, total, omitted, messages });

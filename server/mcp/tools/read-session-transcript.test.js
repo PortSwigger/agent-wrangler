@@ -144,3 +144,24 @@ test('errors for an unknown session or one with no transcript yet', async () => 
   assert.equal(fresh.isError, true);
   assert.match(fresh.content[0].text, /no transcript/);
 });
+
+test('reads Codex history without traversing board scratch sessions', async (t) => {
+  const { file, d } = setupCodex([codexLine('user', 'question', 0), codexLine('assistant', 'answer', 1)]);
+  const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-read-scratch-'));
+  t.after(() => fs.rmSync(scratchDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(d.codexSessionsDir, { recursive: true, force: true }));
+  d.sessionsDir = scratchDir;
+  const reads = [];
+  const readdir = fsp.readdir;
+  t.mock.method(fsp, 'readdir', async (dir, ...args) => {
+    reads.push(String(dir));
+    return readdir.call(fsp, dir, ...args);
+  });
+
+  const out = await readSessionTranscriptTool.handler({ deps: d }, { sessionId: 'CARD1' });
+
+  assert.deepEqual(reads.filter((dir) => dir === scratchDir || dir.startsWith(scratchDir + path.sep)), []);
+  assert.equal(out.isError, undefined);
+  assert.equal(out.structuredContent.transcriptPath, file);
+  assert.deepEqual(out.structuredContent.messages.map((m) => [m.role, m.text]), [['user', 'question'], ['assistant', 'answer']]);
+});
