@@ -1225,6 +1225,26 @@ test('a prompt with an attachment is matched through the TUI image marker', asyn
   assert.equal(echoMatchesEvent({ ...literal, images: ['a.png', 'b.png'] }, { text: '[Image #1][Image #2]Compare [Image #1] with [Image #2]', ts: 1500 }), true);
 });
 
+test('a shell command sent with a space after ! leaves the pending tray once recorded', async () => {
+  const { scanChatText } = await import('../server/chat-events.js');
+  const { view, input, sent, byId } = await mountView();
+  view.mount('sess-1');
+  view.setStatus('idle');
+  input.value = '! gh pr view 123 --repo acme/widgets';
+  send(input);
+  view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
+  assert.equal(echoNodes(byId)[0].dataset.pending, 'queued');
+  const { events } = scanChatText(JSON.stringify({
+    type: 'user', timestamp: new Date().toISOString(),
+    message: { role: 'user', content: '<bash-input> gh pr view 123 --repo acme/widgets</bash-input>' },
+  }), 'claude');
+  const chat = sent.find((m) => m.type === 'chat');
+  view.onChatReply({ sessionId: 'sess-1', token: chat.token, offset: 10, events });
+  assert.equal(echoNodes(byId).length, 1);
+  assert.equal(echoNodes(byId)[0].dataset.pending, undefined);
+  assert.equal(byId.get('chat-stream').children.some((n) => n.className === 'chat-queue'), false);
+});
+
 test('a pasted tab the TUI expanded to spaces still matches its echo', async () => {
   const { echoMatchesEvent, echoRunMatchingEvent } = await import('./chat-view.js');
   const typed = 'error: overwritten by merge:\n\tdocs/nomenclature.md\nAborting';
