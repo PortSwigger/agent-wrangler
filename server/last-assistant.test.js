@@ -27,3 +27,26 @@ test('lastAssistantText is null without a transcript or when history fails', asy
   assert.equal(await lastAssistantText({ liveSessionId: 'missing' }, { adapterFor, historyOptions: { projectsDir: '/nonexistent' } }), null);
   assert.equal(await lastAssistantText({}, { adapterFor: () => { throw new Error('broken'); } }), null);
 });
+
+for (const rewindToRoot of [false, true]) {
+  test(`Claude excerpts exclude an abandoned branch before the next reply (root=${rewindToRoot})`, async (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-last-rewind-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const bucket = path.join(dir, '-work-a');
+    fs.mkdirSync(bucket);
+    const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const line = (n, parent, role, text) => ({
+      uuid: uuid(n), parentUuid: parent === null ? null : uuid(parent), type: role,
+      message: { role, content: [{ type: 'text', text }] },
+    });
+    const rows = [
+      line(1, null, 'user', 'initial prompt'),
+      line(2, 1, 'assistant', 'still relevant'),
+      line(3, 2, 'user', 'abandoned prompt'),
+      line(4, 3, 'assistant', 'discarded answer'),
+      line(5, rewindToRoot ? null : 2, 'user', 'replacement prompt'),
+    ];
+    fs.writeFileSync(path.join(bucket, 'live.jsonl'), rows.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    assert.equal(await lastAssistantText({ agent: 'claude', liveSessionId: 'live' }, { historyOptions: { projectsDir: dir } }), rewindToRoot ? null : 'still relevant');
+  });
+}

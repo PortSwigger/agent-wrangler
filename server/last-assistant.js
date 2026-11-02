@@ -9,11 +9,19 @@ export async function lastAssistantText(entry, { adapterFor = defaultAdapterFor,
     const { history } = adapterFor(entry.agent ?? 'claude');
     const files = await history.findFiles(entry.liveSessionId || entry.sessionId, historyOptions);
     const scanner = history.createScanner();
+    const branch = (entry.agent ?? 'claude') === 'claude' ? [] : null;
     let last = null;
-    const consume = (line) => {
-      for (const event of scanner.push(line)) {
+    const take = (events) => {
+      for (const event of events) {
         if (event.kind === 'assistant' && event.text) last = event.text;
       }
+    };
+    const consume = (line) => {
+      if (!branch) return take(scanner.push(line));
+      const tagged = scanner.pushTagged(line);
+      const events = tagged.events.filter((e) => e.kind === 'user' || e.kind === 'assistant')
+        .map((e) => e.kind === 'user' ? { kind: 'user' } : { kind: 'assistant', text: clipLastSaid(e.text ?? '') });
+      if (events.length) branch.push({ uuid: tagged.uuid, events });
     };
     for (const file of files) {
       if (history.forEachLine) await history.forEachLine(file, consume);
@@ -24,6 +32,7 @@ export async function lastAssistantText(entry, { adapterFor = defaultAdapterFor,
         finally { lines.close(); stream.destroy(); }
       }
     }
+    if (branch) take(scanner.selectLive(branch));
     return last ? clipLastSaid(last) : null;
   } catch { return null; }
 }
