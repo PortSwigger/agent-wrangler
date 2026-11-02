@@ -580,6 +580,14 @@ test('unnamed dispatch notification uses the supplied title before board state a
   assert.equal(app.notices[0].opts.title, 'Scheduled "Check release build" started');
 });
 
+for (const label of ['12345678', 'Older worker title']) {
+  test(`unnamed schedule notification prefers its board title over server label ${JSON.stringify(label)}`, () => {
+    const app = scheduledFocusHarness([{ sessionId: 'CARD1', label: 'Current worker title', managed: true }]);
+    app.onScheduleFired({ name: 'Untitled schedule', sessionId: 'CARD1', label });
+    assert.equal(app.notices[0].opts.title, 'Scheduled "Current worker title" started');
+  });
+}
+
 test('unnamed schedule notification identifies a target absent from board state', () => {
   const app = scheduledFocusHarness();
   app.onScheduleFired({ name: 'Untitled schedule', sessionId: '12345678-1234-1234-1234-123456789abc' });

@@ -49,3 +49,20 @@ test('failed focused schedule broadcasts only an error', async (t) => {
   await fire(schedule.id);
   assert.deepEqual(messages, [{ type: 'schedule-error', id: schedule.id, name: schedule.name, message: 'Target gone' }]);
 });
+
+test('successful schedule remains successful when its stored agent cannot supply a title', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-schedule-label-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const scheduleStore = new ScheduleStore(path.join(dir, 'schedules.json'));
+  const schedule = scheduleStore.create({ when: { kind: 'once', runAt: '2026-10-10T09:00:00Z' }, action: { kind: 'session', sessionId: '12345678-abcd' } }, Date.now());
+  const messages = [];
+  const fire = new Function('scheduleStore', 'performScheduleAction', 'broadcast', 'sessionManager', 'sessionLabel', `${declaration}; return fireSchedule;`)(
+    scheduleStore, async () => ({ sessionId: '12345678-abcd' }), (msg) => messages.push(msg),
+    { entryFor: () => ({ agent: 'retired-provider', name: 'Old worker' }) }, sessionLabel,
+  );
+  await fire(schedule.id, { manual: true });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].type, 'schedule-fired');
+  assert.equal(messages[0].label, '12345678');
+  assert.equal(scheduleStore.snapshot().schedules[0].lastSessionId, '12345678-abcd');
+});

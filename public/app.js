@@ -6862,7 +6862,7 @@ function onScheduleFired(msg) {
   }
   const name = msg.name && msg.name !== 'Untitled schedule'
     ? msg.name
-    : msg.label || latestSessions.find((s) => s.sessionId === msg.sessionId)?.label || msg.sessionId?.slice(0, 8) || 'Untitled schedule';
+    : latestSessions.find((s) => s.sessionId === msg.sessionId)?.label || msg.label || msg.sessionId?.slice(0, 8) || 'Untitled schedule';
   notifications.show('core_schedules', {
     id: String(++scheduleNotificationId),
     title: `Scheduled "${name}" started`,
