@@ -1857,6 +1857,13 @@ export class SessionManager {
     return dir;
   }
 
+  clearStatusNotify(childId) {
+    const entry = this.map.get(childId);
+    if (!entry?.statusNotify) return;
+    delete entry.statusNotify;
+    this._save();
+  }
+
   dispatch(opts) {
     return this._whileLaunching(() => this._doDispatch(opts));
   }

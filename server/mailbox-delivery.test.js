@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
-import { deliverMailNotification } from './mailbox-delivery.js';
+import { deliverMailNotification, deliverNotice } from './mailbox-delivery.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { composeMailNotification } from './mail-notification.js';
 
@@ -428,4 +428,67 @@ test('Claude terminal mail defers a blank-first-line draft, then automatically d
   pane = [frame, '\x1b[39m❯ ', frame].join('\n');
   assert.deepEqual(await deliverMailNotification('CARD1', notification, d), { mode: 'live' });
   assert.deepEqual(d.sent, [{ name: 'cc_one', text: notification, socket: '/s/a' }]);
+});
+
+for (const entry of [null, { archivedAt: 1 }, { snooze: { until: 999 } }]) {
+  test('deliverNotice skips absent, archived and snoozed subscribers ' + JSON.stringify(entry), async () => {
+    const d = deps({ entries: { CARD1: entry }, live: { CARD1: { tmux: 'cc_one' } } });
+    assert.equal((await deliverNotice('CARD1', '[Agent Wrangler] notice', d)).mode, 'skip');
+    assert.equal(d.resumed.length + d.sent.length, 0);
+  });
+}
+
+test('deliverNotice uses the live Claude socket and Codex pane transport', async () => {
+  for (const agent of ['claude', 'codex']) {
+    const d = socketDeps({ agent });
+    assert.equal((await deliverNotice('CARD1', '[Agent Wrangler] notice', d)).mode, 'live');
+    assert.equal(d.socketSent.length, agent === 'claude' ? 1 : 0);
+    assert.equal(d.sent.length, agent === 'codex' ? 1 : 0);
+  }
+});
+
+for (const [agent, joining] of [['claude', false], ['claude', true], ['codex', false]]) {
+  test(`deliverNotice wakes dormant ${agent} (joining=${joining}) without the mail setting`, async () => {
+    const d = deps({ entries: { CARD1: { agent, cwd: os.tmpdir() } } });
+    d.sessionManager.isResuming = () => joining;
+    assert.equal((await deliverNotice('CARD1', '[Agent Wrangler] notice', d)).mode, 'dormant');
+    assert.equal(d.resumed[0][2].intent, '[Agent Wrangler] notice');
+    assert.equal(d.resumed[0][2].reason, 'status-notice');
+    assert.equal(d.sent.length, agent === 'claude' && !joining ? 0 : 1);
+  });
+}
+
+test('deliverNotice retains a gated paste until the composer clears', async () => {
+  let clear = false;
+  const d = socketDeps({ agent: 'codex' });
+  const delivered = [];
+  const pane = '\x1b[1m›\x1b[0m ';
+  d.paneDeferral = createPaneDeferral({
+    tmuxFor: () => 'cx_one', agentFor: () => 'codex', statusFor: () => 'idle',
+    capture: async () => clear ? pane + '\x1b[2mAsk Codex to do anything\x1b[0m' : pane + 'my draft',
+    classify: () => ({ status: 'idle' }), sendText: async (_tmux, text) => delivered.push(text),
+  });
+  const result = await deliverNotice('CARD1', '[Agent Wrangler] notice', d);
+  assert.equal(result.mode, 'deferred');
+  assert.deepEqual(d.paneDeferral.pending('CARD1'), ['[Agent Wrangler] notice']);
+  assert.deepEqual(delivered, []);
+  clear = true;
+  await d.paneDeferral.drain();
+  assert.deepEqual(delivered, ['[Agent Wrangler] notice']);
+});
+
+test('deliverNotice propagates a dormant resume failure', async () => {
+  const d = deps({ entries: { CARD1: { cwd: os.tmpdir() } } });
+  d.sessionManager.isResuming = () => false;
+  d.sessionManager.resume = async () => { throw new Error('resume failed'); };
+  await assert.rejects(deliverNotice('CARD1', 'notice', d), /resume failed/);
+});
+
+test('a subscriber archived during socket readiness receives no notice', async () => {
+  const d = socketDeps({ agent: 'claude' });
+  const entry = d.sessionManager.entryFor('CARD1');
+  entry.relaunchedAt = Date.now();
+  d.mcpSeenAt = () => { entry.archivedAt = 1; return Date.now() + 1; };
+  assert.equal((await deliverNotice('CARD1', 'notice', d)).mode, 'skip');
+  assert.deepEqual(d.socketSent, []);
 });

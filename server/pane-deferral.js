@@ -38,6 +38,7 @@ const CAPTURE_LINES = 60;
 export function createPaneDeferral({
   tmuxFor, socketFor, agentFor = () => 'claude',
   statusFor = () => null,
+  canDeliver = () => true,
   sendText = defaultSendText,
   capture = defaultCapture,
   classify = defaultClassify,
@@ -126,6 +127,7 @@ export function createPaneDeferral({
     const delivered = [];
     for (const id of [...pending.keys()]) {
       if (inFlight.has(id)) continue;
+      if (!canDeliver(id)) { pending.delete(id); continue; }
       const q = pending.get(id);
       if (!q?.length) { pending.delete(id); continue; }
       const name = tmuxFor?.(id) ?? null;
@@ -136,6 +138,7 @@ export function createPaneDeferral({
         // Apply the same draft/dialog guard as the initial delivery, including
         // accepting a clear Codex composer while its current turn is working.
         if (await blocker(id, name, sock)) continue;
+        if (!canDeliver(id)) { pending.delete(id); continue; }
         // Snapshot before the await: anything enqueued while the paste is in
         // flight belongs to the next drain, not this one.
         const lines = [...q];

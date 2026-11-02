@@ -380,3 +380,31 @@ for (const draft of ['\n  Review this draft before sending.', 'Review this draft
     assert.deepEqual(pd.pending('c1'), []);
   });
 }
+
+test('a queued notification is dropped when the recipient becomes ineligible', async () => {
+  let eligible = true;
+  let pane = composer('draft');
+  const d = deps({ pane: () => pane });
+  const pd = createPaneDeferral({ ...d, canDeliver: () => eligible });
+  await pd.deliverOrDefer({ id: 'c1', text: 'notice' });
+  eligible = false;
+  pane = composer();
+  assert.deepEqual(await pd.drain(), []);
+  assert.deepEqual(pd.pending('c1'), []);
+  assert.deepEqual(d.sent, []);
+});
+
+test('a queued recipient becoming ineligible during pane capture is not pasted', async () => {
+  let eligible = true;
+  let draining = false;
+  const d = deps();
+  const pd = createPaneDeferral({ ...d, canDeliver: () => eligible, capture: async () => {
+    if (!draining) return composer('draft');
+    eligible = false;
+    return composer();
+  } });
+  await pd.deliverOrDefer({ id: 'c1', text: 'notice' });
+  draining = true;
+  assert.deepEqual(await pd.drain(), []);
+  assert.deepEqual(d.sent, []);
+});

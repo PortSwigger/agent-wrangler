@@ -21,6 +21,9 @@ import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
 import { CONTROL_HANDLERS } from './control/handlers/index.js';
+import { deliverNotice } from './mailbox-delivery.js';
+import { createStatusWatcher } from './status-notices.js';
+import { createStatusNoticeRunner } from './status-notice-runner.js';
 import { createMailSettleSweeper, createDeferralTracker } from './mail-runner.js';
 import { runDispatch } from './dispatch-runner.js';
 import { runSessionAction } from './session-action-runner.js';
@@ -253,6 +256,10 @@ const paneDeferral = createPaneDeferral({
   tmuxFor,
   socketFor,
   agentFor: (id) => sessionManager.entryFor(id)?.agent ?? 'claude',
+  canDeliver: (id) => {
+    const entry = sessionManager.entryFor(id);
+    return Boolean(entry && !entry.archivedAt && !entry.snooze);
+  },
   statusFor: (id) => lastGraph?.sessions?.find((s) => s.sessionId === id)?.status ?? null,
   sendText,
 });
@@ -849,8 +856,15 @@ const fireDueSnoozeWakesTick = createSnoozeWakeSweeper({
 // deliveryFailed state — the mail pill's unreadInfo age fallback is what still
 // surfaces it to a human, so this just logs rather than broadcasting a toast.
 const mailDeferrals = createDeferralTracker();
+const mailDeliveryDeps = { sessionManager, tmuxFor, socketFor, paneDeferral, wakesDormant: mailWakesDormant };
+const statusNotices = createStatusNoticeRunner({
+  watcher: createStatusWatcher(), mailStore, sessionManager,
+  deliver: (to, text) => deliverNotice(to, text, mailDeliveryDeps),
+  pending: (id) => paneDeferral.pending(id).some((text) => text.startsWith('[Agent Wrangler] Status notice')),
+  log: logError,
+});
 const fireMailSettlesTick = createMailSettleSweeper({
-  mailStore, deferrals: mailDeferrals, sessionManager, tmuxFor, socketFor, paneDeferral, wakesDormant: mailWakesDormant,
+  ...mailDeliveryDeps, mailStore, deferrals: mailDeferrals,
   onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
 });
 
@@ -1115,6 +1129,8 @@ async function rebuildOnce() {
   for (const s of diffNeedsYou(graph.sessions)) {
     broadcast({ type: 'notify', session: { sessionId: s.sessionId, label: s.label, waitingFor: s.waitingFor } });
   }
+  try { await statusNotices.run(graph); } catch (error) { logError('[status-notice]', error); }
+  for (const session of graph.sessions) session.statusNoticeBlocked = statusNotices.blocked(session.sessionId);
   // The wire graph, not `lastGraph`: history is omitted while unchanged, which is
   // almost every tick. See history-gate.js — and note the connect path above sends
   // `lastGraph` itself, so a fresh socket is always served the full list.
