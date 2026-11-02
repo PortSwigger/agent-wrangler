@@ -103,3 +103,42 @@ test('the timeout is passed through and the env is stripped of nested-claude var
   assert.equal(f.calls[0].opts.timeout, 5000);
   assert.equal(f.calls[0].opts.env.CLAUDE_CODE_TEST_LEAK, undefined);
 });
+
+test('env option is merged over the clean environment after nested-Claude variables are removed', async () => {
+  const f = fakeExecFile({ stdout: JSON.stringify({ result: 'ok' }) });
+  const previous = process.env.CLAUDECODE;
+  process.env.CLAUDECODE = 'nested';
+  try {
+    await runHeadlessClaude('P', 'x', { execFile: f.execFile, env: { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-token', AW_CONTEXT: 'secondary' } });
+    const env = f.calls[0].opts.env;
+    assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, 'fixture-token');
+    assert.equal(env.AW_CONTEXT, 'secondary');
+    assert.equal(env.CLAUDECODE, undefined);
+    assert.equal(env.PATH, process.env.PATH);
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDECODE;
+    else process.env.CLAUDECODE = previous;
+  }
+});
+
+test('hook env cannot restore nested Claude markers but keeps the explicit OAuth login', async () => {
+  const f = fakeExecFile({ stdout: JSON.stringify({ result: 'ok' }) });
+  await runHeadlessClaude('P', 'x', { execFile: f.execFile, env: {
+    CLAUDECODE: '1',
+    CLAUDE_CODE_ENTRYPOINT: 'nested',
+    CLAUDE_CODE_SESSION_ID: 'nested-session',
+    CLAUDE_CODE_EXECPATH: '/nested',
+    CLAUDE_CODE_TMPDIR: '/nested-tmp',
+    CLAUDE_JOB_DIR: '/nested-job',
+    CLAUDE_CODE_CHILD_SESSION: '1',
+    CLAUDE_CODE_OAUTH_TOKEN: 'fixture-token',
+    AW_CONTEXT: 'secondary',
+  } });
+  const env = f.calls[0].opts.env;
+  for (const key of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_EXECPATH', 'CLAUDE_CODE_TMPDIR', 'CLAUDE_JOB_DIR', 'CLAUDE_CODE_CHILD_SESSION']) {
+    assert.equal(env[key], undefined, key);
+  }
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, 'fixture-token');
+  assert.equal(env.AW_CONTEXT, 'secondary');
+  assert.equal(env.PATH, process.env.PATH);
+});

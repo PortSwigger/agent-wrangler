@@ -1,3 +1,4 @@
+import { adapterFor } from './agents/index.js';
 // Time-bucketed spend/usage aggregation for the Usage dashboard. Recomputes from
 // the on-disk Claude/Codex transcripts (never the board's cached per-session
 // aggregates), attributing every transcript line to a UTC calendar day by its own
@@ -684,15 +685,20 @@ export async function scanAllDaily({
   dataDir = DEFAULT_DATA_DIR,
   projectsDir = DEFAULT_PROJECTS_DIR,
   codexSessionsDir = DEFAULT_CODEX_SESSIONS_DIR,
+  resolveAdapter = adapterFor,
 } = {}) {
   const mappings = readJson(path.join(dataDir, 'mappings.json'), {});
   const tasks = readJson(path.join(dataDir, 'tasks.json'), {});
   const entries = mappings.sessions || mappings;
   const taskNameById = new Map((tasks.tasks || []).map((t) => [t.id, t.name]));
   const assignments = tasks.assignments || {};
-  const codexSessionIds = new Set(Object.entries(entries)
-    .filter(([, entry]) => (entry.agent || 'claude') === 'codex')
-    .map(([cardId, entry]) => entry.liveSessionId || cardId));
+  const sessionIdsByAgent = new Map();
+  for (const [cardId, entry] of Object.entries(entries)) {
+    const provider = resolveAdapter(entry.agent);
+    const ids = sessionIdsByAgent.get(provider.id) || new Set();
+    ids.add(entry.liveSessionId || cardId);
+    sessionIdsByAgent.set(provider.id, ids);
+  }
   const index = buildClaudeIndex(projectsDir);
   loadUsageFileCaches(dataDir);
 
@@ -722,63 +728,9 @@ export async function scanAllDaily({
   const maybeYield = async () => { if ((statTick += 1) % STAT_YIELD_EVERY === 0) await new Promise((r) => setImmediate(r)); };
 
   for (const [cardId, entry] of Object.entries(entries)) {
-    const agent = entry.agent || 'claude';
+    const agent = entry.agent ?? 'claude';
     const task = taskInfoFor(cardId, entry, assignments, taskNameById);
-    if (agent === 'claude') {
-      // One row per transcript the card has owned (a `/clear` leaves earlier ones
-      // behind), each attributed to the same task — rollup sums rows, so the card's
-      // spend stays whole across a swap and every file stays in seenClaudeFiles.
-      for (const file of resolveClaudeTranscripts(cardId, entry, index, projectsDir)) {
-        seenClaudeFiles.add(file);
-        const cd = await claudeDailyCached(file, usageSince(entry));
-        await maybeYield();
-        if (cd.failed) failedFiles += 1;
-        const days = normalizeClaudeDays(cd);
-        if (!Object.keys(days).length) continue;
-        const uuid = path.basename(file, '.jsonl');
-        const owner = entry.liveSessionId === uuid || cardId === uuid;
-        raw.push({ file, cardId, owner, task, days });
-      }
-    } else if (agent === 'codex' && analyzeCodex) {
-      // Codex rollouts aren't reliably line-stamped for cost, so attribute the whole
-      // (estimated, ChatGPT-plan-equivalent) session to its createdAt day — sub-monthly
-      // Codex is approximate. A session with no usable createdAt is skipped, not crashed.
-      // createdAt is epoch ms (Date.now()); Date.parse would stringify it to NaN and
-      // silently drop every Codex session. new Date() takes both that and an ISO string.
-      const created = entry.createdAt ? new Date(entry.createdAt).getTime() : NaN;
-      if (!Number.isFinite(created)) continue;
-      const sessionKey = entry.liveSessionId || cardId;
-      const rolloutIndex = await codexRolloutIndex();
-      const parentId = rolloutIndex.metaById?.get(sessionKey)?.parentId;
-      if (parentId && codexSessionIds.has(parentId)) continue;
-      const rolloutFile = rolloutIndex.files.get(sessionKey) || null;
-      if (rolloutFile) seenCodexFiles.add(rolloutFile);
-      const a = rolloutFile
-        ? await analyzeCodexCached(analyzeCodex, findRolloutChain, sessionKey, rolloutFile, codexSessionsDir, rolloutIndex)
-        : await analyzeCodex(sessionKey, { sessionsDir: codexSessionsDir, index: rolloutIndex }).catch(() => null);
-      await maybeYield();
-      if (!a || a.usd == null) continue;
-      const tok = a.tokens || blankTokens();
-      const codexTokens = { input: tok.input || 0, output: tok.output || 0, cacheWrite: tok.cacheWrite || 0, cacheRead: tok.cacheRead || 0 };
-      const model = a.model || 'gpt-5.5-codex';
-      const byModel = {};
-      for (const [modelId, modelTotals] of Object.entries(a.totals || { [model]: codexTokens })) {
-        const modelTokens = { input: modelTotals.input || 0, output: modelTotals.output || 0, cacheWrite: 0, cacheRead: modelTotals.cacheRead || 0 };
-        const modelUsd = codexCostUsd({ [modelId]: modelTotals });
-        byModel[modelId] = { usd: modelUsd, estimatedUsd: modelUsd, tokens: modelTokens };
-      }
-      raw.push({
-        file: null, cardId, owner: true, task,
-        days: { [dayKeyOf(created)]: {
-          provider: 'openai',
-          usd: a.usd, estimatedUsd: a.usd, subAgentUsd: a.subAgentUsd || 0, advisorUsd: 0, advisorTokens: blankTokens(),
-          tokens: codexTokens,
-          // Codex $ is estimated, so its per-model and per-type breakdowns are too.
-          byModel,
-          costByType: a.costByType || { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
-        } },
-      });
-    }
+    failedFiles += (await resolveAdapter(agent).usage.scanDaily({ cardId, entry, task, index, projectsDir, seenClaudeFiles, claudeDailyCached, normalizeClaudeDays, resolveClaudeTranscripts, usageSince, maybeYield, raw, trackedSessionIds: sessionIdsByAgent.get(agent), codexRolloutIndex, codexSessionsDir, seenCodexFiles, analyzeCodexCached, analyzeCodex, findRolloutChain, blankTokens, dayKeyOf })) || 0;
   }
 
   for (const key of [...claudeFileCache.keys()]) {
@@ -901,7 +853,8 @@ export function rollup(scan, opts = {}) {
         modelSpend.set(model, (modelSpend.get(model) || 0) + mb.usd);
       }
       addBag(bkt, s.task, bag);
-      addBag(bkt.providers[bag.provider || 'anthropic'], s.task, bag);
+      const provider = bag.provider || 'anthropic';
+      addBag(bkt.providers[provider] ||= blankUsageBucket(), s.task, bag);
       totals.usd += bag.usd; totals.estimatedUsd += bag.estimatedUsd;
       totals.subAgentUsd += bag.subAgentUsd;
       // `|| 0`: a bag built before advisorUsd existed (an unmigrated fixture/cache

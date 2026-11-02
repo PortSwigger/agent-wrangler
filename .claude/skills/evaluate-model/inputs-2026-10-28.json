@@ -1,0 +1,337 @@
+{
+  "read": "2026-10-28",
+  "credit": "Scores: Terminal-Bench 4.0 (tbench.ai, Apache-2.0), with effort results published by Anthropic and OpenAI. Prices: Anthropic and OpenAI list prices from the LiteLLM catalog (MIT), read 2026-10-28.",
+  "sources": {
+    "board": {
+      "name": "Terminal-Bench 4.0 official leaderboard",
+      "by": "Stanford, Laude Institute and Harbor",
+      "licence": "Apache-2.0 (https://github.com/harbor-framework/terminal-bench/blob/main/LICENSE)",
+      "url": "https://github.com/harbor-framework/terminal-bench/tree/main/leaderboard/submissions",
+      "gives": "Accuracy, tokens and mean trial time at max effort, maintainer-run in each vendor's own harness (Claude Code, Codex), 66 tasks x 5 trials"
+    },
+    "anthropic": {
+      "name": "Anthropic model pages, Terminal-Bench 4.0 accuracy against cost per attempt",
+      "by": "Anthropic",
+      "licence": "Published results; anthropic.com lists product terms only, with no website terms restricting reuse. Cite Anthropic.",
+      "url": [
+        "https://www.anthropic.com/claude-opus-5-5",
+        "https://www.anthropic.com/claude-sonnet-5-5",
+        "https://www.anthropic.com/claude-haiku-5-5"
+      ],
+      "gives": "Every effort from low to max: Fable 5.1 and GPT-6 Astra (as reported by OpenAI) from the Opus page, Opus 5.5 from the Sonnet page, Haiku 5.5 and Sonnet 5.5 at today's prices from the Haiku page"
+    },
+    "openai": {
+      "name": "OpenAI GPT-6.1 launch posts, Terminal-Bench 4.0 by effort",
+      "by": "OpenAI",
+      "licence": "Published results, read by hand and cited. OpenAI's Terms of Use bar programmatic extraction, and openai.com refuses automated fetches.",
+      "url": [
+        "https://openai.com/index/introducing-gpt-6-1-terra/",
+        "https://openai.com/index/introducing-gpt-6-1-sol/"
+      ],
+      "gives": "Accuracy only: GPT-6.1 Terra at low, medium and max; GPT-6.1 Sol at medium and max",
+      "unconfirmed": "Taken from coverage crediting OpenAI's chart; confirm on the post itself at the next reading"
+    },
+    "prices": {
+      "name": "LiteLLM model price catalog, standard tier",
+      "by": "LiteLLM",
+      "licence": "MIT; published list-price facts",
+      "url": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+      "gives": "server/price-catalog.snapshot.json: cacheWrite5m, cacheRead and output per million tokens for both vendors; refreshed with npm run gen:catalog"
+    }
+  },
+  "benchmarks": {
+    "terminal-bench": {
+      "name": "Terminal-Bench",
+      "version": "4.0",
+      "weight": 1
+    }
+  },
+  "models": {
+    "claude": {
+      "opus": {
+        "price": {
+          "write": 5,
+          "read": 0.2,
+          "output": 20
+        },
+        "terminal-bench": {
+          "board": {
+            "file": "2026-09-30-anthropic-claude-opus-5-5-max-claude-code.json",
+            "accuracy": 64.85,
+            "n_trials": 330,
+            "uncached_input_tokens": 7945267860,
+            "cached_input_tokens": 7699681320,
+            "output_tokens": 88814607,
+            "total_tokens": 8034082467,
+            "avg_trial_duration_sec": 4790.4
+          },
+          "sweep": {
+            "source": "anthropic",
+            "efforts": {
+              "low": [
+                38.5,
+                1.2911
+              ],
+              "medium": [
+                57.6,
+                2.9365
+              ],
+              "high": [
+                64.2,
+                3.8843
+              ],
+              "xhigh": [
+                66.4,
+                7.3534
+              ],
+              "max": [
+                64.8,
+                11.2418
+              ]
+            }
+          }
+        }
+      },
+      "sonnet": {
+        "price": {
+          "write": 2.5,
+          "read": 0.1,
+          "output": 10
+        },
+        "terminal-bench": {
+          "board": {
+            "file": "2026-09-30-anthropic-claude-sonnet-5-5-max-claude-code.json",
+            "accuracy": 61.82,
+            "n_trials": 330,
+            "uncached_input_tokens": 19226469499,
+            "cached_input_tokens": 18580542667,
+            "output_tokens": 186577885,
+            "total_tokens": 19413047384,
+            "avg_trial_duration_sec": 7431.6
+          },
+          "sweep": {
+            "source": "anthropic",
+            "efforts": {
+              "low": [
+                20,
+                0.6205
+              ],
+              "medium": [
+                28.8,
+                0.6796
+              ],
+              "high": [
+                43,
+                1.462
+              ],
+              "xhigh": [
+                61.5,
+                4.3352
+              ],
+              "max": [
+                70.6,
+                10.4421
+              ]
+            }
+          }
+        }
+      },
+      "fable": {
+        "price": {
+          "write": 12.5,
+          "read": 0.25,
+          "output": 50
+        },
+        "terminal-bench": {
+          "board": {
+            "file": "2026-09-02-anthropic-claude-fable-5-1-max-claude-code.json",
+            "accuracy": 57.88,
+            "n_trials": 330,
+            "uncached_input_tokens": 2683099992,
+            "cached_input_tokens": 2467056906,
+            "output_tokens": 63121568,
+            "total_tokens": 2746221560,
+            "avg_trial_duration_sec": 3893.5
+          },
+          "sweep": {
+            "source": "anthropic",
+            "efforts": {
+              "low": [
+                40.2,
+                5.7
+              ],
+              "medium": [
+                43.4,
+                7.8
+              ],
+              "high": [
+                49.4,
+                10.5
+              ],
+              "xhigh": [
+                51.3,
+                15.8
+              ],
+              "max": [
+                55.8,
+                19.5
+              ]
+            }
+          }
+        }
+      },
+      "haiku": {
+        "like": "opus",
+        "price": {
+          "write": 0.125,
+          "read": 0.01,
+          "output": 0.5
+        },
+        "terminal-bench": {
+          "sweep": {
+            "source": "anthropic",
+            "efforts": {
+              "low": [
+                12.7,
+                0.424
+              ],
+              "medium": [
+                20.3,
+                0.6798
+              ],
+              "high": [
+                24.8,
+                1.0372
+              ],
+              "xhigh": [
+                31.5,
+                1.7545
+              ],
+              "max": [
+                39.2,
+                2.6433
+              ]
+            }
+          }
+        }
+      }
+    },
+    "codex": {
+      "gpt-6-astra": {
+        "like": "gpt-6.1-sol",
+        "price": {
+          "write": 12.5,
+          "read": 1,
+          "output": 50
+        },
+        "terminal-bench": {
+          "sweep": {
+            "source": "anthropic",
+            "efforts": {
+              "low": [
+                49.7,
+                4.95
+              ],
+              "medium": [
+                53.9,
+                6.15
+              ],
+              "high": [
+                57.9,
+                7.21
+              ],
+              "xhigh": [
+                57.6,
+                7.48
+              ],
+              "max": [
+                56.7,
+                10.35
+              ]
+            }
+          }
+        }
+      },
+      "gpt-6.1-sol": {
+        "like": "gpt-6-astra",
+        "price": {
+          "write": 2.5,
+          "read": 0.1,
+          "output": 10
+        },
+        "terminal-bench": {
+          "board": {
+            "file": "2026-09-30-openai-gpt-6-1-sol-max-codex.json",
+            "accuracy": 58.18,
+            "n_trials": 330,
+            "uncached_input_tokens": 1428621998,
+            "cached_input_tokens": 1354187811,
+            "output_tokens": 31314516,
+            "total_tokens": 1459936514,
+            "avg_trial_duration_sec": 3176.7
+          },
+          "sweep": {
+            "source": "openai",
+            "efforts": {
+              "medium": [
+                52.7,
+                null
+              ],
+              "max": [
+                55.9,
+                null
+              ]
+            }
+          }
+        }
+      },
+      "gpt-6.1-terra": {
+        "like": "gpt-6.1-sol",
+        "price": {
+          "write": 1.25,
+          "read": 0.05,
+          "output": 5
+        },
+        "terminal-bench": {
+          "sweep": {
+            "source": "openai",
+            "efforts": {
+              "low": [
+                24.8,
+                null
+              ],
+              "medium": [
+                35.8,
+                null
+              ],
+              "max": [
+                50.3,
+                null
+              ]
+            }
+          }
+        }
+      },
+      "gpt-6-luna": {
+        "like": "gpt-6.1-terra",
+        "price": {
+          "write": 0.125,
+          "read": 0.01,
+          "output": 0.5
+        },
+        "terminal-bench": {
+          "board": {
+            "file": "2026-09-30-openai-gpt-6-luna-max-codex.json",
+            "accuracy": 16.36,
+            "n_trials": 330,
+            "uncached_input_tokens": 3863633999,
+            "cached_input_tokens": 3778954219,
+            "output_tokens": 45490894,
+            "total_tokens": 3909124893,
+            "avg_trial_duration_sec": 2284.1
+          }
+        }
+      }
+    }
+  }
+}

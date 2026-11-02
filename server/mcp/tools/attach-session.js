@@ -11,7 +11,8 @@ export const attachSessionTool = {
   name: 'attach_session',
   description:
     'Attach a session as a nested child of another session on the SAME task (nesting only '
-    + 'renders within one task tile). Refuses if it would create a cycle, or if the two sessions '
+    + 'renders within one task tile; there is no depth limit, and the session\'s own children '
+    + 'move with it). Refuses if it would create a cycle, or if the two sessions '
     + 'are on different tasks — move one onto the other\'s task on the board first. Get ids from '
     + 'list_sessions.',
   inputSchema: {

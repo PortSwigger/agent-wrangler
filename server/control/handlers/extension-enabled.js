@@ -28,6 +28,7 @@ export const extensionEnabledHandler = {
     if (!known) throw new Error(`Unknown extension: ${String(msg.id)}`);
     const enabled = Boolean(msg.enabled);
     const cfg = readConfig();
+    if (msg.onlyIfUnset === true && typeof cfg.extensions?.[msg.id] === 'boolean') return;
     // The merged config as WRITTEN, threaded into staging below: `enabled` on
     // the new list entry is read from it, so an activation must not be left
     // deciding off a value this frame has already superseded.

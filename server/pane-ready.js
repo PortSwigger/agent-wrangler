@@ -1,5 +1,6 @@
-import { capturePane, capturePaneStyled, classify, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys } from './tmux-scraper.js';
-import { paneComposerIsEmpty } from './ghost-suggestion.js';
+import { adapterFor } from './agents/index.js';
+import { capturePane, capturePaneStyled, classifyPane, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys, prefillPane } from './tmux-scraper.js';
+import { paneComposerIsEmpty, paneComposerIsReady } from './ghost-suggestion.js';
 
 const READY_TIMEOUT_MS = 20000;
 const READY_POLL_MS = 250;
@@ -8,6 +9,7 @@ const SUBMIT_WINDOW_MS = 2000;
 const SUBMIT_POLL_MS = 300;
 const COMPACT_TIMEOUT_MS = 300000;
 const COMPACT_POLL_MS = 1000;
+const IMAGE_TIMEOUT_MS = 15000;
 
 // Hold a paste until the freshly-relaunched agent's TUI has actually painted its
 // composer — the fix for a silent, measured message loss.
@@ -36,23 +38,35 @@ const COMPACT_POLL_MS = 1000;
 // title, which Codex never sets, so it would burn its whole timeout on exactly
 // the agent this exists for. Reading it needs `capture-pane -e` (capturePaneStyled)
 // — the faint-text handling is the whole basis of the Claude branch.
+// A resumed Codex process can already be working (for example after joining
+// another resume). Working does not prevent input once its composer is painted.
+// Read the status as well so a dialog cannot be mistaken for ready input.
 //
-// A timeout FALLS THROUGH (returns false, never throws): a late message beats a
-// lost one, and a pane this cannot parse must still be deliverable. It reports
-// which happened because `ensureSubmitted` below is only safe on a confirmed pane.
-// Note it also reads false for a composer with text already in it; on a pane this
-// process relaunched seconds ago there is nobody who could have typed there, and
-// the fall-through means the worst case is the old behaviour.
+// A timeout returns false without sending keys. The caller keeps the message
+// available to retry rather than pasting into a draft, dialog or unreadable pane.
+// Joining a resume can leave another turn or a human draft in this process, so
+// a newly spawned pty alone is never a reason to bypass the input guard.
+// Deliberate sends to a live pane during startup use `requireEmpty: false` to
+// check that input has painted without treating an existing draft as not ready.
 export async function waitForComposerReady(name, socket, agent, {
   timeoutMs = READY_TIMEOUT_MS,
   pollMs = READY_POLL_MS,
+  requireEmpty = true,
   capture = capturePaneStyled,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
   if (!name) return false;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (paneComposerIsEmpty(await capture(name, 6, socket), agent)) return true;
+    const pane = await capture(name, 60, socket);
+    if (requireEmpty) {
+      const { status } = classifyPane(pane, agent, { tailLines: 60, strictWorking: true });
+      if ((status === 'idle' || status === 'working')
+        && paneComposerIsEmpty(pane, agent, { allowWhileWorking: adapterFor(agent).terminal.allowWhileWorking })) return true;
+    } else if (!codexUpdateState(pane) && classifyPane(pane, agent).status !== 'needs-you'
+      && paneComposerIsReady(pane, agent)) {
+      return true;
+    }
     if (Date.now() >= deadline) return false;
     await sleep(pollMs);
   }
@@ -112,7 +126,7 @@ export async function ensureSubmitted(name, socket, {
 } = {}) {
   if (!name) return false;
   for (let attempt = 0; ; attempt += 1) {
-    const seen = await watchPane(name, socket, capture, windowMs, pollMs, sleep);
+    const seen = await watchPane(name, socket, capture, windowMs, pollMs, sleep, agent);
     if (seen === 'working') return true;
     if (seen === 'blocked' || attempt >= attempts) return false;
     if (!composerHoldsText(await capture(name, 8, socket), agent, text)) return false;
@@ -122,12 +136,12 @@ export async function ensureSubmitted(name, socket, {
 
 // 'working' (a turn is running), 'blocked' (a dialog is up — hands off), or
 // 'idle' once the window closes with neither.
-async function watchPane(name, socket, capture, windowMs, pollMs, sleep) {
+async function watchPane(name, socket, capture, windowMs, pollMs, sleep, agent) {
   const deadline = Date.now() + windowMs;
   for (;;) {
     const pane = await capture(name, 60, socket);
     if (codexUpdateState(pane)) return 'blocked';
-    const { status } = classify(pane);
+    const { status } = classifyPane(pane, agent);
     if (status === 'working') return 'working';
     if (status === 'needs-you') return 'blocked';
     if (Date.now() >= deadline) return 'idle';
@@ -147,9 +161,58 @@ export function composerHoldsText(paneText, agent = 'claude', text = '') {
   if (typeof paneText !== 'string' || !paneText) return false;
   const probe = String(text).split('\n')[0].trim().slice(0, 40);
   if (!probe) return false;
-  const mark = agent === 'codex' ? '\u203a' : '\u276f';
+  const mark = adapterFor(agent).terminal.composerMark;
   const line = stripAnsi(paneText).split('\n').filter((l) => l.includes(mark)).pop();
   return Boolean(line) && line.includes(probe);
+}
+
+// Paste each image path as its own block, holding the next paste (and so the
+// caller's prose and Enter) until Claude Code has turned this one into an
+// `[Image #N]` marker. Claude Code attaches a pasted image asynchronously: it
+// shows `Pasting…` while it reads and downsizes the file, and only then writes
+// the marker into the composer. Measured on a live pane with a 4 MB 3200x1800
+// PNG: the marker landed ~1.6s after the paste, so the prose and Enter that
+// followed 120ms later were submitted WITHOUT the image, and the marker then
+// appeared on its own in the freshly emptied composer, unsent, while the turn
+// ran. Codex keeps a pasted path as literal text and attaches it on submit, so
+// it has nothing to wait for.
+//
+// Counted from what the composer already holds, because a live chat message can
+// land on a draft that has markers of its own. Returns true only when every
+// image was seen attached. A timeout or a pane it cannot read still pastes the
+// rest, which is no worse than not waiting at all.
+export async function pasteImages(name, socket, agent, paths, {
+  timeoutMs = IMAGE_TIMEOUT_MS,
+  pollMs = READY_POLL_MS,
+  prefill = prefillPane,
+  capture = capturePaneStyled,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+} = {}) {
+  let seen = adapterFor(agent).terminal.imageAcknowledgement ? (adapterFor(agent).terminal.imageCount?.(await capture(name, 60, socket), composerImageCount) ?? null) : null;
+  let attached = seen !== null;
+  for (const p of paths) {
+    await prefill(name, p, socket);
+    if (seen === null) continue;
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const n = adapterFor(agent).terminal.imageCount?.(await capture(name, 60, socket), composerImageCount) ?? null;
+      if (n !== null && n > seen) { seen = n; break; }
+      if (n === null || Date.now() >= deadline) { seen = n; attached = false; break; }
+      await sleep(pollMs);
+    }
+  }
+  return !adapterFor(agent).terminal.imageAcknowledgement || attached;
+}
+
+// How many `[Image #N]` markers Claude Code's composer holds: everything from
+// the last prompt mark down, since earlier marks are submitted turns echoed into
+// the scrollback. Null when there is no composer to read.
+export function composerImageCount(paneText) {
+  const lines = stripAnsi(String(paneText || '')).split('\n');
+  let i = lines.length - 1;
+  while (i >= 0 && !lines[i].includes('\u276f')) i -= 1;
+  if (i < 0) return null;
+  return lines.slice(i).join('\n').match(/\[Image #\d+\]/g)?.length ?? 0;
 }
 
 // A pane that is compacting its context does not take a prompt: the paste is

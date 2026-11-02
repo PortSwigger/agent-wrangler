@@ -60,6 +60,15 @@ export function autoAttachPrEnabled() {
   return readConfig().autoAttachPr !== false;
 }
 
+// Whether a PR an agent creates with `gh pr create` gets a `Model: <id>` footer
+// naming the session's model (server/pr-footer.js), so PRs can be searched by
+// model. Independent of autoAttachPr: the footer never attaches anything. Default
+// on; config.json `prModelFooter: false` turns it off. Takes cfg so tests never
+// write the shared config.json.
+export function prModelFooterEnabled(cfg = readConfig()) {
+  return cfg.prModelFooter !== false;
+}
+
 // Whether a session's sub-agents zone (board card + panel) starts expanded or
 // collapsed for cards the user hasn't explicitly toggled either way. Default off
 // (collapsed) to preserve today's behaviour; toggled from the board's settings
@@ -99,6 +108,14 @@ export function mailWakesDormant(cfg = readConfig()) {
 // archiveReviewEnabled) so tests never write the shared config.json.
 export function trustCodexLaunchCwd(cfg = readConfig()) {
   return cfg.trustCodexLaunchCwd !== false;
+}
+
+// Whether a Claude launch/resume/fork first marks the scratch-session dir
+// (~/.agent-wrangler/sessions, the parent of every blank-cwd launch) trusted in
+// ~/.claude.json, so Claude's "trust this folder?" dialog never appears there,
+// and mirrors a trusted repo's trust onto a worktree cut from it. Default on; `trustClaudeLaunchCwd: false` restores the normal prompt.
+export function trustClaudeLaunchCwd(cfg = readConfig()) {
+  return cfg.trustClaudeLaunchCwd !== false;
 }
 
 // Whether a newly-nested CHILD session (parentSession set — a workflow worker or
@@ -261,4 +278,12 @@ export function refreshSessionsAfterUpdate(cfg = readConfig()) {
 
 export function defaultSessionCwd(cfg = readConfig()) {
   return typeof cfg.defaultSessionCwd === 'string' ? cfg.defaultSessionCwd.trim() : '';
+}
+
+// The runtime id the dispatch dialog pre-selects for a new session. Not checked
+// against the registry: an extension runtime can be off now and on again later,
+// and the dialog falls back to local for any id it doesn't offer.
+export function defaultRuntime(cfg = readConfig()) {
+  const id = typeof cfg.defaultRuntime === 'string' ? cfg.defaultRuntime.trim() : '';
+  return id || 'local';
 }

@@ -8,7 +8,7 @@ import { deliverMessage } from './message-delivery.js';
 // rewritten to `[Image #1]` and attached, but the same path inside a multi-line
 // paste — or with any text after it — stays literal text the model never sees.
 // So each path must arrive as its own paste, with no Enter, before the prose.
-function deps({ live = true } = {}) {
+function deps({ live = true, ready = true } = {}) {
   const calls = [];
   return {
     calls,
@@ -16,6 +16,10 @@ function deps({ live = true } = {}) {
     socketFor: () => 'sockA',
     prefillPane: async (name, text, socket) => { calls.push({ verb: 'prefill', name, text, socket }); },
     sendText: async (name, text, socket) => { calls.push({ verb: 'sendText', name, text, socket }); },
+    // Fake terminals exercise routing here; the readiness/repair tests own
+    // their real pane parsing, so do not call tmux from this fixture.
+    waitForComposerReady: async () => ready,
+    ensureSubmitted: async () => true,
     sessionManager: {
       entryFor: () => ({ agent: 'claude', cwd: '/tmp', liveSessionId: 'live-1', socket: 'sockA' }),
       isResuming: () => false,
@@ -67,5 +71,12 @@ test('dormant: attachments force the paste route instead of the resume intent, w
 test('dormant with no images: the resume intent shortcut is still taken (unchanged)', async () => {
   const d = deps({ live: false });
   await deliverMessage('CARD1', 'wake up', d);
+  assert.deepEqual(d.calls.map((c) => c.verb), ['resume']);
+});
+
+test('dormant: a readiness failure never pastes attachments or prose', async () => {
+  const d = deps({ live: false, ready: false });
+  const r = await deliverMessage('CARD1', 'look at this', d, { imagePaths: ['/m/pastes/paste-1-aa.png'] });
+  assert.equal(r.outcome, 'unknown');
   assert.deepEqual(d.calls.map((c) => c.verb), ['resume']);
 });

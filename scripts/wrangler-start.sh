@@ -25,6 +25,10 @@ export AW_GIT_UPDATES=1
 # Trim before nvm and dependency sync: either can fail before the launcher runs.
 . "$(dirname "$0")/trim-service-logs.sh"
 
+# Gives a launchd plist from an older template ProcessType Interactive, so the
+# service and its sessions stop running at background priority from next login.
+. "$(dirname "$0")/launchd-process-type.sh"
+
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 nvm use --silent default >/dev/null 2>&1 || true

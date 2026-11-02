@@ -8,17 +8,18 @@
 // the generic nesting link (see the child-sessions design) so the reviewed
 // session's board tile nests the review under it.
 export function reviewDispatchOpts(sourceSessionId, s) {
-  return { cwd: s.cwd, sourceAgent: s.agent || 'claude', parentSession: sourceSessionId };
+  return { cwd: s.cwd, sourceAgent: s.agent ?? 'claude', parentSession: sourceSessionId };
 }
 
-// The complementary agent's default model value, or null when the source is the
-// only installed agent. "Complementary" = the first installed agent whose id
-// differs from the source's; its default-marked model (else its first model).
-// Two agents exist today (claude, codex); this stays correct if more are added.
+export function preferredReviewAgent(sourceAgent, availableAgents) {
+  return (availableAgents || [])
+    .filter((a) => a.id !== (sourceAgent ?? 'claude') && a.models?.length)
+    .sort((a, b) => (a.reviewPriority ?? Infinity) - (b.reviewPriority ?? Infinity) || a.id.localeCompare(b.id))[0] || null;
+}
+
 export function complementaryModel(sourceAgent, availableAgents) {
-  const other = (availableAgents || []).find((a) => a.id !== sourceAgent);
-  if (!other || !other.models || !other.models.length) return null;
-  return (other.models.find((m) => m.default) || other.models[0]).value;
+  const other = preferredReviewAgent(sourceAgent, availableAgents);
+  return other ? (other.models.find((m) => m.default) || other.models[0]).value : null;
 }
 
 // The seeded review intent — pre-filled into the intent field when a review

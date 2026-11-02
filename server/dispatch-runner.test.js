@@ -78,21 +78,8 @@ test('parentSession passes through when given, and is undefined when absent', as
   assert.equal(d2.calls.dispatch[0].parentSession, undefined);
 });
 
-// Nesting only ever renders one level deep (see attachError's file comment in
-// server/control/handlers/attach.js) — this guard keeps that true regardless
-// of which path sets a brand-new parentSession (peer-review dispatch,
-// spawn_session nest:true, a scheduled dispatch), not just Attach.
-test('parentSession pointing at an already-nested session is refused before launch', async () => {
+test('parentSession pointing at an already-nested session is allowed (nesting has no depth limit)', async () => {
   const d = deps({ entries: { SRC1: { parentSession: 'ROOT' } } });
-  await assert.rejects(
-    () => runDispatch({ cwd: '/repo', intent: 'x', parentSession: 'SRC1' }, d),
-    /itself nested/,
-  );
-  assert.equal(d.calls.dispatch.length, 0);
-});
-
-test('parentSession pointing at a top-level session is allowed', async () => {
-  const d = deps({ entries: { SRC1: {} } });
   await runDispatch({ cwd: '/repo', intent: 'x', parentSession: 'SRC1' }, d);
   assert.equal(d.calls.dispatch[0].parentSession, 'SRC1');
 });
@@ -195,13 +182,39 @@ test('deliverFirstPrompt waits for the composer, pastes each image alone, then s
   const steps = [];
   await deliverFirstPrompt({ tmux: 'cc_x', socket: 's', agent: 'claude', text: 'hi', imagePaths: ['/p/1.png', '/p/2.png'] }, {
     waitReady: async (t, s, a) => steps.push(['ready', t, s, a]),
-    prefill: async (t, p, s) => steps.push(['prefill', p]),
+    paste: async (t, s, a, paths) => { steps.push(['paste', a, ...paths]); return true; },
     send: async (t, text) => steps.push(['send', text]),
     confirm: async () => true,
     log: (m) => steps.push(['log', m]),
   });
-  assert.deepEqual(steps, [['ready', 'cc_x', 's', 'claude'], ['prefill', '/p/1.png'], ['prefill', '/p/2.png'], ['send', 'hi']]);
+  assert.deepEqual(steps, [['ready', 'cc_x', 's', 'claude'], ['paste', 'claude', '/p/1.png', '/p/2.png'], ['send', 'hi']]);
   const logs = [];
   await deliverFirstPrompt({ tmux: 'cc_y', agent: 'claude', text: 'hi', imagePaths: [] }, { waitReady: async () => { throw new Error('gone'); }, log: (m) => logs.push(m) });
   assert.match(logs[0], /could not deliver/);
+});
+
+// The stray `[Image #2]` bug: a 4 MB screenshot took Claude Code ~1.6s to attach,
+// so the prose and Enter went first and the marker was left unsent behind them.
+test('deliverFirstPrompt sends the prose only after the composer shows the image marker', async () => {
+  const { deliverFirstPrompt } = await import('./dispatch-runner.js');
+  const { pasteImages } = await import('./pane-ready.js');
+  let composer = '❯ ';
+  let captures = 0;
+  const steps = [];
+  await deliverFirstPrompt({ tmux: 'cc_x', agent: 'claude', text: 'hi', imagePaths: ['/p/big.png'] }, {
+    waitReady: async () => true,
+    paste: (t, s, a, paths) => pasteImages(t, s, a, paths, {
+      prefill: async (n, p) => { steps.push(['prefill', p]); composer = '❯ \n  Pasting…'; },
+      // The marker turns up a few polls after the paste, as it does live.
+      capture: async () => { captures += 1; if (captures === 5) composer = '❯ [Image #1]'; return composer; },
+      sleep: async () => steps.push(['wait']),
+    }),
+    send: async (t, text) => steps.push(['send', text, composer]),
+    confirm: async () => true,
+    log: (m) => steps.push(['log', m]),
+  });
+  assert.deepEqual(steps.at(-1), ['send', 'hi', '❯ [Image #1]'], 'the prose is sent after the marker, not before');
+  assert.equal(steps.filter(([k]) => k === 'prefill').length, 1, 'the image is pasted exactly once');
+  assert.ok(steps.some(([k]) => k === 'wait'), 'and it waited for the attach');
+  assert.ok(!steps.some(([k]) => k === 'log'));
 });

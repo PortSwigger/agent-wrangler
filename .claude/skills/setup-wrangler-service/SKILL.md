@@ -72,21 +72,32 @@ launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler
 ### Step 4 — verify it's actually serving
 
 `bootstrap` succeeding only means launchd accepted the job, not that the server
-came up. Confirm both the job state and an HTTP response on the configured
-`PORT` (read it from the plist — default `7777` in the template):
+came up. Confirm the job state, its spawn type and an HTTP response on the
+configured `PORT` (read it from the plist — default `7777` in the template):
 
 ```
-launchctl print gui/$(id -u)/net.portswigger.agent-wrangler | grep -E 'state =|pid ='
+launchctl print gui/$(id -u)/net.portswigger.agent-wrangler | grep -E 'state =|pid =|spawn type ='
 PORT=$(plutil -extract EnvironmentVariables.PORT raw "$PLIST")
 curl -s -o /dev/null -w 'http %{http_code}\n' "http://localhost:$PORT/"
 ```
 
-Success is `state = running` **and** `http 200`. Report both. If the state is
-`running` but curl fails, the server crashed on boot — read
-`~/Library/Logs/wrangler/wrangler.err`.
+Success is `state = running`, `spawn type = interactive (4)` **and** `http 200`.
+Report all three. If the state is `running` but curl fails, the server crashed
+on boot — read `~/Library/Logs/wrangler/wrangler.err`. `spawn type = daemon (3)`
+means launchd loaded a plist with no `ProcessType`: see the first common failure
+below.
 
 ### Common failures (macOS)
 
+- **`spawn type = daemon (3)`, or sessions lag while the machine is busy** —
+  the loaded plist sets no `ProcessType`, so launchd throttles the service as a
+  background daemon and every session inherits its lower CPU priority.
+  Regenerate the plist from the template (Step 2), which sets `ProcessType` to
+  `Interactive`, and reload it (Step 3); a `kickstart` alone never re-reads the
+  plist. Sessions keep the old priority until their tmux server restarts. Stopping
+  it (`tmux -L <socket> kill-server`, `<socket>` being `tmuxSocket` in
+  `~/.agent-wrangler/config.json`) stops every live session, yours too if you run
+  inside one, so leave that to the user: cards survive and resume.
 - **Exit 127 in the log** — `~/.local/bin` missing from `PATH`. Check the
   `PATH` string in the plist matches the template.
 - **Terminals render Unicode as `_`** — the server's locale isn't UTF-8.
@@ -96,7 +107,9 @@ Success is `state = running` **and** `http 200`. Report both. If the state is
   `LC_CTYPE` in the plist's `EnvironmentVariables` to a UTF-8 locale from
   `locale -a` (and drop any non-UTF-8 `LC_ALL`); confirm with `ps eww <pid>`.
 - **Job won't load ("Bootstrap failed: 5: Input/output error")** — usually a
-  malformed plist. Validate with `plutil -lint "$PLIST"`.
+  malformed plist. Validate with `plutil -lint "$PLIST"`. Straight after a
+  `bootout` it can also mean the old job hadn't finished stopping: rerun the
+  `bootstrap`.
 
 ## Linux (systemd)
 

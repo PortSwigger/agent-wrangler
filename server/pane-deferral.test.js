@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createPaneDeferral, MAX_PENDING_PER_CARD } from './pane-deferral.js';
+import { sendText } from './tmux-scraper.js';
 
 const E = '\x1b';
 // The composer as capturePaneStyled renders it: an SGR-prefixed `❯` line whose
@@ -50,6 +51,54 @@ test('an empty Codex composer takes the notification immediately', async () => {
 
   assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'You have mail', socket: '' }]);
   assert.deepEqual(pd.pending('c1'), []);
+});
+
+test('PR notices reach a working Codex pane with a clear composer', async () => {
+  const pane = [`${E}[1m•${E}[0m Working (27m 09s • esc to interrupt)`, codexComposer()].join('\n');
+  const d = deps({ pane, agent: 'codex' });
+  const pd = createPaneDeferral({ ...d, statusFor: () => 'working' });
+
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 merged — link removed' }), 'sent');
+  assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'PR #1 merged — link removed', socket: '' }]);
+  assert.deepEqual(pd.pending('c1'), []);
+});
+
+test('held Codex PR notices drain together during a turn after drafts and dialogs clear', async () => {
+  const working = `${E}[1m•${E}[0m Working (27m 09s • esc to interrupt)`;
+  let pane = `${working}\n${E}[1m›${E}[0m a human draft`;
+  let status = 'working';
+  const d = deps({ pane: () => pane, agent: 'codex' });
+  const pd = createPaneDeferral({ ...d, statusFor: () => status });
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 checks failing' }), 'deferred');
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'PR #2 auto-merge failed' }), 'deferred');
+  assert.deepEqual(await pd.drain(), []);
+  assert.deepEqual(d.sent, []);
+
+  // A transient dialog blocks even when an old composer is still visible.
+  pane = ['1. Update now', '2. Skip', '3. Skip until next version', 'press enter to continue', codexComposer()].join('\n');
+  assert.deepEqual(await pd.drain(), []);
+  assert.deepEqual(d.sent, []);
+
+  pane = `${working}\n${codexComposer()}`;
+  status = 'needs-you';
+  assert.deepEqual(await pd.drain(), []);
+  status = 'working';
+  assert.deepEqual(await pd.drain(), ['c1']);
+  assert.deepEqual(d.sent, [{ name: 'cc_one', text: 'PR #1 checks failing\nPR #2 auto-merge failed', socket: '' }]);
+  assert.deepEqual(pd.pending('c1'), []);
+  assert.deepEqual(await pd.drain(), []);
+  assert.equal(d.sent.length, 1);
+});
+
+test('PR notices defer for a Codex dialog or uncertain board state before the first paste', async () => {
+  const dialog = ['1. Update now', '2. Skip', '3. Skip until next version', 'press enter to continue', codexComposer()].join('\n');
+  for (const [pane, status] of [[dialog, 'working'], [codexComposer(), 'needs-you'], [codexComposer(), 'unknown']]) {
+    const d = deps({ pane, agent: 'codex' });
+    const pd = createPaneDeferral({ ...d, statusFor: () => status });
+    assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 conflicts' }), 'deferred');
+    assert.deepEqual(d.sent, []);
+    assert.deepEqual(pd.pending('c1'), ['PR #1 conflicts']);
+  }
 });
 
 test('mail waits for a working turn to finish without entering the volatile notification queue', async () => {
@@ -310,3 +359,24 @@ test('a throwing onDefer hook does not change the delivery outcome', async () =>
   assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'x', onDefer: () => { throw new Error('boom'); } }), 'deferred');
   assert.deepEqual(pd.pending('c1'), ['x']);
 });
+
+for (const draft of ['\n  Review this draft before sending.', 'Review this draft ❯', 'Review this draft\n  ❯']) {
+  test(`multiline or quoted-marker draft defers notifications without Enter: ${JSON.stringify(draft)}`, async () => {
+    const frame = `${E}[38;5;244m${'─'.repeat(100)}`;
+    let pane = [frame, composer(draft), frame, `${E}[39m  ⏵⏵ auto mode on`].join('\n');
+    const commands = [];
+    const pd = createPaneDeferral({
+      ...deps({ pane: () => pane }),
+      sendText: (name, text, socket) => sendText(name, text, socket, async (sock, args) => {
+        commands.push(args);
+      }, { wait: async () => {} }),
+    });
+    assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'PR #1 checks failing' }), 'deferred');
+    assert.deepEqual(await pd.drain(), []);
+    assert.deepEqual(commands, []);
+    pane = [frame, composer(''), frame].join('\n');
+    assert.deepEqual(await pd.drain(), ['c1']);
+    assert.equal(commands.filter((args) => args.includes('Enter')).length, 1);
+    assert.deepEqual(pd.pending('c1'), []);
+  });
+}

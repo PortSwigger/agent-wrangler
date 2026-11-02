@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, chatViewDefault, defaultSessionCwd, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -74,6 +74,12 @@ test('subagentsExpandedByDefault defaults to off (collapsed); only an explicit t
   assert.equal(subagentsExpandedByDefault({ subagentsExpandedByDefault: true }), true);
 });
 
+test('trustClaudeLaunchCwd defaults to on; only an explicit false disables', () => {
+  assert.equal(trustClaudeLaunchCwd({}), true);
+  assert.equal(trustClaudeLaunchCwd({ trustClaudeLaunchCwd: true }), true);
+  assert.equal(trustClaudeLaunchCwd({ trustClaudeLaunchCwd: false }), false);
+});
+
 // Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
 test('trustCodexLaunchCwd defaults to on; only an explicit false disables', () => {
   assert.equal(trustCodexLaunchCwd({}), true);
@@ -91,6 +97,13 @@ test('childFullViewByDefault defaults to off (compact); only an explicit true en
 // Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
 // Default OFF (unlike most of these): archive review spends real money per
 // archive and grows a task's memory.md unbounded, so it must be an explicit opt-in.
+test('prModelFooterEnabled defaults to on; only an explicit false disables', () => {
+  assert.equal(prModelFooterEnabled({}), true);
+  assert.equal(prModelFooterEnabled({ prModelFooter: true }), true);
+  assert.equal(prModelFooterEnabled({ prModelFooter: false }), false);
+  assert.equal(prModelFooterEnabled({ autoAttachPr: false }), true, 'independent of autoAttachPr');
+});
+
 test('mailWakesDormant defaults to off; only an explicit true enables', () => {
   assert.equal(mailWakesDormant({}), false);
   assert.equal(mailWakesDormant({ mailWakesDormant: false }), false);
@@ -119,6 +132,14 @@ test('defaultSessionCwd is blank unless a string is set, and is trimmed', () => 
   assert.equal(defaultSessionCwd({}), '');
   assert.equal(defaultSessionCwd({ defaultSessionCwd: '  ~/repos  ' }), '~/repos');
   assert.equal(defaultSessionCwd({ defaultSessionCwd: 42 }), '');
+});
+
+test('defaultRuntime is local unless a non-blank string is set, and is not checked against the registry', () => {
+  assert.equal(defaultRuntime({}), 'local');
+  assert.equal(defaultRuntime({ defaultRuntime: ' devcontainer ' }), 'devcontainer');
+  assert.equal(defaultRuntime({ defaultRuntime: 'sandbox' }), 'sandbox', 'an extension runtime survives its extension being off');
+  assert.equal(defaultRuntime({ defaultRuntime: '  ' }), 'local');
+  assert.equal(defaultRuntime({ defaultRuntime: 7 }), 'local');
 });
 
 // The retired-flag table: a core `<x>Enabled` flag that became an extension is

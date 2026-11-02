@@ -42,85 +42,95 @@ export const scheduleSessionTool = {
     message: z.string().optional().describe('session: optional text — the relaunch prompt if the target is dormant, or the text injected into its terminal if it\'s live.'),
   },
   async handler({ deps, caller }, args = {}) {
-    // When: exactly one of at / cron.
-    const hasAt = typeof args.at === 'string' && args.at.trim();
-    const hasCron = typeof args.cron === 'string' && args.cron.trim();
-    if (hasAt && hasCron) return errorResult('Provide either `at` (one-off) or `cron` (recurring), not both.');
-    if (!hasAt && !hasCron) return errorResult('A schedule needs a time: pass `at` (ISO 8601 instant) or `cron`.');
-    let when;
-    if (hasAt) {
-      const ms = Date.parse(args.at);
-      if (Number.isNaN(ms)) return errorResult(`Could not parse \`at\` as a date/time: ${args.at}`);
-      when = { kind: 'once', runAt: new Date(ms).toISOString() };
-    } else {
-      when = { kind: 'cron', cron: args.cron.trim() };
-      if (args.tz) when.tz = args.tz;
-    }
-
-    // Action: explicit kind, else inferred (an intent ⇒ dispatch, otherwise session).
-    const kind = args.kind || (typeof args.intent === 'string' && args.intent.trim() ? 'dispatch' : 'session');
-    let action;
-    if (kind === 'dispatch') {
-      const intent = (args.intent ?? '').trim();
-      if (!intent) return errorResult('A dispatch schedule needs an `intent` (the launch prompt).');
-      // Validated here, at creation, because this is the only point where an
-      // error can reach whoever got it wrong. At fire time the schedule runs
-      // unattended, so a bad model would silently fall back to the agent's
-      // ambient default with nobody to tell — same reason runDispatch itself is
-      // left alone (its other caller is a UI dropdown that can't produce one).
-      const agent = args.agent || 'claude';
-      const badTarget = launchTargetError(agent, args.model);
-      if (badTarget) return errorResult(badTarget);
-      const autoCompactError = autoCompactTokensError(args.auto_compact_tokens, agent);
-      if (autoCompactError) return errorResult(autoCompactError);
-      // Default the task to the caller's current task, like spawn_session.
-      const taskId = args.into ?? deps.taskStore.taskFor(caller)?.id ?? null;
-      action = {
-        kind: 'dispatch',
-        dispatch: {
-          cwd: args.cwd,
-          intent,
-          model: args.model,
-          agent,
-          taskId: taskId || undefined,
-          worktree: Boolean(args.worktree) || undefined,
-          workflow: Boolean(args.workflow) || undefined,
-          autoCompactTokens: args.auto_compact_tokens,
-        },
-      };
-    } else {
-      // session: target defaults to the caller (self-scheduled wake-up); message is
-      // optional — the runner resumes-or-messages by the target's liveness at fire time.
-      const sessionId = (args.target_session ?? caller ?? '').trim();
-      if (!sessionId) return errorResult('No target session: pass `target_session` (no caller to default to).');
-      const message = (args.message ?? '').trim();
-      action = { kind: 'session', sessionId, message };
-    }
-
+    const prepared = prepareSchedule({ deps, caller }, args);
+    if (prepared.isError) return prepared;
     let created;
     try {
-      created = deps.scheduleStore.create({ name: args.name, when, action }, Date.now());
+      created = deps.scheduleStore.create(prepared, Date.now());
     } catch (e) {
       return errorResult(e?.message || 'Could not create the schedule.');
     }
     await deps.rebuild();
 
-    const structuredContent = {
-      id: created.id,
-      name: created.name,
-      kind: created.action.kind,
-      enabled: created.enabled,
-      when: created.when,
-      nextRunAt: created.nextRunAt,
-      target: created.action.sessionId ?? null,
-    };
-    return {
-      content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
-      structuredContent,
-    };
+    return scheduleResult(created);
   },
 };
 
-function errorResult(message) {
+export function errorResult(message) {
   return { content: [{ type: 'text', text: message }], isError: true };
+}
+
+export function prepareSchedule({ deps, caller }, args) {
+  // When: exactly one of at / cron.
+  const hasAt = typeof args.at === 'string' && args.at.trim();
+  const hasCron = typeof args.cron === 'string' && args.cron.trim();
+  if (hasAt && hasCron) return errorResult('Provide either `at` (one-off) or `cron` (recurring), not both.');
+  if (!hasAt && !hasCron) return errorResult('A schedule needs a time: pass `at` (ISO 8601 instant) or `cron`.');
+  let when;
+  if (hasAt) {
+    const ms = Date.parse(args.at);
+    if (Number.isNaN(ms)) return errorResult(`Could not parse \`at\` as a date/time: ${args.at}`);
+    when = { kind: 'once', runAt: new Date(ms).toISOString() };
+  } else {
+    when = { kind: 'cron', cron: args.cron.trim() };
+    if (args.tz) when.tz = args.tz;
+  }
+
+  // Action: explicit kind, else inferred (an intent ⇒ dispatch, otherwise session).
+  const kind = args.kind || (typeof args.intent === 'string' && args.intent.trim() ? 'dispatch' : 'session');
+  let action;
+  if (kind === 'dispatch') {
+    const intent = (args.intent ?? '').trim();
+    if (!intent) return errorResult('A dispatch schedule needs an `intent` (the launch prompt).');
+    // Validated here, at creation, because this is the only point where an
+    // error can reach whoever got it wrong. At fire time the schedule runs
+    // unattended, so a bad model would silently fall back to the agent's
+    // ambient default with nobody to tell — same reason runDispatch itself is
+    // left alone (its other caller is a UI dropdown that can't produce one).
+    const agent = args.agent ?? 'claude';
+    const badTarget = launchTargetError(agent, args.model);
+    if (badTarget) return errorResult(badTarget);
+    const autoCompactError = autoCompactTokensError(args.auto_compact_tokens, agent);
+    if (autoCompactError) return errorResult(autoCompactError);
+    // Default the task to the caller's current task, like spawn_session.
+    const taskId = args.into ?? deps.taskStore.taskFor(caller)?.id ?? null;
+    action = {
+      kind: 'dispatch',
+      dispatch: {
+        cwd: args.cwd,
+        intent,
+        model: args.model,
+        agent,
+        taskId: taskId || undefined,
+        worktree: Boolean(args.worktree) || undefined,
+        workflow: Boolean(args.workflow) || undefined,
+        autoCompactTokens: args.auto_compact_tokens,
+      },
+    };
+  } else {
+    // session: target defaults to the caller (self-scheduled wake-up); message is
+    // optional — the runner resumes-or-messages by the target's liveness at fire time.
+    const sessionId = (args.target_session ?? caller ?? '').trim();
+    if (!sessionId) return errorResult('No target session: pass `target_session` (no caller to default to).');
+    const message = (args.message ?? '').trim();
+    action = { kind: 'session', sessionId, message };
+  }
+
+  return { name: args.name, when, action };
+}
+
+export function scheduleResult(created) {
+  const structuredContent = {
+    id: created.id,
+    name: created.name,
+    kind: created.action.kind,
+    enabled: created.enabled,
+    when: created.when,
+    nextRunAt: created.nextRunAt,
+    target: created.action.sessionId ?? null,
+  };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent,
+  };
 }

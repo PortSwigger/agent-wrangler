@@ -1,12 +1,18 @@
+import { readClaudeSources, resolveClaudeAutoEffort } from './auto-effort.js';
+import { paneComposerIsReady, paneComposerIsEmpty, paneComposerDraft, parseGhostSuggestion } from './composer-parsers.js';
+import { scanDaily, scanMonth } from './claude-usage.js';
+import { costUsd } from '../pricing.js';
+import { claudeHistory } from './claude-history.js';
+import { claudePermissionArgs } from './permission-mode.js';
 import path from 'node:path';
 import { INSTALL_ROOT } from '../install-root.js';
-import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
-import { analyze, listResumable, activityInRange, findTranscript } from '../transcript-reader.js';
+import { launchAddDirArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
+import { analyze, listResumable, activityInRange, findTranscript, subagentDetail } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
-import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl } from '../mcp/client-config.js';
+import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl, prModelUrl } from '../mcp/client-config.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
-import { newestClaudeName, priceCatalogVersion, snapshotClaudeFamilies } from '../price-catalog.js';
+import { newestClaudeId, newestClaudeName, priceCatalogVersion, snapshotClaudeFamilies } from '../price-catalog.js';
 
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
 // as a plugin only on workflow launches (below), so it's available no matter which
@@ -24,17 +30,27 @@ export const PR_HOOK_PATH = path.join(INSTALL_ROOT, 'scripts', 'pr-attach-hook.m
 // The .mjs imports `../server/pr-hook.js` at runtime; the devcontainer runtime copies
 // this file to the sibling container location so that relative import resolves.
 export const PR_HOOK_DEP_PATH = path.join(INSTALL_ROOT, 'server', 'pr-hook.js');
+// The hook starts the model footer script, which imports `../server/pr-footer.js`;
+// both are copied into a devcontainer the same way.
+export const PR_FOOTER_PATH = path.join(INSTALL_ROOT, 'scripts', 'pr-model-footer.mjs');
+export const PR_FOOTER_DEP_PATH = path.join(INSTALL_ROOT, 'server', 'pr-footer.js');
 
 // Inline --settings value for every Claude launch. Claude merges --settings with
 // the user's own settings.json (additive) and an explicit --settings key wins over
 // the file, so this forces behaviour regardless of the user's global config:
 //   - tui: 'fullscreen' pins the alternate-screen renderer on (CLI 2.1.89+) so a
 //     spawned pane never falls back to the inline renderer, whatever the user set.
-//   - the PR-attach hook on Bash; a user's own hooks still run alongside it. Passive:
-//     the hook exits 0 with no stdout, never blocking a tool.
+//   - the PR-attach hook on Bash (which also starts the PR model footer); a user's
+//     own hooks still run alongside it. Passive: the hook exits 0 with no stdout,
+//     never blocking a tool.
+//   - crossSessionInbound: 'accept' lets the board's socket messages (mail
+//     notifications) through. These sessions bypass permissions, so without it
+//     Claude holds every inbound message for approval, then drops it. Set here,
+//     per session, never in the user's own settings.
 function launchSettings() {
   return JSON.stringify({
     tui: 'fullscreen',
+    crossSessionInbound: 'accept',
     hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: PR_HOOK_PATH }] }] },
   });
 }
@@ -139,7 +155,7 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   // Extension env first, core's after: in a shell prefix the LAST assignment of
   // a name wins, so an extension can add variables but never override ours.
   let inner = launchEnvPrefix(launchContext, shellQuote)
-    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} `;
+    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `;
   if (spawnedBy) inner += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   inner += `claude ${full.map(shellQuote).join(' ')}`;
   // `--` terminates option parsing: the trailing flags (--mcp-config,
@@ -147,6 +163,13 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   // greedily swallowed as another value and the session starts empty.
   if (intent.trim()) inner += ` -- ${shellQuote(intent.trim())}`;
   return inner;
+}
+
+// `--remote-control <name>` for a session spawned with `remoteControl: { name }`.
+// Stored on the entry, so launch and every resume pass it; a fork never inherits it, since two sessions under one
+// name would leave the phone driving whichever registered last.
+function remoteControlArgs(remoteControl) {
+  return remoteControl?.name ? ['--remote-control', remoteControl.name] : [];
 }
 
 const MODELS = [
@@ -175,6 +198,15 @@ export function derivedModels(families = snapshotClaudeFamilies()) {
     }));
 }
 
+// The full model id a launch value runs today (opus → claude-opus-5-5): an alias
+// resolves to the price catalog's newest model of its family, the same one its
+// label names; a derived entry already is one. Null for opusplan, which runs two.
+export function claudeModelId(value) {
+  const family = MODELS.find((m) => m.value === value)?.family;
+  if (family) return newestClaudeId(family);
+  return /^claude-/.test(value || '') ? value : null;
+}
+
 let modelsMemo = null; // { version, models }
 
 function claudeModels() {
@@ -193,6 +225,51 @@ function claudeModels() {
 
 export const claude = {
   id: 'claude',
+  modelId: claudeModelId,
+  history: claudeHistory,
+  autoEffortResolver(paths) {
+    const sources = readClaudeSources(paths);
+    return (value) => resolveClaudeAutoEffort(value, sources);
+  },
+  subagentDetail,
+  subagentDetailOverride: 'subagentDetail',
+  usage: { billingProviders: [{ id: 'anthropic', label: 'Anthropic' }], scanDaily, scanMonth, costUsd: costUsd, unknownModelLabel: 'unknown' },
+  labels: { liveTitle: true, summaryFirst: false },
+  statusSource: 'live-file',
+  presentation: { icon: 'claude', color: '#d97757', estimatedCost: false },
+  modelCommand: (model) => `/model ${model}`,
+  controls: {
+    modelSwitchNote: 'Also becomes your default for new sessions',
+    switchModel: true,
+    permissionModes: ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'],
+    autoCompact: { min: 100000, presets: [100000, 250000, 500000, 1000000] },
+  },
+  launch: { grantPaths: 'symlink', trust: 'claude', gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false },
+  terminal: {
+    readySignal: 'title',
+    contextSource: 'pane',
+    modelLabel: (pane, parse) => parse(pane),
+    contextPercent: (pane, parse) => parse(pane),
+    imageCount: (pane, parse) => parse(pane),
+    backgroundShellPattern: /·\s*\d+\s+(?:shells?|monitors?)\b/,
+    classify: (text, options, parse) => parse(text, options),
+    editingKeys: { newline: '\x1b\r', wordLeft: '\x1bb', wordRight: '\x1bf', clearLine: '\x15' },
+    clearKeys: ['C-u'],
+    composerIsReady: (text) => paneComposerIsReady(text, 'claude'),
+    composerIsEmpty: (text, options) => paneComposerIsEmpty(text, 'claude', options),
+    composerDraft: paneComposerDraft,
+    suggestion: parseGhostSuggestion,
+    composerMark: '❯',
+    paneMetadata: true,
+    restoreDraft: true,
+    socketMail: true,
+    allowWhileWorking: false,
+    imageAcknowledgement: true,
+    interruptKeys: ['Escape'],
+  },
+  reviewPriority: 10,
+  supportsRemoteControl: true,
+  headlessArchiveReview: true,
   label: 'Claude',
   tmuxPrefix: 'cc_',
   presetsSessionId: true,
@@ -232,44 +309,46 @@ export const claude = {
     return /\b(?:devcontainer|docker)\s+exec\b/.test(c) && /(?:^|\s)claude(?:\s|$)/.test(c);
   },
 
-  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
+  buildLaunch({ sessionId, liveSessionId, intent = '', model, effort, permissionMode, autoCompactTokens, addDirs = [], worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills, remoteControl }) {
     // The conversation runs under its own live id (distinct from the card id) so the
     // card id is never also a conversation id. Memory/identity stays on the card id.
     // Falls back to the card id when no live id is supplied (legacy callers).
-    const args = ['--session-id', liveSessionId || sessionId, '--permission-mode', 'auto'];
+    const args = ['--session-id', liveSessionId || sessionId, ...claudePermissionArgs(permissionMode)];
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     for (const d of addDirs) args.push('--add-dir', d);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
+    args.push(...remoteControlArgs(remoteControl));
+    return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildResume({ sessionId, resumeId, addDirs = [], effort, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills }) {
+  buildResume({ sessionId, resumeId, addDirs = [], effort, permissionMode, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills, remoteControl }) {
     // Plain --resume continues the conversation in place under its own id (no
     // --fork-session), so the live id stays equal to resumeId and the transcript
     // grows rather than duplicating. Safe because resume() kills the old tmux first.
     // A scheduled resume may carry an `intent` to queue as the first prompt
     // (buildInnerCommand appends it after `--`); empty for an interactive resume.
     // effort is re-threaded here because it is NOT transcript-restored on resume.
-    const args = ['--resume', resumeId, '--permission-mode', 'auto'];
+    const args = ['--resume', resumeId, ...claudePermissionArgs(permissionMode)];
     for (const d of addDirs) args.push('--add-dir', d);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
+    args.push(...remoteControlArgs(remoteControl));
+    return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildFork({ sessionId, liveSessionId, sourceId, addDirs = [], model, effort, autoCompactTokens, intent = '', launchContext, disabledSkills }) {
+  buildFork({ sessionId, liveSessionId, sourceId, addDirs = [], model, effort, permissionMode, autoCompactTokens, intent = '', launchContext, disabledSkills }) {
     // Branch the source conversation into a *new* id we choose (liveSessionId), so
     // the fork's conversation is known at launch and lives under its board id — no
     // phantom, so the fork is resumable. Memory/identity stays on the card id.
     const args = ['--resume', sourceId, '--fork-session'];
     if (liveSessionId) args.push('--session-id', liveSessionId);
-    args.push('--permission-mode', 'auto');
+    args.push(...claudePermissionArgs(permissionMode));
     for (const d of addDirs) args.push('--add-dir', d);
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
-    return withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, launchContext, disabledSkills }));
+    return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, launchContext, disabledSkills }));
   },
 
   // Claude is given its id at launch, so the live id is the board id.
@@ -277,6 +356,7 @@ export const claude = {
 
   readLive({ pid }) { return liveState(pid); },
   analyze(liveSid, opts) { return analyze(liveSid, undefined, opts); },
+  graphAnalysis(liveSid, opts, enrich) { return enrich ? enrich(liveSid, opts) : null; },
   listResumable(excludeIds, opts) { return listResumable(excludeIds, opts); },
   activityInRange(liveSid, startMs, endMs, dir) { return activityInRange(liveSid, startMs, endMs, dir); },
   transcriptPath(liveSid, dir) { return findTranscript(liveSid, dir); },

@@ -2,8 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearComposer as defaultClearComposer } from './tmux-scraper.js';
-import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted, waitForCompactionEnd as defaultWaitForCompactionEnd } from './pane-ready.js';
+import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted, waitForCompactionEnd as defaultWaitForCompactionEnd, pasteImages as defaultPasteImages } from './pane-ready.js';
 import { adapterFor } from './agents/index.js';
+
+const STARTUP_WINDOW_MS = 60000;
 
 // Deliver a message to a session, waking it first if it's dormant/suspended — the
 // shared primitive behind send_message (MCP) and the `message` WS control handler.
@@ -45,24 +47,25 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   const waitForComposerReady = deps.waitForComposerReady ?? defaultWaitForComposerReady;
   const ensureSubmitted = deps.ensureSubmitted ?? defaultEnsureSubmitted;
   const waitForCompactionEnd = deps.waitForCompactionEnd ?? defaultWaitForCompactionEnd;
+  const pasteImages = deps.pasteImages ?? defaultPasteImages;
 
   // No Enter on any of these — prefillPane pastes and stops, so the TUI absorbs
   // each path into its composer and the single sendText below is what submits the
-  // whole message, images and prose together, as ONE turn.
+  // whole message, images and prose together, as ONE turn. pasteImages holds
+  // each paste until Claude Code has attached it, so the Enter cannot beat it.
   // Ordered: clear first, then attachments, then the prose. Clearing after an
   // attachment would throw the attachment away with it.
-  const attach = async (tmux, socket) => {
-    if (wantClear) await clearComposer(tmux, socket);
-    for (const p of imagePaths) await prefillPane(tmux, p, socket);
+  const attach = async (tmux, socket, agent) => {
+    if (wantClear) await clearComposer(tmux, socket, { agent });
+    if (imagePaths.length) await pasteImages(tmux, socket, agent, imagePaths, { prefill: prefillPane });
   };
 
-  // A LIVE pane needs neither pane gate: it is long past its TUI boot, and a human
-  // pressing Send chose this moment (this path also owns its own clearComposer
-  // semantics for the interrupt-restore case). Only the post-resume path below,
-  // pasting into a pty spawned milliseconds ago, has the readiness problem.
   const target = tmuxFor(id);
   if (target) {
     const socket = socketFor(id);
+    const entry = sessionManager.entryFor?.(id);
+    const launchedAt = entry?.relaunchedAt ?? entry?.createdAt;
+    const starting = Number.isFinite(launchedAt) && Date.now() - launchedAt < STARTUP_WINDOW_MS;
     // The first message after a long idle often lands while the agent is
     // auto-compacting, and a prompt pasted into a compacting pane is lost with no
     // error. Wait the compaction out; if it outlasts the wait, refuse BEFORE
@@ -72,13 +75,14 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
     if (compaction === 'timeout') {
       return { mode: 'error', outcome: 'rejected', error: 'The agent is still compacting its context, so the message was not sent. Send it again once compaction finishes.' };
     }
-    if (compaction === 'finished') await waitForComposerReady(target, socket, sessionManager.entryFor?.(id)?.agent);
-    await attach(target, socket);
+    if (starting) {
+      if (!await waitForComposerReady(target, socket, entry?.agent, { requireEmpty: false })) {
+        return { mode: 'error', outcome: 'rejected', error: 'The agent is still starting, so the message was not sent. Send it again once the terminal is ready.' };
+      }
+    } else if (compaction === 'finished') await waitForComposerReady(target, socket, entry?.agent);
+    await attach(target, socket, entry?.agent);
     await sendText(target, text, socket);
-    // Only a send that followed a compaction is verified: the pane was just
-    // rewritten, so a dropped CR is plausible there, while an ordinary live send
-    // is unchanged.
-    if (compaction === 'finished' && !await ensureSubmitted(target, socket, { text, agent: sessionManager.entryFor?.(id)?.agent })) {
+    if (compaction === 'finished' && !await ensureSubmitted(target, socket, { text, agent: entry?.agent })) {
       return { mode: 'live', outcome: 'unknown', error: 'Sent the message after compaction but could not confirm it started a turn — check the terminal before sending again.' };
     }
     return { mode: 'live' };
@@ -138,24 +142,22 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
       // twice. This is Codex's problem alone in practice, because Claude's
       // resumeCarriesIntent never pastes at all, and it is why the fix sits here
       // rather than in sendText, whose other callers all target settled panes.
-      // A timeout falls THROUGH to the paste (see waitForComposerReady): a late
-      // message beats a lost one.
-      await waitForComposerReady(tmux, socket, fresh.agent);
-      await attach(tmux, socket);
+      // A timeout must not bypass the draft/dialog guard. The session is live,
+      // but no prompt is pasted and the chat keeps the message for a retry.
+      if (!await waitForComposerReady(tmux, socket, fresh.agent)) {
+        return { mode: 'dormant', outcome: 'unknown', error: 'Woke the session but its terminal input is not ready — check the terminal before sending again.' };
+      }
+      await attach(tmux, socket, fresh.agent);
       await sendText(tmux, text, socket);
       // Then confirm the send actually became a turn, repairing a dropped CR with a
       // bare Enter — never a re-paste, which would fuse a second copy onto the text
       // already sitting in the composer. The repair is gated on our own text still
       // being visible in the composer, so it needs `text`/`agent` (see
-      // ensureSubmitted); the readiness result deliberately does NOT gate it, since
-      // a pane whose composer marker we failed to parse is exactly where the repair
-      // is most needed.
+      // ensureSubmitted).
       //
       // An unconfirmed send is reported as UNKNOWN, not success. Falling through a
-      // readiness timeout and then claiming `submitted` would reinstate the silent
-      // loss this whole change exists to remove — precisely on the version/resize
-      // cases most likely to defeat the gate, where the message would be both late
-      // AND lost. Unknown keeps the composer's draft client-side (the chat view
+      // submission check and then claiming `submitted` would reinstate silent
+      // loss. Unknown keeps the composer's draft client-side (the chat view
       // renders "Delivery status unknown" and does not clear it), so the human can
       // look at the pane and resend; a duplicate they can see beats a message that
       // vanished.

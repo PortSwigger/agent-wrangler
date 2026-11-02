@@ -30,7 +30,7 @@ import path from 'node:path';
 // the config.toml already on disk stays valid. A retry is expected to succeed;
 // the race window is a handful of milliseconds.
 
-function codexHome() {
+export function codexHome() {
   return process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 }
 
@@ -74,6 +74,7 @@ export function hasDuplicateHeader(text) {
 // that as a launch failure, not swallow it.
 export function ensureCodexTrust(dirPath) {
   if (!dirPath) return;
+  dirPath = fs.realpathSync(dirPath);
   const file = configPath();
   const header = headerFor(dirPath);
   let text = '';

@@ -1,4 +1,5 @@
-import { resolveResumeDir } from '../../transcript-reader.js';
+import { waitForComposerReady } from '../../pane-ready.js';
+import { adapterFor } from '../../agents/index.js';
 import { ensureLaunchDir } from './resume-dir.js';
 import { prefillPane, paneTitle, claudeTitle } from '../../tmux-scraper.js';
 import { nudgeAndWaitForJobs, descendantIdsOf } from './archive.js';
@@ -36,7 +37,10 @@ export async function waitForPaneReady(name, socket, {
 // gate and prefill are unit-testable without a real tmux pane; the resume handler
 // passes optional ctx overrides, else the real tmux impls run.
 export async function deliverWakeNote(name, socket, comment, {
-  waitReady = waitForPaneReady,
+  agent,
+  waitReady = (name, socket) => adapterFor(agent).terminal.readySignal === 'title'
+    ? waitForPaneReady(name, socket)
+    : waitForComposerReady(name, socket, agent),
   prefill = prefillPane,
 } = {}) {
   if (!comment || !name) return false;
@@ -80,7 +84,7 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   // the card id, which is their live id). Archived sessions are off the
   // board, so s is null; fall back to the cwd persisted in the mapping rather
   // than stranding the resume in ~.
-  const dir = await resolveResumeDir(entry?.liveSessionId || sessionId, {
+  const dir = await adapterFor(entry?.agent ?? s?.agent).history.resolveResumeDir(entry?.liveSessionId || sessionId, {
     graphCwd: s?.cwd,
     entryCwd: entry?.cwd,
   });
@@ -126,6 +130,7 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   // gating on `claimed` is the explicit single-delivery contract).
   if (claimed && snoozeComment) {
     await deliverWakeNote(tmux, socket, snoozeComment, {
+      agent: entry?.agent ?? s?.agent,
       waitReady: ctx.waitForPaneReady,
       prefill: ctx.prefillPane,
     });

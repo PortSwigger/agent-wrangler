@@ -42,7 +42,7 @@ Connect to `ws://localhost:<port>/ws` and send JSON (minimal client: `import Web
 | `{type:'fork', sessionId:'<cardId>', prompt:'<first msg>'}` | replies `{type:'forked', sessionId}` |
 | `{type:'archive', sessionId:'<cardId>'}` / `{type:'resume', sessionId:'<cardId>'}` | archive / restore |
 
-A `{type:'graph', graph}` is pushed on connect and every rebuild; sessions are under **`msg.graph.sessions`** (each has `sessionId` = card id, `liveSessionId`, `managed`, `socket`, `label`). Terminal bytes: `ws://localhost:<port>/pty?sessionId=<cardId>&cols=120&rows=32`.
+A `{type:'graph', graph}` is pushed on connect and on every rebuild that changed something (an idle server sends none; see `server/graph-frame-gate.js`); sessions are under **`msg.graph.sessions`** (each has `sessionId` = card id, `liveSessionId`, `managed`, `socket`, `label`). Terminal bytes: `ws://localhost:<port>/pty?sessionId=<cardId>&cols=120&rows=32`.
 
 ## Waiting on a session
 

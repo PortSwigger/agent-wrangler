@@ -18,7 +18,8 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { costUsd, costUsdByType, codexCostUsd } from '../server/pricing.js';
+import { costUsd, costUsdByType } from '../server/pricing.js';
+import { adapterFor } from '../server/agents/index.js';
 
 const HOME = os.homedir();
 const DATA_DIR = process.env.AW_DATA_DIR || path.join(HOME, '.agent-wrangler');
@@ -48,9 +49,13 @@ const tasks = readJson(path.join(DATA_DIR, 'tasks.json'), {});
 const entries = mappings.sessions || mappings;
 const taskNameById = new Map((tasks.tasks || []).map((t) => [t.id, t.name]));
 const assignments = tasks.assignments || {};
-const codexSessionIds = new Set(Object.entries(entries)
-  .filter(([, entry]) => (entry.agent || 'claude') === 'codex')
-  .map(([cardId, entry]) => entry.liveSessionId || cardId));
+const sessionIdsByAgent = new Map();
+for (const [cardId, entry] of Object.entries(entries)) {
+  const provider = adapterFor(entry.agent);
+  const ids = sessionIdsByAgent.get(provider.id) || new Set();
+  ids.add(entry.liveSessionId || cardId);
+  sessionIdsByAgent.set(provider.id, ids);
+}
 function taskNameFor(cardId) {
   const tid = assignments[cardId];
   if (!tid || tid === 'adhoc') return '(unassigned)';
@@ -260,45 +265,11 @@ const codexIndex = buildRolloutFamilyIndex ? await buildRolloutFamilyIndex() : n
 const sessions = [];
 let unresolved = 0;
 for (const [cardId, entry] of Object.entries(entries)) {
-  const agent = entry.agent || 'claude';
+  const agent = entry.agent ?? 'claude';
   const intent = (entry.intent || '').replace(/\s+/g, ' ').trim();
   const label = (intent && intent !== '(resumed)' ? intent.slice(0, 50) : '')
     || entry.name || (entry.cwd ? path.basename(entry.cwd) : '') || cardId.slice(0, 8);
-  if (agent === 'claude') {
-    const files = resolveClaudeTranscripts(cardId, entry);
-    if (!files.length) { unresolved++; continue; }
-    // One row per conversation the card has owned, so a cleared-away conversation's
-    // spend still lands under the same card and task.
-    for (const file of files) {
-      const { totals, subAgentUsd, advisorUsd } = await monthTotalsFor(file, usageSince(entry));
-      const usd = costUsd(totals);
-      const tokens = tokensOf(totals);
-      if (tokens.total === 0) continue; // no activity this month (parent or sub-agents)
-      const uuid = path.basename(file, '.jsonl');
-      const owner = entry.liveSessionId === uuid || cardId === uuid; // true conversation owner vs a re-pointed resume
-      sessions.push({ cardId, agent, label, task: taskNameFor(cardId), totals, usd, subAgentUsd, advisorUsd, tokens, estimated: false, file, owner });
-    }
-  } else if (agent === 'codex' && analyzeCodex) {
-    // Codex rollouts aren't line-stamped the same way; attribute the whole
-    // session to its createdAt month (estimated ChatGPT-plan pricing).
-    // createdAt is epoch ms (Date.now()); Date.parse would stringify it to NaN and
-    // silently drop every Codex session. new Date() takes both that and an ISO string.
-    const created = entry.createdAt ? new Date(entry.createdAt).getTime() : NaN;
-    if (!Number.isFinite(created) || created < monthStart || created >= monthEnd) continue;
-    const sessionKey = entry.liveSessionId || cardId;
-    const parentId = codexIndex?.metaById.get(sessionKey)?.parentId;
-    if (parentId && codexSessionIds.has(parentId)) continue;
-    const a = await analyzeCodex(sessionKey, { index: codexIndex }).catch(() => null);
-    if (!a || a.usd == null) { unresolved++; continue; }
-    const tok = a.tokens || { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
-    sessions.push({
-      cardId, agent, label, task: taskNameFor(cardId),
-      totals: a.totals || {}, usd: a.usd,
-      subAgentUsd: a.subAgentUsd || 0,
-      tokens: { ...tok, total: tok.input + tok.output + tok.cacheWrite + tok.cacheRead },
-      estimated: true,
-    });
-  }
+  unresolved += await adapterFor(agent).usage.scanMonth({ cardId, entry, agent, label, sessions, resolveClaudeTranscripts, monthTotalsFor, usageSince, tokensOf, taskNameFor, monthStart, monthEnd, codexIndex, trackedSessionIds: sessionIdsByAgent.get(agent), analyzeCodex });
 }
 
 // ---- dedup by transcript ------------------------------------------------
@@ -346,13 +317,13 @@ for (const s of sessions) {
     const bt = costUsdByType(s.totals);
     for (const kk of ['input', 'output', 'cacheWrite', 'cacheRead']) byType[kk] += bt[kk];
   }
-  const models = Object.keys(s.totals).length ? s.totals : { [s.agent === 'codex' ? 'gpt (codex est.)' : 'unknown']: null };
+  const models = Object.keys(s.totals).length ? s.totals : { [adapterFor(s.agent).usage.unknownModelLabel || 'unknown']: null };
   for (const model of Object.keys(models)) {
     if (!byModel.has(model)) byModel.set(model, blankAgg());
     const agg = byModel.get(model);
     // Cost/tokens per model from this session's per-model split when available.
     if (s.totals[model]) {
-      agg.cost += s.agent === 'codex' ? codexCostUsd({ [model]: s.totals[model] }) : costUsd({ [model]: s.totals[model] });
+      agg.cost += adapterFor(s.agent).usage.costUsd({ [model]: s.totals[model] });
       const t = s.totals[model];
       agg.tokens.input += t.input; agg.tokens.output += t.output;
       agg.tokens.cacheWrite += (t.cacheWrite5m || 0) + (t.cacheWrite1h || 0); agg.tokens.cacheRead += t.cacheRead || 0;
@@ -387,7 +358,7 @@ const lpad = (s, w) => String(s).padStart(w);
 console.log(`\n  agent-wrangler cost report — ${month} (UTC)\n  ${'='.repeat(52)}`);
 console.log(`  Total: ${usd(grand.cost)}  across ${grand.sessions} active sessions  ·  ${k(grand.tokens.total)} tokens`);
 console.log(`  Avg/session: ${usd(grand.cost / (grand.sessions || 1))}  ·  ${k(Math.round(grand.tokens.total / (grand.sessions || 1)))} tokens`);
-if (estimatedCost > 0) console.log(`  (includes ${usd(estimatedCost)} estimated Codex/ChatGPT-plan spend)`);
+if (estimatedCost > 0) console.log(`  (includes ${usd(estimatedCost)} estimated API-equivalent spend)`);
 if (subAgentCost > 0) console.log(`  (includes ${usd(subAgentCost)} spent by dispatched sub-agents, folded into the totals above)`);
 // Deliberately NOT disjoint from the sub-agent figure above — a sub-agent's own
 // advisor consult counts in both (each is an independent "of which" slice of the
@@ -417,7 +388,7 @@ for (const [label, key] of [['input (fresh)', 'input'], ['output', 'output'], ['
   const share = claudeCost > 0 ? `${((100 * v) / claudeCost).toFixed(1)}%` : '—';
   console.log(`  ${pad(label, 19)}${lpad(usd(v), 8)}${lpad(share, 10)}`);
 }
-if (estimatedCost > 0) console.log(`  (excludes ${usd(estimatedCost)} estimated Codex spend — not split by type)`);
+if (estimatedCost > 0) console.log(`  (excludes ${usd(estimatedCost)} estimated API-equivalent spend — not split by type)`);
 
 console.log(`\n  Top ${TOP} most expensive sessions`);
 console.log(`  ${'-'.repeat(72)}`);

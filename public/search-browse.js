@@ -46,40 +46,56 @@ function bucketKeyOf(ts, now) {
   return bucketMetaFor(now - (ts || 0)).key;
 }
 
-// One level deep, exactly like the board's own computeAbsorption (public/
-// workflow.js) and History's foldTile: a session is absorbed into its parent
-// iff the parent is present AND in the same bucket AND the parent itself is NOT
-// absorbed into a grandparent — so a chained grandchild promotes to top-level
-// instead of nesting two deep. Cycle-safe (a parentSession chain shouldn't
-// cycle, but this never hangs if one does).
+// Unbounded depth, like the board's own computeAbsorption (public/workflow.js):
+// a session is absorbed into its parent iff the parent is present AND in the
+// same bucket — the parent may itself be absorbed, so a chain nests as deep as
+// it goes. Each entry is `{ group, children? }` with `children` the nested
+// entries, recursively. Cycle-safe (a parentSession chain shouldn't cycle; if
+// one does, its first-listed member stays top-level and nothing vanishes).
 function foldSameBucketChildren(sessions, now) {
   const byCardId = new Map(sessions.filter((g) => g.cardId).map((g) => [g.cardId, g]));
-  const cache = new Map();
-  const isAbsorbed = (g) => {
-    if (!g || !g.parentSession) return false;
+  const sameBucketParent = (g) => {
+    if (!g.parentSession) return null;
     const parent = byCardId.get(g.parentSession);
-    if (!parent) return false;
-    if (bucketKeyOf(g.lastActivity, now) !== bucketKeyOf(parent.lastActivity, now)) return false;
-    if (cache.has(g.sessionId)) return cache.get(g.sessionId);
-    cache.set(g.sessionId, false); // cycle guard
-    const result = !isAbsorbed(parent);
-    cache.set(g.sessionId, result);
-    return result;
+    if (!parent || parent === g) return null;
+    return bucketKeyOf(g.lastActivity, now) === bucketKeyOf(parent.lastActivity, now) ? parent : null;
   };
+  const order = new Map(sessions.map((g, i) => [g, i]));
+  const cycleRoots = new Set();
+  const state = new Map();
+  for (const start of sessions) {
+    const path = [];
+    let cur = start;
+    while (cur && !state.has(cur)) {
+      state.set(cur, 1);
+      path.push(cur);
+      cur = sameBucketParent(cur);
+    }
+    if (cur && state.get(cur) === 1) {
+      const cycle = path.slice(path.indexOf(cur));
+      cycleRoots.add(cycle.reduce((x, y) => (order.get(y) < order.get(x) ? y : x)));
+    }
+    for (const g of path) state.set(g, 2);
+  }
+  const isAbsorbed = (g) => sameBucketParent(g) !== null && !cycleRoots.has(g);
   const childrenByParent = new Map();
   for (const g of sessions) {
-    if (isAbsorbed(g)) {
-      const list = childrenByParent.get(g.parentSession) || [];
-      list.push(g);
-      childrenByParent.set(g.parentSession, list);
-    }
+    if (!isAbsorbed(g)) continue;
+    const parent = sameBucketParent(g);
+    const list = childrenByParent.get(parent) || [];
+    list.push(g);
+    childrenByParent.set(parent, list);
   }
+  const entryFor = (g) => {
+    const kids = childrenByParent.get(g) || [];
+    const entry = { group: g };
+    if (kids.length) entry.children = kids.map(entryFor);
+    return entry;
+  };
   const top = [];
   for (const g of sessions) {
     if (isAbsorbed(g)) continue; // drawn under its parent
-    const children = g.cardId ? childrenByParent.get(g.cardId) || [] : [];
-    const entry = { group: g };
-    if (children.length) entry.children = children;
+    const entry = entryFor(g);
     // A breadcrumb for a top-level row whose parent we know about but couldn't
     // nest under (cross-bucket) — never for a row already nested as a child.
     if (g.parentSession && byCardId.has(g.parentSession)) entry.parentTitle = rowTitle(byCardId.get(g.parentSession));
@@ -129,8 +145,9 @@ function foldTaskGroups(topLevel) {
 //     — every top-level row in this bucket, clustered under one heading: one
 //     cluster per distinct task, plus the always-present Unassigned cluster for
 //     task-less rows. A lone session still gets a cluster of one — every task
-//     reads the same regardless of session count. `children` (raw group
-//     objects) is a same-bucket archived child nested under its entry, and
+//     reads the same regardless of session count. `children` (entries of
+//     the same shape, recursively) are the same-bucket archived children nested
+//     under its entry, however deep, and
 //     `parentTitle` is a cross-bucket parent breadcrumb.
 //   { kind:'task', ts, task, nested }  — a whole task was archived; `nested` is
 //     the sessions cascade-archived alongside it (flat, no further nesting —

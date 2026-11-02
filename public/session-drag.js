@@ -64,3 +64,28 @@ export function gridSlotAt(rects, x, y) {
   rects.forEach((r, i) => { if (r.top <= y) last = i; });
   return last >= 0 ? { index: last, after: true } : { index: 0, after: false };
 }
+
+// A spine draws a parent's whole subtree as flat rows, depth first (see
+// workflow.js spineRows). `rows` are those rows in DOM order, each
+// { parent, depth, top, bottom }. The index just past row `i`'s subtree: the
+// next row no deeper than it, or rows.length when its subtree runs to the end.
+export function subtreeEnd(rows, i) {
+  let j = i + 1;
+  while (j < rows.length && rows[j].depth > rows[i].depth) j++;
+  return j;
+}
+
+// Where a child of `parent` dropped at viewport-Y `y` goes among that parent's
+// other children in `rows`: the index of the row to insert before (rows.length
+// appends). Before the first sibling whose midpoint is below the cursor, else
+// after the last sibling's whole subtree, so a drop never splits a sibling from
+// its own children. null when `parent` has no other children drawn here.
+export function childSlotAt(rows, parent, y) {
+  let last = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].parent !== parent) continue;
+    if (y < (rows[i].top + rows[i].bottom) / 2) return i;
+    last = i;
+  }
+  return last < 0 ? null : subtreeEnd(rows, last);
+}

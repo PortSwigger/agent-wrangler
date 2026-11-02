@@ -2,10 +2,11 @@ import { descendantsOf } from './archive.js';
 
 // Nest a session under another — the board's "Attach to…" action and the
 // attach_session MCP tool share this same guard so neither path can bypass
-// the other's cycle/same-task checks. Nesting only ever renders within one
-// task tile (renderTileCards computes absorption per-tile), so a cross-task
-// attach would set parentSession but render nothing nested — refused
-// outright rather than building task-reassignment logic.
+// the other's cycle/same-task checks. Nesting is unbounded in depth but only
+// renders within one task tile (renderTileCards computes absorption per-tile),
+// so a cross-task attach would set parentSession but render nothing nested —
+// refused outright rather than building task-reassignment logic. The moved
+// session's own children travel with it.
 export function attachError(sessionId, parentSessionId, { sessions, taskStore }) {
   if (!sessionId || !parentSessionId) return 'session_id and parent_session_id are required.';
   if (sessionId === parentSessionId) return 'A session cannot be attached to itself.';
@@ -19,24 +20,7 @@ export function attachError(sessionId, parentSessionId, { sessions, taskStore })
   if (descendants.some((d) => d.sessionId === parentSessionId)) {
     return `Cannot attach — ${parentSessionId} is already a descendant of ${sessionId}; this would create a cycle.`;
   }
-  // Rendering is capped at one level of nesting (see the file comment) — refuse
-  // any attach that would put a session at depth > 1, rather than let the data
-  // reach a state the board can't draw. Two ways that happens: the chosen
-  // parent is itself nested (this session would land at depth 2), or the
-  // session being moved already has its own children (they'd be pushed from
-  // depth 1 to depth 2 when it moves). TODO: relax once recursive nested
-  // rendering ships (see the deferred follow-up plan).
-  const parentEntry = sessions.find((s) => s.sessionId === parentSessionId);
-  if (parentEntry?.parentSession) {
-    return `Cannot attach under ${parentSessionId} — it is itself nested under another session, and the board only renders one level of nesting today. Attach to a top-level session instead.`;
-  }
   const sessionTask = taskStore.taskFor(sessionId);
-  const hasOwnChildren = sessions.some(
-    (s) => s.parentSession === sessionId && (taskStore.taskFor(s.sessionId)?.id ?? null) === (sessionTask?.id ?? null),
-  );
-  if (hasOwnChildren) {
-    return `Cannot attach ${sessionId} — it has its own nested children, and the board only renders one level of nesting today. Detach or promote its children first.`;
-  }
   const parentTask = taskStore.taskFor(parentSessionId);
   if ((sessionTask?.id ?? null) !== (parentTask?.id ?? null)) {
     return `Cannot attach across tasks — ${sessionId} is on ${sessionTask ? sessionTask.name : 'Ad-hoc'} and ${parentSessionId} is on ${parentTask ? parentTask.name : 'Ad-hoc'}. Move one onto the other's task first.`;

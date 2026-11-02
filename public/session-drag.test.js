@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nestTargetsFor, childDropAction, mergeSessionOrder, gridSlotAt } from './session-drag.js';
+import { nestTargetsFor, childDropAction, mergeSessionOrder, gridSlotAt, subtreeEnd, childSlotAt } from './session-drag.js';
 
 const taskOf = (map) => (sid) => map[sid] ?? null;
 const canNestOnto = (sid, target, sessions, tasks) => nestTargetsFor(sid, sessions, tasks).has(target);
@@ -10,7 +10,7 @@ test('nestTargetsFor: a same-task top-level session is a target', () => {
   assert.equal(canNestOnto('a', 'b', sessions, taskOf({ a: 'T', b: 'T' })), true);
 });
 
-test('nestTargetsFor: refuses itself, another task, a nested target, and the current parent', () => {
+test('nestTargetsFor: refuses itself, another task, and the current parent, but allows a nested target', () => {
   const sessions = [
     { sessionId: 'a', label: 'A', parentSession: 'p' },
     { sessionId: 'p', label: 'P' },
@@ -20,14 +20,23 @@ test('nestTargetsFor: refuses itself, another task, a nested target, and the cur
   const tasks = taskOf({ a: 'T', p: 'T', c: 'T', x: 'U' });
   assert.equal(canNestOnto('a', 'a', sessions, tasks), false);
   assert.equal(canNestOnto('a', 'x', sessions, tasks), false);
-  assert.equal(canNestOnto('a', 'c', sessions, tasks), false);
   assert.equal(canNestOnto('a', 'p', sessions, tasks), false);
   assert.equal(canNestOnto('a', null, sessions, tasks), false);
+  // Nesting has no depth limit: a sibling that is itself nested is a target.
+  assert.equal(canNestOnto('a', 'c', sessions, tasks), true);
 });
 
-test('nestTargetsFor: a session with its own children cannot nest (one level deep)', () => {
-  const sessions = [{ sessionId: 'p', label: 'P' }, { sessionId: 'c', label: 'C', parentSession: 'p' }, { sessionId: 'q', label: 'Q' }];
-  assert.equal(canNestOnto('p', 'q', sessions, taskOf({ p: 'T', c: 'T', q: 'T' })), false);
+test('nestTargetsFor: a session with children can move, but never under its own descendants', () => {
+  const sessions = [
+    { sessionId: 'p', label: 'P' },
+    { sessionId: 'c', label: 'C', parentSession: 'p' },
+    { sessionId: 'g', label: 'G', parentSession: 'c' },
+    { sessionId: 'q', label: 'Q' },
+  ];
+  const tasks = taskOf({ p: 'T', c: 'T', g: 'T', q: 'T' });
+  assert.equal(canNestOnto('p', 'q', sessions, tasks), true);
+  assert.equal(canNestOnto('p', 'c', sessions, tasks), false);
+  assert.equal(canNestOnto('p', 'g', sessions, tasks), false);
 });
 
 test('mergeSessionOrder: shown order wins, unshown ids keep their earlier relative order after it', () => {
@@ -84,4 +93,29 @@ test('gridSlotAt: between or below rows, it goes after the last unit above the c
 
 test('nestTargetsFor: an empty set without a session id', () => {
   assert.equal(nestTargetsFor(null, [{ sessionId: 'a' }], () => null).size, 0);
+});
+
+// A root's spine: a (with child a1, grandchild a1x), then b. 30px rows, 6px gaps.
+const row = (parent, depth, i) => ({ parent, depth, top: i * 36, bottom: i * 36 + 30 });
+const spine = [row('root', 0, 0), row('a', 1, 1), row('a1', 2, 2), row('root', 0, 3)];
+
+test('subtreeEnd: a row\'s subtree runs until the next row no deeper than it', () => {
+  assert.equal(subtreeEnd(spine, 0), 3);
+  assert.equal(subtreeEnd(spine, 1), 3);
+  assert.equal(subtreeEnd(spine, 3), 4);
+});
+
+test('childSlotAt: slots sit only between siblings, never inside a sibling\'s subtree', () => {
+  // Above a's midpoint: before a.
+  assert.equal(childSlotAt(spine, 'root', 5), 0);
+  // Over a's children, past a's midpoint but above b's: before b, after a's subtree.
+  assert.equal(childSlotAt(spine, 'root', 80), 3);
+  // Past b: after b (append).
+  assert.equal(childSlotAt(spine, 'root', 200), 4);
+});
+
+test('childSlotAt: a deeper parent\'s children, and none when the parent has no other children', () => {
+  assert.equal(childSlotAt(spine, 'a', 0), 1);
+  assert.equal(childSlotAt(spine, 'a', 200), 3);
+  assert.equal(childSlotAt(spine, 'nobody', 0), null);
 });

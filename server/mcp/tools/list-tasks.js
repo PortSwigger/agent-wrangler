@@ -6,7 +6,8 @@ import { mostCommonCwd } from '../../../public/util.js';
 // tasks.json state file. `bestFolder` (the natural cwd to launch a new session
 // for a task) reuses the exact heuristic the board UI shows: `mostCommonCwd`
 // (public/util.js) folds each session's cwd to its repo root — collapsing both
-// wrangler `<repo>-worktree-<branch>` siblings and `.claude/worktrees/` dirs —
+// wrangler `worktrees.noindex/<repo>-<branch>` dirs, legacy `<repo>-worktree-<branch>`
+// siblings and `.claude/worktrees/` dirs —
 // excludes throwaway scratch dirs, and picks the most frequent repo (ties → most
 // recently active). Keeping one implementation means the tool and the card can
 // never disagree about where a task lives.

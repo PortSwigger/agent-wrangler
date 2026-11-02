@@ -39,7 +39,7 @@ test('validate-worktree: branch absent → status new with the default folder pa
   await validateWorktreeHandler.handler({ type: 'validate-worktree', cwd: repo, branch: 'fresh' }, c);
   assert.equal(c.sent[0].ok, true);
   assert.equal(c.sent[0].status, 'new');
-  assert.equal(c.sent[0].folderPath, path.join(path.dirname(repo), 'myproj-worktree-fresh'));
+  assert.equal(c.sent[0].folderPath, path.join(path.dirname(repo), 'worktrees.noindex', 'myproj-fresh'));
 });
 
 test('validate-worktree: existing branch with no worktree → status existing-branch', async () => {

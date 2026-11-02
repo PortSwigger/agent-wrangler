@@ -236,6 +236,7 @@ function beginAdd(key) {
       send({ type: 'todo-add', taskId: todoKeyToTaskId(key, view.adhocId), text });
       optimisticAdd(state.graph, key, text);
     }
+    input.blur();
     redraw();
   };
   input.addEventListener('keydown', (e) => {
@@ -269,6 +270,7 @@ function beginEdit(view, span) {
       send({ type: 'todo-edit', taskId: wireId(view), todoId, text });
       optimisticEdit(state.graph, view.key, todoId, { text });
     }
+    input.blur();
     redraw();
   };
   input.addEventListener('keydown', (e) => {

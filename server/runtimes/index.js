@@ -1,3 +1,4 @@
+import { agentError } from '../agents/index.js';
 import { local } from './local.js';
 import { devcontainer } from './devcontainer.js';
 
@@ -14,6 +15,11 @@ import { devcontainer } from './devcontainer.js';
 //                `runtime === 'local' ? undefined : runtime`), so back-compat holds.
 //   label        (required) what the dispatch dialog's Runtime select shows, and
 //                what a refusal names the runtime by.
+//   agents       (optional, default ['claude']) the agent ids that may run on it.
+//                Dispatch and spawn_session refuse any other agent, and the
+//                dialog disables the option for one. `local` takes every agent;
+//                devcontainer leaves it out, since its status and cost hooks read
+//                Claude paths. See runtimeAgentError.
 //   wrapLaunch   async ({ inner, cwd, sessionId, parentId, worktree, workflow, launchContext })
 //                → the command tmux actually runs. Receives the agent's already-built
 //                inner command and returns it decorated (local: identity;
@@ -59,6 +65,12 @@ import { devcontainer } from './devcontainer.js';
 //                can't see it, e.g. devcontainer). A runtime whose transcript lands
 //                host-side (e.g. via a bind-mount) leaves this FALSE and keeps the
 //                guard — copying devcontainer's `true` blindly would drop protection.
+//   liveByTmux   (optional, default falsey) when true, an owned tmux that is alive
+//                but not discovered as an agent still reads as a LIVE card
+//                (state-reader's tmux-liveness fallback), as a buildLaunch runtime's
+//                always does. For a wrapLaunch runtime whose pane runs a wrapper that
+//                hides the agent from process discovery (e.g. `sbx exec … sh -lc`).
+//                Without it such a card reads as dormant while it runs.
 //   readLive     (optional) async ({ entry, tmuxName, socket }) → a live-status blob
 //                { liveSid, status, rawStatus, waitingFor, name, updatedAt } or null.
 //                Overrides the host liveState/pane-scrape when the status file is
@@ -147,12 +159,32 @@ export function findRuntime(id) {
 }
 
 // Every runtime a dispatch can name right now, for spawn_session's validation
-// (and its error, which lists them). `extId` only on an extension's.
+// (and its error, which lists them). `agents` is runtimeAgents' answer (null
+// for local); `extId` only on an extension's.
 export function knownRuntimes() {
   return [
-    ...ALL.map(({ id, label }) => ({ id, label })),
-    ...[...registered.values()].map(({ id, label, extId }) => ({ id, label, extId })),
+    ...ALL.map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt) })),
+    ...[...registered.values()].map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt), extId: rt.extId })),
   ];
+}
+
+// The agents a runtime takes: null for local (every agent), else its own
+// `agents`, defaulting to Claude-only — the one agent every runtime before the
+// field existed was built and tested for.
+export function runtimeAgents(rt) {
+  if (!rt || rt === local) return null;
+  return Array.isArray(rt.agents) ? rt.agents : ['claude'];
+}
+
+// Null when `agent` may run on `rt`, else the human-facing refusal. Checked by
+// dispatch itself, so a stale dialog selection, a schedule or a scripted
+// request can't bypass what the dialog's Runtime select disables.
+export function runtimeAgentError(rt, agent = 'claude') {
+  const invalid = agentError(agent);
+  if (invalid) return invalid;
+  const agents = runtimeAgents(rt);
+  if (!agents || agents.includes(agent)) return null;
+  return `The "${rt.label || rt.id}" runtime can't run ${agent} sessions (it supports: ${agents.join(', ')}).`;
 }
 
 // Null when a resume or fork of this card may proceed, else the human-facing

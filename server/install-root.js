@@ -15,7 +15,7 @@ import { logWarn } from './log.js';
 // AW_INSTALL_ROOT names an upgrade-stable path to the same app, such as a
 // symlink the upgrade repoints; see docs/install-signals.md.
 //
-// Server-internal reads (public/, styles/, catalog snapshots) keep their
+// Server-internal reads (public/, builtin extension themes, catalog snapshots) keep their
 // import.meta.url paths: they're resolved by the running process and can't go
 // stale. Git never uses this; it runs in self-update.js's realpathed APP_ROOT.
 //

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getExtensions, _resetExtensionsForTests } from '../extensions/index.js';
-import { claude, derivedModels, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
+import { claude, derivedModels, PR_HOOK_PATH, PR_HOOK_DEP_PATH, PR_FOOTER_PATH, PR_FOOTER_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
 import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, maxContextWindowFor, modelsWithDefault } from './index.js';
 
 test('claude adapter identity', () => {
@@ -54,6 +54,15 @@ test('claude maps an auto-compaction threshold on launch, resume, and fork', () 
   assert.match(launch, /'--autocompact' '200000'/);
   assert.match(resume, /'--autocompact' '300000'/);
   assert.match(fork, /'--autocompact' '400000'/);
+});
+
+test('claude passes --remote-control <name> on launch and resume only when asked, and never on a fork', () => {
+  const rc = { name: 'Phone orchestrator' };
+  assert.match(claude.buildLaunch({ sessionId: 'SID', remoteControl: rc }), /'--remote-control' 'Phone orchestrator'/);
+  assert.match(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE', remoteControl: rc }), /'--remote-control' 'Phone orchestrator'/);
+  assert.doesNotMatch(claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC', remoteControl: rc }), /--remote-control/);
+  assert.doesNotMatch(claude.buildLaunch({ sessionId: 'SID' }), /--remote-control/);
+  assert.doesNotMatch(claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }), /--remote-control/);
 });
 
 test('claude leaves auto-compaction unset when a session has no threshold', () => {
@@ -183,6 +192,13 @@ test('claude launch injects the PR-attach hook on Bash + the attach-url env', ()
   assert.match(cmd, /PostToolUse/);
   assert.match(cmd, /pr-attach-hook\.mjs/);
   assert.match(cmd, /AW_PR_ATTACH_URL='http:\/\/127\.0\.0\.1:\d+\/pr-attach'/);
+  assert.match(cmd, /AW_PR_MODEL_URL='http:\/\/127\.0\.0\.1:\d+\/pr-model'/);
+});
+
+test('claude launch accepts inbound cross-session messages for this session only', () => {
+  const cmd = claude.buildLaunch({ sessionId: 'CARD', liveSessionId: 'LIVE', intent: '' });
+  assert.match(cmd, /crossSessionInbound/);
+  assert.match(cmd, /accept/);
 });
 
 test('claude resume + fork also inject the PR-attach hook (all paths share buildInnerCommand)', () => {
@@ -196,10 +212,10 @@ test('claude discoverLiveId returns the preset id', async () => {
   assert.equal(await claude.discoverLiveId({ sessionId: 'SID', cwd: '/x' }), 'SID');
 });
 
-test('registry resolves claude, defaults unknown agent to claude', () => {
+test('registry defaults only an absent historical agent to Claude', () => {
   assert.equal(adapterFor('claude').id, 'claude');
   assert.equal(adapterFor(undefined).id, 'claude');
-  assert.equal(adapterFor('bogus').id, 'claude');
+  assert.throws(() => adapterFor('bogus'), /Unknown agent/);
 });
 
 test('adapterForProcess matches a claude command', () => {
@@ -298,6 +314,8 @@ test('exported launch-input paths resolve to real files/dirs', () => {
   assert.ok(fs.existsSync(PR_HOOK_DEP_PATH), 'server/pr-hook.js missing');
   assert.ok(PR_HOOK_PATH.endsWith('/scripts/pr-attach-hook.mjs'));
   assert.ok(PR_HOOK_DEP_PATH.endsWith('/server/pr-hook.js'));
+  assert.ok(fs.existsSync(PR_FOOTER_PATH), 'pr-model-footer.mjs missing');
+  assert.ok(fs.existsSync(PR_FOOTER_DEP_PATH), 'server/pr-footer.js missing');
   assert.ok(fs.existsSync(ISSUE_TO_PR_SKILL_DIR), 'skills/issue-to-pr missing');
 });
 
@@ -351,3 +369,14 @@ test('derivedModels offers an unaliased family by its newest id and skips aliase
     { value: 'claude-zeta-3-2', label: 'Zeta 3.2', pillLabel: 'zeta 3.2', transcriptPrefixes: ['claude-zeta-'] },
   ]);
 });
+
+for (const method of ['buildLaunch', 'buildResume', 'buildFork']) {
+  test(`claude ${method} uses the selected permission mode and defaults to auto`, () => {
+    const opts = { sessionId: 'CARD', resumeId: 'LIVE', sourceId: 'SRC' };
+    assert.match(claude[method](opts), /'--permission-mode' 'auto'/);
+    for (const permissionMode of ['manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions']) {
+      assert.ok(claude[method]({ ...opts, permissionMode }).includes(`'--permission-mode' '${permissionMode}'`));
+    }
+    assert.throws(() => claude[method]({ ...opts, permissionMode: 'invalid' }), /permission mode/i);
+  });
+}

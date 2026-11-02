@@ -229,3 +229,100 @@ test('a failing extension check is logged and leaves the core tick alone', async
   assert.equal(status.behind, 2);
   assert.match(events.logs[0], /extension update check failed: dns/);
 });
+
+// A restart that loads auto-applied extension updates. `later` is captured
+// rather than run, so each test decides when the minute's retry comes round.
+function restarting(overrides = {}) {
+  const timers = [];
+  let quiet = true;
+  const { svc, events } = service({
+    mode: () => 'notify',
+    canRestart: true,
+    isQuiet: () => quiet,
+    later: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    checkExtensions: async () => ({ ...outdatedExts, autoApplied: [{ id: 'jira-links', sha: 'j1' }, { id: 'slack-digest', sha: 's1' }] }),
+    ...overrides,
+  });
+  return { svc, events, timers, setQuiet: (q) => { quiet = q; } };
+}
+
+test('two extensions auto-applied in one tick cause exactly one restart', async () => {
+  const { svc, events, timers } = restarting();
+  await svc.tick();
+  assert.deepEqual(events.applied, [{ extensions: ['jira-links', 'slack-digest'] }]);
+  assert.equal(timers.length, 0);
+  assert.match(events.logs.at(-1), /auto-updated extensions jira-links, slack-digest; restarting to load them/);
+  // Even if another check applies more before the process is gone.
+  await svc.tick();
+  assert.equal(events.applied.length, 1);
+});
+
+test('restart waits while not quiet, then fires once quiet', async () => {
+  const { svc, events, timers, setQuiet } = restarting();
+  setQuiet(false);
+  await svc.tick();
+  assert.equal(events.applied.length, 0, 'not while busy');
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].ms, 60 * 1000, 'looked at again in a minute, not at the next hourly tick');
+  timers.shift().fn();
+  assert.equal(events.applied.length, 0, 'still busy');
+  assert.equal(timers.length, 1, 'and still pending');
+  // A tick while one is pending starts no second timer.
+  await svc.tick();
+  assert.equal(timers.length, 1);
+  setQuiet(true);
+  timers.shift().fn();
+  assert.deepEqual(events.applied, [{ extensions: ['jira-links', 'slack-digest'] }]);
+  assert.equal(timers.length, 0, 'nothing pending after it fires');
+});
+
+test('a wrangler auto-apply in the same tick is the one restart for extensions too', async () => {
+  const { svc, events, timers } = restarting({ mode: () => 'auto' });
+  await svc.tick();
+  assert.equal(events.applied.length, 1);
+  assert.equal(events.applied[0].head, 'r1');
+  assert.equal(timers.length, 0);
+});
+
+test('a manual wrangler update while an extension restart is pending is the only restart', async () => {
+  const { svc, events, timers, setQuiet } = restarting();
+  setQuiet(false);
+  await svc.tick();
+  await svc.apply();
+  setQuiet(true);
+  timers.shift().fn();
+  assert.equal(events.applied.length, 1);
+  assert.equal(events.applied[0].head, 'r1');
+});
+
+test('the extension restart waits out an update apply in flight', async () => {
+  let release;
+  const { svc, events, timers, setQuiet } = restarting({ apply: () => new Promise((r) => { release = () => r({ ...behind, updated: false }); }) });
+  setQuiet(false);
+  await svc.tick();
+  setQuiet(true);
+  const applying = svc.apply();
+  timers.shift().fn();
+  assert.equal(events.applied.length, 0);
+  assert.equal(timers.length, 1);
+  release();
+  await applying;
+  timers.shift().fn();
+  assert.deepEqual(events.applied, [{ extensions: ['jira-links', 'slack-digest'] }]);
+});
+
+test('a board that cannot restart itself keeps today\'s behaviour: no restart, nothing pending', async () => {
+  const published = [];
+  const { svc, events, timers } = restarting({ canRestart: false, onExtensions: (s) => published.push(s) });
+  await svc.tick();
+  assert.equal(events.applied.length, 0);
+  assert.equal(timers.length, 0);
+  assert.equal('autoApplied' in published[0], false, 'the published summary is unchanged');
+});
+
+test('no extension applied, no restart', async () => {
+  const { svc, events, timers } = restarting({ checkExtensions: async () => ({ ...outdatedExts, autoApplied: [] }) });
+  await svc.tick();
+  assert.equal(events.applied.length, 0);
+  assert.equal(timers.length, 0);
+});

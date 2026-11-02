@@ -7,8 +7,8 @@
 // `[Agent Wrangler]` is the established prefix for a server-originated pane
 // paste (see notifier.js's PR nudges) — it marks this as coming from the
 // wrangler itself, the trust framing that distinguishes it from a peer's own
-// text. The notification starts a turn only once the recipient can act on it,
-// so it explicitly asks the session to read its mailbox before continuing work.
+// text. The notification starts a turn when idle, or arrives during work through
+// Codex input or Claude's socket, and asks the session to read its mailbox.
 export function composeMailNotification(messages) {
   const count = messages.length;
   const noun = count === 1 ? 'message' : 'messages';

@@ -1,3 +1,6 @@
+import { setProviderMetadata } from './provider-metadata.js';
+import { registeredAgents, providerMetadata } from '../server/agents/index.js';
+setProviderMetadata(registeredAgents().map(providerMetadata));
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { autoCompactPresetTokens, normalizeAutoCompactPreset, normalizeAutoCompactPresetForAgentChange, formatAutoCompactTokens } from './auto-compact-presets.js';

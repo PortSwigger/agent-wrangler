@@ -33,6 +33,7 @@ export function reduceCodexCatalog(raw) {
       visibility: m.visibility || 'list',
       priority: Number.isFinite(m.priority) ? m.priority : 1000,
       efforts: (m.supported_reasoning_levels || []).map((l) => l?.effort).filter(Boolean),
+      defaultEffort: typeof m.default_reasoning_level === 'string' ? m.default_reasoning_level : null,
       contextWindow: Number.isFinite(m.context_window) ? m.context_window : null,
     }))
     .sort((a, b) => a.priority - b.priority);
@@ -46,6 +47,7 @@ const snapshot = readSnapshot();
 let live = null;
 let liveVersion = 0;
 let derived = null;
+let probeUnsupported = false;
 const listeners = new Set();
 
 function catalog() {
@@ -100,6 +102,12 @@ export function liveCodexContextWindow(slug) {
   return live?.find((m) => m.slug === slug)?.contextWindow ?? null;
 }
 
+// The effort Codex runs this model at when neither the launch nor config.toml
+// names one (its catalog's default_reasoning_level), or null when unknown.
+export function codexDefaultEffort(slug) {
+  return catalog().find((m) => m.slug === slug)?.defaultEffort ?? null;
+}
+
 // Bumps whenever a refresh changes the catalog — fold into caches of derived values.
 export function codexCatalogVersion() {
   return liveVersion;
@@ -115,13 +123,25 @@ async function runCodexDebugModels() {
   return JSON.parse(stdout);
 }
 
+// A Codex CLI that predates `debug models` fails with clap's usage error.
+function isUnsupportedSubcommand(err) {
+  return /unrecogni[sz]ed subcommand/i.test(`${err?.stderr || ''}\n${err?.message || ''}`);
+}
+
 // Re-read the catalog from the installed Codex CLI. Returns true when it changed.
 // Never throws — a failed read (no codex, bad output) keeps the current list.
 export async function refreshCodexCatalog({ run = runCodexDebugModels } = {}) {
+  // An old CLI won't grow the subcommand mid-run; the snapshot and Codex's
+  // models cache already cover it, so stop probing until the next restart.
+  if (probeUnsupported) return false;
   let next;
   try {
     next = reduceCodexCatalog(await run());
   } catch (err) {
+    if (isUnsupportedSubcommand(err)) {
+      probeUnsupported = true;
+      return false;
+    }
     // No codex on PATH is the normal state for a Claude-only install.
     if (err.code !== 'ENOENT') logWarn(`[agent-wrangler] codex model catalog refresh failed: ${err.message}`);
     return false;
@@ -148,4 +168,5 @@ export function startCodexCatalogRefresh() {
 export function _resetCodexCatalogForTest() {
   live = null;
   derived = null;
+  probeUnsupported = false;
 }

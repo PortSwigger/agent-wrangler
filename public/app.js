@@ -1,3 +1,8 @@
+import { setProviderMetadata, providerMetadataFor, canSwitchProviderModel, needsYouTitle } from './provider-metadata.js';
+import { dispatchPick, readDispatchPick, saveDispatchPick } from './dispatch-preferences.js';
+import { createDispatchModelPicker } from './dispatch-model-picker.js';
+import { effortsOf } from './model-front.js';
+import { createSoundMigration } from './sound-migration.js';
 /* global Terminal, FitAddon, WebLinksAddon, ClipboardAddon, Unicode11Addon */
 import {
   snoozePhase, resolveUntil, wakeLabel, tileWeight,
@@ -6,16 +11,17 @@ import {
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
 import { createAdditionalFolders } from './additional-folders.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
+import { focusReturnTarget } from './terminal-dialog.js';
 import {
   MAX_ONSCREEN_ROWS,
   sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised, refinePerRow,
 } from './layout.js';
-import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption, sessionGroups } from './workflow.js';
+import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption, sessionGroups, MAX_SPINE_INDENT } from './workflow.js';
 import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.js';
 import { cascadeSummary, cascadeDialogBody, worktreeStillInUse, containerStillInUse } from './archive-cascade.js';
 import { attachCandidates, nestingDepth, orderAttachCandidates } from './attach-picker.js';
-import { nestTargetsFor, childDropAction, mergeSessionOrder, gridSlotAt } from './session-drag.js';
+import { nestTargetsFor, childDropAction, mergeSessionOrder, gridSlotAt, subtreeEnd, childSlotAt } from './session-drag.js';
 import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actionSummary } from './schedules.js';
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
@@ -31,45 +37,50 @@ import {
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
+import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { updatePanelEl, installDriftEl, shouldReloadForVersion, sessionOnOlderCode, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
-import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, consentBodyEl, progressText, uninstallBodyText, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
+import { updatePanelEl, restartPanelEl, shouldReloadForVersion, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
+import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
 import {
   wtSlug, truncate, esc, tildify, timeAgo, throbDelayStyle, pad2,
   repoRoot, branchBadge, mostCommonCwd as mostCommonCwdPure, displayStatus,
-
+  anyModalOpen as anyModalOpenIn,
 } from './util.js';
-import { STATUS_WORDS, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
+import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
-import { readTerminalTheme, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle } from './theme.js';
+import { readTerminalTheme, readTerminalFont, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
 import { createNotifications } from './notifications.js';
+import { createInputGates } from './input-gate.js';
 import { prCheckToastOptions } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
+import { createExtFileViewer } from './ext-file-viewer.js';
 import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
 import { createBoardOpen } from './board-open.js';
+import { onBoard } from './off-board.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
-import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, EXT_SETTING_PREFIX, openSettings } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
 import { createIntentImages } from './intent-images.js';
 import { createExtImageStaging } from './ext-image-staging.js';
-import { playSound } from './sound.js';
+import { createStagedPreviews } from './staged-previews.js';
 import { viewForSession as resolveSessionView } from './session-view.js';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { enhanceSelects } from './select-dd.js';
 import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } from './auto-compact-presets.js';
 import { keybindings } from './keybindings.js';
 import { registerCoreBindings } from './core-keybindings.js';
+import { createSessionEmbed } from './session-embed.js';
 
 let currentView = 'grid';
 
@@ -122,6 +133,18 @@ function minimise(id) {
   renderGrid();
 }
 
+function setMinimisedTasks(ids) {
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id)) return false;
+  const order = currentOrder();
+  const next = pruneMinimised(new Set(ids), new Set(order));
+  if (order.length && next.size === order.length) return false;
+  if (next.size === minimisedIds.size && [...next].every((id) => minimisedIds.has(id))) return true;
+  minimisedIds = next;
+  persistMinimised();
+  renderGrid();
+  return true;
+}
+
 function focusOnly(id) {
   minimisedIds = new Set(currentOrder().filter((x) => x !== id));
   persistMinimised();
@@ -145,19 +168,21 @@ export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
 let subagentsExpandedByDefault = false; // server config flag, carried on every graph push
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
+let trustClaudeLaunchCwd = true; // likewise
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let mailWakesDormant = false;
+let prModelFooter = true;
 let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
+let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
 // The server's loaded extensions [{id, enabled, label, help, defaultEnabled}],
 // carried on every graph push — what the generic `ext:<id>` settings toggles
 // read back, and what mounts/unmounts each one's slot contributions. The
 // identity fields are fixed at server boot; `enabled` is live.
 let autoUpdate = 'notify';
 let refreshSessionsAfterUpdate = false;
-let graphCodeVersion = null;
 let latestExtensions = [];
 // The latest graph as received, handed whole to extension slot updates
 // (slots.update) so an extension reads its own contribution off it — the core
@@ -193,6 +218,9 @@ const extRequires = new Map();
 const extKeybindings = new Map();
 // Extension labels, for the Shortcuts tab's group titles.
 const extLabels = new Map();
+// Each extension's `{ branch, enabled }` early-adopter facts, for api.earlyAdopter.
+// Absent when its manifest declares no branch.
+const extEarlyAdopter = new Map();
 // The host API version the server serves, announced alongside the manifest.
 // Handed to each extension's client api as `version` — the browser counterpart
 // of the `engines.wranglerApi` range its manifest declares server-side.
@@ -205,6 +233,10 @@ function noteExtClientFacts(list) {
     if (Array.isArray(e.requires)) extRequires.set(e.id, e.requires);
     if (Array.isArray(e.keybindings)) extKeybindings.set(e.id, e.keybindings);
     if (typeof e.label === 'string' && e.label) extLabels.set(e.id, e.label);
+    if ('earlyAdopter' in e) {
+      if (typeof e.earlyAdopter?.branch === 'string' && e.earlyAdopter.branch) extEarlyAdopter.set(e.id, { branch: e.earlyAdopter.branch, enabled: e.earlyAdopter.enabled === true });
+      else extEarlyAdopter.delete(e.id);
+    }
   }
 }
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
@@ -212,7 +244,7 @@ function noteExtClientFacts(list) {
 const notifications = createNotifications({ document });
 const slots = createSlots({
   document,
-  onExtensionRemoved: (id) => notifications.clear(id),
+  onExtensionRemoved: (id) => { notifications.clear(id); sessionEmbed.dropExtension(id); },
   storage: (() => { try { return localStorage; } catch { return null; } })(),
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
@@ -231,9 +263,30 @@ const slots = createSlots({
     queueMicrotask(() => { chipsRenderQueued = false; if (latestGraph) renderGrid(); });
   },
   version: () => hostApiVersion,
+  themeButtonHtml,
+  // api.refreshInputGates(), or a gate's extension going away. Deferred like
+  // onChipsChanged so a timer firing for every card lands as one pass.
+  onInputGatesChanged: () => {
+    if (inputGatesQueued) return;
+    inputGatesQueued = true;
+    queueMicrotask(() => { inputGatesQueued = false; refreshInputGates(); });
+  },
 });
 let chipsRenderQueued = false;
+let inputGatesQueued = false;
+// Sessions a `session.inputGate` extension has locked: typed input is dropped
+// at their terminals (pointer reports still pass, so the wheel scrolls) and the
+// chat composer is disabled with the gate's reason. Told once per lock.
+const inputGates = createInputGates({
+  gateFor: (s) => slots.inputGate(s, latestGraph, extApi),
+  notify: (_sid, g) => toast(`Input locked: ${g.reason}`),
+});
+function refreshInputGates() {
+  if (!inputGates.refresh(latestSessions)) return;
+  chatView.setInputGate(inputGates.get(selectedSessionId));
+}
 function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
+  selectionBeforeView = null;
   setView('grid');
   if (latestSessions.some((x) => x.sessionId === sessionId)) {
     const dropped = boardOpen.drop();
@@ -242,7 +295,7 @@ function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
     return;
   }
   boardOpen.request(sessionId, { diff, onClose });
-  pendingSelect = sessionId;
+  setPendingSelect(sessionId);
   send({ type: 'resume', sessionId });
   toast('Restoring…');
 }
@@ -266,7 +319,11 @@ function landOnCard(sessionId, { diff, onClose }, select) {
   openDiffPanel(sessionId);
 }
 const boardOpen = createBoardOpen();
-onDiffPanelClosed((sid) => boardOpen.diffClosed(sid));
+onDiffPanelClosed((sid) => {
+  boardOpen.diffClosed(sid);
+  // An embedded panel's Diff button goes back to Chat/Terminal (api.mountSession).
+  if (sessionEmbed.active() && selectedSessionId === sid) renderPanel(sid);
+});
 
 function scrollTaskIntoView(taskId) {
   const sel = taskId === ADHOC_ID ? '.task-cell[data-entity="no-task"]' : `.task-cell[data-taskid="${CSS.escape(taskId)}"]`;
@@ -297,6 +354,9 @@ function openTaskInBoard(taskId) {
 // Lazy + memoised so <script> load order can't break module init: window.markdownit
 // is only read on first render, by which point the classic vendor <script> has run.
 let renderMarkdown;
+let extFileViewer;
+const migrateSoundPreference = createSoundMigration();
+
 const extApi = {
   send,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
@@ -315,15 +375,22 @@ const extApi = {
   // on the live board counts (an archived or unknown id would sit in the
   // minimised set until the next prune), and minimise() itself refuses the last
   // visible tile — so report whether the tile really went.
+  setMinimisedTasks,
   minimiseTask: (taskId) => {
     if (!currentOrder().includes(taskId) || minimisedIds.has(taskId)) return false;
     minimise(taskId);
     return minimisedIds.has(taskId);
   },
+  // Backs `api.openFile`; slots has checked the capability and bound the id.
+  openExtFile: (extId, p) => (extFileViewer ||= createExtFileViewer({ document, renderMarkdown: (md) => extApi.markdownPreview(md) })).open(extId, p),
   // Backs `api.images.stage`.
   stageImage: (file) => extImageStaging.stage(file),
+  // Back `api.earlyAdopter`; slots binds the id.
+  earlyAdopterFor: (extId) => extEarlyAdopter.get(extId),
+  setEarlyAdopter: setEarlyAdopterAcked,
   // Backs `api.agents()`; slots hands each caller a deep copy.
   agents: () => availableAgents,
+  modelFront: MODEL_FRONT,
   // Backs slots' per-extension `api.settings()`, which binds the id.
   settingsFor: (extId) => latestExtensions.find((e) => e.id === extId)?.settingValues,
   // Backs `api.settings.set` (slots binds the id). Sent through the RAW send
@@ -337,7 +404,7 @@ const extApi = {
   openDispatchAcked,
   // Backs `api.dispatch.submit` (throws; slots turns that into a rejection).
   submitDispatchFromExt,
-  // Backs `api.runtimes()`: the Runtime select's options, as offered for a Claude model.
+  // Backs `api.runtimes()`: the Runtime select's options, each with the agents it takes.
   runtimes: listDispatchRuntimes,
   // Back `api.ui.notify`/`withdraw`; slots forces the owner to the caller.
   notify: (owner, opts) => notifications.show(owner, opts),
@@ -345,14 +412,82 @@ const extApi = {
   // Backs `api.requestBoardRender`: the task.body counterpart of
   // requestPanelRender, for content that changes a tile's size.
   requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },
+  // Backs `api.mountSession`; slots has checked the element and the id and
+  // bound the extension. Lent at once if the element's view is on screen
+  // (or not in the document yet), otherwise parked until it is.
+  mountSession: (extId, el, sessionId, { onMaximize = null, view = null } = {}) => {
+    const host = extViewHosts.get(currentView);
+    const active = el.isConnected ? Boolean(host?.contains(el)) : isExtView(currentView);
+    return sessionEmbed.mount(el, sessionId, { extId, onMaximize, view, active });
+  },
 };
 
-// api.openDispatch({ taskId, intent, lockTask }): open the dispatch modal as
-// openDispatch does; resolves with the `dispatched` ack once the human launches,
-// null if they cancel or a later call supersedes this one, and rejects when a
-// launch is already awaiting its ack (see dispatch-waiter.js).
-function openDispatchAcked({ taskId = null, intent = '', lockTask = false } = {}) {
-  return dispatchWaiter.open(() => openDispatch(taskId, { ...(intent ? { intent } : {}), lockTask }));
+// ── api.mountSession: the board's session panel inside an extension view ────
+// session-embed.js moves the nodes; these say what showing and letting go mean.
+// While lent, main.session-embedded keeps the board's resize handle out of it.
+const sessionEmbed = createSessionEmbed({
+  document,
+  parts: () => ({
+    sidebar: document.getElementById('sidebar'),
+    diffPanel: document.getElementById('diff-panel'),
+    diffAnchor: document.getElementById('term-wrap'),
+  }),
+  show: showEmbeddedSession,
+  release: (o) => {
+    if (isDiffPanelOpen()) closeDiffPanel();
+    if (pendingSelect === o.sessionId) pendingSelect = null;
+    if (selectedSessionId) deselectSession(); else hideSidebar();
+    document.querySelector('main').classList.remove('session-embedded');
+  },
+});
+
+// A live session is selected as a card click would; a dormant one is resumed
+// first, as its card does; one that is not on the board at all (archived) is
+// restored and selected when the next graph brings it back (tryFulfillPending).
+function showEmbeddedSession(sessionId, o) {
+  document.querySelector('main').classList.add('session-embedded');
+  o.wrap?.classList.remove('pending');
+  const s = latestSessions.find((x) => x.sessionId === sessionId);
+  if (s && !s.managed) { resumeDormant(sessionId); applyEmbedView(o); return; }
+  if (s) { selectSession(sessionId); applyEmbedView(o); return; }
+  if (selectedSessionId) deselectSession();
+  if (isDiffPanelOpen()) closeDiffPanel();
+  o.wrap?.classList.add('pending');
+  showSidebar();
+  document.getElementById('panel').innerHTML = '<div class="panel-empty">Restoring…</div>';
+  setPendingSelect(sessionId);
+  send({ type: 'resume', sessionId });
+}
+
+// The view a mount or show asked for (`{ view: 'diff' }`), applied once the
+// session is selected and then forgotten, as the panel's own Diff button does.
+function applyEmbedView(o) {
+  if (o.view !== 'diff') return;
+  o.view = null;
+  openDiffPanel(o.sessionId);
+  renderPanel(o.sessionId);
+}
+
+// Lend the panel to the current view if it holds the embed's element, take it
+// back otherwise. Called on every view switch and graph tick, so an element
+// dropped without unmount (its view re-drew over it) never strands the panel.
+function syncSessionEmbed() {
+  sessionEmbed.reclaimOrphan();
+  const o = sessionEmbed.owner();
+  if (!o) return;
+  if (extViewHosts.get(currentView)?.contains(o.el)) sessionEmbed.unpark();
+  else sessionEmbed.park();
+}
+
+// api.openDispatch({ taskId, intent, lockTask, cwd, images }): open the dispatch
+// modal as openDispatch does; resolves with the `dispatched` ack once the human
+// launches, null if they cancel or a later call supersedes this one, and rejects
+// when a launch is already awaiting its ack (see dispatch-waiter.js). `cwd`
+// prefills the folder and `images` (names from api.images.stage) become chips.
+function openDispatchAcked({ taskId = null, intent = '', lockTask = false, cwd = '', images = [] } = {}) {
+  return dispatchWaiter.open(() => openDispatch(taskId, {
+    ...(intent ? { intent } : {}), ...(cwd ? { cwd } : {}), ...(images.length ? { images } : {}), lockTask,
+  }));
 }
 
 // Pending api.settings.set promises, by reqId, settled by `ext-setting-result`.
@@ -378,6 +513,34 @@ function setExtSettingAcked(extId, key, value) {
     send({ type: 'ext-setting-set', id: extId, key, value, reqId });
   });
 }
+// api.earlyAdopter.set, the same way: settled by `ext-early-adopter-result`.
+const extEarlyAdopterPending = new Map();
+function setEarlyAdopterAcked(extId, on) {
+  const reqId = `e${++extSettingSeq}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      extEarlyAdopterPending.delete(reqId);
+      reject(new Error('Saving the early-adopter choice timed out'));
+    }, 10000);
+    extEarlyAdopterPending.set(reqId, {
+      resolve: (stored) => {
+        const facts = extEarlyAdopter.get(extId);
+        if (facts) extEarlyAdopter.set(extId, { ...facts, enabled: stored });
+        resolve(stored);
+      },
+      reject,
+      timer,
+    });
+    send({ type: 'ext-set-early-adopter', id: extId, on, reqId });
+  });
+}
+function settleEarlyAdopter(msg) {
+  const p = extEarlyAdopterPending.get(msg.reqId);
+  if (!p) return;
+  extEarlyAdopterPending.delete(msg.reqId);
+  clearTimeout(p.timer);
+  if (msg.ok) p.resolve(msg.on === true); else p.reject(new Error(String(msg.error || 'Early-adopter choice refused')));
+}
 function settleExtSetting(msg) {
   const p = extSettingPending.get(msg.reqId);
   if (!p) return;
@@ -397,7 +560,7 @@ function pruneSampleHosts() {
 function renderSampleCard(el, _extId, hidden) {
   if (!el) return;
   pruneSampleHosts();
-  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null, isOnOlderCode: () => true }, { expanded: true });
+  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null }, { expanded: true });
   // Inert: never wired (no wireGridEvents), not focusable, not clickable.
   const card = el.querySelector('.session-card');
   if (card) {
@@ -446,9 +609,9 @@ function syncClientExtensions() {
   }
   // A panel re-render is what draws the gap the unmount left, and what gives a
   // freshly-loaded contribution its host to mount into.
-  if (unmounted) { extApi.requestPanelRender(); renderExtViews(); syncDispatchExtFields(); }
+  if (unmounted) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); }
   clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
-    .then((changed) => { if (changed) { extApi.requestPanelRender(); renderExtViews(); syncDispatchExtFields(); } });
+    .then((changed) => { if (changed) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); } });
 }
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
@@ -479,13 +642,38 @@ const dispatchWaiter = createDispatchWaiter();
 
 // Available agents + their models, replaced by the server's `agents` message on
 // connect (the lists are the server's live model catalogs — never copied here).
-// Seeded with just the Claude default so a dispatch before that lands still works.
-let availableAgents = [{ id: 'claude', label: 'Claude', models: [{ value: 'opus', label: 'Opus', default: true }], efforts: [] }];
+let availableAgents = [];
+
+let dispatchModelPicker = null;
+
+function currentDispatchPick() {
+  const model = document.getElementById('m-model');
+  return { agent: model.options[model.selectedIndex]?.dataset.agent, model: model.value, effort: document.getElementById('m-effort').value };
+}
+
+function rememberedDispatchPick() {
+  try { return readDispatchPick(localStorage); } catch { return null; }
+}
+
+function rememberDispatchPick() {
+  try { saveDispatchPick(localStorage, currentDispatchPick()); } catch {}
+}
+
+function applyDispatchPick(explicit) {
+  const pick = dispatchPick(availableAgents, rememberedDispatchPick(), explicit);
+  if (!pick) return;
+  const model = document.getElementById('m-model');
+  model.selectedIndex = [...model.options].findIndex((o) => o.value === pick.model && o.dataset.agent === pick.agent);
+  modelEdited = true;
+  populateEffortSelect();
+  document.getElementById('m-effort').value = pick.effort;
+  effortEdited = true;
+}
 
 function populateModelSelect() {
   const sel = document.getElementById('m-model');
   if (!sel) return;
-  const prev = sel.value;
+  const prev = modelEdited ? currentDispatchPick() : undefined;
   sel.innerHTML = '';
   const single = availableAgents.length === 1;
   for (const a of availableAgents) {
@@ -496,13 +684,14 @@ function populateModelSelect() {
       opt.value = m.value;
       opt.textContent = m.label;
       opt.dataset.agent = a.id;
-      if (m.default && a.id === 'claude') opt.selected = true;
+      if (m.default && a.id === availableAgents[0]?.id) opt.selected = true;
       parent.appendChild(opt);
     }
   }
   // Preserve only a user's explicit choice across a repopulate; otherwise let the
   // server-marked default win (the seed's default must not clobber it on first load).
-  if (modelEdited && prev) sel.value = prev;
+  applyDispatchPick(prev);
+  modelEdited = Boolean(prev);
   syncQuickLaunch();
   populateEffortSelect();
   syncAutoCompactPresets();
@@ -510,7 +699,7 @@ function populateModelSelect() {
 
 function syncAutoCompactPresets() {
   const modelSel = document.getElementById('m-model');
-  const agent = modelSel?.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
+  const agent = modelSel?.options[modelSel.selectedIndex]?.dataset.agent ?? 'claude';
   const available = new Set(autoCompactPresetTokens(agent));
   document.querySelectorAll('.auto-compact-preset').forEach((button) => {
     const tokens = button.dataset.autoCompactTokens;
@@ -530,13 +719,13 @@ function populateEffortSelect() {
   const modelSel = document.getElementById('m-model');
   if (!eff || !modelSel) return;
   const prev = eff.value;
-  const agentId = modelSel.options[modelSel.selectedIndex]?.dataset.agent || 'claude';
-  const agent = availableAgents.find((a) => a.id === agentId) || availableAgents[0];
-  const efforts = agent?.efforts || [];
+  const agentId = modelSel.options[modelSel.selectedIndex]?.dataset.agent ?? 'claude';
+  const agent = availableAgents.find((a) => a.id === agentId);
+  const efforts = effortsOf(agent, agent?.models.find((m) => m.value === modelSel.value));
   eff.innerHTML = '';
   const def = document.createElement('option');
   def.value = '';
-  def.textContent = 'Default';
+  def.textContent = 'Auto';
   eff.appendChild(def);
   for (const e of efforts) {
     const opt = document.createElement('option');
@@ -548,6 +737,7 @@ function populateEffortSelect() {
   // fall back to Default rather than stranding a level the agent can't take.
   if (effortEdited && prev && efforts.some((e) => e.value === prev)) eff.value = prev;
   else eff.value = '';
+  dispatchModelPicker?.sync();
 }
 
 // The three models offered as one-click "Launch with X" shortcuts (⌘1–⌘3). Derived
@@ -613,6 +803,8 @@ function quickLaunch(value) {
   if (!opt) return;
   sel.value = value;
   modelEdited = true;
+  populateEffortSelect();
+  rememberDispatchPick();
   syncRuntimeToggle();
   submitDispatch();
 }
@@ -630,12 +822,7 @@ function barWord(s) {
   const phase = workflowPhaseLabel(s.workflow);
   if (phase) return phase;
   // needs-you (red) outranks a manual unread bookmark — a live block beats a cue.
-  // An api-error is retryable by sending another message — 'reply' would wrongly
-  // suggest the same "go answer a prompt in the terminal" affordance as a real
-  // permission prompt or OAuth screen (see workerStatusWord in cards.js, same
-  // vocabulary).
-  if (s.status === 'needs-you' && s.waitingReason === 'api-error') return 'error';
-  if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
+  if (s.status === 'needs-you') return waitingStatusWord(s.waitingReason);
   if (unread.has(s.sessionId)) return 'unread';
   if (justFinished.has(s.sessionId)) return 'done';
   return STATUS_WORDS[displayStatus(s)] || '?';
@@ -655,15 +842,17 @@ function applyGraph(graph) {
   latestSchedules = graph.schedules || { schedules: [] };
   subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
+  trustClaudeLaunchCwd = graph.trustClaudeLaunchCwd !== false;
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   archiveReviewEnabled = graph.archiveReviewEnabled === true;
   mailWakesDormant = graph.mailWakesDormant === true;
+  prModelFooter = graph.prModelFooter !== false;
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
+  defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
   autoUpdate = graph.autoUpdate || 'notify';
   refreshSessionsAfterUpdate = graph.refreshSessionsAfterUpdate === true;
-  graphCodeVersion = graph.codeVersion || null;
   const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
   noteExtClientFacts(latestExtensions);
@@ -712,13 +901,18 @@ function applyGraph(graph) {
   // mount or an unmount. After `latestGraph` is assigned, because the render it
   // can ask for reads that — and before the renderPanel further down, so the
   // panel is drawn against the contributions that survive this tick.
+  if (latestExtensions.some((e) => e.id === 'sounds')) migrateSoundPreference(send);
   syncClientExtensions();
+  // After the sync above, so the Settings row offers exactly what #m-runtime does.
+  setRuntimeOptions([...document.getElementById('m-runtime').options].map((o) => ({ value: o.value, label: o.textContent })));
   // Every `view` contribution gets this graph. AFTER syncClientExtensions, so a
   // view that has only just registered is updated in the same tick it appears
   // rather than staying blank until the next one — and unconditionally, because
   // a view is a whole pane with no other render path of its own.
   updateExtViews();
+  syncSessionEmbed();
   trackJustFinished(latestSessions);
+  refreshInputGates();
   detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
   // re-render it whenever it's open so toggles/edits/fires reflect at once.
@@ -777,15 +971,13 @@ function applyGraph(graph) {
 function setView(view) {
   if (currentView === 'search' && view === 'grid') clearSearch();
   currentView = view;
-  // The diff panel overlays the board, so leaving grid must dismiss it.
-  if (view !== 'grid' && isDiffPanelOpen()) closeDiffPanel();
+  // The diff panel overlays the board, so leaving grid must dismiss it. An
+  // embedded one is the embed's to keep (syncSessionEmbed below).
+  if (view !== 'grid' && isDiffPanelOpen() && !sessionEmbed.active()) closeDiffPanel();
   document.querySelectorAll('.layouts button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   const gridEl = document.getElementById('grid');
   gridEl.classList.toggle('hidden', view !== 'grid');
-  // #grid.focus-mode carries its own `display: flex`, which ties in CSS
-  // specificity with #grid.hidden — leaving it set while grid is hidden lets
-  // the focused tile win the tie and render alongside Search. renderGrid()
-  // re-adds it whenever focus mode is actually active.
+  // renderGrid() re-adds focus-mode when grid is shown again.
   if (view !== 'grid') gridEl.classList.remove('focus-mode');
   const searchEl = document.getElementById('search');
   if (searchEl) searchEl.classList.toggle('hidden', view !== 'search');
@@ -793,18 +985,18 @@ function setView(view) {
   // ALL of them on every setView rather than just the pair being swapped, so a
   // host created while another view was current starts hidden.
   for (const [key, host] of extViewHosts) host.classList.toggle('hidden', key !== view);
-  if (view === 'grid') renderGrid();
-  else if (view === 'search') {
-    // Search is a no-session view: drop any open terminal so it doesn't dangle
-    // behind the results.
-    if (selectedSessionId) deselectSession();
-    onEnterSearchView();
-  } else if (isExtView(view) && selectedSessionId) {
-    // Same rule as Search, for the same reason: an extension view owns the
-    // whole board area, so a terminal left attached behind it is invisible and
-    // still 80 columns wide when you come back.
+  syncSessionEmbed();
+  if (selectedSessionId && (view === 'search' || (isExtView(view) && !sessionEmbed.active()))) {
+    const previous = selectedSessionId;
     deselectSession();
+    selectionBeforeView = previous;
   }
+  if (view === 'grid') {
+    const previous = selectionBeforeView;
+    selectionBeforeView = null;
+    if (previous && latestSessions.some((s) => s.sessionId === previous)) selectSession(previous);
+    else renderGrid();
+  } else if (view === 'search') onEnterSearchView();
   // Mirror the view into the URL hash so a refresh re-lands here (Search is a
   // deep link, like a selected session). syncHash prefers the view over selection.
   syncHash();
@@ -1031,6 +1223,15 @@ let dragUnitHeight = 0;
 // closing the old slot can shift the target, so the preview holds for as long
 // as the cursor stays in that rect, rather than flickering off and on.
 let previewSpine = null;
+// A dragged spine row's own descendants: the rows below it in its spine that
+// move with it (nesting has no depth limit), hidden for the drag like the row.
+// `subtreeHeight` is their drawn height plus the gaps between them, which the
+// placeholder adds so it previews the whole subtree, not one row.
+let draggedSubtree = [];
+let subtreeHeight = 0;
+// The dragged session's own card height (its card inside a group), the shape
+// it keeps as a full-view child.
+let dragCardHeight = 0;
 // A bare top-level card being previewed as a parent is wrapped, with its
 // temporary spine, in this `.child-group`, the same unit a real parent with
 // children renders as. In a multi-column body each direct child is its own
@@ -1101,19 +1302,20 @@ function dragUnitSid(el) {
   return el.dataset.childSid || el.dataset.sid;
 }
 
-// During a session drag, give every top-level card the dragged session could
-// nest under (dragNestTargets) a Nest zone: a labelled drop target on the card's
-// right-hand side. A card drawn in a spine is itself a child, and nesting is
-// one level deep, so it never gets one. The zones go when the board
+// During a session drag, give every card and spine row the dragged session
+// could nest under (dragNestTargets: same task, not its own descendants) a Nest
+// zone: a labelled drop target on its right-hand side. Nesting has no depth
+// limit, so a child row is a target too. The zones go when the board
 // re-renders at dragend.
 function addNestZones(grid) {
-  for (const card of grid.querySelectorAll('.task-body .session-card')) {
-    if (card.closest('.child-spine, .workflow-spine') || draggedCard?.contains(card)) continue;
-    if (!dragNestTargets.has(card.dataset.sid)) continue;
+  for (const card of grid.querySelectorAll('.task-body .session-card, .task-body .worker-row[data-child-sid]')) {
+    if (draggedCard?.contains(card) || !dragNestTargets.has(card.dataset.sid)) continue;
     const zone = document.createElement('div');
     // In a multi-column body a card's left and right halves pick the insert
-    // slot, so its Nest zone sits in the middle instead of on the right.
-    zone.className = isMultiColumn(card.closest('.task-body')) ? 'nest-zone center' : 'nest-zone';
+    // slot, so its Nest zone sits in the middle instead of on the right. A
+    // compact row's zone is a slimmer fit for its height.
+    const row = card.classList.contains('worker-row') ? ' row' : '';
+    zone.className = `${isMultiColumn(card.closest('.task-body')) ? 'nest-zone center' : 'nest-zone'}${row}`;
     zone.innerHTML = `${ATTACH_ICON}<span>Nest</span>`;
     card.appendChild(zone);
   }
@@ -1160,8 +1362,30 @@ function childShapeHeight() {
   if (draggedCard?.dataset.childSid) return childRowHeight;
   const s = latestSessions.find((x) => x.sessionId === dragUnitSid(draggedCard));
   const full = s?.childFullView === true || (s?.childFullView === undefined && childFullViewByDefault);
-  if (full) return dragUnitHeight;
+  if (full) return dragCardHeight;
   return document.querySelector('#grid .worker-row')?.offsetHeight || 30;
+}
+
+// The spine rows of `spine` a drop can land among, with their place in the
+// subtree (cards.js childDragAttrs): the dragged row and its subtree are
+// hidden, and the placeholder is not a row.
+function spineRowsIn(spine) {
+  return [...spine.querySelectorAll(':scope > [data-child-sid]:not(.dragging-hidden)')].map((el) => {
+    const rect = el.getBoundingClientRect();
+    return { el, parent: el.dataset.parentSid, depth: Number(el.dataset.depth) || 0, top: rect.top, bottom: rect.bottom };
+  });
+}
+
+// Put the placeholder in `spine` before row `index` of `rows` (rows.length
+// appends), as a child of `parentSid` at `depth`. Returns whether anything
+// changed.
+function placeInSpine(spine, rows, index, parentSid, depth) {
+  const moved = placePlaceholder(spine, rows[index]?.el || null);
+  const indent = String(Math.min(depth, MAX_SPINE_INDENT));
+  if (!moved && placeholderEl.dataset.parentSid === parentSid && placeholderEl.dataset.indent === indent) return false;
+  placeholderEl.dataset.parentSid = parentSid;
+  placeholderEl.dataset.indent = indent;
+  return true;
 }
 
 // Give the placeholder the shape the dragged session will have where it now
@@ -1177,7 +1401,18 @@ function shapePlaceholder() {
   const line = !inSpine && !!body && isMultiColumn(body);
   placeholderEl.classList.toggle('in-spine', inSpine);
   placeholderEl.classList.toggle('as-line', line);
-  const h = inSpine ? childShapeHeight() : draggedCard.dataset.childSid ? topLevelCardHeight : dragUnitHeight;
+  if (inSpine) placeholderEl.style.setProperty('--indent', placeholderEl.dataset.indent || '0');
+  else {
+    delete placeholderEl.dataset.parentSid;
+    delete placeholderEl.dataset.indent;
+    placeholderEl.style.removeProperty('--indent');
+  }
+  // A dragged row brings its subtree: as a child it stays rows under it, and
+  // promoted it becomes a card with those rows as its spine (8px below the
+  // card, where rows sit 6px apart).
+  const h = inSpine ? childShapeHeight() + subtreeHeight
+    : draggedCard.dataset.childSid ? topLevelCardHeight + (subtreeHeight ? subtreeHeight + 2 : 0)
+      : dragUnitHeight;
   placeholderEl.style.height = `${h}px`;
   updateInsertLine(line ? body : null);
 }
@@ -1214,18 +1449,33 @@ function spineParentSid(spine) {
 }
 
 // Show what nesting under `card` will do: move the placeholder to the end of
-// its spine, shaped as the child it will be, closing the old slot. A card with
-// no spine yet (a bare card, a solo or collapsed workflow) gets a temporary
-// one right after it.
+// its subtree, shaped as the child it will be, closing the old slot. `card` is
+// a top-level card, or a row in a spine (a compact .worker-row, or the card
+// inside a full-view row): then the placeholder goes after that row's own
+// subtree, one indent step in. A top-level card with no spine yet (a bare
+// card, a solo or collapsed workflow) gets a temporary one right after it.
 function enterNestPreview(card, zone) {
   const sid = card.dataset.sid;
-  if (previewReturn && placeholderEl.parentNode?.dataset.nestFor === sid) return;
+  if (previewReturn && placeholderEl.dataset.nestFor === sid) return;
   exitNestPreview();
+  previewReturn = {
+    parent: placeholderEl.parentNode, next: placeholderEl.nextSibling,
+    parentSid: placeholderEl.dataset.parentSid, indent: placeholderEl.dataset.indent,
+  };
+  nestZoneRect = zone.getBoundingClientRect();
+  placeholderEl.dataset.nestFor = sid;
+  const inSpine = card.closest('.child-spine, .workflow-spine');
+  if (inSpine) {
+    const rowEl = card.closest('[data-child-sid]');
+    const rows = spineRowsIn(inSpine);
+    const i = rows.findIndex((r) => r.el === rowEl);
+    placeInSpine(inSpine, rows, i < 0 ? rows.length : subtreeEnd(rows, i), sid, (i < 0 ? 0 : rows[i].depth) + 1);
+    shapePlaceholder();
+    return;
+  }
   const host = card.closest('.child-group, .workflow-box');
   const group = host && host.dataset.sid === sid ? host : null;
   let into = group?.querySelector(':scope > .child-spine, :scope > .workflow-spine') || null;
-  previewReturn = { parent: placeholderEl.parentNode, next: placeholderEl.nextSibling };
-  nestZoneRect = zone.getBoundingClientRect();
   if (!into) {
     previewSpine = document.createElement('div');
     previewSpine.className = 'child-spine';
@@ -1241,15 +1491,15 @@ function enterNestPreview(card, zone) {
     } else card.after(previewSpine);
     into = previewSpine;
   }
-  into.dataset.nestFor = sid;
-  into.appendChild(placeholderEl);
+  // A top-level card's spine is its whole subtree, so its end is the spine's.
+  placeInSpine(into, [], 0, sid, 0);
   shapePlaceholder();
 }
 
 // End a nest preview: the placeholder goes back to the slot it held.
 function exitNestPreview() {
   if (!previewReturn) return;
-  delete placeholderEl.parentNode?.dataset.nestFor;
+  delete placeholderEl.dataset.nestFor;
   // Unwrap first: the slot to return to may sit right before the card.
   if (previewGroup) {
     const card = previewGroup.querySelector(':scope > .session-card');
@@ -1259,9 +1509,10 @@ function exitNestPreview() {
   }
   previewSpine?.remove();
   previewSpine = null;
-  const { parent, next } = previewReturn;
+  const { parent, next, parentSid, indent } = previewReturn;
   if (next && next.parentNode === parent) parent.insertBefore(placeholderEl, next);
   else parent.appendChild(placeholderEl);
+  if (parentSid) { placeholderEl.dataset.parentSid = parentSid; placeholderEl.dataset.indent = indent; }
   previewReturn = null;
   nestZoneRect = null;
   shapePlaceholder();
@@ -1272,10 +1523,11 @@ function inRect(rect, x, y) {
 }
 
 // The child spine under a drag of a nested child that will take it, or null:
-// its own spine (a sibling reorder), or another parent's spine it could nest
-// under (a move to that parent, at the slot it's dropped in). Only a child
-// drag uses spines: a top-level card dragged past a parent's spine reorders as
-// usual and nests only through a Nest zone.
+// its own spine (a reorder among its siblings), or another top-level parent's
+// spine it could nest under (a move to that parent, among its direct children,
+// at the slot it's dropped in; a deeper parent is reached by its Nest zone).
+// Only a child drag uses spines: a top-level card dragged past a parent's
+// spine reorders as usual and nests only through a Nest zone.
 function spineDropTarget(e, cell) {
   if (!draggedCard?.dataset.childSid) return null;
   const spine = e.target.closest?.('.child-spine, .workflow-spine');
@@ -1310,13 +1562,24 @@ function releaseChildForMove(sessionId) {
   return promoteDraggedChild(sessionId);
 }
 
-// Same as dragAfterElement, for the rows of one child spine.
-function dragAfterChild(spine, y) {
-  for (const row of spine.querySelectorAll(':scope > [data-child-sid]:not(.dragging-hidden)')) {
-    const rect = row.getBoundingClientRect();
-    if (y < rect.top + rect.height / 2) return row;
+// Place a dragged child's placeholder in `spine` at viewport-Y `y`: among its
+// own siblings in its own spine, or among the spine owner's direct children in
+// another. With no other sibling to sit beside, it keeps its own slot.
+// Returns whether anything changed.
+function placeChildInSpine(spine, y) {
+  const own = spine === draggedCard.parentNode;
+  const parentSid = own ? draggedCard.dataset.parentSid : spineParentSid(spine);
+  const depth = own ? Number(draggedCard.dataset.depth) || 0 : 0;
+  const rows = spineRowsIn(spine);
+  const slot = childSlotAt(rows, parentSid, y);
+  if (slot == null) {
+    if (!own) return placeInSpine(spine, rows, rows.length, parentSid, depth);
+    const moved = placePlaceholder(spine, draggedCard);
+    placeholderEl.dataset.parentSid = parentSid;
+    placeholderEl.dataset.indent = String(Math.min(depth, MAX_SPINE_INDENT));
+    return moved;
   }
-  return null;
+  return placeInSpine(spine, rows, slot, parentSid, depth);
 }
 
 // The bucket's new session order after a drop at the placeholder: every
@@ -1550,9 +1813,8 @@ function sortBucketSessions(sessions, bucketId) {
 
 // Feeds tileSpan (layout.js) the secondary-weight counts it needs, all derived from
 // exactly what renderTileCards (cards.js) draws: computeAbsorption decides which
-// sessions fold into a parent's spine (an orphan, or a chained grandchild whose
-// parent is itself absorbed, renders as its own top-level card instead and must
-// NOT be counted in either number). Takes the same non-asleep subset tileHtml
+// sessions fold into a parent's spine (an orphan renders as its own top-level
+// card instead and must NOT be counted in either number). Takes the same non-asleep subset tileHtml
 // uses (an asleep session is shown as its own flat snoozed row, never nested,
 // regardless of parentSession).
 //
@@ -1576,7 +1838,7 @@ function sortBucketSessions(sessions, bucketId) {
 // they're split out rather than folded into `visible`. Same collapse exemption:
 // a collapsed workflow box's workers draw nothing, full-view or not.
 function childRowCounts(activeSessions) {
-  const { absorbed, childrenByParent } = computeAbsorption(activeSessions);
+  const { absorbed } = computeAbsorption(activeSessions);
   let visible = 0;
   let fullView = 0;
   // Full-view children that are actually drawn (so, same collapse exemption as
@@ -1585,10 +1847,11 @@ function childRowCounts(activeSessions) {
   // this set is what tells that loop such a child isn't zone-less like a plain
   // compact `.worker-row`.
   const drawnFullView = new Set();
-  for (const [parentId, children] of childrenByParent) {
-    const parent = activeSessions.find((s) => s.sessionId === parentId);
-    if (isWorkflowRun(parent) && collapsedWorkflows.has(parentId)) continue;
-    for (const c of children) {
+  // A collapsed workflow box hides its WHOLE subtree, however deep, so the walk
+  // goes per top-level group rather than per parent.
+  for (const { session, descendants } of sessionGroups(activeSessions)) {
+    if (isWorkflowRun(session) && collapsedWorkflows.has(session.sessionId)) continue;
+    for (const c of descendants) {
       if (isChildFullView(c)) { fullView += 1; drawnFullView.add(c.sessionId); }
       else visible += 1;
     }
@@ -1686,7 +1949,6 @@ function cardCtx() {
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
     linkChip: (l) => slots.linkChip(l, latestGraph, extApi),
     hiddenChips: slots.hiddenChips(),
-    isOnOlderCode: (s) => sessionOnOlderCode(s, graphCodeVersion),
   };
 }
 
@@ -1750,12 +2012,7 @@ function restoreScrollState(el, { grid, bodies, tray }) {
   if (trayPills) trayPills.scrollTop = tray;
 }
 
-function renderGrid() {
-  const el = document.getElementById('grid');
-  // Migrate a legacy single-value focus once the task list is known, then prune
-  // stale ids. minimisedIds drives everything below: the board shows every tile
-  // NOT in the set; the tray (trayHtml) shows those that are.
-  const orderIds = currentOrder();
+function reconcileMinimised(orderIds) {
   const validIds = new Set(orderIds);
   if (legacyFocusedId != null) {
     minimisedIds = expandFocusToMinimised(orderIds, legacyFocusedId);
@@ -1763,9 +2020,38 @@ function renderGrid() {
     localStorage.removeItem(LEGACY_FOCUS_KEY);
     persistMinimised();
   }
-  const pruned = pruneMinimised(minimisedIds, validIds);
+  let pruned = pruneMinimised(minimisedIds, validIds);
+  if (orderIds.length && pruned.size === orderIds.length) pruned = new Set();
   if (pruned.size !== minimisedIds.size) { minimisedIds = pruned; persistMinimised(); }
+}
 
+function trayContext() {
+  return {
+    tasks: currentOrder().map((id) => ({
+      id, name: id === ADHOC_ID ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === id).name,
+      adhoc: id === ADHOC_ID,
+    })),
+    minimisedIds: [...minimisedIds],
+  };
+}
+
+const trayHost = document.createElement('div');
+trayHost.className = 'tray-pills';
+let extensionTrayActive = false;
+
+function renderGrid() {
+  // Only the grid view lays the board out: focus mode's `display: flex` would
+  // otherwise bring a hidden board back beside Search or an extension view.
+  // setView('grid') renders it again on the way back.
+  if (currentView !== 'grid') return;
+  const el = document.getElementById('grid');
+  // Migrate a legacy single-value focus once the task list is known, then prune
+  // stale ids. minimisedIds drives everything below: the board shows every tile
+  // NOT in the set; the tray (trayHtml) shows those that are.
+  const orderIds = currentOrder();
+  reconcileMinimised(orderIds);
+
+  extensionTrayActive = slots.syncTray(trayHost, extApi, trayContext(), latestGraph);
   const visible = visibleTileIds(orderIds, minimisedIds);
   // Exactly one visible tile → the big expanded focus view (unchanged look). More
   // than one → the normal packed grid. The tray is appended by both paths.
@@ -1773,7 +2059,7 @@ function renderGrid() {
   el.classList.remove('focus-mode');
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
-  for (const s of latestSessions) {
+  for (const s of onBoard(latestSessions)) {
     const tid = assignedTaskId(s.sessionId);
     if (tid) byTask.get(tid).push(s);
     else noTask.push(s);
@@ -1836,20 +2122,20 @@ function renderGrid() {
   // tiles — a content-sized `auto` track so it never steals height from the tiles.
   // Without its own track it would auto-place into a tile cell, cramped to one
   // column (the bug this fixes).
-  const hasTray = minimisedIds.size > 0;
+  const hasTray = extensionTrayActive || minimisedIds.size > 0;
   const trayRow = hasTray ? ' auto' : '';
   const singleColumn = cols === 1;
   el.classList.toggle('single-column', singleColumn);
   el.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
   if (singleColumn) {
     el.classList.add('scrolling');
-    el.style.gridTemplateRows = '';
+    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, max-content) minmax(0, 1fr) auto` : '';
     el.style.gridAutoRows = 'max-content';
   } else if (scroll) {
     // Past 3×3: lock cell height to the 3-row size and let the board scroll.
     el.classList.add('scrolling');
     const cellH = Math.max(90, Math.floor(el.clientHeight / MAX_ONSCREEN_ROWS) - 12);
-    el.style.gridTemplateRows = '';
+    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, ${cellH}px) minmax(0, 1fr) auto` : '';
     el.style.gridAutoRows = `${cellH}px`;
   } else {
     el.classList.remove('scrolling');
@@ -1867,10 +2153,10 @@ function renderGrid() {
   const ctx = cardCtx();
   el.innerHTML = placed.map((t) => tileHtml(t, ctx)).join('') + ghosts.map(ghostHtml).join('') + trayHtml(visible);
   // Pin the tray to its own row spanning every column (grid-column via CSS). In the
-  // scrolling layout there's no explicit track for it, so place it just past the
-  // last tile row; the implicit gridAutoRows track sizes it (capped by CSS).
+  // scrolling layout it takes the last explicit track, after the spacer row that
+  // keeps it at the bottom when the tiles don't fill the board.
   const tray = el.querySelector(':scope > .focus-switcher');
-  if (tray) tray.style.gridRow = scroll ? `${rows + 1}` : '';
+  if (tray) tray.style.gridRow = el.classList.contains('scrolling') ? `${rows + 2}` : '';
   wireGridEvents(el);
   wireTray(el);
   restoreScrollState(el, scrollState);
@@ -1893,7 +2179,7 @@ function renderFocusedTile(el, id) {
   const isAdhoc = id === ADHOC_ID;
   const sessions = sortAsleepLast(
     sortBucketSessions(
-      latestSessions.filter((s) => isAdhoc ? !assignedTaskId(s.sessionId) : assignedTaskId(s.sessionId) === id),
+      onBoard(latestSessions).filter((s) => isAdhoc ? !assignedTaskId(s.sessionId) : assignedTaskId(s.sessionId) === id),
       id
     ),
     phaseOf
@@ -1930,6 +2216,7 @@ function sessionDotStatus(s) {
 // The bottom tray: the tiles NOT in `visible` (so grid and tray can never show the
 // same tile), one pill each. Reuses the .focus-switcher strip styling.
 function trayHtml(visible) {
+  if (extensionTrayActive) return '<div class="focus-switcher"><div data-tray-host></div></div>';
   const visibleSet = new Set(visible);
   const mins = currentOrder()
     .filter((id) => !visibleSet.has(id))
@@ -1937,10 +2224,13 @@ function trayHtml(visible) {
     .filter(Boolean);
   if (!mins.length) return '';
   const pills = mins.map((t) => {
-    const sessions = latestSessions.filter((s) => {
-      const tid = assignedTaskId(s.sessionId);
-      return (t.id === ADHOC_ID ? !tid : tid === t.id) && !isAsleep(s);
-    });
+    const sessions = sortBucketSessions(
+      onBoard(latestSessions).filter((s) => {
+        const tid = assignedTaskId(s.sessionId);
+        return (t.id === ADHOC_ID ? !tid : tid === t.id) && !isAsleep(s);
+      }),
+      t.id
+    );
     const dots = sessions.map((s) => `<span class="switcher-dot ${esc(sessionDotStatus(s))}"></span>`).join('');
     return `<button class="switcher-pill" data-taskid="${esc(t.id)}" title="Restore ${esc(t.name)}">
       <span class="switcher-name">${esc(t.name)}</span><span class="switcher-dots">${dots}</span>
@@ -1951,6 +2241,8 @@ function trayHtml(visible) {
 }
 
 function wireTray(el) {
+  const placeholder = el.querySelector('[data-tray-host]');
+  if (placeholder) { placeholder.replaceWith(trayHost); return; }
   // Shift+click a pill to focus on just that task (everything else minimises),
   // same as the kebab menu's Focus action — a plain click only restores this one
   // alongside whatever's already visible.
@@ -2332,6 +2624,13 @@ function mountMenu(items, x, y) {
 // `on`) rather than dismissing the menu; the server round-trip + next graph poll
 // reconcile the persisted state. run gets the click event — its currentTarget is
 // the row button, whose trailing slot holds the tick.
+// Every file link clicked in a session's chat or terminal: a `file.open`
+// extension may take it, otherwise the board's own preview opens.
+function openFile(path, { sessionId, source }) {
+  if (slots.fileOpen({ path, sessionId, source }, latestGraph, extApi)) return;
+  openFilePreview(path);
+}
+
 // `card.action` extension items for one card, in the menu's own item shape.
 // Sits with the per-session settings (auto-fix, auto-merge) in both the card
 // right-click menu and the pane's Actions menu. `hint` is extension TEXT, so it
@@ -2363,6 +2662,21 @@ function extTaskMenuItems(taskId, isNoTask) {
       run: it.run,
       ...(it.hint ? { trailing: `<span class="context-menu-hint">${esc(it.hint)}</span>` } : {}),
     }));
+}
+
+function taskMinimiseMenuItem(taskId) {
+  const adhoc = taskId === ADHOC_ID;
+  const task = { id: taskId, name: adhoc ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === taskId)?.name, adhoc };
+  return slots.trayMinimiseItem(task, latestGraph, extApi)
+    || { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(taskId) };
+}
+
+function openTaskViewMenu(x, y) {
+  const item = slots.trayBackgroundItem(latestGraph, extApi);
+  mountMenu([
+    { label: 'New task', icon: PLUS_ICON, run: () => createTask() },
+    ...(item ? [item] : []),
+  ], x, y);
 }
 
 function autoFixMenuItem(s) {
@@ -2476,7 +2790,7 @@ function attachMenuItems(sessionId) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!s) return [];
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
-  const candidates = orderAttachCandidates(attachCandidates(sessionId, latestSessions, assignedTaskId), s.spawnedBy);
+  const candidates = orderAttachCandidates(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId), s.spawnedBy);
   return candidates.map((c) => {
     const depth = nestingDepth(c, byId);
     const prefix = depth ? '— '.repeat(depth) : '';
@@ -2525,7 +2839,7 @@ function openCardMenu(sessionId, x, y) {
     // "Full view" only makes sense for a genuine CHILD (parentSession set) — a
     // top-level session already renders full, whether or not it's `spawnedBy`.
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, latestSessions, assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(items, x, y);
@@ -2551,7 +2865,8 @@ function openActionsMenu(sessionId, x, y) {
   const items = [
     { label: 'Fork session', icon: FORK_ICON, trailing: KBD_FORK, run: () => openFork(sessionId) },
     { label: 'Peer review session…', icon: PLUS_ICON, trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
-    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
+    // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
+    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => { openDiffPanel(sessionId); if (sessionEmbed.active()) renderPanel(sessionId); } },
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
@@ -2568,7 +2883,7 @@ function openActionsMenu(sessionId, x, y) {
     ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, run: () => promoteSession(sessionId) }] : []),
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, latestSessions, assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Stop & archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(items, x, y);
@@ -2579,7 +2894,7 @@ function openActionsMenu(sessionId, x, y) {
 // inline conditions because the two sides have to agree: a mismatch here shows a
 // menu whose every choice fails.
 function canSwitchModel(s) {
-  return Boolean(s) && s.agent !== 'codex' && s.managed && displayStatus(s) === 'idle';
+  return canSwitchProviderModel(s && { ...s, status: displayStatus(s) });
 }
 
 // What this browser last asked for, per card id. Needed only to break one
@@ -2595,8 +2910,8 @@ const lastModelSet = new Map();
 function openModelMenu(sessionId, x, y) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!canSwitchModel(s)) return;
-  const claude = availableAgents.find((a) => a.id === 'claude');
-  const models = claude?.models || [];
+  const provider = availableAgents.find((a) => a.id === (s.agent ?? 'claude'));
+  const models = provider?.models || [];
   if (!models.length) return;
   // Ticked against what the CHIP shows, which is the pane's own live label —
   // not s.modelPill, which is derived from the last assistant message and so
@@ -2609,7 +2924,7 @@ function openModelMenu(sessionId, x, y) {
     // scoped to this session. Verified — it writes "model" into
     // ~/.claude/settings.json, so it becomes the default for every new Claude
     // session, wrangler-launched or not.
-    { header: 'Also becomes your default for new sessions' },
+    ...(provider.controls?.modelSwitchNote ? [{ header: provider.controls.modelSwitchNote }] : []),
     ...models.map((m) => ({
       label: m.label,
       // `trailing` rather than `icon`, and present on every row even when empty:
@@ -2625,21 +2940,17 @@ function openModelMenu(sessionId, x, y) {
   ], x, y);
 }
 
-// The task tile's kebab menu — the header's action buttons collapsed into one menu,
-// reusing the same mountMenu primitive as the card/pane menus. `taskId` is the bucket
-// id (a real task id or ADHOC_ID). Distinct from openTaskMenu (the cell right-click
-// menu with New session/New TODO/Rename): this is the header kebab, view actions plus
-// memory/delete. The adhoc tile can't be renamed/deleted and has no memory, so it gets
-// only the view actions (Focus/Minimise/Sort). Sort is a keepOpen toggle with a tick,
-// like autoFixMenuItem.
+// The task tile's kebab menu combines view actions and extension task actions.
+// Archive is available only for real tasks. Sort stays open as a ticked toggle.
 function openTaskActionsMenu(taskId, x, y) {
   const isAdhoc = taskId === ADHOC_ID;
   const task = isAdhoc ? null : latestTasks.tasks.find((t) => t.id === taskId);
   if (!isAdhoc && !task) return;
+  const extItems = extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
   const sortOn = activitySortedTasks.has(taskId);
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
-    { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(taskId) },
+    taskMinimiseMenuItem(taskId),
     { label: 'Sort by activity', icon: SORT_ICON, keepOpen: true, trailing: sortOn ? CHECK_ICON : '',
       run: (e) => {
         toggleActivitySort(taskId);
@@ -2647,9 +2958,8 @@ function openTaskActionsMenu(taskId, x, y) {
         const slot = e.currentTarget.querySelector('.context-menu-trailing');
         if (slot) slot.innerHTML = now ? CHECK_ICON : '';
       } },
+    ...(extItems.length || !isAdhoc ? [{ sep: true }, ...extItems] : []),
     ...(isAdhoc ? [] : [
-      { sep: true },
-      ...extTaskMenuItems(taskId, false),
       { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTask(taskId, task.name) },
     ]),
   ];
@@ -2745,7 +3055,7 @@ function openTaskMenu(cell, x, y) {
     ...(!isNoTask ? [
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
     ] : []),
-    { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(isNoTask ? ADHOC_ID : taskId) },
+    taskMinimiseMenuItem(isNoTask ? ADHOC_ID : taskId),
     ...(extItems.length ? [{ sep: true }, ...extItems] : []),
     ...(!isNoTask ? [
       { sep: true },
@@ -2829,11 +3139,28 @@ function wireGridDnd(el) {
         dragUnitHeight = card.offsetHeight;
         childRowHeight = card.dataset.childSid ? card.offsetHeight : 0;
         topLevelCardHeight = body ? topLevelHeightIn(body, card.offsetHeight) : card.offsetHeight;
+        // The session's own card (a group's lead card), and the rows that move
+        // with it: a row's descendants follow it in its spine, deeper than it; a
+        // group's are its whole spine.
+        dragCardHeight = card.matches('.session-card') ? card.offsetHeight
+          : card.querySelector(':scope > .session-card, :scope > .workflow-box > .session-card, .session-card')?.offsetHeight || card.offsetHeight;
+        draggedSubtree = [];
+        if (card.dataset.childSid) {
+          const depth = Number(card.dataset.depth) || 0;
+          for (let r = card.nextElementSibling; r && r.dataset.childSid && (Number(r.dataset.depth) || 0) > depth; r = r.nextElementSibling) draggedSubtree.push(r);
+        }
+        const subtreeRows = card.dataset.childSid ? draggedSubtree : [...card.querySelectorAll('[data-child-sid]')];
+        subtreeHeight = subtreeRows.reduce((sum, r) => sum + r.offsetHeight + 6, 0);
         // A top-level card in a multi-column body stays in place, dimmed: hiding
         // it would reflow every later card into the next column.
         const dim = !card.dataset.childSid && body && isMultiColumn(body);
         card.parentNode.insertBefore(ph, card);
+        if (card.dataset.childSid) {
+          ph.dataset.parentSid = card.dataset.parentSid;
+          ph.dataset.indent = String(Math.min(Number(card.dataset.depth) || 0, MAX_SPINE_INDENT));
+        }
         card.classList.add(dim ? 'drag-source' : 'dragging-hidden');
+        for (const r of draggedSubtree) r.classList.add('dragging-hidden');
         shapePlaceholder();
         // The placeholder and Nest zones only exist from here on, so a dragover
         // handled before this tick must not let the same position be skipped.
@@ -2843,6 +3170,9 @@ function wireGridDnd(el) {
     });
     card.addEventListener('dragend', () => {
       card.classList.remove('dragging-hidden', 'drag-source');
+      for (const r of draggedSubtree) r.classList.remove('dragging-hidden');
+      draggedSubtree = [];
+      subtreeHeight = 0;
       exitNestPreview();
       removePlaceholder();
       updateInsertLine(null);
@@ -2917,7 +3247,7 @@ function wireGridDnd(el) {
       // placeholder previews the nest in its spine. Checked before the
       // activity-sort bail below, since nesting needs no manual order.
       const zone = e.target.closest?.('.nest-zone');
-      const nest = zone && cell.contains(zone) ? zone.closest('.session-card') : null;
+      const nest = zone && cell.contains(zone) ? zone.closest('.worker-row, .session-card') : null;
       // In a gap straight after a Nest zone (e.g. between two stacked zones):
       // hold the preview and its target, until the cursor is over a card.
       const overCard = e.target.closest?.('.session-card, .worker-row, .spine-full-row, .snoozed-row, .session-placeholder');
@@ -2942,8 +3272,7 @@ function wireGridDnd(el) {
         // slot). Anywhere else among the cards is a top-level slot.
         const spine = spineDropTarget(e, cell);
         if (spine) {
-          const after = dragAfterChild(spine, e.clientY);
-          if (placePlaceholder(spine, after)) shapePlaceholder();
+          if (placeChildInSpine(spine, e.clientY)) shapePlaceholder();
           return;
         }
         const body = cell.querySelector('.task-body');
@@ -2986,7 +3315,7 @@ function wireGridDnd(el) {
       // preview put the placeholder in its spine, so the reorder path below
       // stores the new child last among its siblings, where the preview drew
       // it. An activity-sorted bucket has no manual order, so it only attaches.
-      const nestSid = (nestTargetEl || e.target.closest?.('.nest-zone')?.closest('.session-card'))?.dataset.sid;
+      const nestSid = (nestTargetEl || e.target.closest?.('.nest-zone')?.closest('.worker-row, .session-card'))?.dataset.sid;
       setNestTarget(null);
       const nestBucket = isNoTask ? ADHOC_ID : taskId;
       if (p.kind === 'session' && nestSid && (activitySortedTasks.has(nestBucket) || !previewReturn)) {
@@ -3015,17 +3344,18 @@ function wireGridDnd(el) {
           // Landed in another parent's spine → nest there; a child landed among
           // the top-level cards → promote it. Either goes before the order lands.
           const inSpine = placeholderEl.parentNode?.closest?.('.child-spine, .workflow-spine');
+          const newParent = inSpine ? placeholderEl.dataset.parentSid || spineParentSid(inSpine) : null;
           const action = childDropAction({
-            spineParent: inSpine ? spineParentSid(inSpine) : null,
+            spineParent: newParent,
             currentParent: latestSessions.find((x) => x.sessionId === p.sessionId)?.parentSession || null,
             drawnAsChild: draggedCard?.dataset.childSid === p.sessionId,
           });
-          if (action === 'attach') attachSession(p.sessionId, spineParentSid(inSpine));
+          if (action === 'attach') attachSession(p.sessionId, newParent);
           else if (action === 'promote' && !promoteDraggedChild(p.sessionId)) return;
           // Optimistic, like the order below: dragend re-renders before the
           // server's graph lands, and would briefly draw the old parent link.
           const live = action && latestSessions.find((x) => x.sessionId === p.sessionId);
-          if (live) live.parentSession = action === 'attach' ? spineParentSid(inSpine) : undefined;
+          if (live) live.parentSession = action === 'attach' ? newParent : undefined;
           latestTasks.sessionOrder = latestTasks.sessionOrder || {};
           latestTasks.sessionOrder[bucket] = order; // optimistic; server confirms on next graph
           send({ type: 'task-reorder-sessions', taskId: bucket, order });
@@ -3236,7 +3566,7 @@ function armNewTask(on) {
     grid.addEventListener('contextmenu', (e) => {
       if (e.target.closest('.task-cell')) return;
       e.preventDefault();
-      mountMenu([{ label: 'New task', icon: PLUS_ICON, run: () => createTask() }], e.clientX, e.clientY);
+      openTaskViewMenu(e.clientX, e.clientY);
     });
   }
   btn.addEventListener('dragover', (e) => { e.preventDefault(); btn.classList.add('drop'); });
@@ -3286,7 +3616,7 @@ function trackJustFinished(sessions) {
     const settled = settledStatus(s, prev);
     if (prev === 'working' && settled === 'idle') {
       justFinished.add(s.sessionId); jfChanged = true;
-      if (!playFinishCue && getSetting('soundOnFinish') && !focusSuppresses('session', s.sessionId)) playFinishCue = true;
+      if (!playFinishCue && !focusSuppresses('session', s.sessionId)) playFinishCue = true;
     }
     if (settled !== 'idle' && justFinished.delete(s.sessionId)) jfChanged = true;
     // The needs-you ack re-arm stays on the raw status: needs-you is hook-driven
@@ -3307,7 +3637,7 @@ function trackJustFinished(sessions) {
   if (jfChanged) persistJustFinished();
   prevStatusById = nextSettled;
   lastRawById = nextRaw;
-  if (playFinishCue) playSound('finished');
+  if (playFinishCue) slots.notificationCue('finished', extApi);
 }
 
 // Post-archive toast with an immediate Resume action; drops the selection if the
@@ -3317,7 +3647,7 @@ function trackJustFinished(sessions) {
 // descendant must be excluded from the "still in use" check too.
 function archivedToast(sessionId, text, worktree, archivedIds = [sessionId]) {
   if (selectedSessionId === sessionId) selectAfterArchive(sessionId);
-  const actions = [{ label: 'Resume', onClick: () => { pendingSelect = sessionId; send({ type: 'resume', sessionId }); } }];
+  const actions = [{ label: 'Resume', onClick: () => { setPendingSelect(sessionId); send({ type: 'resume', sessionId }); } }];
   const cleanup = worktreeCleanupAction(sessionId, worktree, archivedIds);
   if (cleanup) actions.push(cleanup);
   const stopContainer = containerStopAction(sessionId, archivedIds);
@@ -3527,6 +3857,7 @@ function showRestartingPlaceholder() {
 // --- selection / panel ---
 
 export let selectedSessionId = null;
+let selectionBeforeView = null;
 // Keyboard nav can also land on a tile's "new session" slot rather than a session
 // card: this holds that tile's id (a task id, or ADHOC_ID for Unassigned), and is
 // mutually exclusive with selectedSessionId. Enter on it opens the dispatch dialog.
@@ -3537,9 +3868,10 @@ let selectedNewSlot = null;
 // load / back-forward. Fulfilled in applyGraph; survives until the session shows.
 let pendingSelect = null;
 let pendingScheduledFocus = null;
+let scheduleNotificationId = 0;
 // Setter so split-out views (search.js) can arm a post-resume jump without
 // owning the binding (ES live bindings are read-only to importers).
-export function setPendingSelect(id) { pendingSelect = id; }
+export function setPendingSelect(id) { selectionBeforeView = null; pendingSelect = id; }
 
 // In-app "maximize the agent window" view state: a transient toggle (no
 // persistence) that expands #sidebar to fill the content area, hiding the task
@@ -3588,6 +3920,7 @@ function toggleMaximize() {
 // acknowledgement — persist it so the needs-you alarm stays quiet across a
 // refresh, not just while this card happens to be the selected one.
 function selectSession(sessionId) {
+  selectionBeforeView = null;
   // Moving the selection to a DIFFERENT session dismisses a diff panel still
   // showing the previous one — the diff is coupled to a single session's terminal,
   // so it shouldn't linger over another. Re-selecting the same session keeps it.
@@ -3628,7 +3961,7 @@ const resuming = new Set();
 let resumeFailTimer = null;
 function resumeDormant(sessionId) {
   resuming.add(sessionId);
-  pendingSelect = sessionId;
+  setPendingSelect(sessionId);
   send({ type: 'resume', sessionId });
   toast('Resuming…');
   selectSession(sessionId);
@@ -3667,6 +4000,7 @@ function wakeSession(sessionId) {
 // Drop the current selection: close its terminal and hide the sidebar. Used by
 // the Search view (no-session state) and when the selected session is archived.
 export function deselectSession() {
+  selectionBeforeView = null;
   selectedSessionId = null;
   selectedNewSlot = null;
   closeTerminal();
@@ -3726,9 +4060,14 @@ function syncHash() {
 function tryFulfillPending() {
   if (!pendingSelect) return;
   if (!latestSessions.some((x) => x.sessionId === pendingSelect)) return;
-  if (currentView !== 'grid') setView('grid');
   const target = pendingSelect;
+  selectionBeforeView = null;
+  // An embed's restore lands in the embed, not on the board.
+  const embed = sessionEmbed.active();
+  const embedded = embed?.sessionId === target;
+  if (currentView !== 'grid' && !embedded) setView('grid');
   pendingSelect = null;
+  if (embedded) { embed.wrap?.classList.remove('pending'); selectSession(target); applyEmbedView(embed); return; }
   const req = boardOpen.claim(target);
   if (req) landOnCard(target, req, selectSession);
   else selectSession(target);
@@ -3740,10 +4079,15 @@ window.addEventListener('hashchange', () => {
   // (#view=history) is normalized to what syncHash would write.
   if (view) { if (currentView !== view) setView(view); else syncHash(); return; }
   const id = hashSessionId();
-  if (id === selectedSessionId) return;
-  if (id) { pendingSelect = id; tryFulfillPending(); }
-  else if (currentView !== 'grid') setView('grid');
-  else deselectSession();
+  if (id) {
+    if (id === selectedSessionId) return;
+    setPendingSelect(id);
+    tryFulfillPending();
+  } else {
+    selectionBeforeView = null;
+    if (currentView !== 'grid') setView('grid');
+    else deselectSession();
+  }
 });
 
 // True when the board is collapsed onto a single visible tile (renderGrid's same
@@ -3769,7 +4113,7 @@ function focusModeActive() {
 function navTargets() {
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
-  for (const s of latestSessions) {
+  for (const s of onBoard(latestSessions)) {
     const tid = assignedTaskId(s.sessionId);
     if (tid && byTask.has(tid)) byTask.get(tid).push(s);
     else noTask.push(s);
@@ -3778,10 +4122,10 @@ function navTargets() {
   for (const id of currentOrder()) {
     const arr = id === ADHOC_ID ? noTask : (byTask.get(id) || []);
     const active = sortBucketSessions(arr.filter((s) => phaseOf(s) !== 'asleep'), id);
-    for (const { session, children } of sessionGroups(active)) {
+    for (const { session, descendants } of sessionGroups(active)) {
       targets.push({ tileId: id, sid: session.sessionId });
       if (isWorkflowRun(session) && collapsedWorkflows.has(session.sessionId)) continue;
-      for (const c of children) targets.push({ tileId: id, sid: c.sessionId });
+      for (const c of descendants) targets.push({ tileId: id, sid: c.sessionId });
     }
     targets.push({ tileId: id, sid: null }); // the tile's "new session" slot
   }
@@ -3860,6 +4204,7 @@ function moveSessionFocus(dir) {
 // appended after the last card and can sit just below the tile's fold, which is
 // what made it feel like an invisible element got selected "at the end".
 function selectNewSlot(tileId) {
+  selectionBeforeView = null;
   selectedNewSlot = tileId;
   // Keep the terminal open but blur it: while focused, xterm would ALSO emit a stray
   // \r for the Enter that's meant to launch (the leak openTerminal documents), and
@@ -4208,7 +4553,7 @@ function onHintKey(e) {
 // definitions in core-keybindings.js). The gating each one had as a bare
 // window listener lives on in its `when`, unchanged: the registry's scopes
 // pick which bindings are candidates, `when` keeps the exact old conditions.
-const anyModalOpen = () => Boolean(document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)'));
+const anyModalOpen = () => anyModalOpenIn(document);
 // The nav / Enter gate: grid view, no card menu, no modal, and not typing in a
 // real text field (the xterm helper textarea doesn't count — see isTypingTarget).
 const boardIdle = () => currentView === 'grid' && !cardMenuEl && !isTypingTarget(document.activeElement) && !anyModalOpen();
@@ -4433,6 +4778,7 @@ function renderSidebar(s) {
     document.getElementById('term-wrap').hidden = true;
     closeTerminal(); // no-op when nothing is attached
     chatView.mount(s.sessionId);
+    chatView.setInputGate(inputGates.get(s.sessionId));
     // AFTER mount, which resets the view's cached status to null: selectSession calls
     // renderPanel (the only other setStatus caller) BEFORE this function, so without
     // re-seeding here an already-working session shows no "Working — running X" line
@@ -4476,7 +4822,7 @@ function renderSidebar(s) {
     <p>This session isn't running in tmux, so its live terminal can't be attached — ${where}.</p>
     ${exitBlock}
     <button id="resume-btn">▶ Resume a copy in a new terminal</button>
-    <p class="muted">Runs <code>claude --resume --fork-session</code> to branch a copy of this conversation into a fresh tmux session you can attach to here. The original process keeps running independently.</p>
+    <p class="muted">${esc(providerMetadataFor(s?.agent).forkHelp || 'Branch this conversation into a fresh session. The original keeps running independently.')}</p>
   </div>`;
   term.querySelector('#resume-btn').addEventListener('click', () => {
     send({ type: 'resume', sessionId: s.sessionId });
@@ -4630,9 +4976,18 @@ function renderPanel(sessionId) {
   const panelSubagentShown = isPanelSubagentShown(sessionId);
   const panelSubagentShowFinished = panelSubagentShowFinishedIds.has(sessionId);
   const view = viewForSession(sessionId);
+  // Lent to an extension view (api.mountSession): the diff is a third view in
+  // place rather than a panel over the board, the extension owns leaving (no
+  // Close), and Fullscreen is offered only when it said what that means.
+  const embed = sessionEmbed.active();
+  const diffing = Boolean(embed) && isDiffPanelOpen() && diffPanelSessionId() === sessionId;
+  const segOn = (v) => (diffing ? v === 'diff' : v === view);
+  const showMax = !embed || Boolean(embed.onMaximize);
+  const maxOn = embed ? embed.maximized : maximized;
   // Mirror the card's transient cyan "just-finished" edge in the header.
   const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
   if (view === 'chat') {
+    chatView.setInputGate(inputGates.get(s.sessionId));
     chatView.setStatus(displayStatus(s), s.waitingFor, s.waitingReason);
     chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
     chatView.setExitNotice(s.exitOutput);
@@ -4645,6 +5000,7 @@ function renderPanel(sessionId) {
   const costChip = costTagHtml(s, slots.costCeiling(s, latestGraph), { showZero: true });
   if (costChip) chips.push(costChip);
   if (s.modelPill) chips.push(modelPillHtml(s.modelPill));
+  if (s.permissionMode && (providerMetadataFor(s.agent).controls?.permissionModes?.length || 0) > 1) chips.push(`<span class="card-tag" title="Launch permission mode">${esc(s.permissionMode)}</span>`);
   // The panel is never "collapsed" like a small board tile, so it always shows
   // the token breakdown.
   if (s.tokens) chips.push(tokenChipHtml(s, { expanded: true }));
@@ -4677,13 +5033,14 @@ function renderPanel(sessionId) {
           <span class="sess-name" id="session-name" title="Click to rename">${esc(s.label)}</span>
           <span class="sess-acts">
             <span class="chat-seg" role="group" aria-label="Session view">
-              <button type="button" class="chat-seg-btn${view === 'chat' ? ' on' : ''}" data-view="chat" aria-pressed="${view === 'chat'}">Chat</button>
-              <button type="button" class="chat-seg-btn${view === 'terminal' ? ' on' : ''}" data-view="terminal" aria-pressed="${view === 'terminal'}">Terminal</button>
+              <button type="button" class="chat-seg-btn${segOn('chat') ? ' on' : ''}" data-view="chat" aria-pressed="${segOn('chat')}">Chat</button>
+              <button type="button" class="chat-seg-btn${segOn('terminal') ? ' on' : ''}" data-view="terminal" aria-pressed="${segOn('terminal')}">Terminal</button>
+              ${embed ? `<button type="button" class="chat-seg-btn${diffing ? ' on' : ''}" data-view="diff" aria-pressed="${diffing}">Diff</button>` : ''}
             </span>
             <button id="actions-btn" class="sess-actions-btn" title="Session actions">${KEBAB_ICON}Actions</button>
-            <span class="sess-acts-divider"></span>
-            <button id="panel-maximize" class="icon-ghost${maximized ? ' active' : ''}" title="${maximized ? 'Restore' : 'Fullscreen'} (${KBD_MAXIMIZE})">${maximized ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>
-            <button id="panel-close" class="icon-ghost" title="Close">${X_ICON}</button>
+            ${showMax || !embed ? '<span class="sess-acts-divider"></span>' : ''}
+            ${showMax ? `<button id="panel-maximize" class="icon-ghost${maxOn ? ' active' : ''}" title="${maxOn ? 'Restore' : 'Fullscreen'}${embed ? '' : ` (${KBD_MAXIMIZE})`}">${maxOn ? MINIMIZE_ICON : MAXIMIZE_ICON}</button>` : ''}
+            ${embed ? '' : `<button id="panel-close" class="icon-ghost" title="Close">${X_ICON}</button>`}
           </span>
         </div>
         <div class="sess-path">
@@ -4718,7 +5075,12 @@ function renderPanel(sessionId) {
   const closeBtn = panel.querySelector('#panel-close');
   if (closeBtn) closeBtn.addEventListener('click', closePanel);
   const maxBtn = panel.querySelector('#panel-maximize');
-  if (maxBtn) maxBtn.addEventListener('click', toggleMaximize);
+  if (maxBtn) maxBtn.addEventListener('click', () => {
+    if (!embed) { toggleMaximize(); return; }
+    embed.maximized = !embed.maximized;
+    embed.onMaximize(embed.maximized);
+    renderPanel(sessionId);
+  });
   const nameEl = panel.querySelector('#session-name');
   if (nameEl) nameEl.addEventListener('click', () => beginRename(sessionId));
   const saPill = panel.querySelector('#panel-sa-pill');
@@ -4753,7 +5115,9 @@ function renderPanel(sessionId) {
       // all. Clearing after the return would ignore the one gesture that most
       // needs to be honoured.
       disarmChatHandoff();
-      if (next === viewForSession(sessionId)) return;
+      if (next === 'diff') { openDiffPanel(sessionId); renderPanel(sessionId); return; }
+      if (diffing) closeDiffPanel();
+      if (next === viewForSession(sessionId)) { if (diffing) renderPanel(sessionId); return; }
       setSessionView(sessionId, next);
       applySessionView(sessionId);
       renderPanel(sessionId);
@@ -4780,6 +5144,25 @@ function setTermFontSize(size) {
     current.term.options.fontSize = n;
     try { current.fit.fit(); } catch {}
   }
+}
+// Give a terminal the theme's monospace font once the browser has it. xterm
+// measures its cell size when the family changes, so a web font that arrives
+// after that would be drawn on the fallback font's grid. When the face was
+// still loading, the family is cycled through a placeholder so xterm sees a
+// change and measures again.
+function syncTermFont(term, fit) {
+  const family = readTerminalFont();
+  const spec = `${termFontSize()}px ${family}`;
+  const loaded = !document.fonts || document.fonts.check(spec);
+  const apply = () => {
+    try {
+      if (!loaded) term.options.fontFamily = 'monospace';
+      term.options.fontFamily = family;
+      fit.fit();
+    } catch {}
+  };
+  if (loaded) { if (term.options.fontFamily !== family) apply(); return; }
+  document.fonts.load(spec).then(apply, apply);
 }
 // Rendered into the settings modal's Appearance section: one segmented button per
 // preset size. Font size is a single global preference (every terminal), not
@@ -4849,6 +5232,98 @@ function syncShellTerminal(sessionId) {
   if (visible) try { currentShellTerm.fit.fit(); } catch {}
 }
 
+// A registered shell tmux attached into `body`: the xterm, its /pty socket and
+// the size sync. `onEnd(ws)` runs when that socket closes.
+// `sessionId` is the session a sidebar shell belongs to, so its lock covers it.
+function connectShellXterm(body, terminalId, onEnd, sessionId = null) {
+  const term = new Terminal({
+    fontSize: termFontSize(), fontFamily: readTerminalFont(),
+    theme: readTerminalTheme(), cursorBlink: true,
+    allowTransparency: true,
+    // Same reason as the agent terminal: tmux runs with `mouse on`, so a plain drag is
+    // reported to the pane instead of selecting — Option-drag is the only local select.
+    macOptionClickForcesSelection: true,
+    // Unicode11Addon's activate() calls the proposed term.unicode API.
+    allowProposedApi: true,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  attachClipboard(term);
+  attachUnicode11(term);
+  term.open(body);
+  fit.fit();
+  syncTermFont(term, fit);
+  term.focus();
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
+  term.onData((d) => ws.readyState === 1 && inputGates.allow(sessionId, d) && ws.send(d));
+  ws.onclose = () => onEnd(ws);
+
+  // Assert our true size once the socket is open so tmux's idea of our size can't
+  // drift from what xterm renders (the source of redraw garble); the server
+  // forces a repaint after the resize.
+  const syncSize = () => {
+    try {
+      fit.fit();
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    } catch { /* disposed */ }
+  };
+  ws.onopen = syncSize;
+  const ro = new ResizeObserver(syncSize);
+  ro.observe(body);
+  return { term, fit, ws, ro };
+}
+
+// --- extension terminal dialog ---
+// `terminals.create({ presentation: 'dialog' })` lands here, in the requesting
+// tab only, over whatever is open (usually Settings, which stays as it was).
+// Closing detaches: the server keeps the shell, and the extension's next create
+// with the same key presents it again. Escape belongs to the shell, so only the
+// Close button closes the dialog.
+let terminalDialog = null; // { terminalId, term, ws, ro, opener, scope }
+const terminalModal = document.getElementById('terminal-modal');
+
+function detachTerminalDialog() {
+  if (!terminalDialog) return null;
+  const { term, ws, ro, opener, scope } = terminalDialog;
+  terminalDialog = null;
+  try { ro.disconnect(); } catch {}
+  try { ws.close(); } catch {}
+  try { term.dispose(); } catch {}
+  document.getElementById('terminal-modal-body').replaceChildren();
+  return { opener, scope };
+}
+
+function closeTerminalDialog() {
+  const { opener = null, scope = null } = detachTerminalDialog() ?? {};
+  if (terminalModal.open) terminalModal.close();
+  focusReturnTarget(opener, document, scope)?.focus();
+}
+
+function openTerminalDialog({ terminalId, command, title }) {
+  if (terminalDialog?.terminalId === terminalId) { terminalDialog.term.focus(); return; }
+  const prior = terminalModal.contains(document.activeElement) ? null : document.activeElement;
+  const { opener = prior, scope = prior?.closest?.('[id$="-modal"]') ?? null } = detachTerminalDialog() ?? {};
+  document.getElementById('terminal-modal-title').textContent = title || 'Terminal';
+  const preview = document.getElementById('terminal-modal-preview');
+  preview.querySelector('code').textContent = command || '';
+  preview.classList.toggle('hidden', !command);
+  const ended = document.getElementById('terminal-modal-ended');
+  ended.classList.add('hidden');
+  if (!terminalModal.open) terminalModal.showModal();
+  const body = document.getElementById('terminal-modal-body');
+  const conn = connectShellXterm(body, terminalId, (closed) => {
+    if (terminalDialog?.ws === closed) ended.classList.remove('hidden');
+  });
+  terminalDialog = { terminalId, ...conn, opener, scope };
+}
+
+document.getElementById('terminal-modal-close').addEventListener('click', closeTerminalDialog);
+terminalModal.addEventListener('cancel', (e) => e.preventDefault());
+
 // Open (or replace) the shell terminal pane below #term-wrap in the sidebar.
 // `command` (if non-empty) is already pre-populated server-side; we show it
 // in a DOM preview so it's immune to ANSI tricks inside the xterm canvas.
@@ -4904,23 +5379,11 @@ function openShellTerminal({ terminalId, command, sessionId }) {
   pane.querySelector('.shell-terminal-close').addEventListener('click', closeShellTerminal);
 
   const body = pane.querySelector('.shell-terminal-body');
-  const term = new Terminal({
-    fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    theme: readTerminalTheme(), cursorBlink: true,
-    allowTransparency: true,
-    // Same reason as the agent terminal: tmux runs with `mouse on`, so a plain drag is
-    // reported to the pane instead of selecting — Option-drag is the only local select.
-    macOptionClickForcesSelection: true,
-    // Unicode11Addon's activate() calls the proposed term.unicode API.
-    allowProposedApi: true,
-  });
-  const fit = new FitAddon.FitAddon();
-  term.loadAddon(fit);
-  attachClipboard(term);
-  attachUnicode11(term);
-  term.open(body);
-  fit.fit();
-  term.focus();
+  // Server-side kill on disconnect removes the registry entry; client-side close
+  // removes the pane from DOM. No reconnect — shell terminals are one-shot.
+  const { term, fit, ws } = connectShellXterm(body, terminalId, (closed) => {
+    if (currentShellTerm && currentShellTerm.ws === closed) closeShellTerminal();
+  }, sessionId);
 
   // Hide immediately if the terminal belongs to a session other than the currently selected one.
   const visible = !sessionId || sessionId === selectedSessionId;
@@ -4928,31 +5391,6 @@ function openShellTerminal({ terminalId, command, sessionId }) {
     pane.style.display = 'none';
     if (handle) handle.style.display = 'none';
   }
-
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
-  ws.binaryType = 'arraybuffer';
-  ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
-  term.onData((d) => ws.readyState === 1 && ws.send(d));
-
-  // Server-side kill on disconnect removes the registry entry; client-side close
-  // removes the pane from DOM. No reconnect — shell terminals are one-shot.
-  ws.onclose = () => {
-    if (currentShellTerm && currentShellTerm.ws === ws) closeShellTerminal();
-  };
-
-  // Assert our true size once the socket is open so tmux's idea of our size can't
-  // drift from what xterm renders (the source of redraw garble); the server
-  // forces a repaint after the resize.
-  const syncSize = () => {
-    try {
-      fit.fit();
-      if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-    } catch { /* disposed */ }
-  };
-  ws.onopen = syncSize;
-  const ro = new ResizeObserver(syncSize);
-  ro.observe(body);
 
   currentShellTerm = { pane, handle, term, fit, ws, sessionId: sessionId || null };
 }
@@ -4980,6 +5418,7 @@ function attachClipboard(term) {
   term.loadAddon(new globalThis.ClipboardAddon.ClipboardAddon(undefined, {
     readText: () => Promise.resolve(''),
     writeText: (_sel, text) => {
+      if (!text) return;
       const p = navigator.clipboard?.writeText(text);
       if (!p) return;
       return p.then(() => { if (text && text.trim()) toast('Copied to clipboard', false, { duration: 1500 }); }, () => {});
@@ -5003,7 +5442,7 @@ function openTerminal(s) {
   closeTerminal();
   showSidebar();
   const term = new Terminal({
-    fontSize: termFontSize(), fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: termFontSize(), fontFamily: readTerminalFont(),
     theme: readTerminalTheme(), cursorBlink: true,
     // Honor an rgba --term-bg so a style's wallpaper can show through the canvas;
     // opaque (dark/light) backgrounds render unchanged.
@@ -5042,7 +5481,7 @@ function openTerminal(s) {
   // looks like an http(s) URL, and vice-versa. s.cwd is the base a relative
   // path (docs/x.md) resolves against.
   try {
-    term.registerLinkProvider(createMarkdownLinkProvider(term, openFilePreview, s.cwd));
+    term.registerLinkProvider(createMarkdownLinkProvider(term, (p) => openFile(p, { sessionId: s.sessionId, source: 'terminal' }), s.cwd));
   } catch (err) {
     console.error('[term-links]', err);
   }
@@ -5065,6 +5504,7 @@ function openTerminal(s) {
   delete el.dataset.restarting; // leaving the spinner state — attaching a real pane
   term.open(el);
   fit.fit();
+  syncTermFont(term, fit);
   // Clicking the terminal puts keyboard focus on the Claude input and marks the
   // session as user-attended so its card stops flashing needs-you.
   const clickHandler = () => { term.focus(); acknowledge(s.sessionId); };
@@ -5077,7 +5517,7 @@ function openTerminal(s) {
   const ws = new WebSocket(`${proto}://${location.host}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
-  term.onData((d) => ws.readyState === 1 && ws.send(d));
+  term.onData((d) => ws.readyState === 1 && inputGates.allow(s.sessionId, d) && ws.send(d));
   // The pty socket can drop without us asking — a server restart (launchd), the
   // server-side `tmux attach` exiting, or a network blip. Unlike the control
   // socket it has no re-poll, so a silent drop leaves the terminal dead: the
@@ -5113,6 +5553,7 @@ function openTerminal(s) {
   //   Cmd+←/→     → \x1bb / \x1bf : readline backward/forward-word. (Shift+Cmd+←/→
   //                            is left for the board's session nav, so we skip it.)
   //   Cmd+⌫       → \x15   : Ctrl-U, delete from cursor to start of line.
+  const editingKeys = providerMetadataFor(s.agent).terminal?.editingKeys || {};
   const sendKey = (bytes, e) => { if (ws.readyState === 1) ws.send(bytes); e.preventDefault(); return false; };
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
@@ -5121,10 +5562,10 @@ function openTerminal(s) {
     // \x1b[3~, or the Ctrl-U below) before the window handler acts. Checked
     // before the plain Cmd+⌫ clear-line chord since that one doesn't gate on Ctrl.
     if (e.metaKey && e.ctrlKey && CTRL_CMD_KEYS.has(e.key.toLowerCase())) { e.preventDefault(); return false; }
-    if (e.key === 'Enter' && e.shiftKey) return sendKey('\x1b\r', e);
-    if (e.metaKey && !e.shiftKey && e.key === 'ArrowLeft') return sendKey('\x1bb', e);
-    if (e.metaKey && !e.shiftKey && e.key === 'ArrowRight') return sendKey('\x1bf', e);
-    if (e.metaKey && e.key === 'Backspace') return sendKey('\x15', e);
+    if (e.key === 'Enter' && e.shiftKey && editingKeys.newline) return sendKey(editingKeys.newline, e);
+    if (e.metaKey && !e.shiftKey && e.key === 'ArrowLeft' && editingKeys.wordLeft) return sendKey(editingKeys.wordLeft, e);
+    if (e.metaKey && !e.shiftKey && e.key === 'ArrowRight' && editingKeys.wordRight) return sendKey(editingKeys.wordRight, e);
+    if (e.metaKey && e.key === 'Backspace' && editingKeys.clearLine) return sendKey(editingKeys.clearLine, e);
     return true;
   });
   let lastCols = term.cols;
@@ -5161,6 +5602,7 @@ function openTerminal(s) {
 // Close the detail panel + terminal and clear the selection, so the periodic
 // graph refresh doesn't silently re-open the sidebar for the still-selected card.
 function closePanel() {
+  selectionBeforeView = null;
   selectedSessionId = null;
   closeTerminal();
   hideSidebar();
@@ -5414,14 +5856,14 @@ function refreshWorktreeDefaults() {
   if (!wtFolderEdited) {
     const branch = branchEl.value || 'work';
     if (wtValidation && wtValidation.ok && wtValidation.repoRoot) {
-      // Full path: a sibling of the repo by default, but the user can edit it to
-      // place the worktree anywhere.
+      // Full path: in the repo's sibling worktrees.noindex folder by default, but
+      // the user can edit it to place the worktree anywhere.
       const parent = wtValidation.repoRoot.replace(/\/[^/]*$/, '');
-      folderEl.value = `${parent}/${wtValidation.repoName}-worktree-${branch}`;
+      folderEl.value = `${parent}/worktrees.noindex/${wtValidation.repoName}-${branch}`;
     } else {
       // Before validation lands we don't know the repo root — show a bare name.
       const repo = (cwdField() || proposedCwd || '').replace(/\/+$/, '').split('/').pop() || 'repo';
-      folderEl.value = `${repo}-worktree-${branch}`;
+      folderEl.value = `worktrees.noindex/${repo}-${branch}`;
     }
   }
 }
@@ -5477,22 +5919,29 @@ function syncWorkflow() {
 }
 function setDispatchMode(mode) { dispatchMode = mode; syncWorkflow(); }
 
-// The runtime picker defaults to Local (host). Every non-local runtime is currently
-// Claude-only (devcontainer's status/cost hooks read Claude paths; codex-in-container
-// isn't wired), so for a non-Claude agent disable each non-local <option> and snap
-// the value back to local — a stale devcontainer selection must not survive an agent
-// swap. Workflow runs ARE supported (the issue-to-pr skill dir is copied into the
-// container). Extensible: a new built-in runtime adds an <option> in index.html, an
-// extension runtime is appended by syncExtRuntimeOptions; the loop below reads
-// rt.options at call time, so the Claude-only gate covers both, and any extra
-// per-runtime constraints slot in alongside.
+// The runtime picker defaults to Local (host), which takes every agent. Each other
+// runtime says which agents it runs: an extension's from its manifest `agents`
+// (graph.extensions[].runtimes, ['claude'] when left out), a built-in's as
+// Claude-only (devcontainer's status/cost hooks read Claude paths). For an agent
+// a runtime doesn't list, disable its <option> and snap the value back to local —
+// a stale selection must not survive an agent swap. Workflow runs ARE supported
+// (the issue-to-pr skill dir is copied into the container). The loop reads
+// rt.options at call time, so it covers the built-ins in index.html and the
+// options syncExtRuntimeOptions appends alike. The server enforces the same rule
+// (runtimeAgentError), so this is the dialog's courtesy, not the guard.
+function runtimeAllowsAgent(opt, agent) {
+  if (!opt || opt.value === 'local') return true;
+  const agents = opt.dataset.ext
+    ? latestExtensions.find((e) => e.id === opt.dataset.ext)?.runtimes?.find((r) => r?.id === opt.value)?.agents
+    : null;
+  return (Array.isArray(agents) ? agents : ['claude']).includes(agent);
+}
+
 function syncRuntimeToggle() {
   const sel = document.getElementById('m-model');
-  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  const agent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   const rt = document.getElementById('m-runtime');
-  for (const opt of rt.options) {
-    if (opt.value !== 'local') opt.disabled = agent !== 'claude';
-  }
+  for (const opt of rt.options) opt.disabled = !runtimeAllowsAgent(opt, agent);
   const cur = rt.options[rt.selectedIndex];
   if (cur && cur.disabled) rt.value = 'local';
   const foldersEnabled = rt.value === 'local';
@@ -5568,6 +6017,7 @@ function syncModalChrome() {
   // Launch mode is always a dispatch (no action selector, dispatch fields visible).
   if (!sched) {
     document.getElementById('m-dispatch-fields').classList.remove('hidden');
+    document.getElementById('m-task-fields').classList.remove('hidden');
     document.getElementById('m-session-fields').classList.add('hidden');
     return;
   }
@@ -5581,7 +6031,7 @@ function syncModalChrome() {
 // Schedule mode only.
 function syncScheduleAction() {
   const isDispatch = scheduleAction === 'dispatch';
-  document.getElementById('m-dispatch-fields').classList.toggle('hidden', !isDispatch);
+  document.getElementById('m-task-fields').classList.toggle('hidden', !isDispatch);
   document.getElementById('m-session-fields').classList.toggle('hidden', isDispatch);
   document.querySelectorAll('#m-sch-action .sched-action-btn').forEach((b) => {
     const on = b.dataset.action === scheduleAction;
@@ -5673,14 +6123,15 @@ function readCoreDispatchFields() {
   const sel = document.getElementById('m-model');
   const model = sel.value.trim();
   const wfOn = dispatchMode === 'workflow';
-  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  const agent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   // !reviewMode makes the "a review never creates a worktree" invariant explicit
   // (the box is also hidden+unchecked in review mode, but don't rely on that alone).
   const wtOn = !wfOn && !reviewMode && document.getElementById('m-worktree').checked && !document.getElementById('m-worktree').disabled;
   // Runtime picker; Local is the default and sent as undefined (the server stores
-  // only non-local). Non-Claude agents are local-only (see syncRuntimeToggle), so
-  // resolve to local for them regardless of a stale selection — a dispatch safety net.
-  const runtime = agent === 'claude' ? document.getElementById('m-runtime').value : 'local';
+  // only non-local). A runtime that doesn't list the agent resolves to local
+  // regardless of a stale selection (see syncRuntimeToggle) — a dispatch safety net.
+  const rtSel = document.getElementById('m-runtime');
+  const runtime = runtimeAllowsAgent(rtSel.options[rtSel.selectedIndex], agent) ? rtSel.value : 'local';
   return {
     cwd: cwdField() || proposedCwd,
     addDirs: additionalFolders.values(),
@@ -5789,6 +6240,7 @@ function syncDispatchExtFields() {
   // so hand contributions the cached copy rather than whatever the last tick had.
   slots.syncHosts('dispatch.field', entries, extApi, latestGraph && { ...latestGraph, history: latestHistory });
   applyDispatchFieldVeto(ctx);
+  dispatchModelPicker?.sync();
 }
 
 // The per-open lifecycle call (slots.openDispatchFields): once per openModal,
@@ -5801,12 +6253,13 @@ function openDispatchExtFields(saved) {
   const ctx = { ...dispatchFieldCtx(), editing: modalMode === 'schedule-edit' };
   slots.openDispatchFields(ctx, saved);
   applyDispatchFieldVeto(ctx);
+  dispatchModelPicker?.sync();
 }
 
 // One opener for all three modalModes. `schedule` (when editing) pre-fills every
 // field from the saved dispatch + picker; otherwise the form defaults as for a
 // launch, with the cwd defaulted from the target task's sessions.
-function openModal({ mode, taskId = null, schedule = null }) {
+function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   modalMode = mode;
   editingScheduleId = schedule?.id || null;
   // The action kind (and its dispatch bag) come off schedule.action; a launch is
@@ -5832,7 +6285,7 @@ function openModal({ mode, taskId = null, schedule = null }) {
   // Folders dismissed from the recents list are skipped here too.
   const cwdForTask = (sel) => {
     const hidden = hiddenRecents();
-    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd)))));
+    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd, s.worktree)))));
     return pick(latestSessions) || pick(latestHistory);
   };
   cwdInput.value = schedule
@@ -5841,22 +6294,31 @@ function openModal({ mode, taskId = null, schedule = null }) {
   cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
   additionalFolders.reset(d.addDirs || []);
   document.getElementById('m-intent').value = d.intent || '';
-  intentImages.reset();
+  // Images an openDispatch is about to adopt keep their previews through the reset.
+  intentImages.reset({ keep: keepImages });
   autoCompactTokens = d.autoCompactTokens;
-  if (d.model) { document.getElementById('m-model').value = d.model; modelEdited = true; }
-  autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent || 'claude';
+  applyDispatchPick(schedule ? d : undefined);
+  autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent ?? 'claude';
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
   document.getElementById('m-worktree').checked = Boolean(d.worktree) && !d.workflow;
-  // Restore the saved runtime (Local default); syncWorkflow→syncRuntimeToggle re-gates by agent.
-  // The extension options go in first so a saved extension runtime can be
-  // selected; one whose extension is now off or gone matches no option (the
-  // select reads back '') and falls back to local.
+  // Restore the saved runtime, or for a new session the Default runtime setting;
+  // syncWorkflow→syncRuntimeToggle re-gates by agent. The extension options go
+  // in first so an extension runtime can be selected; one whose extension is now
+  // off or gone matches no option (the select reads back '') and falls back to local.
   syncExtRuntimeOptions();
   const rtSel = document.getElementById('m-runtime');
-  rtSel.value = d.runtime || 'local';
-  if (rtSel.value !== (d.runtime || 'local')) rtSel.value = 'local';
+  const wantRuntime = (schedule ? d.runtime : defaultRuntime) || 'local';
+  rtSel.value = wantRuntime;
+  if (rtSel.value !== wantRuntime) rtSel.value = 'local';
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   document.getElementById('m-advanced-options').open = false;
+  dispatchModelPicker?.reset();
+  populateEffortSelect();
+  if (schedule) {
+    const effort = document.getElementById('m-effort');
+    effort.value = [...effort.options].some((o) => o.value === (d.effort || '')) ? (d.effort || '') : '';
+    effortEdited = Boolean(d.effort);
+  }
   wtBranchEdited = false; wtFolderEdited = false; wtValidation = null; wtLastCwd = null; wtPending = false;
   // A reopened dialog must not inherit the last folder's verdict — the field it
   // belonged to may have been refilled from a different task.
@@ -5889,10 +6351,18 @@ function defaultPicker() {
 function openDispatch(taskId = null, opts = {}) {
   const taskSel = document.getElementById('m-task');
   if (taskSel) taskSel.disabled = Boolean(opts.lockTask);
-  openModal({ mode: 'launch', taskId });
+  openModal({ mode: 'launch', taskId, keepImages: opts.images || [] });
   // The source session's exact folder must win over openModal's task-dominant cwd.
-  if (opts.cwd) document.getElementById('m-cwd').value = opts.cwd;
+  if (opts.cwd) {
+    document.getElementById('m-cwd').value = opts.cwd;
+    // Re-check the folder as typing into the field does, so the worktree box
+    // reflects this folder rather than the one openModal filled in.
+    syncWorktreeFields();
+    requestFolderBrowse();
+  }
   if (opts.addDirs) additionalFolders.reset(opts.addDirs);
+  // Already-staged images (api.openDispatch), after openModal's reset cleared the last ones.
+  if (opts.images) intentImages.adopt(opts.images);
   // Implicit nesting context (e.g. a review's source session) — not a user toggle,
   // so it isn't reflected in any dialog control; just carried through to dispatch.
   if (opts.parentSession) parentSessionId = opts.parentSession;
@@ -5978,6 +6448,8 @@ function submitDispatch(over) {
   const imageNames = intentImages.names();
   if (imageNames.length && fields.runtime && fields.runtime !== 'local') { toast('Images in the first prompt need a local launch.'); return false; }
   if (imageNames.length) fields.imageNames = imageNames;
+  const blocked = slots.validateDispatch(dispatchFieldCtx(fields));
+  if (blocked) { toast(blocked); return false; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return false; // can't create a worktree here — let the user untick or fix the folder
@@ -6044,14 +6516,23 @@ function submitDispatchFromExt({ model, effort, runtime } = {}) {
   return true;
 }
 
-// [{ id, label, ownsModel }] for every #m-runtime option, whatever the
-// current model's agent disables (a quick launch picks its own model).
+// [{ id, label, ownsModel, ownLaunch, agents }] for every #m-runtime option, whatever the
+// current model's agent disables (a quick launch picks its own model). `agents`
+// is the agent ids it offers, from the known ones; null for local (every agent).
 function listDispatchRuntimes() {
+  const agentIds = availableAgents.map((a) => a.id);
   return [...document.getElementById('m-runtime').options].map((o) => ({
     id: o.value,
     label: o.textContent,
     ownsModel: Boolean(o.dataset.ext) && runtimeOwnsModel(o.dataset.ext, o.value),
+    ownLaunch: Boolean(o.dataset.ext) && runtimeOwnLaunch(o.dataset.ext, o.value),
+    agents: o.value === 'local' ? null : agentIds.filter((a) => runtimeAllowsAgent(o, a)),
   }));
+}
+
+function runtimeOwnLaunch(extId, runtimeId) {
+  const e = latestExtensions.find((x) => x.id === extId);
+  return Boolean(e?.runtimes?.find((r) => r?.id === runtimeId)?.ownLaunch);
 }
 
 function runtimeOwnsModel(extId, runtimeId) {
@@ -6216,13 +6697,13 @@ function mountUpdatePanel(host) {
   // update, and a Notify or Auto value carried over in config.json is ignored by
   // the server, so the row is hidden rather than left looking live.
   host.parentElement?.querySelector('.setting-row[data-id="autoUpdate"]')?.classList.toggle('hidden', Boolean(updateUnavailable));
-  const drift = installDriftEl({
+  const restart = restartPanelEl({
     drift: installDrift,
     canRestart: canRestartServer,
-    restarting: installDriftRestarting,
+    restarting: installDriftRestarting || updatePhase === 'restarting' || extRestarting,
     onRestart: () => { installDriftRestarting = true; send({ type: 'restart-server' }); remountUpdatePanel(); },
   });
-  if (drift) host.append(drift);
+  if (restart) host.append(restart);
   host.append(updatePanelEl({
     phase: updatePhase,
     status: updateStatus,
@@ -6375,12 +6856,20 @@ function clearExtTransientLater() {
   }, EXT_TRANSIENT_MS);
 }
 
-// The selected extension, the filter text, the add form and the "Update all"
-// queue — kept here so a remount on the next graph keeps them.
+// The selected extension, the filter text, the add pane's mode and search
+// text, and the "Update all" queue — kept here so a remount on the next graph
+// keeps them.
 let extSelectedId = '';
 let extFilter = '';
 let extAdding = false;
+let extAddMode = 'browse';
+let extBrowseQuery = '';
 let extUpdateQueue = [];
+// "Update & restart": set on approval of the update in flight, then promoted to
+// the queue-wide flag only once that update's install reports `done`, so a
+// failed or cancelled one never restarts. The restart waits for the queue.
+let extRestartOnDone = false;
+let extRestartAfterUpdates = false;
 // The GitHub browser in the add pane: searched when the pane is opened and on
 // Refresh, then kept for the life of the page so reopening it costs nothing.
 let extBrowse = null;
@@ -6390,17 +6879,21 @@ let extSettingsPanelHost = null;
 
 const startExtUpdate = (entry) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url: entry.origin }); remountExtensions(); };
 
+const restartForExtensions = () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); remountUpdatePanel(); };
+
 // One update at a time: each goes through its own consent modal, so the next
 // starts only once the last has settled.
 function runNextExtUpdate() {
   if (extInstallBusy) return;
   const next = extUpdateQueue.shift();
   if (next) startExtUpdate(next);
+  else if (extRestartAfterUpdates) { extRestartAfterUpdates = false; restartForExtensions(); }
 }
 
 // The selected extension's Settings section: its own `settings.panel`
 // contributions above the manifest rows, and a Save button for those panels
-// (the manifest rows commit on change). Null when it has neither.
+// when any has a `save` (the manifest rows commit on change). Null when it has
+// neither.
 function extSettingsEl(entry) {
   const content = document.createElement('div');
   const panelHost = document.createElement('div');
@@ -6423,7 +6916,7 @@ function extSettingsEl(entry) {
       },
     }));
   }
-  if (panels) {
+  if (panels && slots.hasPanelSave(panelHost)) {
     const save = document.createElement('button');
     save.type = 'button';
     save.className = 'ext-btn ext-btn-primary ext-settings-save';
@@ -6446,6 +6939,7 @@ function extSettingsEl(entry) {
 // the first thing it shows; remounts after that keep whatever was picked since.
 function openExtensionsPanel(host) {
   extAdding = true;
+  extAddMode = 'browse';
   if (!extBrowse) searchExtBrowse();
   mountExtensionsPanel(host);
 }
@@ -6453,6 +6947,7 @@ function openExtensionsPanel(host) {
 function mountExtensionsPanel(host) {
   extPanelHost = host;
   if (!host) return;
+  const refocus = focusedFieldState(host);
   commitFocusedField(host);
   if (extSettingsPanelHost) {
     slots.unmountHost('settings.panel', extSettingsPanelHost);
@@ -6475,15 +6970,23 @@ function mountExtensionsPanel(host) {
     filter: extFilter,
     adding: extAdding,
     browse: extBrowse,
+    addMode: extAddMode,
+    browseQuery: extBrowseQuery,
     onSelect: (id) => { extSelectedId = id; extAdding = false; remountExtensions(); },
     onFilter: (text) => { extFilter = text; },
+    onBrowseQuery: (text) => { extBrowseQuery = text; },
+    onAddMode: (mode) => {
+      extAddMode = mode;
+      remountExtensions();
+      restoreFocusedField(host, { key: mode === 'url' ? 'url' : 'gh-search' });
+    },
     onAdd: () => { extAdding = true; if (!extBrowse) searchExtBrowse(); remountExtensions(); },
     onBrowse: () => { searchExtBrowse(); remountExtensions(); },
     onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
     // An update IS an install against the recorded origin — same frame, same
     // consent modal, same handler. There is deliberately no separate path.
-    onUpdate: (entry) => { extUpdateQueue = []; startExtUpdate(entry); },
-    onUpdateAll: (entries) => { extUpdateQueue = [...entries]; runNextExtUpdate(); },
+    onUpdate: (entry) => { extUpdateQueue = []; extRestartAfterUpdates = false; startExtUpdate(entry); },
+    onUpdateAll: (entries) => { extUpdateQueue = [...entries]; extRestartAfterUpdates = false; runNextExtUpdate(); },
     onUninstall: async (entry) => {
       const answer = await confirmDialog({
         title: `Uninstall ${entry.label || entry.id}?`,
@@ -6494,9 +6997,23 @@ function mountExtensionsPanel(host) {
       if (answer === 'ok') send({ type: 'ext-uninstall', id: entry.id });
     },
     onCheckUpdates: () => { extUpdateStatuses = {}; extChecking = true; send({ type: 'ext-check-updates' }); remountExtensions(); },
-    onRestart: () => { extRestarting = true; send({ type: 'restart-server' }); remountExtensions(); },
+    // Turning it ON is the decision, so only that asks; off never needs one.
+    onAutoUpdate: async (entry, on) => {
+      if (on) {
+        const answer = await confirmDialog({
+          title: `Auto-update ${entry.label || entry.id}?`,
+          body: AUTO_UPDATE_WARNING,
+          okLabel: 'Turn on auto-update',
+          danger: true,
+        });
+        if (answer !== 'ok') return;
+      }
+      send({ type: 'ext-set-auto-update', id: entry.id, on });
+    },
+    onRestart: restartForExtensions,
     settingsEl: extSettingsEl,
   }));
+  restoreFocusedField(host, refocus);
 }
 
 // The consent step. The modal is opened by the server's DISCLOSURE reply, never
@@ -6509,28 +7026,36 @@ function openExtConsent(payload) {
   body.textContent = '';
   body.append(consentBodyEl(payload));
   const ok = document.getElementById('ext-consent-ok');
+  const later = document.getElementById('ext-consent-later');
   const cancel = document.getElementById('ext-consent-cancel');
   // An update that widens `requires` needs a fresh yes; one that does not is
   // still shown, because a human asked for it and the dependency diff is worth
   // reading — but the button says which of the two this is.
-  ok.textContent = payload.reconsentNeeded ? (payload.update ? 'Approve & update' : 'Approve & install') : (payload.update ? 'Update' : 'Install');
+  const labels = consentButtonLabels(payload, canRestartServer);
+  ok.textContent = labels.ok;
+  later.classList.toggle('hidden', !labels.later);
+  if (labels.later) later.textContent = labels.later;
   modal.classList.remove('hidden');
   cancel.focus();
-  const done = (approve) => {
+  const done = (approve, restart = false) => {
     modal.classList.add('hidden');
     ok.removeEventListener('click', onOk);
+    later.removeEventListener('click', onLater);
     cancel.removeEventListener('click', onCancel);
     modal.removeEventListener('keydown', onKey);
     modal.removeEventListener('mousedown', onBackdrop);
+    extRestartOnDone = restart;
     send({ type: 'ext-consent', tempId: payload.tempId, approve });
   };
-  const onOk = () => done(true);
+  const onOk = () => done(true, Boolean(labels.later));
+  const onLater = () => done(true);
   const onCancel = () => done(false);
   // No Enter-to-approve, unlike confirmDialog: this dialog grants a process
   // full access to the machine, so approving must be a deliberate click.
   const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(false); } };
   const onBackdrop = (e) => { if (e.target === modal) done(false); };
   ok.addEventListener('click', onOk);
+  later.addEventListener('click', onLater);
   cancel.addEventListener('click', onCancel);
   modal.addEventListener('keydown', onKey);
   modal.addEventListener('mousedown', onBackdrop);
@@ -6541,12 +7066,15 @@ initSettings({
     get: (id) => {
       if (id === 'subagentsExpandedByDefault') return subagentsExpandedByDefault;
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
+      if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'mailWakesDormant') return mailWakesDormant;
+      if (id === 'prModelFooter') return prModelFooter;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
+      if (id === 'defaultRuntime') return defaultRuntime;
       if (id === 'autoUpdate') return autoUpdate;
       if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
       // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
@@ -6565,6 +7093,9 @@ initSettings({
       } else if (id === 'trustCodexLaunchCwd') {
         trustCodexLaunchCwd = Boolean(value);
         send({ type: 'set-trust-codex-launch-cwd', enabled: trustCodexLaunchCwd });
+      } else if (id === 'trustClaudeLaunchCwd') {
+        trustClaudeLaunchCwd = Boolean(value);
+        send({ type: 'set-trust-claude-launch-cwd', enabled: trustClaudeLaunchCwd });
       } else if (id === 'childFullViewByDefault') {
         childFullViewByDefault = Boolean(value);
         send({ type: 'set-child-full-view-default', enabled: childFullViewByDefault });
@@ -6577,12 +7108,18 @@ initSettings({
       } else if (id === 'mailWakesDormant') {
         mailWakesDormant = Boolean(value);
         send({ type: 'set-mail-wakes-dormant', enabled: mailWakesDormant });
+      } else if (id === 'prModelFooter') {
+        prModelFooter = Boolean(value);
+        send({ type: 'set-pr-model-footer', enabled: prModelFooter });
       } else if (id === 'chatViewDefault') {
         chatViewDefault = Boolean(value);
         send({ type: 'set-chat-view-default', enabled: chatViewDefault });
       } else if (id === 'defaultSessionCwd') {
         defaultSessionCwd = String(value || '').trim();
         send({ type: 'set-default-session-cwd', cwd: defaultSessionCwd });
+      } else if (id === 'defaultRuntime') {
+        defaultRuntime = String(value || 'local');
+        send({ type: 'set-default-runtime', runtime: defaultRuntime });
       } else if (id === 'autoUpdate') {
         autoUpdate = value;
         send({ type: 'set-auto-update-mode', mode: autoUpdate });
@@ -6649,12 +7186,13 @@ document.getElementById('m-wt-folder').addEventListener('input', (e) => { wtSani
 document.getElementById('m-model').addEventListener('change', () => {
   modelEdited = true;
   const sel = document.getElementById('m-model');
-  const agent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  const agent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   autoCompactTokens = normalizeAutoCompactPresetForAgentChange(autoCompactTokens, autoCompactAgent, agent);
   autoCompactAgent = agent;
   populateEffortSelect();
   syncRuntimeToggle();
   syncAutoCompactPresets();
+  rememberDispatchPick();
   // A contribution drawing a per-agent control needs the agent swap.
   syncDispatchExtFields();
 });
@@ -6667,10 +7205,27 @@ document.getElementById('m-auto-compact-presets').addEventListener('click', (e) 
   if (!button) return;
   autoCompactTokens = button.dataset.autoCompactTokens === '' ? undefined : Number(button.dataset.autoCompactTokens);
   const sel = document.getElementById('m-model');
-  autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent || 'claude';
+  autoCompactAgent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   syncAutoCompactPresets();
 });
-document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; });
+document.getElementById('m-effort').addEventListener('change', () => { effortEdited = true; rememberDispatchPick(); syncDispatchExtFields(); });
+dispatchModelPicker = createDispatchModelPicker({
+  root: document.getElementById('m-model-picker'),
+  storage: (() => { try { return localStorage; } catch { return null; } })(),
+  agents: () => availableAgents,
+  read: () => {
+    const model = document.getElementById('m-model');
+    return { agent: model.options[model.selectedIndex]?.dataset.agent ?? 'claude', model: model.value, effort: document.getElementById('m-effort').value };
+  },
+  select: (pick) => {
+    const model = document.getElementById('m-model');
+    model.selectedIndex = [...model.options].findIndex((o) => o.value === pick.model && o.dataset.agent === pick.agent);
+    model.dispatchEvent(new Event('change', { bubbles: true }));
+    const effort = document.getElementById('m-effort');
+    effort.value = pick.effort;
+    effort.dispatchEvent(new Event('change', { bubbles: true }));
+  },
+});
 enhanceSelects(document.getElementById('modal'));
 // ⌘Enter / ⌘1–⌘3 / Escape are `dispatch.*` registry bindings (see registerCoreBindings).
 (() => {
@@ -6781,11 +7336,24 @@ schedulesModal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.
 schedulesModal.addEventListener('mousedown', (e) => { if (e.target === schedulesModal) closeSchedulesPanel(); });
 
 function onScheduleFired(msg) {
-  toast(`Scheduled "${msg.name}" started`);
-  if (msg.focus === true && msg.sessionId) {
+  const viewSession = () => {
     pendingScheduledFocus = { sessionId: msg.sessionId, expiresAt: Date.now() + 8000 };
     tryFulfillScheduledFocus();
+  };
+  if (msg.focus === true && msg.sessionId) {
+    viewSession();
+    return;
   }
+  const name = msg.name && msg.name !== 'Untitled schedule'
+    ? msg.name
+    : latestSessions.find((s) => s.sessionId === msg.sessionId)?.label || msg.label || msg.sessionId?.slice(0, 8) || 'Untitled schedule';
+  notifications.show('core_schedules', {
+    id: String(++scheduleNotificationId),
+    title: `Scheduled "${name}" started`,
+    actions: msg.sessionId ? [{ id: 'view', label: 'View session', primary: true }] : [],
+  }).then((answer) => {
+    if (answer === 'view' && msg.sessionId) viewSession();
+  });
 }
 
 function tryFulfillScheduledFocus() {
@@ -6800,6 +7368,7 @@ function tryFulfillScheduledFocus() {
   if (isDiffPanelOpen()) closeDiffPanel();
   disarmChatHandoff();
   setSessionView(target, 'terminal');
+  selectionBeforeView = null;
   if (currentView !== 'grid') setView('grid');
   if (maximized) setMaximized(false);
   boardOpen.drop();
@@ -6809,6 +7378,21 @@ function tryFulfillScheduledFocus() {
 
 // --- websocket control ---
 let ws;
+// The server only sends a graph when something in it changed (graph-frame-gate.js),
+// so an idle board can go minutes without one. What the board draws still moves
+// with the clock — "5m ago" tags, a comment-less snooze waking, a finished
+// sub-agent leaving the recent window — so after this long without a frame the
+// last graph is re-applied as-is, which is exactly what an unchanged server tick
+// used to do.
+const IDLE_REAPPLY_MS = 30000;
+let idleReapply = null;
+function armIdleReapply() {
+  clearTimeout(idleReapply);
+  idleReapply = setTimeout(() => {
+    if (latestGraph) applyGraph(latestGraph);
+    armIdleReapply();
+  }, IDLE_REAPPLY_MS);
+}
 export function send(obj) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify(obj));
@@ -6820,11 +7404,11 @@ function connect() {
   // A #view=search deep link runs setView before this socket exists, so its
   // index-status request is dropped. Re-issue it on open — which also refreshes
   // the view after a reconnect.
-  ws.onopen = () => { if (currentView === 'search') onEnterSearchView(); };
+  ws.onopen = () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); };
   ws.onclose = () => { chatView.onConnectionClosed(); setTimeout(connect, 1500); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === 'graph') applyGraph(msg.graph);
+    if (msg.type === 'graph') { applyGraph(msg.graph); armIdleReapply(); }
     // A `config` is the first frame of every connect, so it is also how the board
     // learns a restart finished: the pending install/removal notes describe a
     // boot snapshot that has just been replaced, and the process holding them is
@@ -6833,8 +7417,8 @@ function connect() {
       sessionsDir = msg.sessionsDir || '';
       homeDir = msg.homeDir || '';
       canRestartServer = Boolean(msg.canRestart);
-      noteConfigUpdate(msg);
       extRestarting = false;
+      noteConfigUpdate(msg);
       extPendingRemoval.clear();
       extPendingInstall = '';
       remountExtensions();
@@ -6863,6 +7447,10 @@ function connect() {
       extInstallProgress = progressText(msg.phase, msg);
       extInstallPhase = msg.phase;
       if (msg.phase === 'failed' || msg.phase === 'cancelled' || msg.phase === 'done') extInstallBusy = false;
+      if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) {
+        if (msg.phase === 'done' && extRestartOnDone) extRestartAfterUpdates = true;
+        extRestartOnDone = false;
+      }
       if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) clearExtTransientLater();
       remountExtensions();
       if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) runNextExtUpdate();
@@ -6899,7 +7487,11 @@ function connect() {
         delete extUpdateStatuses[msg.id];
         if (extBgUpdates) extBgUpdates = { ...extBgUpdates, extensions: extBgUpdates.extensions.filter((e) => e.id !== msg.id) };
         remountUpdatePanel();
-        if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
+        // `automatic`: the update tick applied it for an extension that opted
+        // in, and every tab is told, so the restart button is up wherever the
+        // human looks next.
+        if (msg.automatic) toast(`Auto-updated ${msg.id}. ${canRestartServer ? EXT_AUTO_RESTART_NOTE : EXT_RESTART_NOTE}`);
+        else if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
         else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
         else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
       }
@@ -6922,14 +7514,15 @@ function connect() {
     }
     else if (msg.type === 'ext-update-status') applyExtUpdateStatus(msg);
     else if (msg.type === 'update-status') { applyUpdateStatus(msg); updatePhase = 'status'; remountUpdatePanel(); }
-    else if (msg.type === 'update-applied') { updatePhase = 'restarting'; remountUpdatePanel(); }
+    // `extensions`: the restart loads auto-applied extension updates only.
+    else if (msg.type === 'update-applied') { updatePhase = 'restarting'; if (msg.extensions) extRestarting = true; remountUpdatePanel(); remountExtensions(); }
     else if (msg.type === 'install-drift') { installDrift = msg.drift || null; remountUpdatePanel(); }
     else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
     // The board is about to lose this socket; ws.onclose already retries every
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
-    else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); }
+    else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
-    else if (msg.type === 'agents') { if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
+    else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
     else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);
@@ -7002,11 +7595,11 @@ function connect() {
         okLabel: 'Force delete',
       }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true }); });
     }
-    else if (msg.type === 'forked') { pendingSelect = msg.sessionId; tryFulfillPending(); }
+    else if (msg.type === 'forked') { setPendingSelect(msg.sessionId); tryFulfillPending(); }
     // Search adopted an off-board conversation onto the board (or found it already
     // had a card). The card id is minted server-side, so this reply is the first
     // moment the view knows what to jump to — same deferred select as a fork.
-    else if (msg.type === 'adopted') { pendingSelect = msg.sessionId; tryFulfillPending(); onAdopted(msg); }
+    else if (msg.type === 'adopted') { setPendingSelect(msg.sessionId); tryFulfillPending(); onAdopted(msg); }
     else if (msg.type === 'adopt-failed') { toast(msg.message); onAdoptFailed(msg); }
     else if (msg.type === 'resume-needs-dir') {
       const forking = msg.action === 'fork';
@@ -7021,8 +7614,9 @@ function connect() {
         else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true });
       });
     }
+    else if (msg.type === 'open-terminal' && msg.presentation === 'dialog') openTerminalDialog({ terminalId: msg.terminalId, command: msg.command || '', title: msg.title || '' });
     else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
-    else if (msg.type === 'styles') setCustomStyles(msg.styles);
+    else if (msg.type === 'styles') { setCustomStyles(msg.styles); refreshThemeRows(); }
     else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
     else if (msg.type === 'chat') chatView.onChatReply(msg);
     else if (msg.type === 'message-result') chatView.onMessageResult(msg);
@@ -7042,6 +7636,7 @@ function connect() {
       dispatchWaiter.ack(msg);
     }
     else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
+    else if (msg.type === 'ext-early-adopter-result') settleEarlyAdopter(msg);
     else if (msg.type === 'restart-tmux-done') {
       tmuxRestarting = false;
       toast('tmux restarted. Resume your sessions to bring them back.');
@@ -7087,11 +7682,9 @@ function focusSuppresses(scope, ownerId) {
 function notify(session) {
   if (focusSuppresses('session', session.sessionId)) return;
   const body = `${session.label}${session.waitingFor ? ' — ' + session.waitingFor : ''}`;
-  // Same opt-in as the finish chime (one setting, two tones) — this path is
-  // already focus-suppressed above, so it needs no gate of its own.
-  if (getSetting('soundOnFinish')) playSound('needs-you');
+  slots.notificationCue('needs-you', extApi);
   if (window.Notification && Notification.permission === 'granted') {
-    const n = new Notification('Claude needs you', { body });
+    const n = new Notification(needsYouTitle(session), { body });
     n.onclick = () => { window.focus(); selectSession(session.sessionId); };
   }
   toast(`⚠ ${body}`, false);
@@ -7181,19 +7774,33 @@ function onPrComments(msg) {
 }
 // Re-theme a live terminal when the style changes — registered here so theme.js
 // stays decoupled from the terminal's `current` handle.
-onThemeChange(() => { if (current) current.term.options.theme = readTerminalTheme(); });
+onThemeChange((theme) => {
+  if (current) current.term.options.theme = readTerminalTheme();
+  if (current) syncTermFont(current.term, current.fit);
+  if (currentShellTerm) syncTermFont(currentShellTerm.term, currentShellTerm.fit);
+  slots.themeChanged(theme);
+});
 initStyles();
 
 // Constructed once; openTerminal attaches it to each agent terminal it opens.
 const terminalImagePaste = createTerminalImagePaste({ send, toast });
 // The dispatch dialog's intent box. Off for schedules: a staged image is pruned
 // within a week, and a schedule can fire long after that.
-const extImageStaging = createExtImageStaging({ send });
+// One browser-side preview map for the dialog's chips. A paste is remembered on
+// upload; an extension's staged image only when api.openDispatch hands its name
+// to the dialog (adoptBlob), so the same thumbnail shows either way.
+const stagedPreviews = createStagedPreviews();
+const extImageStaging = createExtImageStaging({ send, previews: stagedPreviews });
 const intentImages = createIntentImages({
   input: document.getElementById('m-intent'),
   listEl: document.getElementById('m-intent-attachments'),
   send,
   toast,
+  previews: stagedPreviews,
+  // The overlay, not the card: .modal-card scrolls and has a backdrop-filter,
+  // either of which would clip or re-anchor the fixed-position preview.
+  previewHost: modal,
+  adoptBlob: (name) => extImageStaging.takeBlob(name),
   enabled: () => !scheduleMode() && modalMode !== 'subagent',
 });
 
@@ -7214,7 +7821,7 @@ const chatView = initChatView({
   },
   // The same destination the terminal's .md link provider uses, so a path opens
   // the same preview whichever view it was clicked in.
-  onOpenFile: (path) => openFilePreview(path),
+  onOpenFile: (path, sessionId) => openFile(path, { sessionId, source: 'chat' }),
   // Looked up per click/render rather than pushed in on mount: the chat view only
   // ever needs the cwd of the session it is showing, and latestSessions is already
   // the live answer.
@@ -7227,6 +7834,6 @@ if (window.Notification && Notification.permission === 'default') Notification.r
 // a #session link is fulfilled once the first graph contains it.
 initSearchView();
 if (hashView()) setView(hashView());
-else pendingSelect = hashSessionId();
+else setPendingSelect(hashSessionId());
 populateModelSelect();
 connect();

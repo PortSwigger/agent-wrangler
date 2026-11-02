@@ -1,4 +1,4 @@
-import { resolveResumeDir, launchCwd } from '../../transcript-reader.js';
+import { adapterFor } from '../../agents/index.js';
 import { NEVER_MESSAGED_FORK_MSG } from '../../session-manager.js';
 import { ensureLaunchDir } from './resume-dir.js';
 
@@ -20,10 +20,11 @@ export const forkHandler = {
     // A never-messaged fork has no persisted conversation to branch from (and its
     // branch point was never saved). Refuse with guidance rather than launch a
     // `--resume` that dies on "No conversation found". (Caught by the router → client.)
-    if (parentEntry?.forkedFrom && !(await launchCwd(sourceId))) {
+    const history = adapterFor(parentEntry?.agent ?? s?.agent).history;
+    if (history.requiresResumeFile && parentEntry?.forkedFrom && !(await history.launchCwd(sourceId))) {
       throw new Error(NEVER_MESSAGED_FORK_MSG);
     }
-    const dir = await resolveResumeDir(msg.sessionId, {
+    const dir = await history.resolveResumeDir(sourceId, {
       graphCwd: s?.cwd,
       entryCwd: parentEntry?.cwd,
     });

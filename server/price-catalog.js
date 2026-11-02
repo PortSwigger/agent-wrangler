@@ -214,6 +214,19 @@ export function priceFor(provider, model) {
 // The newest first-party Claude model of a family, as a display name:
 // newestClaudeName('opus') → "Opus 5.5". Null when the catalog has none.
 export function newestClaudeName(family) {
+  const best = newestClaudeVersion(family);
+  if (!best) return null;
+  const name = family[0].toUpperCase() + family.slice(1);
+  return `${name} ${best[0]}${best[1] >= 0 ? `.${best[1]}` : ''}`;
+}
+
+// The same newest model as its full id ("claude-opus-5-5"), or null.
+export function newestClaudeId(family) {
+  const best = newestClaudeVersion(family);
+  return best ? `claude-${family}-${best[0]}${best[1] >= 0 ? `-${best[1]}` : ''}` : null;
+}
+
+function newestClaudeVersion(family) {
   const re = new RegExp(`^claude-${family}-(\\d{1,2})(?:-(\\d{1,2}))?$`);
   let best = null;
   for (const id of Object.keys(tables.anthropic)) {
@@ -222,9 +235,7 @@ export function newestClaudeName(family) {
     const v = [Number(m[1]), m[2] == null ? -1 : Number(m[2])];
     if (!best || compareVersions(v, best) > 0) best = v;
   }
-  if (!best) return null;
-  const name = family[0].toUpperCase() + family.slice(1);
-  return `${name} ${best[0]}${best[1] >= 0 ? `.${best[1]}` : ''}`;
+  return best;
 }
 
 // The families of first-party Claude models in the bundled snapshot, each with its

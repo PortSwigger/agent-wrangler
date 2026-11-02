@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import ptyPkg from 'node-pty';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { attachEnv } from './session-manager.js';
 import { gentleKill } from './tmux-gentle-kill.js';
@@ -23,19 +23,53 @@ const { spawn: ptySpawn } = ptyPkg;
 // survives and WebLinksAddon linkifies it client-side; that's why "direct" links work
 // but these don't). Advertise `hyperlinks` on the socket before attaching so the
 // sequence survives to xterm. `terminal-features` is a persistent server-global, so
-// guard the append (each `set -ag` of the same entry grows the array unboundedly);
-// running it per-attach — like ensurePtyHelperExecutable below — self-heals every
+// guard the append (each `set -ag` of the same entry grows the array unboundedly).
+//
+// Asked asynchronously, and once per tmux server rather than per attach: a
+// synchronous ask froze the event loop, and with it the board and every open
+// terminal, for as long as a busy tmux took to answer. The setting lives as long as
+// the server, so a socket's first attach, and its first after the server restarts,
+// is the one that asks. Checking each attach's own socket still self-heals every
 // socket (generated, legacy, default) and both agent + shell terminals without a
-// restart. A tmux hiccup here only costs un-clickable links, never the attach.
-function ensureHyperlinksFeature(tmuxBin, tmuxSocket) {
+// restart. A tmux hiccup here only costs un-clickable links, never the attach, and
+// the next attach asks again.
+const hyperlinkAsks = new Map(); // socket name -> { id, asked } for the server last asked
+
+// Which server is listening on `socket`, by its socket file: tmux(1) keeps it in
+// $TMUX_TMPDIR (or /tmp)/tmux-<uid>/, and each new server binds a fresh one, so the
+// inode and mtime change exactly when the server does. Null when unreadable; such a
+// server is asked on every attach instead.
+async function tmuxServerId(socket, env) {
   try {
-    const args = tmuxSocketArgs(tmuxSocket);
-    const cur = execFileSync(tmuxBin, [...args, 'show', '-s', 'terminal-features'],
-      { timeout: 2000, encoding: 'utf8' });
-    if (/hyperlinks/.test(cur)) return;
-    execFileSync(tmuxBin, [...args, 'set', '-ag', 'terminal-features', 'xterm*:hyperlinks'],
-      { timeout: 2000, stdio: 'ignore' });
-  } catch { /* leave links un-clickable rather than fail the attach */ }
+    const st = await fs.promises.stat(path.join(env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`, socket || 'default'));
+    return `${st.ino}:${st.mtimeMs}`;
+  } catch {
+    return null;
+  }
+}
+
+async function askForHyperlinks(tmuxBin, socket, env) {
+  const args = tmuxSocketArgs(socket);
+  const opts = { timeout: 2000, env };
+  const { stdout } = await exec(tmuxBin, [...args, 'show', '-s', 'terminal-features'], opts);
+  if (/hyperlinks/.test(stdout)) return;
+  await exec(tmuxBin, [...args, 'set', '-ag', 'terminal-features', 'xterm*:hyperlinks'], opts);
+}
+
+// Resolves once that server has been asked; never rejects. Attaches that arrive
+// while the ask is in flight share it.
+async function ensureHyperlinksFeature(tmuxBin, socket, env) {
+  const id = await tmuxServerId(socket, env);
+  const known = hyperlinkAsks.get(socket);
+  if (known && known.id === id) return known.asked;
+  // Settles to whether later attaches may skip asking: only once a server we can
+  // recognise again has answered.
+  const asked = askForHyperlinks(tmuxBin, socket, env).then(() => id !== null, () => false);
+  hyperlinkAsks.set(socket, { id, asked });
+  asked.then((keep) => {
+    if (!keep && hyperlinkAsks.get(socket)?.asked === asked) hyperlinkAsks.delete(socket);
+  });
+  return asked;
 }
 
 function isExecutable(file) {
@@ -77,9 +111,12 @@ export function ensurePtyHelperExecutable() {
 // so switching/re-attaching is cheap and browser+iTerm2 can co-attach.
 // When `?terminalId=<id>` is present the connection is for a plain-shell terminal
 // (from the terminal registry) rather than an agent session. On disconnect the
-// shell tmux session is killed and removed from the registry.
-export function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, sessionFromGraph, terminalRegistry }) {
+// shell tmux session is killed and removed from the registry, unless it is
+// `detachable` (an extension's dialog terminal): that one keeps running and
+// leaves the registry only once its shell has exited.
+export async function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, sessionFromGraph, terminalRegistry }) {
   let term;
+  let closed = false;
   let shellTermEntry = null; // set when this is a shell-terminal connection
   // Force a full repaint of THIS tmux client (its pts/tty is the tmux client
   // name). tmux repaints on attach/resize on its own, but a same-size re-assert
@@ -92,6 +129,49 @@ export function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, 
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => refreshClient(), delay);
   };
+  const onMessage = (raw) => {
+    const s = raw.toString();
+    if (s.startsWith('{')) {
+      try {
+        const m = JSON.parse(s);
+        if (m.type === 'resize') {
+          // Always swallow a resize frame (never echo it as input); act only on
+          // real positive dims, and force a repaint after the reflow settles so
+          // the screen resyncs even when the size was unchanged.
+          if (m.cols > 0 && m.rows > 0) {
+            term.resize(m.cols, m.rows);
+            scheduleRefresh(50);
+          }
+          return;
+        }
+      } catch {
+        /* not a control frame — treat as input */
+      }
+    }
+    term.write(s);
+  };
+  // Listen before tmux is asked about hyperlinks below, which can take a while: a
+  // close in that window calls the attach off, and what the client sends in it (its
+  // open-time resize, early keystrokes) waits in `early` for the pty.
+  const early = [];
+  ws.on('message', (raw) => (term ? onMessage(raw) : early.push(raw)));
+  // Detach this client when the socket closes. For shell terminals, kill the
+  // backing tmux session and remove it from the registry so it doesn't linger.
+  ws.on('close', () => {
+    closed = true;
+    clearTimeout(refreshTimer);
+    try { term?.kill(); } catch { /* already gone */ }
+    if (shellTermEntry) {
+      const { terminalId, tmuxName, socket, detachable } = shellTermEntry;
+      const tmux = (a) => exec(sessionManager.tmuxBin, [...tmuxSocketArgs(socket), ...a]);
+      if (detachable) {
+        tmux(['has-session', '-t', `=${tmuxName}`]).catch(() => terminalRegistry?.remove(terminalId));
+        return;
+      }
+      terminalRegistry?.remove(terminalId);
+      gentleKill(tmux, { session: tmuxName }).catch(() => {});
+    }
+  });
   try {
     const { searchParams } = new URL(req.url, 'http://localhost');
     const terminalId = searchParams.get('terminalId');
@@ -104,7 +184,7 @@ export function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, 
         ws.close();
         return;
       }
-      shellTermEntry = { terminalId, tmuxName: reg.tmuxName, socket: reg.socket };
+      shellTermEntry = { terminalId, tmuxName: reg.tmuxName, socket: reg.socket, detachable: Boolean(reg.detachable) };
       tmuxTarget = reg.tmuxName;
       tmuxSocket = reg.socket;
       cwd = [reg.cwd].find((d) => d && fs.existsSync(d)) || process.cwd();
@@ -123,8 +203,11 @@ export function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, 
     }
 
     const tmuxDir = path.dirname(sessionManager.tmuxBin);
+    const env = attachEnv(process.env, tmuxDir);
     ensurePtyHelperExecutable();
-    ensureHyperlinksFeature(sessionManager.tmuxBin, tmuxSocket);
+    await ensureHyperlinksFeature(sessionManager.tmuxBin, tmuxSocket, env);
+    // The client left while tmux answered: an attach now would have no one to read it.
+    if (closed) return;
     // `|| 120/32` would promote a transient 0 (fit ran before layout settled) to a
     // bogus default; take a query size only when it's a real positive count.
     const qCols = Number(searchParams.get('cols'));
@@ -134,7 +217,7 @@ export function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, 
       cols: qCols > 0 ? qCols : 120,
       rows: qRows > 0 ? qRows : 32,
       cwd,
-      env: attachEnv(process.env, tmuxDir),
+      env,
     });
     const tmuxBin = sessionManager.tmuxBin;
     refreshClient = () => {
@@ -162,39 +245,8 @@ export function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socketFor, 
   // session, so reattaching costs nothing and loses nothing.
   term.onData((d) => { sendGuarded(ws, d); });
   term.onExit(() => ws.readyState === 1 && ws.close());
-  ws.on('message', (raw) => {
-    const s = raw.toString();
-    if (s.startsWith('{')) {
-      try {
-        const m = JSON.parse(s);
-        if (m.type === 'resize') {
-          // Always swallow a resize frame (never echo it as input); act only on
-          // real positive dims, and force a repaint after the reflow settles so
-          // the screen resyncs even when the size was unchanged.
-          if (m.cols > 0 && m.rows > 0) {
-            term.resize(m.cols, m.rows);
-            scheduleRefresh(50);
-          }
-          return;
-        }
-      } catch {
-        /* not a control frame — treat as input */
-      }
-    }
-    term.write(s);
-  });
   // A fresh attach paints on its own, but force one repaint shortly after so a
   // same-size onopen re-assert (a node-pty no-op) still lands a clean screen.
   scheduleRefresh(200);
-  // Detach this client when the socket closes. For shell terminals, kill the
-  // backing tmux session and remove it from the registry so it doesn't linger.
-  ws.on('close', () => {
-    clearTimeout(refreshTimer);
-    try { term.kill(); } catch { /* already gone */ }
-    if (shellTermEntry) {
-      const { terminalId, tmuxName, socket } = shellTermEntry;
-      terminalRegistry?.remove(terminalId);
-      gentleKill((a) => exec(sessionManager.tmuxBin, [...tmuxSocketArgs(socket), ...a]), { session: tmuxName }).catch(() => {});
-    }
-  });
+  for (const raw of early.splice(0)) onMessage(raw);
 }

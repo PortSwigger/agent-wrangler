@@ -4,27 +4,21 @@
 // rather than imported so this module stays DOM-free and independently
 // testable.
 
+import { descendantsOf } from './archive-cascade.js';
+
 // Sessions `sessionId` could attach under: same task/bucket (including two
 // sessions both with no task, where taskOf returns null for both), excluding
-// itself and its CURRENT parent (re-attaching to the same parent is a no-op,
-// not a real option). Alphabetical by label.
-//
-// Nesting only renders one level deep (see attachError's file comment in
-// server/control/handlers/attach.js), so this also excludes any target that
-// is itself already nested — attaching under one would land `sessionId` at
-// depth 2, which the board can't draw — and returns [] outright when
-// `sessionId` currently has its own same-task children, since moving it would
-// push THEM to depth 2 instead. That second check also makes a dedicated
-// cycle guard unnecessary here: a session with no children of its own can't
-// have any descendants to cycle through, so self-exclusion is enough. TODO:
-// relax both once recursive nested rendering ships.
+// itself, its CURRENT parent (re-attaching to the same parent is a no-op, not a
+// real option), and its own descendants at any depth (attaching under one would
+// make a cycle). Nesting has no depth limit, so a target that is itself nested
+// is fine, and a session with children of its own can move — they go with it.
+// Alphabetical by label.
 export function attachCandidates(sessionId, sessions, taskOf) {
   const taskId = taskOf(sessionId);
-  const hasOwnChildren = sessions.some((c) => c.parentSession === sessionId && taskOf(c.sessionId) === taskId);
-  if (hasOwnChildren) return [];
   const currentParent = sessions.find((s) => s.sessionId === sessionId)?.parentSession;
+  const below = new Set(descendantsOf(sessionId, sessions).map((d) => d.sessionId));
   return sessions
-    .filter((c) => c.sessionId !== sessionId && c.sessionId !== currentParent && taskOf(c.sessionId) === taskId && !c.parentSession)
+    .filter((c) => c.sessionId !== sessionId && c.sessionId !== currentParent && !below.has(c.sessionId) && taskOf(c.sessionId) === taskId)
     .sort((a, b) => (a.label || '').localeCompare(b.label || ''));
 }
 

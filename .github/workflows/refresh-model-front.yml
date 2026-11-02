@@ -1,0 +1,113 @@
+name: Refresh model front
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: refresh-model-front
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Set refresh paths
+        run: |
+          echo "FRESH_INPUTS=$RUNNER_TEMP/front-inputs.json" >> "$GITHUB_ENV"
+          echo "DIFF_REPORT=$RUNNER_TEMP/front-diff.txt" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex@0.160.1
+        continue-on-error: true
+      - name: Refresh catalog before reading benchmark sources
+        run: npm run gen:catalog
+      - name: Read permitted sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=$(node --input-type=module -e 'import { newestCommittedInputs } from "./scripts/read-front-sources.mjs"; console.log(newestCommittedInputs())')
+          echo "BASE_INPUTS=$base" >> "$GITHUB_ENV"
+          node scripts/read-front-sources.mjs --base "$base" --out "$FRESH_INPUTS" | tee "$RUNNER_TEMP/front-sources.txt"
+          cat "$RUNNER_TEMP/front-sources.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Compare inputs
+        id: diff
+        run: bash scripts/check-front-refresh.sh
+      - name: Generate data and PR report
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          node .claude/skills/evaluate-model/evaluate.js "$FRESH_INPUTS" --write > "$RUNNER_TEMP/front-evaluation.txt"
+          dated=$(node --input-type=module -e 'import fs from "node:fs"; console.log(JSON.parse(fs.readFileSync(process.env.FRESH_INPUTS)).read)')
+          cp "$FRESH_INPUTS" ".claude/skills/evaluate-model/inputs-$dated.json"
+          {
+            echo 'Refresh of permitted benchmark sources and the LiteLLM price catalog. OpenAI sweeps are retained for manual reading; no OpenAI posts are fetched.'
+            echo
+            echo 'Review the source flags and each agent-set front below. This PR is never auto-merged.'
+            echo
+            echo '```text'
+            cat "$DIFF_REPORT" "$RUNNER_TEMP/front-sources.txt" "$RUNNER_TEMP/front-evaluation.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/front-pr.md"
+          cat "$RUNNER_TEMP/front-evaluation.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Test refreshed data
+        if: steps.diff.outputs.changed == 'true'
+        run: npm test
+      - name: Mint token via idcat
+        if: steps.diff.outputs.changed == 'true'
+        id: idcat
+        uses: ./.github/actions/idcat-token
+        with:
+          target-repository: PortSwigger/agent-wrangler
+      - name: Open or update the refresh PR
+        if: steps.diff.outputs.changed == 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.idcat.outputs.token }}
+        run: |
+          branch=automation/refresh-model-front
+          git config user.name 'agent-wrangler-bot'
+          git config user.email 'agent-wrangler-bot@users.noreply.github.com'
+          git checkout -B "$branch"
+          git add .claude/skills/evaluate-model/inputs-*.json public/model-front-data.json server/price-catalog.snapshot.json server/agents/codex-models.snapshot.json agent-skills/skills/spawn-session/SKILL.md
+          git commit -m 'Refresh model front data'
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          url=$(gh pr list --head "$branch" --state open --json url --jq '.[0].url')
+          if [ -z "$url" ]; then
+            url=$(gh pr create --head "$branch" --base main --title 'Refresh model front data' --body-file "$RUNNER_TEMP/front-pr.md")
+          else
+            gh pr edit "$url" --body-file "$RUNNER_TEMP/front-pr.md"
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Notify Slack of refresh PR
+        if: steps.pr.outputs.url != '' && env.SLACK_WEBHOOK_URL != ''
+        env:
+          PR_URL: ${{ steps.pr.outputs.url }}
+        run: |
+          jq -n --arg text "Model front refresh needs review (including manual source flags): $PR_URL" '{text: $text}' \
+            | curl --fail -sS -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+      - name: Notify Slack of failure
+        if: failure() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n --arg text "Model front refresh failed: $RUN_URL" '{text: $text}' \
+            | curl --fail -sS -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"

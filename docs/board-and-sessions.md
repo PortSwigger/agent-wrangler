@@ -3,12 +3,64 @@
 This is the operational reference for controls that are easy to miss. See the README for installation
 and product concepts.
 
+## API errors
+
+A live Claude session whose latest transcript message is a terminal API error shows **ERROR**
+on its board card and chat header. The chat notice carries the error text. Connection failures
+allow another message to retry; blocking errors such as an expired login keep the composer disabled
+and offer **Terminal →** to resolve the cause. Ordinary permission prompts show **REPLY**.
+A new user turn or a successful assistant response clears the transcript error signal.
+
+This detection uses Claude's structured `isApiErrorMessage` flag, including errors followed by
+system bookkeeping. Codex's current rollout reader has no equivalent terminal API-error signal;
+API-error wording in an ordinary reply does not trigger this label. Codex continues to use its
+pane and turn markers for status.
+
 ## Dispatch a session
 
 Choose **New session**, then select a task, folder, agent, and model. Leave the folder blank for a
 scratch session; a new path is created at launch. The folder starts filled in from the task's
 existing sessions, or from **Settings → Sessions → Default folder for new sessions** when the task
 has none.
+
+The dialog places task controls on the left and the model picker on the right, stacking them on
+narrow screens. **Intent / first prompt** starts at twelve rows and can be resized vertically.
+**Schedule a session** uses the same layout, with timing and action controls on the task side.
+Choose **Existing session** to show the target session and optional message instead of launch controls.
+When a schedule starts, its notification shows the schedule name. For an unnamed schedule, it shows
+the target session's title, falling back to its short session id if no title is available.
+
+The selected model, effort and Quality, Cost and Time bars stay above three collapsible sections.
+**Recommended models** opens by default on first use: drag its slider or use the arrow keys to
+choose a recommended setting, cheapest to best. **Cost & quality graph** plots measured quality
+against cost per task on a log scale; click an available point to select it. Both views include
+settings recommended for their speed as well as their quality and cost. **All models** holds the
+full agent/model and effort dropdowns, including settings outside the recommendations.
+
+Opening a section does not change the selection. The dialog remembers the last section you opened
+in this browser, including across page reloads. Settings outside the recommended set show a notice
+without highlighting a slider stop or graph point. Their known measurements remain visible. When
+no benchmark data is available, a message overlays empty metric tracks; partially measured settings
+show their known values and mark individual missing estimates **Unavailable**. The verdict beside
+the model name compares quality, cost and time against settings your installed agents offer; hover
+a truncated name or verdict to read it in full.
+
+Dots and slider stops share stable colours for each provider/model, named in the key below the
+chart. Hover or focus a dot or stop to read its model and effort without selecting it; activate it
+to select. Selection has an outer ring; unavailable settings are grey and clicking one explains
+what is missing without changing the selection.
+
+The dialog remembers your last explicit agent, model and effort in this browser, including
+**Auto**, when you use the slider, chart, **All models** or a quick-launch button. Cancelling,
+closing and reloading keep that choice. Saved schedules and values supplied by extensions take
+precedence without replacing your preference; forks inherit their source session's settings.
+If a remembered agent or model is unavailable, the dialog uses a live default. Unsupported
+remembered effort falls back to **Auto**.
+
+**Auto** uses the effort reported by the agent; without a reported effort or benchmark row, the
+pick is unscored. The chart's **ⓘ** button opens its benchmark sources. Sections expand and scroll
+into view when opened, respecting reduced-motion settings. **Advanced options** starts collapsed
+and holds auto-compaction and runtime controls.
 
 Optional launch controls include:
 
@@ -17,7 +69,8 @@ Optional launch controls include:
 - **Effort:** select a provider-supported reasoning level.
 - **Auto-compaction threshold:** set the working-context budget.
 - **Runtime:** launch Claude locally, inside the project's devcontainer, or on a runtime an enabled extension adds. Codex currently runs on the
-  host.
+  host. **Settings → Sessions → Default runtime for new sessions** picks which one is pre-selected; a runtime that is
+  no longer offered or can't run the chosen agent falls back to Local.
 - **Workflow:** run the issue-to-PR autopilot in a fresh worktree.
 - **Quick launch:** use a model button or `Command+1` through `Command+3`. An extension can replace these with its own quick launches (see [extensions](extensions.md)); its buttons and shortcuts then take their place.
 
@@ -29,7 +82,8 @@ attachable terminal only after being resumed through the board.
 Tasks are board columns for related sessions. Drag cards between tasks; moving a parent also moves its
 nested descendants.
 
-While you drag a session, each card it can nest under shows a **Nest** zone on its right-hand side.
+While you drag a session, each card and child row it can nest under shows a **Nest** zone on its
+right-hand side. Its own descendants never do.
 Drop on the zone to make the session that card's child. Dropping anywhere else reorders cards as usual.
 The dashed placeholder shows the shape the board will take: a child row under the target while you hover
 its Nest zone, or a full card when a child is about to become a top-level session.
@@ -38,8 +92,9 @@ When a task shows its cards in more than one column (focus mode), the dragged ca
 dimmed, and a blue line shows where it will land. The left or right half of the card under the cursor
 picks the side, and the Nest zone sits in the middle of the card.
 
-Child rows can be dragged too: up or down within their parent to reorder them, into another parent's
-children or onto its Nest zone to move them there, or out among the top-level cards to promote them.
+Child rows can be dragged too: up or down among their siblings to reorder them, into another
+top-level parent's children or onto any row's or card's Nest zone to move them there, or out among the
+top-level cards to promote them. A dragged row takes its own children with it.
 Workflow workers can be reordered but stay with their run. A workflow run nested under another session
 keeps its violet box and workflow symbol.
 
@@ -54,10 +109,28 @@ Each task also has:
 Use task memory for durable decisions, the checklist for session progress, and `AGENTS.md` or
 `CLAUDE.md` for repository instructions.
 
+Minimised tasks appear as pills in the bottom tray. Click one to restore it, Shift-click one to
+focus it, or choose **Restore all**. Core keeps at least one task visible, and newly created tasks
+join the visible board.
+
+An enabled extension can own this strip and replace **Minimise** in both task menus, including
+Unassigned, and add an action beside **New task** in the blank task-view right-click menu.
+Its strip stays visible even when every task is shown; **Focus** remains available.
+Enabling a tray extension preserves tasks you already minimised. Disabling it returns the core tray
+and **Minimise** entries with the current view intact. If a tray contribution fails, core falls back
+to another registered tray or its own controls.
+
 ## Read a session card
 
 Cards show status, model, cost, context budget, links, PR/CI state, checklist progress, and native
-sub-agents. Nested children are compact rows unless **Full view** is enabled.
+sub-agents. Nested children are compact rows unless **Full view** is enabled. Nesting has no depth
+limit: a child's own children sit indented beneath it on the same spine, stepping in a level each
+until the indent stops growing after four. Attaching a session moves its children with it.
+
+A Codex card's working or idle status comes from Codex's own turn-end notification plus its session log,
+with the terminal screen as a tie-breaker. Wrangler sets `notify` when it launches Codex and forwards the
+event to any `notify` command already in `~/.codex/config.toml`. The latest turn end for each thread is
+kept under `~/.agent-wrangler/codex-turns/`.
 
 The **parent** controls board nesting and can change; the **spawner** records who launched the session
 and cannot. **Attach to…** and **Promote to full session** change nesting, not launch lineage.
@@ -68,7 +141,7 @@ Right-click a card or open **Actions** to find:
 
 - **Rename** the board label.
 - **Fork** into a separate card, optionally with a divergent first prompt.
-- **Peer review session…**, using the complementary provider when available.
+- **Peer review session…**, using an available different provider, preferring Claude before Codex.
 - **View diff** for uncommitted, branch, and PR review.
 - **Copy reference** (right-click only) to paste a session into another agent's chat; the agent reads it with `read_session_transcript`.
 - **Open terminal** for a separate shell in the session directory.
@@ -88,6 +161,9 @@ prompts, images, Markdown previews, drafts, model switching for idle Claude sess
 interrupt-and-edit, context display, and suggested prompts. Use Terminal for permission prompts,
 streaming output, or direct TUI control.
 
+Rendered Markdown never loads a remote image by itself: an image an agent writes is shown as a link
+to it, so opening a message or file sends nothing to that site until you click.
+
 Paste or drop an image into the Chat composer, the agent terminal, or the new-session dialog's
 **Intent / first prompt** box (local launches; the session starts and then receives the images with
 its first prompt): screenshots, Copy Image from a
@@ -95,6 +171,17 @@ browser or Slack, image files copied in Finder, a selection containing images, o
 URL. BMP and other formats the browser can draw are converted to PNG before upload; HEIC and TIFF are
 converted to PNG by the server, which needs macOS. An image on another site is fetched by your browser
 only if that site allows it; otherwise use Copy Image instead.
+In the new-session dialog, each attached image's chip shows a thumbnail; hover over it or focus it
+for a larger preview. While a preview is open, Escape closes the preview rather than the dialog.
+
+When a message resumes a dormant Codex session, Wrangler waits for its terminal
+input to be ready, including during an active turn. If a draft, dialog or unreadable
+terminal prevents delivery, the chat reports the uncertainty and keeps your message
+available to retry.
+
+Automated terminal notifications (mail and PR/check nudges) wait while the composer holds an unsent
+draft, including multiline text. Once it is clear, Wrangler submits the notification automatically.
+Claude mail delivered through its messaging socket does not touch the terminal composer.
 
 **Open terminal** creates an independent shell; it does not replace or interrupt the agent terminal.
 
@@ -116,11 +203,18 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 **Settings** has Appearance, Sessions, Automation, Extensions, and Shortcuts tabs, covering:
 
 - Theme, terminal side, terminal font size, and chat font size.
-- Child-card and Chat defaults, the default folder for new sessions, and completion sounds.
-- PR auto-fix, Codex folder trust, and optional extraction of archive learnings into task memory.
-- Extension installation, enablement, updates, and extension-specific settings. The per-session
-  checklist is a builtin extension, so its on/off switch lives here (an older `checklistEnabled: false`
-  is carried over automatically).
+- Child-card and Chat defaults, and the default folder for new sessions.
+- PR auto-fix, Codex and Claude folder trust, and optional extraction of archive learnings into task memory.
+  Codex folder trust uses the resolved directory path, so a symlink and its target share one trust
+  entry. If the directory cannot be resolved or trust cannot be saved, the launch reports an error.
+  Claude folder trust covers scratch sessions and worktrees of a repo you already trust in Claude: the
+  worktree inherits the repo's trust (just that worktree, never its parent folder), so a job or
+  auto-session in a worktree doesn't stall on "Do you trust this folder?". A worktree of an untrusted
+  repo still asks.
+- Extension installation, enablement, updates, and extension-specific settings. Sounds offers
+  shared audio cues, uploaded audio files, and previews. The per-session checklist is a builtin
+  extension, so its on/off switch lives here (an older `checklistEnabled: false` is carried over
+  automatically).
 - Board-navigation axis preference and the complete keyboard-shortcut reference.
 
 ## Keyboard shortcuts

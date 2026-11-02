@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MailboxStore, SETTLE_MS } from './mailbox-store.js';
-import { sweepDueSettles, createMailSettleSweeper, createDeferralTracker, DEFER_LOG_AFTER_MS } from './mail-runner.js';
+import { sweepDueSettles, createMailSettleSweeper, createDeferralTracker, DEFER_LOG_AFTER_MS, DRAFT_SURFACE_AFTER_MS } from './mail-runner.js';
+import { createPaneDeferral } from './pane-deferral.js';
 
 function tmpFile() {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-mailrunner-')), 'mailbox.json');
@@ -53,6 +54,138 @@ test('sweepDueSettles: fan-in batch — one notification for the whole batch, no
   await sweepDueSettles(d, SETTLE_MS);
   assert.equal(d.sent.length, 1);
   assert.match(d.sent[0].text, /2 messages\. Call read_mail now/);
+});
+
+// Model a successful socket write whose identical peer content is silently
+// suppressed. Consumption (read_mail's drain) happens separately from sending.
+for (const drainBetweenBatches of [true, false]) {
+  test(`Claude successive equal-count batches survive identical-content suppression: ${drainBetweenBatches ? 'draining between batches' : 'another batch before drain'}`, async (t) => {
+    const file = tmpFile();
+    t.after(() => fs.rmSync(path.dirname(file), { recursive: true, force: true }));
+    let store = new MailboxStore(file);
+    const d = deps({
+      mailStore: store,
+      live: { CARD1: { tmux: 'cc_one', socket: '/s' } },
+      entries: { CARD1: { agent: 'claude', liveSessionId: 'LIVE1' } },
+    });
+    const seen = new Set();
+    const accepted = [];
+    const attempts = [];
+    d.findSocket = () => ({ socketPath: '/s/claude.sock', keyPath: '/s/claude.key' });
+    d.sendSocket = async (_target, text) => {
+      attempts.push(text);
+      if (seen.has(text)) return; // A completed write does not prove consumption.
+      seen.add(text);
+      accepted.push(text);
+    };
+    const ids = [];
+    const drained = [];
+    const addBatch = (now) => {
+      for (const body of ['first private body', 'second private body']) {
+        ids.push(store.append('CARD1', { from: 'same_sender', body }, now).id);
+      }
+    };
+    const notify = async (now, count) => {
+      const before = accepted.length;
+      assert.equal(await sweepDueSettles(d, now), 1);
+      assert.equal(accepted.length, before + 1, 'Claude must accept each notification despite identical-content suppression');
+      assert.match(accepted.at(-1), new RegExp(`^\\[Agent Wrangler\\] 📬 New mail — ${count} messages\\. Call read_mail now, then continue your work\\.`));
+      assert.doesNotMatch(accepted.at(-1), /same_sender|private body|mail_/);
+      assert.equal(store.unreadMessages('CARD1').length, count, 'sending leaves mail unread');
+      assert.equal(store.boxes.get('CARD1').lastNotifiedAt, now);
+      assert.equal(await sweepDueSettles(d, now + 1), 0, 'no duplicate settle delivery');
+    };
+    const drain = () => {
+      drained.push(...store.drain('CARD1'));
+      assert.equal(store.unreadMessages('CARD1').length, 0);
+      assert.deepEqual(store.drain('CARD1'), [], 'mail is consumed only once');
+    };
+
+    addBatch(0);
+    await notify(SETTLE_MS, 2);
+    if (drainBetweenBatches) drain();
+    addBatch(SETTLE_MS + 1);
+    await notify(2 * SETTLE_MS + 1, drainBetweenBatches ? 2 : 4);
+    drain();
+    // Reload the mailbox between batches, as after a server restart.
+    store = d.mailStore = new MailboxStore(file);
+    addBatch(2 * SETTLE_MS + 2);
+    await notify(3 * SETTLE_MS + 2, 2);
+    // Drain the reloaded store, as the recipient would after restart.
+    drained.push(...d.mailStore.drain('CARD1'));
+    assert.equal(d.mailStore.unreadMessages('CARD1').length, 0);
+    assert.deepEqual(drained.map((m) => m.id), ids);
+    assert.ok(d.mailStore.list('CARD1').every((m) => m.state === 'read'));
+    assert.equal(attempts.length, 3);
+    assert.equal(new Set(attempts).size, 3);
+    assert.deepEqual(d.sent, [], 'the socket path never touches the pane');
+  });
+}
+
+test('Codex mail held for a draft survives restart and delivers once during the same active turn', async () => {
+  const file = tmpFile();
+  const store = new MailboxStore(file);
+  store.append('CARD1', { from: 'sess_a', body: 'one' }, 0);
+  const d = deps({
+    mailStore: store,
+    live: { CARD1: { tmux: 'cx_one', socket: '/s' } },
+    entries: { CARD1: { agent: 'codex' } },
+  });
+  const E = '\x1b';
+  const working = `${E}[1m•${E}[0m Working (20m · esc to interrupt)`;
+  let composer = `${E}[1m›${E}[0m a human draft`;
+  d.paneDeferral = createPaneDeferral({
+    tmuxFor: d.tmuxFor, socketFor: d.socketFor, agentFor: () => 'codex',
+    statusFor: () => 'working', capture: async () => `${working}\n${composer}`,
+    sendText: d.sendText,
+  });
+
+  assert.equal(await sweepDueSettles(d, SETTLE_MS), 0);
+  assert.equal(store.list('CARD1')[0].state, 'unread');
+  assert.deepEqual(d.paneDeferral.pending('CARD1'), []);
+  assert.deepEqual(d.sent, []);
+
+  d.mailStore = new MailboxStore(file);
+  d.mailStore.append('CARD1', { from: 'sess_b', body: 'two' }, SETTLE_MS + 1);
+  composer = `${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
+  assert.equal(await sweepDueSettles(d, 2 * SETTLE_MS), 1);
+  assert.equal(d.sent.length, 1);
+  assert.match(d.sent[0].text, /2 messages\. Call read_mail now/);
+  assert.equal(d.mailStore.boxes.get('CARD1').lastNotifiedAt, 2 * SETTLE_MS);
+  assert.equal(d.mailStore.unreadMessages('CARD1').length, 2, 'notification does not mark mail read');
+  assert.equal(await sweepDueSettles(d, 3 * SETTLE_MS), 0);
+  assert.equal(d.sent.length, 1, 'the notified batch must not be pasted again');
+});
+
+test('a working Codex draft surfaces the held-mail warning and clears it on delivery', async () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('CARD1', { from: 'sess_a', body: 'guidance' }, 0);
+  const d = deps({
+    mailStore: store,
+    live: { CARD1: { tmux: 'cx_one', socket: '/s' } },
+    entries: { CARD1: { agent: 'codex' } },
+  });
+  const E = '\x1b';
+  let composer = `${E}[1m›${E}[0m a human draft`;
+  d.deferrals = createDeferralTracker({ log: () => {} });
+  d.paneDeferral = createPaneDeferral({
+    tmuxFor: d.tmuxFor, socketFor: d.socketFor, agentFor: () => 'codex',
+    statusFor: () => 'working',
+    capture: async () => `${E}[1m•${E}[0m Working (3m • esc to interrupt)\n${composer}`,
+    sendText: d.sendText,
+  });
+  for (let now = SETTLE_MS; now <= SETTLE_MS + DRAFT_SURFACE_AFTER_MS; now += SETTLE_MS) {
+    assert.equal(await sweepDueSettles(d, now), 0);
+    assert.equal(d.deferrals.draftBlocked('CARD1', now), now === SETTLE_MS + DRAFT_SURFACE_AFTER_MS);
+  }
+  assert.deepEqual(d.sent, []);
+
+  composer = `${E}[1m›${E}[0m ${E}[2mAsk Codex to do anything${E}[0m`;
+  const deliveredAt = DRAFT_SURFACE_AFTER_MS + 2 * SETTLE_MS;
+  assert.equal(await sweepDueSettles(d, deliveredAt), 1);
+  assert.equal(d.deferrals.draftBlocked('CARD1', deliveredAt), false);
+  assert.equal(d.sent.length, 1);
+  assert.equal(store.unreadMessages('CARD1').length, 1, 'notification does not read the mail');
 });
 
 test('sweepDueSettles: deferred live delivery stays unread and retries the latest batch', async () => {
@@ -316,4 +449,37 @@ test('reading part of a held batch keeps its deferral episode running', () => {
   assert.deepEqual(logs, []);
   t.deferred('CARD1', 'pane classified working', 60_000, ['mail_c']);
   assert.deepEqual(logs, ['[mail] notification to CARD1 deferred 60s: pane classified working']);
+});
+
+test('a draft-held notification is surfaced only after the threshold', () => {
+  const t = createDeferralTracker({ log: () => {} });
+  const draft = 'composer not confirmed empty';
+  for (let now = 0; now < DRAFT_SURFACE_AFTER_MS; now += 10_000) {
+    t.deferred('CARD1', draft, now);
+    assert.equal(t.draftBlocked('CARD1', now), false, `${now}ms`);
+  }
+  t.deferred('CARD1', draft, DRAFT_SURFACE_AFTER_MS);
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS), true);
+});
+
+test('the draft notice clears on delivery and when retries stop', () => {
+  const t = createDeferralTracker({ log: () => {} });
+  for (let now = 0; now <= DRAFT_SURFACE_AFTER_MS; now += 10_000) t.deferred('CARD1', 'composer not confirmed empty (after beforeSend)', now);
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS), true);
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS + 60_000), false, 'stale episode');
+  t.resolved('CARD1');
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS), false);
+});
+
+test('other deferral reasons never surface the draft notice', () => {
+  const t = createDeferralTracker({ log: () => {} });
+  for (let now = 0; now <= DRAFT_SURFACE_AFTER_MS * 2; now += 10_000) t.deferred('CARD1', 'pane classified working', now);
+  assert.equal(t.draftBlocked('CARD1', DRAFT_SURFACE_AFTER_MS * 2), false);
+});
+
+test('a draft reason only counts from when it began, not from a busy start', () => {
+  const t = createDeferralTracker({ log: () => {} });
+  for (let now = 0; now < 100_000; now += 10_000) t.deferred('CARD1', 'pane classified working', now);
+  t.deferred('CARD1', 'composer not confirmed empty', 100_000);
+  assert.equal(t.draftBlocked('CARD1', 100_000), false);
 });

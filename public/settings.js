@@ -28,7 +28,7 @@
 // The modal is split into focused tabs. Appearance includes bespoke widgets owned
 // by theme.js/app.js; Shortcuts renders the keybinding registry via shortcuts.js.
 
-import { esc } from './util.js';
+import { esc, anyModalOpen } from './util.js';
 import { shortcutsHtml } from './shortcuts.js';
 import { keybindings } from './keybindings.js';
 
@@ -67,6 +67,14 @@ export const SETTINGS = [
     default: true,
   },
   {
+    id: 'trustClaudeLaunchCwd',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Skip Claude\'s trust-folder prompt for scratch sessions and worktrees',
+    help: 'Blank-cwd Claude launches run in a fresh folder under ~/.agent-wrangler/sessions, which would ask "Do you trust this folder?" every time. This marks that sessions folder as trusted in Claude\'s ~/.claude.json before launch, which also covers every scratch folder inside it. A worktree of a repo you already trust in Claude (the repo or a folder above it) is trusted too, just that worktree, never its parent folder, so jobs and auto-sessions don\'t stall on the prompt. A worktree of a repo you haven\'t trusted, and your own project folders, are never touched. Off restores Claude\'s normal prompt.',
+    default: true,
+  },
+  {
     id: 'archiveReviewEnabled',
     type: 'toggle',
     scope: 'server',
@@ -83,11 +91,12 @@ export const SETTINGS = [
     default: false,
   },
   {
-    id: 'soundOnFinish',
+    id: 'prModelFooter',
     type: 'toggle',
-    label: 'Play a sound when a session finishes',
-    help: 'A short rising chime when a session stops working, and a lower double-beep when one starts waiting on you. Per-browser rather than shared, since it is the machine you are sitting at that should make the noise; while focus mode is on, other tasks stay silent like their toasts do.',
-    default: false,
+    scope: 'server',
+    label: 'Tag new PRs with the session\'s model',
+    help: 'When a session opens a PR with gh pr create, add a last line to its description naming the model the session is running, e.g. "Model: claude-opus-5-5", so you can search PRs by model with gh search prs \'"Model: claude-opus-5-5" in:body\'. A description that already has a Model: line is left alone. This never attaches the PR to a card.',
+    default: true,
   },
   {
     id: 'childFullViewByDefault',
@@ -115,6 +124,17 @@ export const SETTINGS = [
     default: '',
   },
   {
+    id: 'defaultRuntime',
+    type: 'segmented',
+    scope: 'server',
+    // Replaced on every graph push by setRuntimeOptions: the built-ins plus each
+    // enabled extension's runtimes, read off the dispatch dialog's own select.
+    options: [{ value: 'local', label: 'Local (host)' }, { value: 'devcontainer', label: 'Devcontainer' }],
+    label: 'Default runtime for new sessions',
+    help: 'Pre-selects the Runtime field when you start a session. If the runtime is no longer offered (its extension is off) or cannot run the chosen agent, the session starts on Local. Resumed and forked sessions keep their own runtime.',
+    default: 'local',
+  },
+  {
     id: 'terminalSide',
     type: 'segmented',
     options: [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }],
@@ -136,7 +156,7 @@ export const SETTINGS = [
     type: 'toggle',
     scope: 'server',
     label: 'Restart idle sessions after an update',
-    help: 'Running sessions keep the MCP tools and skills they launched with. When this is on, sessions marked "older version" restart one at a time after 10 idle minutes with no terminal, background job or snooze. Each restart re-reads the conversation, so the next turn pays for a new prompt cache.',
+    help: 'Running sessions keep the MCP tools and skills they launched with. When this is on, sessions launched before the latest update restart one at a time after 10 idle minutes with no terminal, background job or snooze. Each restart re-reads the conversation, so the next turn pays for a new prompt cache.',
     default: false,
   },
 ];
@@ -150,14 +170,14 @@ export const SETTINGS_TABS = [
     id: 'sessions',
     label: 'Sessions',
     settingIds: [
-      'subagentsExpandedByDefault', 'soundOnFinish',
-      'childFullViewByDefault', 'chatViewDefault', 'defaultSessionCwd',
+      'subagentsExpandedByDefault',
+      'childFullViewByDefault', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
     ],
   },
   {
     id: 'automation',
     label: 'Automation',
-    settingIds: ['autoFixPrChecksDefault', 'trustCodexLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
+    settingIds: ['autoFixPrChecksDefault', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
   },
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
@@ -211,6 +231,22 @@ export function setExtensionDefs(list) {
   // those rows carry this def's id, so the delegated flip handler below still
   // finds them here.
   return defs;
+}
+
+// Re-draw the Appearance tab's theme rows in place when the theme list changes
+// while the modal is open (an extension contributing themes flipped on or off).
+// A closed modal needs nothing: it renders the rows fresh on open.
+export function refreshThemeRows() {
+  const rows = document.querySelector('#settings-modal #settings-panel-appearance .theme-rows');
+  if (rows) rows.innerHTML = appearanceBridge.themeRowsHtml();
+}
+
+// The Default runtime row's options, [{ value, label }], from whatever the
+// dispatch dialog's Runtime select offers right now. Called on every graph push,
+// like setExtensionDefs; the modal renders on open, so the row is always current.
+export function setRuntimeOptions(list) {
+  const def = byId.get('defaultRuntime');
+  if (def && Array.isArray(list) && list.length) def.options = list;
 }
 
 // One note element per row, created on first flip and rewritten after. Never
@@ -316,9 +352,12 @@ function rowHtml(def) {
       </div>`;
   }
   if (def.type === 'segmented') {
+    // A stored value no option offers (a server-scoped one isn't validated on
+    // read) shows as the default, which is what a consumer falls back to.
+    const cur = def.options.some((o) => o.value === on) ? on : def.default;
     const opts = def.options.map((o) => `<button type="button" role="radio"
-          class="setting-seg-opt${o.value === on ? ' active' : ''}"
-          aria-checked="${o.value === on ? 'true' : 'false'}"
+          class="setting-seg-opt${o.value === cur ? ' active' : ''}"
+          aria-checked="${o.value === cur ? 'true' : 'false'}"
           data-value="${esc(o.value)}">${esc(o.label)}</button>`).join('');
     return `<div class="setting-row" data-id="${esc(def.id)}">
         <div class="setting-copy">
@@ -555,7 +594,7 @@ export function initSettings({ server, appearance, onChange, extensions, updates
       e.preventDefault();
       return;
     }
-    if (document.querySelector('#modal:not(.hidden), [id$="-modal"]:not(.hidden)')) return;
+    if (anyModalOpen(document)) return;
     e.preventDefault();
     open();
   }, true);
@@ -572,10 +611,15 @@ export function initSettings({ server, appearance, onChange, extensions, updates
       selectTab(body, tab.dataset.tab);
       return;
     }
-    const themeRow = e.target.closest('.theme-row');
+    // The picker's own buttons only: an extension's panel may draw the same
+    // .theme-row markup (api.themeButtonHtml) and handle its clicks itself.
+    const themeRow = e.target.closest('#settings-panel-appearance .theme-row');
     if (themeRow) {
       appearanceBridge.onThemeSelect(themeRow.dataset.id);
-      body.querySelectorAll('.theme-row').forEach((r) => r.classList.toggle('active', r === themeRow));
+      body.querySelectorAll('#settings-panel-appearance .theme-row').forEach((r) => {
+        r.classList.toggle('active', r === themeRow);
+        r.setAttribute('aria-pressed', String(r === themeRow));
+      });
       return;
     }
     const fontOpt = e.target.closest('.fontsize-opt');

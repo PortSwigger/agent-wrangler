@@ -468,12 +468,27 @@ test('an api-error message sets apiError, so a session left there is not silentl
   assert.equal(state.apiError, true);
 });
 
+test('an api-error message keeps its own text, and a login error is kept too', () => {
+  const state = { totals: {}, subAgents: [], lastActivity: 0, summary: null, apiError: false };
+  scanLine(apiErrorLine(), state);
+  assert.equal(state.apiErrorText, 'API Error: Connection closed mid-response. The response above may be incomplete.');
+  scanLine(JSON.stringify({
+    type: 'assistant',
+    message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'Login expired · Please run /login' }] },
+    error: 'authentication_failed',
+    isApiErrorMessage: true,
+  }), state);
+  assert.equal(state.apiError, true);
+  assert.equal(state.apiErrorText, 'Login expired · Please run /login');
+});
+
 test('apiError clears once the conversation moves past the error (retry or a new user turn)', () => {
   const state = { totals: {}, subAgents: [], lastActivity: 0, summary: null, apiError: false };
   scanLine(apiErrorLine(), state);
   assert.equal(state.apiError, true);
   scanLine(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Picking up where I left off.' }] } }), state);
   assert.equal(state.apiError, false);
+  assert.equal(state.apiErrorText, null);
 });
 
 test('apiError is unaffected by message-less lines (e.g. a compaction/summary marker)', () => {
@@ -845,6 +860,7 @@ test('analyze reports apiError when a transcript ends on a dropped API connectio
   ));
   const r = await analyze('ends-in-api-error', projects);
   assert.equal(r.apiError, true);
+  assert.equal(r.apiErrorText, 'API Error: Connection closed mid-response. The response above may be incomplete.');
 });
 
 test('analyze reports apiError false once a later turn moves past the dropped connection', async () => {
@@ -860,6 +876,7 @@ test('analyze reports apiError false once a later turn moves past the dropped co
   ));
   const r = await analyze('recovered-from-api-error', projects);
   assert.equal(r.apiError, false);
+  assert.equal(r.apiErrorText, null);
 });
 
 // --- fork cost: a fork's transcript REPLAYS the parent's whole history --------

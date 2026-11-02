@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { isOwnedTmux, adapterForProcess, adapterForContainerProcess } from './agents/index.js';
+import { isOwnedTmux, adapterFor, adapterForProcess, adapterForContainerProcess } from './agents/index.js';
 import { gentleKill } from './tmux-gentle-kill.js';
 import { tmuxSocketArgs } from './tmux-socket.js';
 import { boundedPs } from './bounded-ps.js';
@@ -412,16 +412,17 @@ export function trustDialogState(paneText) {
 // the trailing-middot form silently stopped matching once the pane was
 // narrower than the full "· N shell(s) · …" segment, while requiring only the
 // leading middot survives down to the word "shell(s)" itself being cut.
+// A running Monitor tool shows in the same footer ("· 1 monitor", or
+// "· 1 shell, 1 monitor" alongside a shell) and dies with the pane just the
+// same, so it counts as a background job too; it gets the same leading-middot
+// rule, which a monitor-only footer needs because no shell segment precedes it.
 // Codex's "N background terminal(s) running · /ps to view · /stop to close" is
 // distinctive enough on its own (verified against a real `codex` session).
 // Killing the pane kills these jobs regardless of agent; only Claude's CLI
 // surfaces an ambiguous message about it on the next resume ("No completion
 // record was found") — Codex degrades gracefully instead — but both leave the
 // job dead all the same, so both are worth the same suspend/archive caution.
-const BACKGROUND_SHELL_PATTERNS = {
-  claude: /·\s*\d+\s+shells?\b/,
-  codex: /\d+\s+background terminals?\s+running/i,
-};
+
 
 // A user's custom statusline (see the `statusline-builder` plugin) renders
 // independently SELECTABLE and REORDERABLE components joined by " | " — e.g.
@@ -501,8 +502,12 @@ export function paneContextPercent(paneText) {
   return pct >= 0 && pct <= 100 ? pct : null;
 }
 
+export function classifyPane(paneText, agent, options, parse = classify) {
+  return adapterFor(agent).terminal.classify?.(paneText, options, parse) || { status: 'unknown' };
+}
+
 export function hasBackgroundShell(paneText, agent = 'claude') {
-  const pattern = BACKGROUND_SHELL_PATTERNS[agent];
+  const pattern = adapterFor(agent).terminal.backgroundShellPattern;
   if (!pattern) return false;
   const recent = stripAnsi(paneText).split('\n').filter((l) => l.trim()).slice(-12).join('\n');
   return pattern.test(recent);
@@ -564,15 +569,15 @@ async function pasteBlock(name, text, socket = '', run = tmux) {
 // and it fails safe by reporting NOT empty when it cannot tell. Returns true only
 // on a confirmed-empty composer, so a caller can decide what to do when the pane
 // will not come clean rather than pasting into it blind.
-export async function clearComposer(name, socket = '', { capture = capturePaneStyled, run = tmux, maxPresses = 12 } = {}) {
+export async function clearComposer(name, socket = '', { capture = capturePaneStyled, run = tmux, maxPresses = 12, agent } = {}) {
   for (let i = 0; i <= maxPresses; i += 1) {
-    if (paneComposerIsEmpty(await capture(name, 6, socket))) return true;
-    await run(socket, ['send-keys', '-t', name, 'C-u']);
+    if (paneComposerIsEmpty(await capture(name, 6, socket), agent)) return true;
+    await run(socket, ['send-keys', '-t', name, ...adapterFor(agent).terminal.clearKeys]);
     // The TUI redraws asynchronously, so re-reading immediately would judge the
     // previous frame and burn the whole budget in a few milliseconds.
     await new Promise((r) => setTimeout(r, 60));
   }
-  return paneComposerIsEmpty(await capture(name, 6, socket));
+  return paneComposerIsEmpty(await capture(name, 6, socket), agent);
 }
 
 // Prefill a pane's input with text but DON'T submit it — no Enter, so a human reviews

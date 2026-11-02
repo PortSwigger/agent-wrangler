@@ -6,7 +6,7 @@
 }
 #memory-modal.hidden { display: none; }
 .memory-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 12px; }
-.memory-text { min-height: 320px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; }
+.memory-text { min-height: 320px; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12.5px; line-height: 1.55; }
 
 /* Title + Write·Split·Preview toggle share the modal's first row. */
 .memory-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }

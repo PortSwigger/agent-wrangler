@@ -1,3 +1,4 @@
+import { billingProviderChoices } from './provider-metadata.js';
 // The Usage & spend dashboard: a bottom-rail panel (modelled on the schedules
 // panel) showing a stacked time series of spend ($) or token usage, bucketed
 // day / week / month and SLICED by task, model, or token type. All data comes from
@@ -39,11 +40,7 @@ const SLICES = [
   { v: 'model', label: 'Model', dim: 'model' },
   { v: 'type', label: 'Token type', dim: 'type' },
 ];
-const PROVIDERS = [
-  { v: '', label: 'All providers' },
-  { v: 'anthropic', label: 'Anthropic' },
-  { v: 'openai', label: 'OpenAI' },
-];
+
 
 // Range and granularity are INDEPENDENT: rangeSel (a RANGE_PRESETS key) + from/to
 // (custom day keys, or null) resolve to the absolute {start, end} sent on the wire;
@@ -88,7 +85,7 @@ const dimensionMap = (bucket) => dimensionMapOf(selectedBucket(bucket), dimensio
 const rankedMembers = () => {
   if (dimension() === 'type') return members();
   if (dimension() === 'model' && !state.provider) {
-    return rankProviderAwareModels(members(), state.data?.buckets, state.metric, ['anthropic', 'openai'], 1, CAT_VARS.length);
+    return rankProviderAwareModels(members(), state.data?.buckets, state.metric, billingProviderChoices().slice(1).map((p) => p.v), 1, CAT_VARS.length);
   }
   return rankMembersOf(members(), providerBuckets(), state.metric, dimension()).filter((m) => m.value > 0);
 };
@@ -185,7 +182,7 @@ function loadPrefs() {
   state.granularity = ['day', 'week', 'month'].includes(g) ? g : 'day';
   let provider = null;
   try { provider = localStorage.getItem(PROVIDER_KEY); } catch { /* ignore */ }
-  state.provider = PROVIDERS.some((p) => p.v === provider) ? provider : '';
+  state.provider = billingProviderChoices().some((p) => p.v === provider) ? provider : '';
 }
 
 // Re-coerce the granularity against whatever the (possibly just-changed) range allows,
@@ -267,7 +264,7 @@ function renderControls() {
   }));
 
   renderDropdown('usage-range-dd', RANGE_PRESETS, state.rangeSel, onRangeSelectChange);
-  renderDropdown('usage-provider-dd', PROVIDERS, state.provider, (v) => {
+  renderDropdown('usage-provider-dd', billingProviderChoices(), state.provider, (v) => {
     state.provider = v;
     state.filter = null;
     persistProvider();
@@ -328,8 +325,8 @@ function renderSummary() {
     const est = document.createElement('div');
     est.className = 'usage-est';
     est.textContent = state.metric === 'usd'
-      ? `includes ~${fmtUsd(selectedTotals.estimatedUsd)} estimated Codex spend`
-      : 'includes estimated Codex usage';
+      ? `includes ~${fmtUsd(selectedTotals.estimatedUsd)} estimated API-equivalent spend`
+      : 'includes estimated usage';
     box.appendChild(est);
   }
   // Advisor consults are already inside the total above (real spend, never

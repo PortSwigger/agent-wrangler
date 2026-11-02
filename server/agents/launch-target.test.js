@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  adapterFor, agentError, modelError, effortError, launchTargetError, knownAgentIds, modelChoicesText,
+  supportsRemoteControl, adapterFor, agentError, modelError, effortError, launchTargetError, knownAgentIds, modelChoicesText,
 } from './index.js';
 
 test('a known agent/model pair passes, and an absent model is not a rejection', () => {
@@ -89,4 +89,21 @@ test('launchTargetError checks effort after agent and model', () => {
   assert.match(launchTargetError('claude', 'gpt-5.5', 'max'), /Unknown model/);
   assert.match(launchTargetError('claude', 'opus', 'ultra'), /Unknown effort/);
   assert.equal(launchTargetError('claude', 'opus', undefined), null);
+});
+
+test('Remote Control registry requires explicit true capability opt-in and never falls back to Claude', () => {
+  assert.equal(supportsRemoteControl('claude'), true);
+  for (const id of ['codex', 'future-agent', undefined, null, '']) assert.equal(supportsRemoteControl(id), false);
+  const adapter = adapterFor('claude');
+  const prev = adapter.supportsRemoteControl;
+  try {
+    delete adapter.supportsRemoteControl;
+    assert.equal(supportsRemoteControl('claude'), false, 'missing capability is unsupported');
+    for (const flag of [false, undefined, null, 'true', 1, {}]) {
+      adapter.supportsRemoteControl = flag;
+      assert.equal(supportsRemoteControl('claude'), false);
+    }
+  } finally {
+    adapter.supportsRemoteControl = prev;
+  }
 });

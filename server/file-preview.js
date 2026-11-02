@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { fileTypeOf } from '../public/file-types.js';
 
 // Pure path validation for GET /file. fs functions are injected so this unit
 // tests without touching disk; server/index.js passes the real ones. Returns an
@@ -10,7 +11,7 @@ export function expandHome(p, homedir) {
 }
 
 export function isMarkdownPath(p) {
-  return /\.(?:md|markdown)$/i.test(p);
+  return fileTypeOf(p)?.kind === 'markdown';
 }
 
 // realpath BEFORE the extension check: a symlink named foo.md pointing at a

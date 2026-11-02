@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { TodoStore, TODOS_FILE } from './store.js';
-import { migrateFromTasks, LEGACY_TASKS_FILE } from './migrate.js';
+import { migrateFromTasks, stripLegacyTodos, LEGACY_TASKS_FILE } from './migrate.js';
 import { todoHandlers } from './handlers.js';
 import { todoTools } from './tools.js';
 
@@ -28,6 +28,16 @@ function pruneOnce(store, host) {
   }
 }
 
+// Sweeps start after the instance lock at boot, so this is where the legacy key
+// leaves tasks.json: a duplicate instance refused the lock never gets here.
+export function stripLegacySweep({ host }) {
+  const store = host.stores.todos;
+  const pending = store.legacyStrip;
+  if (!pending) return;
+  store.legacyStrip = null;
+  stripLegacyTodos(pending);
+}
+
 export default {
   id: 'todos',
   dir,
@@ -45,6 +55,7 @@ export default {
     pruneOnce(store, host);
     return { todos: store.snapshot().todos };
   },
+  sweeps: [{ id: 'strip-legacy', everyMs: 5000, run: stripLegacySweep }],
   onTaskDelete({ taskId, host }) {
     host.stores.todos.dropBucket(taskId);
   },

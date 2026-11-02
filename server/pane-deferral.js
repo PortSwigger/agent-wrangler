@@ -1,3 +1,5 @@
+import { classifyPane } from './tmux-scraper.js';
+import { adapterFor } from './agents/index.js';
 import { sendText as defaultSendText, capturePaneStyled as defaultCapture, classify as defaultClassify } from './tmux-scraper.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
 
@@ -26,6 +28,10 @@ import { paneComposerIsEmpty } from './ghost-suggestion.js';
 // trade for not adding a JSON store for text whose board toast already fired.
 export const MAX_PENDING_PER_CARD = 200;
 
+// The defer reason for a prompt box that holds (or may hold) an unsent draft.
+// Exported so the mail deferral tracker can tell it from a merely busy session.
+export const COMPOSER_BLOCKED_REASON = 'composer not confirmed empty';
+
 // Enough pane history for both composer parsing and the working-state marker.
 const CAPTURE_LINES = 60;
 
@@ -51,34 +57,26 @@ export function createPaneDeferral({
     pending.set(id, q);
   }
 
-  async function composerIsClear(id, tmux, socket) {
-    try {
-      return paneComposerIsEmpty(await capture(tmux, CAPTURE_LINES, socket), agentFor(id));
-    } catch {
-      return false;
-    }
-  }
-
   // Why the pane is not ready for a notification, or null when it is. The
   // reason is for a log line only; every non-null answer defers.
-  async function notifyBlocker(id, tmux, socket) {
+  async function blocker(id, tmux, socket, deferWhileWorking = false, allowWhileWorking = false) {
     try {
+      const agent = agentFor(id);
+      // PR notices can reach an active turn. Mail retains its agent-specific
+      // timing policy, but both routes require clear input and no dialog.
+      const allowWorking = !deferWhileWorking || (allowWhileWorking && adapterFor(agent).terminal.allowWhileWorking);
+      const canNotify = (status) => status === 'idle' || (allowWorking && status === 'working');
       const status = statusFor(id);
-      if (status != null && status !== 'idle') return `board status ${status}`;
+      if (status != null && !canNotify(status)) return `board status ${status}`;
       const pane = await capture(tmux, CAPTURE_LINES, socket);
       if (!pane) return 'pane capture empty';
-      const paneStatus = classify(pane, { tailLines: CAPTURE_LINES, strictWorking: true }).status;
-      if (paneStatus !== 'idle') return `pane classified ${paneStatus}`;
-      if (!paneComposerIsEmpty(pane, agentFor(id))) return 'composer not confirmed empty';
+      const paneStatus = classifyPane(pane, agent, { tailLines: CAPTURE_LINES, strictWorking: true }, classify).status;
+      if (!canNotify(paneStatus)) return `pane classified ${paneStatus}`;
+      if (!paneComposerIsEmpty(pane, agent, { allowWhileWorking: allowWorking })) return COMPOSER_BLOCKED_REASON;
       return null;
     } catch (err) {
       return `pane check failed: ${err?.message || err}`;
     }
-  }
-
-  async function blocker(id, tmux, socket, deferWhileWorking) {
-    if (deferWhileWorking) return notifyBlocker(id, tmux, socket);
-    return (await composerIsClear(id, tmux, socket)) ? null : 'composer not confirmed empty';
   }
 
   // Paste `text` into the card's pane if its composer is confirmed empty,
@@ -86,7 +84,9 @@ export function createPaneDeferral({
   // for a pane the caller already holds (deliverPrNudge's post-resume handle,
   // which tmuxFor may not report yet). `onDefer(reason)` hears why a delivery
   // was held back. Returns 'sent' | 'deferred'.
-  async function deliverOrDefer({ id, text, tmux, socket, deferWhileWorking = false, queueOnDefer = true, beforeSend, onDefer }) {
+  // `allowWhileWorking` lets Codex mail through the notification gate during a
+  // turn, while still checking for dialogs and a confirmed-empty composer.
+  async function deliverOrDefer({ id, text, tmux, socket, deferWhileWorking = false, allowWhileWorking = false, queueOnDefer = true, beforeSend, onDefer }) {
     const defer = (reason) => {
       if (queueOnDefer) enqueue(id, text);
       try { onDefer?.(reason); } catch { /* a reporting hook must never change delivery */ }
@@ -98,7 +98,7 @@ export function createPaneDeferral({
     // capture here — a dormant card must cost zero tmux execs.
     if (!name) return defer('no tmux target');
     const sock = socket ?? socketFor?.(id) ?? '';
-    const before = await blocker(id, name, sock, deferWhileWorking);
+    const before = await blocker(id, name, sock, deferWhileWorking, allowWhileWorking);
     if (before) return defer(before);
     if (beforeSend) {
       try {
@@ -106,7 +106,7 @@ export function createPaneDeferral({
       } catch (err) {
         return defer(`beforeSend failed: ${err?.message || err}`);
       }
-      const after = await blocker(id, name, sock, deferWhileWorking);
+      const after = await blocker(id, name, sock, deferWhileWorking, allowWhileWorking);
       if (after) return defer(`${after} (after beforeSend)`);
     }
     try {
@@ -133,7 +133,9 @@ export function createPaneDeferral({
       const sock = socketFor?.(id) ?? '';
       inFlight.add(id);
       try {
-        if (!(await composerIsClear(id, name, sock))) continue;
+        // Apply the same draft/dialog guard as the initial delivery, including
+        // accepting a clear Codex composer while its current turn is working.
+        if (await blocker(id, name, sock)) continue;
         // Snapshot before the await: anything enqueued while the paste is in
         // flight belongs to the next drain, not this one.
         const lines = [...q];

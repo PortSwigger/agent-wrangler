@@ -72,6 +72,14 @@ test('a codex thinking item with no text renders without a duration or body', ()
   assert.ok(walk(node).some((n) => n._text === 'Thinking'));
 });
 
+test('visible thinking renders as inline prose, not a collapsed chip', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: (t) => `<p>${t}</p>` });
+  const node = dom.itemNode({ type: 'thinking', event: { kind: 'thinking', ts: 1, text: 'reasoning here', visible: true } });
+  const nodes = walk(node);
+  assert.ok(nodes.some((n) => n._html === '<p>reasoning here</p>'));
+  assert.ok(!nodes.some((n) => n.className === 'chat-thinking-chip'));
+});
+
 test('a context item renders its label as a collapsed chip with the text as body', () => {
   const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '' });
   const node = dom.itemNode({ type: 'context', event: { kind: 'context', label: 'Codex goal', text: 'long goal text', ts: 1 } });

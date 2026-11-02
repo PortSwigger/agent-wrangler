@@ -132,6 +132,14 @@ test('a working Codex pane is not safe to notify yet', () => {
   assert.equal(paneComposerIsEmpty([working, codexPlaceholder].join('\n'), 'codex'), false);
 });
 
+test('active-turn mail can opt into an empty Codex composer without changing the default guard', () => {
+  const pane = `${E}[1m•${E}[0m Working (12s · esc to interrupt)\n${codexPlaceholder}`;
+  assert.equal(paneComposerIsEmpty(pane, 'codex', { allowWhileWorking: true }), true);
+  assert.equal(paneComposerIsEmpty(pane, 'codex'), false);
+  const draft = `${E}[1m›${E}[0m half a prompt`;
+  assert.equal(paneComposerIsEmpty(`${pane}\n${draft}`, 'codex', { allowWhileWorking: true }), false);
+});
+
 test('a long-running Codex status with background-terminal text is not an empty composer', () => {
   const working = `${E}[1m•${E}[0m Working ${E}[2m(27m 09s • esc to interrupt)${E}[0m · 1 background terminal running · /ps to…`;
   assert.equal(paneComposerIsEmpty([working, codexPlaceholder].join('\n'), 'codex'), false);
@@ -203,4 +211,15 @@ test('an unreadable capture is never reported as empty', () => {
   assert.equal(paneComposerIsEmpty(''), false);
   assert.equal(paneComposerIsEmpty(null), false);
   assert.equal(paneComposerIsEmpty(`${E}[39msome output with no composer`), false);
+});
+
+test('a blank first composer line does not hide a multiline draft', () => {
+  const pane = [FRAME, composer(''), '  Review this draft before sending.', FRAME].join('\n');
+  assert.equal(paneComposerIsEmpty(pane), false);
+});
+
+test('prompt marks inside a draft cannot masquerade as an empty composer', () => {
+  for (const body of ['Review this draft ❯', 'Review this draft\n  ❯']) {
+    assert.equal(paneComposerIsEmpty([FRAME, composer(body), FRAME].join('\n')), false);
+  }
 });

@@ -1,8 +1,6 @@
 import fsp from 'node:fs/promises';
 import { findConversationFiles as realFindConversationFiles } from '../../conversation-file.js';
-import { createChatScanner } from '../../chat-events.js';
 import { capturePaneStyled, paneModelLabel, paneContextPercent } from '../../tmux-scraper.js';
-import { parseGhostSuggestion } from '../../ghost-suggestion.js';
 import { adapterFor } from '../../agents/index.js';
 
 // The first open reads only the trailing slice of the transcript. sinceOffset
@@ -165,13 +163,13 @@ function bumpEpoch(convId) {
 // straight past tool_use lines it never saw (offset ahead), corrupting
 // `pending` either way. Matching the offset exactly is what guarantees two
 // clients at different points in the stream never share one scanner.
-function getOrCreateScanner(convId, since, agent) {
+function getOrCreateScanner(convId, since, agent, adapter) {
   const cached = scannerCache.get(convId);
   if (cached && since != null && cached.offset === since && cached.agent === agent) {
     touchCache(convId, cached); // mark recently used, keep it alive under LRU pressure
     return cached.scanner;
   }
-  return createChatScanner(agent);
+  return adapter.history.createScanner();
 }
 
 // On-demand, uncached read of one session's conversation. A fresh, TARGETED reply
@@ -211,7 +209,10 @@ export const chatHandler = {
     // does that the terminal cannot.
     const entry = ctx.sessionManager?.entryFor?.(msg.sessionId);
     const convId = node?.liveSessionId || entry?.liveSessionId || msg.sessionId;
-    const agent = (node?.agent || entry?.agent) === 'codex' ? 'codex' : 'claude';
+    const agent = node?.agent ?? entry?.agent ?? 'claude';
+
+    const resolveAdapter = ctx.resolveAdapter || adapterFor;
+    const adapter = resolveAdapter(agent);
 
     // Claude Code's suggested next prompt — the one thing in this view that is
     // not transcript-sourced, because it exists nowhere else (see
@@ -224,15 +225,15 @@ export const chatHandler = {
     // be exactly the wrong-suggestion failure this is built to avoid.
     // One capture, two readings — both are things the pane knows and the
     // transcript does not.
-    const pane = (agent === 'claude' && node?.tmux)
+    const pane = (adapter.terminal.paneMetadata && node?.tmux)
       ? await (ctx.capturePaneStyled || capturePaneStyled)(node.tmux, 6, node.socket || '')
       : '';
-    const suggestion = pane ? parseGhostSuggestion(pane) : null;
+    const suggestion = pane ? adapter.terminal.suggestion(pane) : null;
     // The model as the TUI itself reports it. Needed because a `/model` switch
     // writes nothing to the transcript, so the graph's `modelPill` — built from
     // the last assistant message's model — keeps naming the OLD model until the
     // next turn runs, and the chip ends up contradicting the pane beside it.
-    const modelNow = pane ? paneModelLabel(pane) : null;
+    const modelNow = pane ? adapter.terminal.modelLabel?.(pane, paneModelLabel) ?? null : null;
     // Context-window occupancy. Unlike the model, this has no transcript-derived
     // fallback at all — it is null (chip hidden) whenever it cannot be read, never
     // a guess. Claude: scraped off the SAME pane capture above, when the user's
@@ -242,17 +243,18 @@ export const chatHandler = {
     // ctx seam for tests only, like findConversationFile/capturePaneStyled above —
     // production always calls the real Codex adapter, which reads the real rollout
     // and the real ~/.codex/models_cache.json.
-    const analyzeCodex = ctx.analyzeCodex || ((id) => adapterFor('codex').analyze(id));
-    const contextPercent = agent === 'claude'
-      ? (pane ? paneContextPercent(pane) : null)
-      : (await analyzeCodex(convId).catch(() => null))?.contextPercent ?? null;
+    const analyze = ctx.analyzeProvider || (agent === 'codex' ? ctx.analyzeCodex : null) || ((id) => adapter.analyze(id));
+    const contextPercent = adapter.terminal.contextSource === 'pane'
+      ? (pane ? adapter.terminal.contextPercent?.(pane, paneContextPercent) ?? null : null)
+      : adapter.terminal.contextSource === 'analysis'
+        ? (await analyze(convId).catch(() => null))?.contextPercent ?? null : null;
 
-    const resolved = await findConversationFiles(convId, agent);
+    const resolved = await findConversationFiles(convId, agent, { resolveAdapter });
     // Older handler tests inject the single-file seam; production and new chain
     // tests supply an array. Normalising here leaves the one-file path identical.
     const files = Array.isArray(resolved) ? resolved : (resolved ? [resolved] : []);
     if (!files.length) {
-      if (agent === 'codex' && scannerCache.has(convId)) {
+      if (adapter.history.continuations && scannerCache.has(convId)) {
         scannerCache.delete(convId);
         bumpEpoch(convId);
       }
@@ -276,7 +278,7 @@ export const chatHandler = {
     // Move the epoch before clamping `sinceOffset`, so the client discards this
     // reply and rebuilds instead of repeatedly polling from a stale position.
     const cached = scannerCache.get(convId);
-    if (agent === 'codex' && cached?.segments && chainRebased(cached.segments, segments)) {
+    if (adapter.history.continuations && cached?.segments && chainRebased(cached.segments, segments)) {
       scannerCache.delete(convId);
       bumpEpoch(convId);
     }
@@ -351,7 +353,7 @@ export const chatHandler = {
           // newline is its final byte — EOF, also a legal boundary.)
           offset = start + from;
         } else {
-          scanner = getOrCreateScanner(convId, since, agent);
+          scanner = getOrCreateScanner(convId, since, agent, adapter);
           const complete = buf.subarray(from, lastNl + 1).toString('utf8');
           const tagged = [];
           for (const line of complete.split('\n')) tagged.push(scanner.pushTagged(line));

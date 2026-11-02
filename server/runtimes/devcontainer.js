@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { shellQuote, PR_HOOK_PATH, PR_HOOK_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from '../agents/claude.js';
+import { shellQuote, PR_HOOK_PATH, PR_HOOK_DEP_PATH, PR_FOOTER_PATH, PR_FOOTER_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from '../agents/claude.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillDirs } from '../agent-skills.js';
 import { launchAddDirsOf } from '../launch-context.js';
 import { analyzeLines, usageSince } from '../transcript-reader.js';
@@ -90,11 +90,13 @@ export function launchDirDest(sessionId, index) {
 // The host paths a devcontainer Claude launch injects that must be copied into the
 // container. Each: { src, dest, substitute?, chmodX? }. `substitute` (default true)
 // rewrites the host path → its /tmp/aw-<sid> dest inside the inner command; it's
-// false ONLY for the PR-hook's parser (server/pr-hook.js), whose path never appears
-// in the command — node resolves the .mjs's `../server/pr-hook.js` relative import at
-// runtime, so the file just has to sit at the sibling container location. The two
-// PR-hook files preserve that scripts/ ↔ server/ relative layout; pr-hook.js is
-// dependency-free, so those two files are the whole hook. chmodX marks the .mjs so
+// false for the files the PR hook reaches by relative path, which never appear in
+// the command: its parser (server/pr-hook.js, the .mjs's `../server/pr-hook.js`
+// import), the model footer script it starts beside itself
+// (scripts/pr-model-footer.mjs) and that script's `../server/pr-footer.js`. Each
+// just has to sit at the sibling container location; the four files preserve the
+// scripts/ ↔ server/ layout and import only node builtins, so they are the whole
+// hook. chmodX marks the .mjs so
 // its shebang stays executable after copy. issue-to-pr rides only workflow launches
 // (buildInnerCommand adds its --plugin-dir only then). Every directory the
 // extensions granted (`launchContext.addDirs`) is copied too, and substituted in
@@ -108,6 +110,8 @@ export function launchInputs(sessionId, { workflow = false, launchContext = null
     ...launchAddDirsOf(launchContext).map((src, i) => ({ src, dest: launchDirDest(sessionId, i) })),
     { src: PR_HOOK_PATH, dest: `${base}/scripts/pr-attach-hook.mjs`, chmodX: true },
     { src: PR_HOOK_DEP_PATH, dest: `${base}/server/pr-hook.js`, substitute: false },
+    { src: PR_FOOTER_PATH, dest: `${base}/scripts/pr-model-footer.mjs`, substitute: false },
+    { src: PR_FOOTER_DEP_PATH, dest: `${base}/server/pr-footer.js`, substitute: false },
   ];
   if (workflow) inputs.push({ src: ISSUE_TO_PR_SKILL_DIR, dest: `${base}/issue-to-pr` });
   // An extension's skill is a --plugin-dir of its own (agents/claude.js), and

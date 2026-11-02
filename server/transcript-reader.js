@@ -314,7 +314,7 @@ export async function activityInRange(sessionId, startMs, endMs, projectsDir = P
 }
 
 function emptyState(transcript, since = 0) {
-  return { transcript, since, offset: 0, totals: {}, subAgentTotals: {}, advisorTotals: {}, subAdvisorTotals: {}, subAgents: [], legacyAgents: new Map(), subFiles: new Map(), leftover: '', lastActivity: 0, summary: null, aiTitle: null, currentModel: null, seenUsageIds: new Set(), apiError: false };
+  return { transcript, since, offset: 0, totals: {}, subAgentTotals: {}, advisorTotals: {}, subAdvisorTotals: {}, subAgents: [], legacyAgents: new Map(), subFiles: new Map(), leftover: '', lastActivity: 0, summary: null, aiTitle: null, currentModel: null, seenUsageIds: new Set(), apiError: false, apiErrorText: null };
 }
 
 // Add one per-model totals bag into another (the shape addUsage builds), so the
@@ -424,7 +424,12 @@ export function scanLine(line, state) {
   // real turn (retry or a new user message) overwrites it back to false.
   // Sidechain lines (a legacy inline sub-agent's own turns) are excluded — its
   // error is the sub-agent's problem, not the parent conversation's.
-  if (!entry.isSidechain) state.apiError = Boolean(entry.isApiErrorMessage);
+  // The error's own text rides along so the board can say which error it was
+  // and whether waiting it out can help (see state-reader's apiErrorPromotion).
+  if (!entry.isSidechain) {
+    state.apiError = Boolean(entry.isApiErrorMessage);
+    state.apiErrorText = state.apiError ? textOf(msg.content) : null;
+  }
   // Claude Code writes one transcript line per content block (thinking/text/tool_use)
   // of a single assistant turn, each repeating the same usage for that one API call.
   // Dedup by message.id so a multi-block turn is billed once, not 2-3x; an id-less
@@ -885,5 +890,6 @@ function summarise(state) {
     aiTitle: state.aiTitle || null,
     currentModel: state.currentModel || null,
     apiError: Boolean(state.apiError),
+    apiErrorText: state.apiErrorText || null,
   };
 }

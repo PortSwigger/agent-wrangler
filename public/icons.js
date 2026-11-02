@@ -1,3 +1,4 @@
+import { providerMetadataFor } from './provider-metadata.js';
 // Inline SVG glyphs shared across the board UI. All theme via currentColor and
 // share the `.icon` sizing so a row of them reads at one weight (mixing these
 // with variable-width unicode/emoji looked ragged). Pure strings — this module
@@ -70,6 +71,9 @@ export const PROMOTE_ICON =
 // Lucide "link" — the Attach action (nest a session under another).
 export const ATTACH_ICON =
   '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+// Lucide "search" — the add pane's search box over the GitHub browser.
+export const SEARCH_ICON =
+  '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
 // Lucide "chevron-right" — the disclosure arrow on a context-menu row that
 // opens a flyout submenu (e.g. "Attach to…") rather than running an action.
 export const CHEVRON_RIGHT_ICON =
@@ -152,8 +156,8 @@ const AGENT_ICONS = { claude: CLAUDE_ICON, codex: CODEX_ICON };
 // A mapping entry with no `agent` is Claude (the registry default); any unknown
 // agent falls back to the generic chip rather than masquerading as Claude.
 export function agentIcon(agent) {
-  if (!agent) return CLAUDE_ICON;
-  return AGENT_ICONS[agent] || AGENT_FALLBACK_ICON;
+  if (agent == null) return CLAUDE_ICON;
+  return AGENT_ICONS[providerMetadataFor(agent).presentation?.icon] || AGENT_FALLBACK_ICON;
 }
 
 // Lucide "copy" — two overlapping sheets; the copy-to-clipboard affordance.

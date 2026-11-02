@@ -52,7 +52,7 @@ async function connect(deps, caller, opts) {
 test('buildMcpServer advertises the registered tools in tools/list', async () => {
   const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ ext: NO_EXT }) });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'cancel_schedule', 'create_terminal', 'detach_session', 'get_links', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'read_session_transcript', 'remove_links', 'rename_session', 'restore_session', 'restore_task', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'workflow_phase']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'cancel_schedule', 'create_terminal', 'detach_session', 'get_links', 'get_model_front', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'read_session_transcript', 'remove_links', 'rename_session', 'restore_session', 'restore_task', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'update_schedule', 'workflow_phase']);
   await server.close();
 });
 
@@ -87,6 +87,27 @@ test('buildMcpServer runs list_sessions with the bound caller', async () => {
   await server.close();
 });
 
+test('get_model_front is callable through MCP with schema validation and helpful choice errors', async () => {
+  const { client, server } = await connect({ agents: async () => [
+    { id: 'claude', models: [{ value: 'opus', autoEffort: 'high' }], efforts: [{ value: 'high' }] },
+  ] }, null);
+  try {
+    const result = await client.callTool({ name: 'get_model_front', arguments: { pick: { agent: 'claude', model: 'opus' } } });
+    assert.equal(result.structuredContent.pick.resolvedEffort, 'high');
+    assert.equal(result.structuredContent.pick.onFront, true);
+    assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+    for (const args of [{ maxUsd: 0 }, { maxUsd: -1 }, { minQuality: -1 }, { minQuality: 101 }, { pick: { agent: 'claude' } }]) {
+      assert.equal((await client.callTool({ name: 'get_model_front', arguments: args })).isError, true);
+    }
+    const unknown = await client.callTool({ name: 'get_model_front', arguments: { agent: 'typo' } });
+    assert.equal(unknown.isError, true);
+    assert.match(unknown.content[0].text, /Valid agents: claude/);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 test('buildMcpServer runs spawn_session through the SDK schema boundary', async () => {
   const deps = {
     ...fakeDeps(),
@@ -100,6 +121,8 @@ test('buildMcpServer runs spawn_session through the SDK schema boundary', async 
   // The required `intent` is enforced by the schema at the SDK boundary.
   const missing = await client.callTool({ name: 'spawn_session', arguments: {} });
   assert.equal(missing.isError, true);
+  const invalidMode = await client.callTool({ name: 'spawn_session', arguments: { intent: 'x', permission_mode: 'invalid' } });
+  assert.equal(invalidMode.isError, true);
   await server.close();
 });
 
@@ -180,4 +203,62 @@ test('buildMcpServer invokes a tagged tool with its facade and an untagged one w
   assert.equal(seen[0].caller, 'CARD1');
   assert.equal(seen[1].deps, deps);
   assert.equal(seen[1].host, undefined);
+});
+
+test('SDK boundary forwards Remote Control for explicit/default Claude including a Codex caller and rejects invalid options', async () => {
+  const seen = { dispatch: [], assign: [], rebuild: 0 };
+  const deps = {
+    ...fakeDeps(),
+    sessionManager: { entryFor: () => ({ agent: 'codex', model: 'gpt-6-sol', effort: 'ultra' }) },
+    dispatch: async (opts) => { seen.dispatch.push(opts); return { sessionId: 'NEWCARD', cwd: '/a' }; },
+    taskStore: { taskFor: () => ({ id: 'T1' }), assign: (...args) => seen.assign.push(args) },
+    rebuild: async () => { seen.rebuild++; },
+  };
+  const { client, server } = await connect(deps, 'CARD1');
+  try {
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'spawn_session');
+    assert.equal(tool.inputSchema.properties.remote_control.type, 'string');
+    assert.match(tool.inputSchema.properties.remote_control.description, /Claude/);
+    for (const args of [{ agent: 'claude', remote_control: ' Phone ' }, { remote_control: 'Phone' }, {}]) {
+      const out = await client.callTool({ name: 'spawn_session', arguments: { intent: 'x', ...args } });
+      assert.equal(out.isError, undefined);
+    }
+    assert.deepEqual(seen.dispatch.slice(0, 2).map((o) => ({ agent: o.agent, remoteControl: o.remoteControl, model: o.model, effort: o.effort })), [
+      { agent: 'claude', remoteControl: { name: 'Phone' }, model: undefined, effort: undefined },
+      { agent: 'claude', remoteControl: { name: 'Phone' }, model: undefined, effort: undefined },
+    ]);
+    assert.equal('remoteControl' in seen.dispatch[2], false);
+    for (const args of [
+      { remote_control: 42 }, { remote_control: null }, { remote_control: {} },
+      { remote_control: '' }, { remote_control: 'a\nb' }, { remote_control: ' --flag' },
+      { remote_control: 'Phone', agent: 'codex' }, { remote_control: 'Phone', agent: 'unknown' },
+    ]) {
+      const out = await client.callTool({ name: 'spawn_session', arguments: { intent: 'x', ...args } });
+      assert.equal(out.isError, true);
+      if (args.agent) assert.ok(out.content[0].text.includes(args.agent));
+    }
+    assert.equal(seen.dispatch.length, 3);
+    assert.equal(seen.assign.length, 3);
+    assert.equal(seen.rebuild, 3);
+  } finally {
+    await server.close();
+  }
+});
+
+test('update_schedule is callable over MCP and validates patches without writes', async () => {
+  let updated = 0;
+  const stored = { id: 'sch_existing', name: 'Check', enabled: true, when: { kind: 'once', runAt: '2035-01-01T00:00:00.000Z' }, action: { kind: 'session', sessionId: 'CARD1', message: 'Original' }, nextRunAt: '2035-01-01T00:00:00.000Z' };
+  const { client, server } = await connect({ ...fakeDeps(), scheduleStore: { schedules: [stored], update: (id, patch) => { updated++; return { ...stored, ...patch }; } }, rebuild: async () => {} }, 'CARD1');
+  try {
+    for (const arguments_ of [{}, { id: stored.id, name: 2 }, { id: stored.id, kind: 'other' }, { id: stored.id, auto_compact_tokens: 1 }, { id: stored.id, at: 'invalid' }]) {
+      assert.equal((await client.callTool({ name: 'update_schedule', arguments: arguments_ })).isError, true);
+    }
+    assert.equal(updated, 0);
+    const result = await client.callTool({ name: 'update_schedule', arguments: { id: stored.id, name: 'Edited' } });
+    assert.equal(result.isError, undefined);
+    assert.equal(result.structuredContent.id, stored.id);
+    assert.equal(result.structuredContent.name, 'Edited');
+    assert.equal(result.structuredContent.nextRunAt, stored.nextRunAt);
+    assert.equal(updated, 1);
+  } finally { await client.close(); await server.close(); }
 });

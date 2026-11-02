@@ -1,0 +1,15 @@
+.sound-settings > p { color: var(--fg-muted); line-height: 1.5; }
+.sound-settings > label { display: flex; align-items: center; gap: 6px; }
+.sound-cue {
+  margin: 16px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+.sound-cue legend { padding: 0 6px; font-weight: 600; }
+.sound-cue p { margin: 0 0 10px; overflow-wrap: anywhere; }
+.sound-cue label { display: block; margin-bottom: 12px; }
+.sound-cue input[type="file"] { display: block; margin-top: 6px; max-width: 100%; font: inherit; }
+.sound-cue .ext-btn + .ext-btn { margin-left: 6px; }
+.sound-status { overflow-wrap: anywhere; }

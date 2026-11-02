@@ -50,7 +50,7 @@ function validateAction(action, { isCron }) {
     // client's {type:'error'}. Only reached from create/update — `_load` maps
     // stored rows through migrateStored alone, so an already-persisted legacy
     // value can never break startup.
-    const badTarget = launchTargetError(d.agent || 'claude', d.model);
+    const badTarget = launchTargetError(d.agent ?? 'claude', d.model);
     if (badTarget) throw new Error(badTarget);
     if (isCron && d.worktree && !d.workflow) d.worktreeAuto = true;
     return { kind: 'dispatch', dispatch: d };

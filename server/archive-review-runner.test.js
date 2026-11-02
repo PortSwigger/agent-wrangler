@@ -236,3 +236,60 @@ test('a subscriber owned by an inactive extension does not count as listening', 
   assert.equal(await runArchiveReview('c1', ENTRY, TASK, d), 'skipped');
   assert.equal(sp.calls.length, 0);
 });
+
+test('archive review runs with the environment returned by launch hooks for its card', async () => {
+  const calls = [];
+  const { collectLaunchContext } = await import('./launch-context.js');
+  const d = deps({
+    launchContext: (payload) => collectLaunchContext(payload, {
+      ext: { hooks: { 'session.launchContext': [{ extId: 'context', fn: (p) => {
+        assert.equal(p.sid, 'c1');
+        assert.deepEqual(p.task, TASK);
+        assert.equal(p.agent, 'claude');
+        assert.equal(p.reason, 'headless');
+        return { env: { AW_CONTEXT: 'secondary' } };
+      } }] } },
+    }),
+    review: async (excerpt, opts) => { calls.push(opts); return { text: '- durable fact', liveSessionId: 'R1', error: null }; },
+  });
+  assert.equal(await runArchiveReview('c1', ENTRY, TASK, d), 'written');
+  assert.deepEqual(calls, [{ env: { AW_CONTEXT: 'secondary' } }]);
+  assert.equal(d.stamps.length, 1);
+});
+
+test('a refusing launch hook skips archive review without stamping or emitting', async () => {
+  const { collectLaunchContext } = await import('./launch-context.js');
+  const logs = [];
+  const sp = subprocessDep();
+  const d = deps({ ...sp,
+    launchContext: (payload) => collectLaunchContext(payload, {
+      ext: { hooks: { 'session.launchContext': [{ extId: 'context', fn: () => ({ refuse: 'context Secondary has no Claude environment' }) }] } },
+    }),
+    onError: (message) => logs.push(message),
+  });
+  assert.equal(await runArchiveReview('c1', ENTRY, TASK, d), 'skipped');
+  assert.deepEqual(sp.calls, []);
+  assert.deepEqual(d.stamps, []);
+  assert.deepEqual(d.appended, []);
+  assert.match(logs[0], /archive review skipped for c1: context Secondary has no Claude environment/);
+});
+
+test('archive review resolves its headless environment for the archived card runtime', async () => {
+  for (const runtime of [undefined, 'devcontainer']) {
+    const calls = [];
+    const d = deps({
+      launchContext: async (payload) => {
+        if (payload.runtime !== (runtime || 'local')) throw new Error('unsupported runtime');
+        return { env: { AW_RUNTIME: payload.runtime } };
+      },
+      review: async (excerpt, opts) => {
+        calls.push(opts);
+        return { text: 'NONE', liveSessionId: 'R1', error: null };
+      },
+      onError: () => {},
+    });
+    assert.equal(await runArchiveReview('runtime-card', { ...ENTRY, runtime }, TASK, d), 'none');
+    assert.deepEqual(calls, [{ env: { AW_RUNTIME: runtime || 'local' } }]);
+    assert.equal(d.stamps.length, 1);
+  }
+});

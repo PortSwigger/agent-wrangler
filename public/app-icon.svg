@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <!-- Source for public/icon-{192,512}.png (regenerate via qlmanage + sips). Hat glyph
-       reused from the Wrangler theme (styles/wrangler/theme.json). Western hat by
+       reused from the Wrangler theme (server/extensions/builtin/themes/themes/wrangler/theme.json). Western hat by
        Delapouite — game-icons.net — CC BY 3.0. -->
   <rect width="512" height="512" rx="114" fill="#0d1117"/>
   <g transform="translate(31.4 31.6) scale(0.877)">

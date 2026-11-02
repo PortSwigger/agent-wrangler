@@ -1,12 +1,47 @@
 import { claude } from './claude.js';
 import { codex } from './codex.js';
-import { codexContextWindow } from './codex-rollout.js';
 import { logWarn } from '../log.js';
 
-const ALL = [claude, codex];
+const allAgents = () => [claude, codex];
 
-export function adapterFor(id) {
-  return ALL.find((a) => a.id === id) || claude;
+export function createAgentRegistry(adapters) {
+  const values = typeof adapters === 'function' ? adapters : () => adapters;
+  return {
+    registeredAgents: () => [...values()],
+    adapterFor(id) {
+      const adapter = values().find((a) => a.id === (id ?? 'claude'));
+      if (!adapter) throw new TypeError(`Unknown agent "${id}". Valid agents: ${values().map((a) => a.id).join(', ')}.`);
+      return adapter;
+    },
+  };
+}
+
+export const { adapterFor, registeredAgents } = createAgentRegistry(allAgents);
+
+export function providerMetadata(adapter) {
+  return {
+    id: adapter.id, label: adapter.label, reviewPriority: adapter.reviewPriority,
+    billingProviders: adapter.usage?.billingProviders || [],
+    terminal: { editingKeys: adapter.terminal?.editingKeys || {} },
+    presentation: adapter.presentation || {}, controls: adapter.controls || {},
+    supportsRemoteControl: adapter.supportsRemoteControl === true,
+    forkHelp: adapter.forkHelp || 'Branch this conversation into a new session. The original keeps running independently.',
+  };
+}
+
+export function supportsRemoteControl(id) {
+  return allAgents().find((a) => a.id === id)?.supportsRemoteControl === true;
+}
+
+// The exact model id a session runs now: its transcript's live model, else its
+// launch model as a full id (the adapter's `modelId` resolves an alias, opus →
+// claude-opus-5-5; without one the launch value already is an id). Null when
+// neither is known.
+export function sessionModelId(agentId, currentModel, launchModel) {
+  if (currentModel) return currentModel;
+  if (!launchModel) return null;
+  const adapter = allAgents().find((a) => a.id === (agentId ?? 'claude'));
+  return (adapter?.modelId ? adapter.modelId(launchModel) : launchModel) || null;
 }
 
 // Shared by modelPillFor and maxContextWindowFor: resolve the model ENTRY a
@@ -50,7 +85,8 @@ export function modelPillFor(agentId, currentModel, launchModel) {
 // first-match guess is fine for modelPillFor's label (cosmetic), but here it
 // would render a confidently WRONG number, not just a mislabelled one.
 export function maxContextWindowFor(agentId, currentModel, launchModel) {
-  if (agentId === 'codex') return codexContextWindow(currentModel || launchModel);
+  const adapter = adapterFor(agentId);
+  if (adapter.contextWindow) return adapter.contextWindow(currentModel || launchModel);
   const models = adapterFor(agentId).models;
   if (!currentModel) return launchModel ? (findModelEntry(models, null, launchModel)?.contextWindow ?? null) : null;
   const launchEntry = models.find((entry) => entry.value === launchModel);
@@ -77,17 +113,17 @@ export function discoveryFloor(entry) {
 }
 
 export function adapterForProcess(command) {
-  return ALL.find((a) => a.matchProcess(command)) || null;
+  return allAgents().find((a) => a.matchProcess(command)) || null;
 }
 
 // Like adapterForProcess, but for a container-exec wrapper of an agent (the agent
 // binary is an argument, not the executable). Returns null for a plain host command.
 export function adapterForContainerProcess(command) {
-  return ALL.find((a) => a.matchContainerized?.(command)) || null;
+  return allAgents().find((a) => a.matchContainerized?.(command)) || null;
 }
 
 export function ownedPrefixes() {
-  return ALL.map((a) => a.tmuxPrefix);
+  return allAgents().map((a) => a.tmuxPrefix);
 }
 
 export function isOwnedTmux(name) {
@@ -95,8 +131,8 @@ export function isOwnedTmux(name) {
 }
 
 export async function availableAgents() {
-  const flags = await Promise.all(ALL.map((a) => a.isAvailable().catch(() => false)));
-  return ALL.filter((_, i) => flags[i]);
+  const flags = await Promise.all(allAgents().map((a) => a.isAvailable().catch(() => false)));
+  return allAgents().filter((_, i) => flags[i]);
 }
 
 // The pre-selected model in the dispatch dialog is baked into each adapter via a
@@ -115,7 +151,7 @@ export function modelsWithDefault(agent, env = process.env) {
 export function validateDefaultModel(env = process.env) {
   const override = env.AW_DEFAULT_MODEL;
   if (!override) return;
-  if (!ALL.some((a) => a.models.some((m) => m.value === override))) {
+  if (!allAgents().some((a) => a.models.some((m) => m.value === override))) {
     logWarn(`[agent-wrangler] AW_DEFAULT_MODEL="${override}" matches no known model; using built-in default`);
   }
 }
@@ -129,15 +165,11 @@ export function validateDefaultModel(env = process.env) {
 // list anywhere: everything below is derived from the adapters.
 
 export function knownAgentIds() {
-  return ALL.map((a) => a.id);
+  return allAgents().map((a) => a.id);
 }
 
-// An error message when `id` names no adapter, else null. Needed because
-// adapterFor FALLS BACK to claude, so an unvalidated `agent: "codx"` quietly
-// launches Claude — and must be checked BEFORE the model, or the resulting
-// "unknown model for claude" hides the typo that actually caused it.
 export function agentError(id) {
-  if (id == null || id === '' || ALL.some((a) => a.id === id)) return null;
+  if (id == null || allAgents().some((a) => a.id === id)) return null;
   return `Unknown agent "${id}". Valid agents: ${knownAgentIds().join(', ')}.`;
 }
 
@@ -153,16 +185,11 @@ export function agentError(id) {
 // reaches for `model: "opus"` against `agent: "codex"`.
 export function modelError(agentId, model) {
   if (model == null || model === '') return null;
-  // Self-safe: adapterFor falls back to claude, so an unknown agent would
-  // otherwise produce "unknown model … for claude" — the exact misleading
-  // message this whole check exists to avoid. launchTargetError already runs
-  // agentError first; this makes the guarantee structural rather than a
-  // convention a future direct caller has to know about.
   const wrongAgent = agentError(agentId);
   if (wrongAgent) return wrongAgent;
   const adapter = adapterFor(agentId);
   if (adapter.models.some((m) => m.value === model)) return null;
-  const other = ALL.find((a) => a !== adapter && a.models.some((m) => m.value === model));
+  const other = allAgents().find((a) => a !== adapter && a.models.some((m) => m.value === model));
   const hint = other ? ` "${model}" is a ${other.id} model — did you mean agent: "${other.id}"?` : '';
   const valid = adapter.models.map((m) => m.value).join(', ');
   return `Unknown model "${model}" for agent "${adapter.id}". Valid models: ${valid}.${hint}`;
@@ -174,12 +201,11 @@ export function modelError(agentId, model) {
 // is either silently dropped or rejected by the CLI in the pane, where the agent
 // that spawned the session never sees it. Self-safe against an unknown agent for
 // the same reason modelError is.
-export function effortError(agentId, effort) {
+export function effortError(agentId, effort, model, resolve = adapterFor) {
   if (effort == null || effort === '') return null;
-  const wrongAgent = agentError(agentId);
-  if (wrongAgent) return wrongAgent;
-  const adapter = adapterFor(agentId);
-  const efforts = adapter.efforts || [];
+  let adapter;
+  try { adapter = resolve(agentId); } catch (err) { return err.message; }
+  const efforts = adapter.effortsForModel?.(model) ?? adapter.efforts ?? [];
   if (efforts.some((e) => e.value === effort)) return null;
   const valid = efforts.map((e) => e.value).join(', ');
   return `Unknown effort "${effort}" for agent "${adapter.id}". Valid efforts: ${valid}.`;
@@ -189,14 +215,14 @@ export function effortError(agentId, effort) {
 // `effort` is optional: the UI dispatch paths pick it from a dropdown and pass
 // nothing here, where the MCP tools take it as a free string from an agent.
 export function launchTargetError(agentId, model, effort) {
-  return agentError(agentId) || modelError(agentId, model) || effortError(agentId, effort);
+  return agentError(agentId) || modelError(agentId, model) || effortError(agentId, effort, model);
 }
 
 // The `effort` parameter's own description text on those tools, generated from
 // the adapters — the counterpart to modelChoicesText, and for the same reason:
 // a tool schema is the only enumeration of the effort vocabulary an agent reads.
 export function effortChoicesText() {
-  return ALL
+  return allAgents()
     .map((a) => `${a.id}: ${(a.efforts || []).map((e) => e.value).join(', ')}`)
     .join('; ');
 }
@@ -208,7 +234,7 @@ export function effortChoicesText() {
 // spawn-session skill points here rather than keeping a hand-copied table (one
 // that had already drifted: `opusplan` was missing from it).
 export function modelChoicesText() {
-  return ALL
+  return allAgents()
     .map((a) => `${a.id}: ${a.models.map((m) => `${m.value} (${m.label})`).join(', ')}`)
     .join('; ');
 }
@@ -221,7 +247,7 @@ export function modelChoicesText() {
 // reach them), where a loaded SKILL.md body is plainly in front of it. So the
 // skill keeps a table after all — generated, never hand-copied.
 export function modelTableMarkdown() {
-  return ALL.map((a) => {
+  return allAgents().map((a) => {
     const rows = a.models.map((m) => `- \`${m.value}\` — ${m.label}${m.default ? ' (default)' : ''}`);
     // Efforts ride the same generated block rather than a second one: they are
     // per-adapter vocabulary picked at the same moment as the model, and a

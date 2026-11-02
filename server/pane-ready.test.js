@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { waitForComposerReady, ensureSubmitted, composerHoldsText } from './pane-ready.js';
+import { waitForComposerReady, ensureSubmitted, composerHoldsText, pasteImages, composerImageCount } from './pane-ready.js';
 
 const ESC = '';
 // Byte-exact against ghost-suggestion.js's own markers — paneComposerIsEmpty
@@ -35,6 +35,32 @@ test('waitForComposerReady resolves true as soon as the composer paints', async 
   assert.equal(calls, 3);
 });
 
+test('resume readiness waits for input to paint but accepts Codex already working', async () => {
+  let captures = 0;
+  const ready = await waitForComposerReady('cx_a', '/s', 'codex', {
+    capture: async () => {
+      captures += 1;
+      return captures < 3 ? booting : `${working}\n${codexEmpty}`;
+    },
+    sleep: nowait,
+  });
+  assert.equal(ready, true);
+  assert.equal(captures, 3);
+});
+
+test('active-turn resume readiness still rejects drafts, dialogs and unreadable input', async () => {
+  for (const pane of [
+    `${working}\n${codexHolding}`,
+    `${updateMenu}\n${codexEmpty}`,
+    `${working}\n› Ask Codex to do anything`,
+    '',
+  ]) {
+    assert.equal(await waitForComposerReady('cx_a', '/s', 'codex', {
+      capture: async () => pane, timeoutMs: 0, sleep: nowait,
+    }), false);
+  }
+});
+
 test('waitForComposerReady is agent-aware (a Codex composer is not a Claude one)', async () => {
   assert.equal(await waitForComposerReady('cc_a', '/s', 'claude', {
     capture: async () => claudeEmpty, sleep: nowait,
@@ -44,8 +70,7 @@ test('waitForComposerReady is agent-aware (a Codex composer is not a Claude one)
   }), false);
 });
 
-// A timeout must FALL THROUGH to the caller's paste, not abort it — but the
-// caller then reports UNKNOWN rather than success (see message-delivery).
+// A timeout must leave delivery unconfirmed without bypassing the input guard.
 test('waitForComposerReady returns false on timeout rather than throwing', async () => {
   assert.equal(await waitForComposerReady('cx_a', '/s', 'codex', {
     capture: async () => booting, timeoutMs: 0, sleep: nowait,
@@ -222,4 +247,127 @@ test('waitForCompactionEnd: idle pane returns immediately; compacting pane waits
   const frames = [compacting, compacting, idle];
   assert.equal(await waitForCompactionEnd('p', '', { capture: async () => frames.shift() ?? idle, sleep: async () => {} }), 'finished');
   assert.equal(await waitForCompactionEnd('p', '', { capture: async () => compacting, sleep: async () => {}, timeoutMs: -1 }), 'timeout');
+});
+
+test('startup readiness accepts a working composer and an existing draft without requiring emptiness', async () => {
+  for (const pane of [`${working}\n${codexEmpty}`, codexHolding, claudeComposer('restored draft'), claudeComposer('\u00a0')]) {
+    assert.equal(await waitForComposerReady('p', '', pane.includes('❯') ? 'claude' : 'codex', {
+      requireEmpty: false, capture: async () => pane, timeoutMs: 0, sleep: nowait,
+    }), true);
+  }
+});
+
+test('startup readiness needs a composer even when a working status is present', async () => {
+  for (const pane of [booting, working, `${updateMenu}\n${codexEmpty}`]) {
+    assert.equal(await waitForComposerReady('p', '', 'codex', {
+      requireEmpty: false, capture: async () => pane, timeoutMs: 0, sleep: nowait,
+    }), false);
+  }
+});
+
+const claudeRule = '─'.repeat(60);
+const claudeComposer = (draft = '') => `${claudeRule}\n${claudeEmpty}${draft}\n${claudeRule}\nHaiku 5.5\nauto mode on`;
+
+test('startup readiness rejects selection cursors and history echoes', async () => {
+  const panes = [
+    ['Resume this session?', '❯ 1. Resume from summary (recommended)', '  2. Resume full session as-is', "  3. Don't ask me again"].join('\n'),
+    ['Resume this session?', '❯ Resume from summary (recommended)', '  Resume full session as-is', "  Don't ask me again"].join('\n'),
+    ['Allow this tool?', '❯ 1. Yes', '  2. No'].join('\n'),
+    ['❯ fix the flaky test', '⏺ Done'].join('\n'),
+  ];
+  for (const pane of panes) {
+    assert.equal(await waitForComposerReady('p', '', 'claude', {
+      requireEmpty: false, capture: async () => pane, timeoutMs: 0,
+    }), false, pane);
+  }
+  assert.equal(await waitForComposerReady('p', '', 'codex', {
+    requireEmpty: false, capture: async () => `${ESC}[1;2m› old prompt${ESC}[0m\nDone`, timeoutMs: 0,
+  }), false);
+});
+
+test('startup readiness accepts a framed Claude draft with several wrapped lines', async () => {
+  assert.equal(await waitForComposerReady('p', '', 'claude', {
+    requireEmpty: false,
+    capture: async () => claudeComposer('first line\n  second line\n  third line\n  fourth line\n  fifth line'),
+    timeoutMs: 0,
+  }), true);
+});
+
+test('startup readiness rejects styled Codex startup and selection menus', async () => {
+  const panes = [
+    `Trust this folder?\n${ESC}[1m› 1. Trust and continue${ESC}[0m\n  2. Quit\n  enter continue · esc quit`,
+    `Background server settings differ\n  1. Run without daemon this time\n  2. Restart with these settings\n${ESC}[1;7m› 3. Cancel${ESC}[0m`,
+    `${codexEmpty}\n  ? for shortcuts\nReplace goal?\n${ESC}[1m› 1. Replace current goal${ESC}[0m\n  2. Cancel\n  enter select · esc back`,
+  ];
+  for (const pane of panes) {
+    assert.equal(await waitForComposerReady('p', '', 'codex', {
+      requireEmpty: false, capture: async () => pane, timeoutMs: 0,
+    }), false, pane);
+  }
+});
+
+test('startup readiness accepts a numbered Codex draft and selection hints quoted inside it', async () => {
+  const pane = `${ESC}[1m›${ESC}[0m 1. first item\n  2. second item\n  enter continue · esc quit\n  GPT-6-Luna medium · /tmp/example\n  warnings`;
+  assert.equal(await waitForComposerReady('p', '', 'codex', {
+    requireEmpty: false, capture: async () => pane, timeoutMs: 0,
+  }), true);
+});
+
+test('composerImageCount reads only the live composer, not echoed turns', () => {
+  const pane = [`${ESC}[0m❯ look at [Image #1]`, '⏺ ok', '─────', `${ESC}[0m❯ [Image #2] [Image #3]`, '─────'].join('\n');
+  assert.equal(composerImageCount(pane), 2);
+  assert.equal(composerImageCount(`${ESC}[0m❯ `), 0);
+  assert.equal(composerImageCount(booting), null);
+});
+
+test('pasteImages holds each paste until its marker appears, counting from a draft', async () => {
+  const log = [];
+  let composer = '❯ draft [Image #4]';
+  let pending = null;
+  let polls = 0;
+  const ok = await pasteImages('cc_a', '/s', 'claude', ['/p/1.png', '/p/2.png'], {
+    prefill: async (n, p) => { log.push(p); pending = p; polls = 0; },
+    // Each image attaches on the third poll after its paste.
+    capture: async () => {
+      if (pending && (polls += 1) === 3) { composer += ` [Image #${5 + log.filter((l) => l.startsWith('/')).indexOf(pending)}]`; pending = null; }
+      return composer;
+    },
+    sleep: async () => log.push(`wait:${composer.match(/\[Image/g).length}`),
+  });
+  assert.equal(ok, true);
+  assert.deepEqual(log, ['/p/1.png', 'wait:1', 'wait:1', '/p/2.png', 'wait:2', 'wait:2'],
+    'the second image is not pasted until the first has attached');
+  assert.equal(composer, '❯ draft [Image #4] [Image #5] [Image #6]');
+});
+
+test('pasteImages gives up on a marker that never comes, but still pastes every image', async () => {
+  const pasted = [];
+  let now = 0;
+  const realNow = Date.now;
+  Date.now = () => now;
+  try {
+    const ok = await pasteImages('cc_a', '/s', 'claude', ['/p/1.png', '/p/2.png'], {
+      timeoutMs: 1000,
+      prefill: async (n, p) => { pasted.push(p); },
+      capture: async () => '❯ ',
+      sleep: async (ms) => { now += ms; },
+    });
+    assert.equal(ok, false);
+    assert.deepEqual(pasted, ['/p/1.png', '/p/2.png']);
+  } finally { Date.now = realNow; }
+});
+
+test('pasteImages does not wait on Codex or on a pane it cannot read', async () => {
+  for (const [agent, pane] of [['codex', codexEmpty], ['claude', '']]) {
+    const pasted = [];
+    let slept = 0;
+    const ok = await pasteImages('x', '/s', agent, ['/p/1.png'], {
+      prefill: async (n, p) => { pasted.push(p); },
+      capture: async () => pane,
+      sleep: async () => { slept += 1; },
+    });
+    assert.deepEqual(pasted, ['/p/1.png']);
+    assert.equal(slept, 0);
+    assert.equal(ok, agent === 'codex');
+  }
 });

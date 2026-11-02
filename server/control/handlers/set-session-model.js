@@ -33,16 +33,17 @@ export const setSessionModelHandler = {
     const fail = (reason) => ctx.reply({ type: 'model-set', sessionId: msg.sessionId, ok: false, reason });
 
     const node = ctx.sessionFromGraph?.(msg.sessionId);
-    const agentId = node?.agent === 'codex' ? 'codex' : 'claude';
+    const agentId = node?.agent ?? 'claude';
     // Claude only. Codex's model is chosen at launch and its TUI is a different
     // program; sending it a Claude slash command would type nonsense into a
     // prompt. Widening this belongs in the agent adapter, not here.
-    if (agentId !== 'claude') return fail('Switching model mid-conversation is Claude-only.');
+    const adapter = adapterFor(agentId);
+    if (!adapter.controls.switchModel) return fail('Switching model mid-conversation is Claude-only.');
 
     // Validated against the adapter's own list, so the only strings that can ever
     // reach the pane are ones this codebase already offers at launch — a
     // client-supplied model name is never pasted through unchecked.
-    const known = adapterFor('claude').models.some((m) => m.value === msg.model);
+    const known = adapter.models.some((m) => m.value === msg.model);
     if (!known) return fail('Unknown model.');
 
     const target = ctx.tmuxFor?.(msg.sessionId);
@@ -58,11 +59,11 @@ export const setSessionModelHandler = {
     // fuse with the command and be submitted as one mangled prompt. Confirmed
     // empty or nothing is sent (paneComposerIsEmpty is false whenever it cannot
     // tell).
-    if (!paneComposerIsEmpty(await capturePaneStyled(target, 6, socket))) {
+    if (!paneComposerIsEmpty(await capturePaneStyled(target, 6, socket), agentId)) {
       return fail('Something is typed in the terminal — clear it first.');
     }
 
-    await sendText(target, `/model ${msg.model}`, socket);
+    await sendText(target, adapter.modelCommand(msg.model), socket);
     ctx.reply({ type: 'model-set', sessionId: msg.sessionId, ok: true, model: msg.model });
   },
 };

@@ -27,3 +27,5 @@ docs/*
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+!.claude/skills/evaluate-model/

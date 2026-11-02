@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { readSessionTranscriptTool, clipText } from './read-session-transcript.js';
@@ -34,6 +35,25 @@ function setup(lines, entry = {}) {
   const file = writeTranscript(dir, 'live1', lines);
   const entries = [{ sessionId: 'CARD1', liveSessionId: 'live1', name: 'Redaction pipeline', cwd: '/work/a', ...entry }];
   return { dir, file, d: deps(dir, entries) };
+}
+
+function setupCodex(lines) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-read-rollout-'));
+  const sessionId = '11111111-2222-3333-4444-555555555555';
+  const day = path.join(dir, '2026', '07', '01');
+  fs.mkdirSync(day, { recursive: true });
+  const file = path.join(day, `rollout-2026-07-01T09-00-00-${sessionId}.jsonl`);
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const entries = [{ sessionId: 'CARD1', liveSessionId: sessionId, agent: 'codex', name: 'Stream parser', cwd: '/work/a' }];
+  return { file, d: { ...deps(dir, entries), codexSessionsDir: dir } };
+}
+
+function codexLine(role, text, i) {
+  return {
+    type: 'response_item',
+    timestamp: new Date(Date.UTC(2026, 6, 1, 9, i)).toISOString(),
+    payload: { type: 'message', role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }] },
+  };
 }
 
 test('returns every turn and the transcript path when the conversation is short', async () => {
@@ -77,6 +97,24 @@ test('drops tool calls and harness wrappers, keeping only conversation text', as
   assert.deepEqual(s.messages.map((m) => [m.role, m.text]), [['user', 'real question'], ['assistant', 'answer']]);
 });
 
+test('streams a Codex rollout with a multi-megabyte record', async (t) => {
+  const { file, d } = setupCodex([
+    codexLine('user', 'question', 0),
+    { type: 'response_item', payload: { type: 'custom_tool_call_output', output: [{ type: 'input_text', text: 'x'.repeat(5 * 1024 * 1024) }] } },
+    codexLine('assistant', 'answer', 1),
+  ]);
+  const readFile = fsp.readFile;
+  t.mock.method(fsp, 'readFile', async (target, ...args) => {
+    if (target === file) throw new Error('rollouts must not use readFile');
+    return readFile(target, ...args);
+  });
+
+  const out = await readSessionTranscriptTool.handler({ deps: d }, { sessionId: 'CARD1' });
+
+  assert.equal(out.isError, undefined);
+  assert.deepEqual(out.structuredContent.messages.map((m) => [m.role, m.text]), [['user', 'question'], ['assistant', 'answer']]);
+});
+
 test('clipText keeps the start and end of a long message', () => {
   const words = Array.from({ length: 1000 }, (_, i) => `w${i}`);
   const out = clipText(words.join(' '));
@@ -105,4 +143,25 @@ test('errors for an unknown session or one with no transcript yet', async () => 
   const fresh = await readSessionTranscriptTool.handler({ deps: deps(dir, [{ sessionId: 'CARD2' }]) }, { sessionId: 'CARD2' });
   assert.equal(fresh.isError, true);
   assert.match(fresh.content[0].text, /no transcript/);
+});
+
+test('reads Codex history without traversing board scratch sessions', async (t) => {
+  const { file, d } = setupCodex([codexLine('user', 'question', 0), codexLine('assistant', 'answer', 1)]);
+  const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-read-scratch-'));
+  t.after(() => fs.rmSync(scratchDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(d.codexSessionsDir, { recursive: true, force: true }));
+  d.sessionsDir = scratchDir;
+  const reads = [];
+  const readdir = fsp.readdir;
+  t.mock.method(fsp, 'readdir', async (dir, ...args) => {
+    reads.push(String(dir));
+    return readdir.call(fsp, dir, ...args);
+  });
+
+  const out = await readSessionTranscriptTool.handler({ deps: d }, { sessionId: 'CARD1' });
+
+  assert.deepEqual(reads.filter((dir) => dir === scratchDir || dir.startsWith(scratchDir + path.sep)), []);
+  assert.equal(out.isError, undefined);
+  assert.equal(out.structuredContent.transcriptPath, file);
+  assert.deepEqual(out.structuredContent.messages.map((m) => [m.role, m.text]), [['user', 'question'], ['assistant', 'answer']]);
 });

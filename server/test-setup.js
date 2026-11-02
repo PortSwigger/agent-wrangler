@@ -39,3 +39,12 @@ process.env.AW_DATA_DIR = dataDir;
 process.on('exit', () => {
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
+
+// And a third: ensureClaudeTrust (claude-trust.js) writes `projects[...]` into
+// `~/.claude.json` (a large, live-rewritten file) on every claude dispatch/
+// resume/fork. It honours CLAUDE_CONFIG_DIR, so point that at a throwaway dir.
+const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-claude-config-'));
+process.env.CLAUDE_CONFIG_DIR = claudeDir;
+process.on('exit', () => {
+  fs.rmSync(claudeDir, { recursive: true, force: true });
+});

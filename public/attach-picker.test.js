@@ -21,10 +21,7 @@ test('attachCandidates: two Ad-hoc (no-task, both null) sessions count as the sa
   assert.deepEqual(cands.map((c) => c.sessionId), ['S2']);
 });
 
-// A has a descendant chain (B, then C under B) — meaning A has a child of its
-// own (B), which the "own children" depth guard below now refuses outright,
-// making a would-be-a-cycle target unreachable rather than merely excluded.
-test('attachCandidates: a session with its own descendant chain gets no candidates at all (own-children guard)', () => {
+test('attachCandidates: excludes the session\'s own descendants at any depth (would make a cycle)', () => {
   const sessions = [
     { sessionId: 'A', label: 'A' },
     { sessionId: 'B', label: 'B', parentSession: 'A' },
@@ -32,7 +29,7 @@ test('attachCandidates: a session with its own descendant chain gets no candidat
     { sessionId: 'D', label: 'D' },
   ];
   const cands = attachCandidates('A', sessions, taskOf({}));
-  assert.deepEqual(cands, []);
+  assert.deepEqual(cands.map((c) => c.sessionId), ['D']);
 });
 
 test('attachCandidates: excludes the session\'s own current parent (re-attaching to it is a no-op)', () => {
@@ -45,7 +42,7 @@ test('attachCandidates: excludes the session\'s own current parent (re-attaching
   assert.deepEqual(cands.map((c) => c.sessionId), ['Q']);
 });
 
-test('attachCandidates: [] when the current parent is the only other top-level session on the task', () => {
+test('attachCandidates: [] when the current parent is the only other session on the task', () => {
   const sessions = [
     { sessionId: 'S', label: 'S', parentSession: 'P' },
     { sessionId: 'P', label: 'P' },
@@ -54,24 +51,24 @@ test('attachCandidates: [] when the current parent is the only other top-level s
   assert.deepEqual(cands, []);
 });
 
-test('attachCandidates: excludes a target that is itself already nested (would land the mover at depth 2)', () => {
+test('attachCandidates: a target that is itself already nested is a valid candidate (no depth limit)', () => {
   const sessions = [
     { sessionId: 'A', label: 'A' },
     { sessionId: 'B', label: 'B', parentSession: 'A' },
     { sessionId: 'S', label: 'S' },
   ];
   const cands = attachCandidates('S', sessions, taskOf({}));
-  assert.deepEqual(cands.map((c) => c.sessionId), ['A']);
+  assert.deepEqual(cands.map((c) => c.sessionId), ['A', 'B']);
 });
 
-test('attachCandidates: returns [] when the session being attached already has same-task children of its own', () => {
+test('attachCandidates: a session with children of its own can still move — they go with it', () => {
   const sessions = [
     { sessionId: 'S', label: 'S' },
     { sessionId: 'Child', label: 'Child', parentSession: 'S' },
     { sessionId: 'P', label: 'P' },
   ];
   const cands = attachCandidates('S', sessions, taskOf({}));
-  assert.deepEqual(cands, []);
+  assert.deepEqual(cands.map((c) => c.sessionId), ['P']);
 });
 
 test('attachCandidates: a child on a DIFFERENT task does not block attaching its parent elsewhere', () => {

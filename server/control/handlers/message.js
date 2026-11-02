@@ -31,8 +31,8 @@ export const messageHandler = {
     try { result = await deliverMessage(msg.sessionId, msg.text || '', ctx, { imagePaths, clearComposer: msg.clearComposer === true }); }
     catch (err) { replyResult(false, err?.message || String(err), null, 'unknown'); return; }
     if (result.mode === 'error') { replyResult(false, result.error, null, result.outcome); return; }
-    // An UNKNOWN outcome is a real delivery that could not be confirmed, not a
-    // refusal: the session IS live now, so it still needs the rebuild below. It is
+    // An UNKNOWN outcome means delivery could not be confirmed: the session IS
+    // live now, so it still needs the rebuild below. It is
     // reported as not-ok so the view keeps the draft and says so, rather than
     // clearing the composer on a send that may have stranded in the pane.
     if (result.outcome === 'unknown') replyResult(false, result.error, result.mode, 'unknown');

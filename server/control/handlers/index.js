@@ -16,14 +16,17 @@ import { autoFixPrChecksDefaultHandler } from './auto-fix-pr-checks-default.js';
 import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
 import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-default.js';
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
+import { trustClaudeLaunchCwdHandler } from './trust-claude-launch-cwd.js';
 import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { mailWakesDormantHandler } from './mail-wakes-dormant.js';
+import { prModelFooterHandler } from './pr-model-footer.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
 import { defaultSessionCwdHandler } from './default-session-cwd.js';
+import { defaultRuntimeHandler } from './default-runtime.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
-import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler } from './extensions-install.js';
+import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler, extSetAutoUpdateHandler, extSetEarlyAdopterHandler } from './extensions-install.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
 import { extBrowseHandler } from './ext-browse.js';
 import { restartHandler } from './restart.js';
@@ -87,18 +90,23 @@ export const CONTROL_HANDLERS = [
   autoMergeOnPassHandler,
   subagentsExpandedByDefaultHandler,
   trustCodexLaunchCwdHandler,
+  trustClaudeLaunchCwdHandler,
   archiveReviewEnabledHandler,
   mailWakesDormantHandler,
+  prModelFooterHandler,
   childFullViewHandler,
   childFullViewDefaultHandler,
   chatViewDefaultHandler,
   defaultSessionCwdHandler,
+  defaultRuntimeHandler,
   extensionEnabledHandler,
   extSettingSetHandler,
   extInstallHandler,
   extConsentHandler,
   extUninstallHandler,
   extCheckUpdatesHandler,
+  extSetAutoUpdateHandler,
+  extSetEarlyAdopterHandler,
   extBrowseHandler,
   restartHandler,
   restartTmuxHandler,

@@ -7,14 +7,14 @@ Managed Claude and Codex sessions receive Wrangler-specific skills: guidance for
 
 | Skill | Use it for | Example request |
 | --- | --- | --- |
-| `adversarial-pr-review` | A second opinion on a pull request from the opposite agent provider. A Claude session launches Codex; a Codex session launches Claude. The reviewer follows a written-out review process, which you can replace in the **Adversarial PR review** extension's settings, and sends one verdict with ranked findings through Wrangler mail. It requires both providers to be installed. Ships as a built-in extension; in Claude Code it is listed as `adversarial-pr-review:adversarial-pr-review`, and `/adversarial-pr-review` still invokes it. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | “Run an adversarial review of the PR attached to this session.” |
+| `adversarial-pr-review` | A second opinion on a pull request from the preferred available different agent provider. A Claude session launches Codex; a Codex session launches Claude. The reviewer follows a written-out review process, which you can replace in the **Adversarial PR review** extension's settings, and sends one verdict with ranked findings through Wrangler mail. It requires another provider to be installed, selecting by declared preference (Claude before Codex). Ships as a built-in extension; in Claude Code it is listed as `adversarial-pr-review:adversarial-pr-review`, and `/adversarial-pr-review` still invokes it. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | “Run an adversarial review of the PR attached to this session.” |
 | `advisor` | Consulting a stronger model before a difficult decision, when stuck, or before declaring substantial work complete. | “Ask an advisor to challenge this design before I commit to it.” |
 | `checklist` | Keeping a short, human-visible progress list on the session card. It is deliberately separate from the agent's private plan. | “Keep the Wrangler checklist updated while you do this.” |
 | `links` | Attaching Jira issues and GitHub pull requests to a session or task so they appear on the board and drive PR automation. | “Attach PR 123 to this session.” |
 | `mail` | Reading queued messages from peer sessions and deciding whether a reply or action is needed. | “Check your Wrangler mailbox and act on anything relevant.” |
 | `session-activity` | Reconstructing what was worked on during a date or date range, including archived and suspended sessions. | “Summarise what I worked on yesterday from Wrangler activity.” |
 | `session-hierarchy` | Distinguishing board nesting from launch lineage, and finding a session's parent, spawner, or task. Also linking you to another session: `[name](#session=<id>)` in chat selects it in place. | “Which session spawned you, and where are you nested?” |
-| `spawn-session` | Starting a new, independent board session with an explicit handoff, agent, model, task, and optional nesting. | “Spawn a Codex session to investigate the failing integration tests.” |
+| `spawn-session` | Starting a new, independent board session with an explicit handoff, agent, model, task, optional nesting, and [Claude Remote Control](agent-tools.md#remote-control-on-spawn_session). | “Spawn a Claude session to investigate the failing integration tests with Remote Control named Phone.” |
 | `task-memory` | Reading and maintaining context shared by every session assigned to the same task, including work across multiple repositories. | “Record that decision in task memory for future sessions.” |
 | `archive-to-todo` | (Requires the `todos` extension.) Capturing a short title and descriptive handoff from the current session as a board TODO, then archiving that session. In Claude Code, invoke `/agent-skills:archive-to-todo` explicitly. For an ordinary TODO that leaves the session running, use `add_todo`. | “Archive this session to a TODO for later.” |
 
@@ -26,12 +26,30 @@ The `issue-to-pr` skill powers **Workflow** launch mode. Given a Jira issue, Git
 task, it plans, builds, verifies, and opens a pull request from a dedicated worktree. The card shows its
 phase and switches to **needs-you** if blocked. Launch it from the dialog or with `spawn_workflow`.
 
+## Model-front maintenance
+
+In a checkout of this repository, ask “Are the model benchmarks current?” to use
+[the project-local `evaluate-model` skill](../.claude/skills/evaluate-model/SKILL.md).
+It reads permitted benchmark sources and the bundled LiteLLM prices, preserves
+OpenAI effort results for manual reading, and generates `public/model-front-data.json`.
+The evaluator prints separate fronts for both agents, Claude and Codex without
+requiring the client API. The weekly **Refresh model front** workflow runs the
+catalog refresh first and opens a reviewable data PR when inputs change; it never
+auto-merges. Slack notices require `SLACK_WEBHOOK_URL`.
+
+Client extensions can use [host API **1.56.0** `api.modelFront`](extensions.md)
+for the same frozen data and pure quality/cost/time maths, filtered to the installed
+agent catalog. It also supplies a quality/cost curve and resolves known Auto
+efforts; extensions provide their own presets and picker UI. The data ships
+with Wrangler and is available without installing an extension or making external
+benchmark requests.
+
 ## Human-visible collaboration surfaces
 
 - **Checklist:** the human and agent edit the same per-session list.
 - **Task memory:** durable Markdown shared across all sessions on a task.
 - **Links:** Jira and GitHub context displayed on cards and task headings.
-- **Mail:** durable peer-to-peer messages; live idle recipients are prompted, while dormant recipients keep mail unread until resumed, unless the "Let mail wake dormant sessions" setting is on (snoozed sessions are never woken).
+- **Mail:** durable peer-to-peer messages; Codex can receive notifications during active turns; Claude uses its messaging socket when available. Terminal notifications protect drafts and dialogs, and Claude's terminal fallback waits until idle; dormant recipients keep mail unread until resumed, unless the "Let mail wake dormant sessions" setting is on (snoozed and archived sessions are never woken).
 - **Hierarchy:** sessions can be nested for presentation without changing who originally spawned them.
 
 Use these board-visible surfaces instead of burying coordination state in a transcript.
@@ -40,3 +58,9 @@ Use these board-visible surfaces instead of burying coordination state in a tran
 
 Extensions may add skills and tools while enabled. Disabling **Per-session checklist** in
 **Settings → Extensions** removes its four tools and the `checklist` skill after sessions resume. Disabling **Task memory** removes the `task-memory` skill and its `AW_TASK_MEMORY` variable from new launches.
+
+## Scheduling
+
+Ask “Move my scheduled check to 3pm and keep its prompt” to edit an existing schedule with
+[`update_schedule`](agent-tools.md). Supply the schedule id and only the fields to change; omitted
+values remain in place. `schedule_session` creates schedules and `cancel_schedule` removes them.

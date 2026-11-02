@@ -9,6 +9,28 @@ import { codexCatalogVersion, liveCodexContextWindow } from './codex-catalog.js'
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
 const MODELS_CACHE_PATH = path.join(os.homedir(), '.codex', 'models_cache.json');
 
+export async function forEachRolloutLine(file, visit) {
+  let stream;
+  try {
+    stream = fs.createReadStream(file, { encoding: 'utf8' });
+    let parts = [];
+    for await (const chunk of stream) {
+      let start = 0;
+      let nl;
+      while ((nl = chunk.indexOf('\n', start)) !== -1) {
+        const line = parts.length ? parts.join('') + chunk.slice(start, nl) : chunk.slice(start, nl);
+        parts = [];
+        if (await visit(line) === false) return;
+        start = nl + 1;
+      }
+      if (start < chunk.length) parts.push(chunk.slice(start));
+    }
+    if (parts.length) await visit(parts.join(''));
+  } finally {
+    stream?.destroy();
+  }
+}
+
 export function uuidFromName(name) {
   const m = name.match(/^rollout-.*-([0-9a-fA-F-]{36})(?:_[0-9a-fA-F-]{36})?\.jsonl$/);
   return m ? m[1] : null;
@@ -517,8 +539,7 @@ async function analyzeRollout(file, meta = null, modelsCachePath = MODELS_CACHE_
   try {
     const st = await fsp.stat(file);
     lastActivity = Math.round(st.mtimeMs);
-    const text = await fsp.readFile(file, 'utf8');
-    for (const line of text.split('\n')) scanLine(line, state);
+    await forEachRolloutLine(file, (line) => scanLine(line, state));
   } catch {
     return null;
   }
@@ -590,10 +611,10 @@ async function analyzeCodexUncached(sessionId, { sessionsDir = CODEX_SESSIONS, i
     : await cachedFamilyIndex(sessionsDir);
   const files = family.files;
   const file = files?.get(sessionId) || null;
-  if (!file) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null, contextPercent: null };
+  if (!file) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null, contextPercent: null, hasTranscript: false };
   const ownFiles = chains?.get(sessionId) || await findRolloutChain(sessionId, sessionsDir);
   const own = await analyzeRolloutChain(ownFiles.length ? ownFiles : [file], family.metaById?.get(sessionId), modelsCachePath);
-  if (!own) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null, contextPercent: null };
+  if (!own) return { usd: null, tokens: null, subAgents: [], summary: null, lastActivity: null, contextPercent: null, hasTranscript: true };
   const totals = {};
   mergeTotals(totals, own.totals);
   const subTotals = {};
@@ -630,6 +651,7 @@ async function analyzeCodexUncached(sessionId, { sessionsDir = CODEX_SESSIONS, i
     // THIS session's own occupancy only — never merged across the sub-agent
     // family above (a sub-agent's context window is a separate conversation).
     contextPercent: own.contextPercent,
+    hasTranscript: true,
   };
 }
 
@@ -693,27 +715,27 @@ export async function codexSubagentDetail(sessionId, subagentId, { sessionsDir =
   if (!descendantsOf(sessionId, family.childrenByParent || new Map()).includes(subagentId)) {
     return { prompt: null, toolCalls: null, result: null };
   }
-  let text;
-  try { text = await fsp.readFile(family.files.get(subagentId), 'utf8'); } catch { return { prompt: null, toolCalls: null, result: null }; }
   let prompt = null;
   let result = null;
   const toolCalls = [];
-  for (const line of text.split('\n')) {
-    let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
-    if (entry.type !== 'response_item') continue;
-    const p = entry.payload || {};
-    if (p.type === 'message') {
-      const message = codexMessageText(p.content);
-      if (p.role === 'user' && prompt == null && message && !isSyntheticCodexMessage(message)) prompt = message;
-      if (p.role === 'assistant' && message) result = message;
-    } else if (p.type === 'agent_message' && prompt == null) {
-      prompt = agentMessageTaskName(p);
-    } else if (p.type === 'function_call' || p.type === 'tool_search_call' || p.type === 'custom_tool_call') {
-      const input = detailToolInput(p);
-      toolCalls.push({ name: p.name || p.type, target: detailToolTarget(input) });
-    }
-  }
+  try {
+    await forEachRolloutLine(family.files.get(subagentId), (line) => {
+      let entry;
+      try { entry = JSON.parse(line); } catch { return; }
+      if (entry.type !== 'response_item') return;
+      const p = entry.payload || {};
+      if (p.type === 'message') {
+        const message = codexMessageText(p.content);
+        if (p.role === 'user' && prompt == null && message && !isSyntheticCodexMessage(message)) prompt = message;
+        if (p.role === 'assistant' && message) result = message;
+      } else if (p.type === 'agent_message' && prompt == null) {
+        prompt = agentMessageTaskName(p);
+      } else if (p.type === 'function_call' || p.type === 'tool_search_call' || p.type === 'custom_tool_call') {
+        const input = detailToolInput(p);
+        toolCalls.push({ name: p.name || p.type, target: detailToolTarget(input) });
+      }
+    });
+  } catch { return { prompt: null, toolCalls: null, result: null }; }
   return { prompt, toolCalls, result };
 }
 
@@ -757,12 +779,11 @@ export async function activityInRangeCodex(sessionId, startMs, endMs, sessionsDi
     if (tally.lastActivity == null || t > tally.lastActivity) tally.lastActivity = t;
   };
   try {
-    const text = await fsp.readFile(file, 'utf8');
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
+    await forEachRolloutLine(file, (line) => {
+      if (!line.trim()) return;
       let entry;
-      try { entry = JSON.parse(line); } catch { continue; }
-      if (typeof entry.timestamp !== 'string') continue;
+      try { entry = JSON.parse(line); } catch { return; }
+      if (typeof entry.timestamp !== 'string') return;
       const p = entry.payload || entry;
       const kind = p.type || entry.type;
       let tally = null;
@@ -773,24 +794,23 @@ export async function activityInRangeCodex(sessionId, startMs, endMs, sessionsDi
       } else if (responseItemUserText(entry, p)) {
         tally = current;
       }
-      if (!tally) continue;
+      if (!tally) return;
       const t = Date.parse(entry.timestamp);
-      if (!t || t < startMs || t >= endMs) continue;
+      if (!t || t < startMs || t >= endMs) return;
       bump(tally, t);
-    }
+    });
   } catch {
     /* rollout unreadable */
   }
   return current.messageCount > 0 ? current : legacy;
 }
 
-function headMetaCodex(file) {
+async function headMetaCodex(file) {
   let cwd = null; let summary = null;
   try {
-    const text = fs.readFileSync(file, 'utf8');
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
-      let entry; try { entry = JSON.parse(line); } catch { continue; }
+    await forEachRolloutLine(file, (line) => {
+      if (!line.trim()) return;
+      let entry; try { entry = JSON.parse(line); } catch { return; }
       const p = entry.payload || entry;
       if (!cwd && p.cwd) cwd = p.cwd;
       const kind = p.type || entry.type;
@@ -803,8 +823,8 @@ function headMetaCodex(file) {
           if (text2) summary = text2.replace(/\s+/g, ' ').slice(0, 80);
         }
       }
-      if (cwd && summary) break;
-    }
+      if (cwd && summary) return false;
+    });
   } catch { /* unreadable */ }
   return { cwd, summary };
 }
@@ -820,7 +840,7 @@ export async function listResumableCodex(excludeIds = new Set(), opts = {}) {
     if (!sessionId || seenIds.has(sessionId)) continue;
     seenIds.add(sessionId);
     if (family.metaById.get(sessionId)?.parentId || excludeIds.has(sessionId) || r.mtimeMs < cutoff) continue;
-    const { cwd, summary } = headMetaCodex(r.full);
+    const { cwd, summary } = await headMetaCodex(r.full);
     candidates.push({ sessionId, cwd, summary, lastActivity: Math.round(r.mtimeMs), agent: 'codex' });
   }
   candidates.sort((a, b) => b.lastActivity - a.lastActivity);

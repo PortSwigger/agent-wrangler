@@ -73,8 +73,8 @@ export function createRenderer(markdownit, { mdPathBase = null, boardOrigin = nu
   const esc = md.utils.escapeHtml;
   const baseOf = () => (typeof mdPathBase === 'function' ? mdPathBase() : mdPathBase) || null;
 
-  // External http(s) links open in a new tab; rel guards the opener from
-  // tabnabbing. A link to a local .md file becomes a preview control instead (see
+  // External http(s) and protocol-relative (`//host`) links open in a new tab; rel
+  // guards the opener from tabnabbing. A link to a local .md file becomes a preview control instead (see
   // localMarkdownHref). Relative / in-repo links to anything else (e.g.
   // `src/token.js`) and any other scheme are left to the default rule untouched —
   // they stay same-tab and markdown-it has already dropped unsafe schemes by this
@@ -89,7 +89,7 @@ export function createRenderer(markdownit, { mdPathBase = null, boardOrigin = nu
       token.attrSet('href', sessionHash);
       return defaultLinkOpen(tokens, idx, options, env, self);
     }
-    if (/^https?:\/\//i.test(href)) {
+    if (/^(?:https?:)?\/\//i.test(href)) {
       token.attrSet('target', '_blank');
       token.attrSet('rel', 'noopener noreferrer');
       return defaultLinkOpen(tokens, idx, options, env, self);
@@ -110,6 +110,20 @@ export function createRenderer(markdownit, { mdPathBase = null, boardOrigin = nu
       token.attrSet('title', mdPath);
     }
     return defaultLinkOpen(tokens, idx, options, env, self);
+  };
+
+  // An <img> is fetched the moment the page renders, with no click, so an image URL
+  // an agent wrote (or was steered into writing by something it read) could carry
+  // data off the machine. Show it as a link to the image instead. An inline `data:`
+  // image loads nothing (validateLink only lets raster types through) and is kept.
+  const defaultImage = md.renderer.rules.image;
+  md.renderer.rules.image = (tokens, idx, options, env, self) => {
+    const token = tokens[idx];
+    const src = token.attrGet('src') || '';
+    if (/^data:/i.test(src)) return defaultImage(tokens, idx, options, env, self);
+    const label = esc(self.renderInlineAsText(token.children || [], options, env) || src);
+    if (insideLink(tokens, idx)) return label;
+    return `<a href="${esc(src)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   };
 
   // Bare paths in prose and in inline code. Inline code is the common case, not an

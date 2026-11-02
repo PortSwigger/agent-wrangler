@@ -1,5 +1,8 @@
+import { adapterFor } from './agents/index.js';
 import { findTranscript, readLines, textOf, usageSince } from './transcript-reader.js';
 import { runHeadlessClaude } from './headless-claude.js';
+import { collectLaunchContext } from './launch-context.js';
+import { logError } from './log.js';
 import { archiveReviewEnabled } from './config-store.js';
 
 // The core event a finished review is published as: `{ sid, taskId, markdown }`.
@@ -144,6 +147,8 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
     findTranscriptFn = findTranscript,
     readLinesFn = readLines,
     review = reviewExcerpt,
+    launchContext = collectLaunchContext,
+    onError = logError,
     // Called once the subprocess has actually run, with the fresh liveSessionId
     // it used — regardless of outcome, since a spawned-but-unparseable review
     // still spent real tokens and should be attributed. `advanceReviewedAt`
@@ -156,7 +161,7 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
   } = deps;
 
   if (!isEnabled()) return 'skipped';
-  if ((entry?.agent || 'claude') !== 'claude') return 'skipped';
+  if (!adapterFor(entry?.agent).headlessArchiveReview) return 'skipped';
   if (!task?.id) return 'skipped';
   // The result is delivered as an `archive-review:completed` event, and the
   // task-memory extension is what writes it to memory.md. With nobody listening
@@ -174,7 +179,14 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
   if (!excerpt) return 'skipped';
 
   return runQueued(async () => {
-    const { text, liveSessionId, error } = await review(excerpt);
+    let env;
+    try {
+      ({ env } = await launchContext({ sid: sessionId, task, agent: 'claude', runtime: entry?.runtime || 'local', reason: 'headless' }));
+    } catch (err) {
+      onError(`archive review skipped for ${sessionId}: ${err.message}`);
+      return 'skipped';
+    }
+    const { text, liveSessionId, error } = await review(excerpt, { env });
     const success = !error && text != null;
     onStamp({ reviewLiveSessionId: liveSessionId, advanceReviewedAt: success });
     if (!success) return 'error';

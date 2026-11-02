@@ -1,44 +1,52 @@
+import { readCodexConfigEffort, resolveCodexAutoEffort } from './auto-effort.js';
+import { paneComposerIsReady, paneComposerIsEmpty, paneComposerDraft, parseGhostSuggestion } from './composer-parsers.js';
+import { scanDaily, scanMonth } from './codex-usage.js';
+import { codexCostUsd } from '../pricing.js';
+import { codexHistory } from './codex-history.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { launchAddDirArgs, launchEnvPrefix } from '../launch-context.js';
+import { launchAddDirArgs, launchCodexConfigArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
 import { shellQuote } from './claude.js';
-import { analyzeCodex, listResumableCodex, activityInRangeCodex, findRollout } from './codex-rollout.js';
+import { analyzeCodex, listResumableCodex, activityInRangeCodex, codexContextWindow, codexSubagentDetail, findRollout } from './codex-rollout.js';
 import { discoverCodexLiveId } from './codex-discover.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
-import { codexMcpConfigArgs, MCP_TOKEN_ENV } from '../mcp/client-config.js';
+import { codexMcpConfigArgs, MCP_TOKEN_ENV, prModelUrl } from '../mcp/client-config.js';
 import { codexPolicyArgs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
+import { tomlString, notifyOverride } from '../codex-notify-config.js';
+import { postToolHookOverrides } from '../codex-hook-config.js';
+import { fileURLToPath } from 'node:url';
+import { installPath } from '../install-root.js';
 
 const exec = promisify(execFile);
 
-// A TOML double-quoted string for a `-c key=value` override. Escapes backslash
-// and double-quote per TOML basic-string rules; the memory prompt has neither
-// today, but escape defensively so a future prompt edit can't break the arg.
-function tomlString(s) {
-  return `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
+const HOOK_PATH = installPath(fileURLToPath(new URL('../codex-notify-hook.js', import.meta.url)));
+// The PR model footer's PostToolUse hook (scripts/codex-pr-footer-hook.mjs).
+const PR_FOOTER_HOOK_PATH = installPath(fileURLToPath(new URL('../../scripts/codex-pr-footer-hook.mjs', import.meta.url)));
 
-// Env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
+// The pane-side refuseIfSet guard, env assignments + the `codex` binary. `sessionId` is always the OWNER/board id,
 // even for a fork (its own fresh board id). The extensions' env comes FIRST and
 // core's after, so an extension adds variables but can never override ours (the
 // last assignment of a name wins in a shell prefix). A path an extension hands
 // Codex (task-memory's) is already the launch-time REAL path: its hook is told
 // `agent: 'codex'`, because Codex 0.149+ rejects a symlinked writable root.
 function envPrefix(sessionId, spawnedBy, launchContext) {
-  let env = launchEnvPrefix(launchContext, shellQuote)
-    + `AW_SESSION_ID=${shellQuote(sessionId)} ${MCP_TOKEN_ENV}=${shellQuote(sessionId)} `;
+  let env = launchEnvGuard(launchContext, shellQuote) + launchEnvPrefix(launchContext, shellQuote)
+    + `AW_SESSION_ID=${shellQuote(sessionId)} ${MCP_TOKEN_ENV}=${shellQuote(sessionId)} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `;
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
 }
 
-// Flags shared by launch/resume/fork: autonomy, network, the extensions' directory grants, and
+// Flags shared by launch/resume/fork: autonomy, network, the extensions' config overrides and directory grants, and
 // the additive developer-instructions channel. Autonomy (sandbox, approval, the
 // network grant, --approve-for-me or bypass) comes from an extension's
 // `codexPolicy` answer when one answers (codexPolicyArgs,
 // extensions/codex-policy.js); otherwise the core defaults apply:
 // --sandbox workspace-write --ask-for-approval never plus the workspace-write
-// network grant. Everything else is unconditional, bypass included.
+// network grant. Everything else is unconditional, bypass included, the
+// notify hook and the PR model footer's PostToolUse hook among it (pre-trusted
+// in the same flags, codex-hook-config.js; it never attaches a PR to a card).
 // Developer instructions are the verified equivalent of Claude's
 // --append-system-prompt; injected as a `developer`-role message). Directory trust is NOT handled
 // here: verified against the installed binary that Codex's interactive trust
@@ -56,7 +64,10 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
   const base = [mandatorySkillPrompt(undefined, { disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = codexPolicyArgs(codexPolicy);
+  args.push(...launchCodexConfigArgs(launchContext));
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
+  args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
+  for (const o of postToolHookOverrides(`${shellQuote(process.execPath)} ${shellQuote(PR_FOOTER_HOOK_PATH)}`)) args.push('-c', o);
   args.push(...launchAddDirArgs(launchContext));
   for (const d of addDirs) args.push('--add-dir', d);
   args.push(...codexMcpConfigArgs());
@@ -65,7 +76,48 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
 
 export const codex = {
   id: 'codex',
+  history: codexHistory,
+  autoEffortResolver(paths) {
+    const configEffort = readCodexConfigEffort(paths.codexConfig);
+    return (value) => resolveCodexAutoEffort(value, { configEffort });
+  },
+  subagentDetail: codexSubagentDetail,
+  subagentDetailOverride: 'codexSubagentDetail',
+  usage: { billingProviders: [{ id: 'openai', label: 'OpenAI' }], scanDaily, scanMonth, costUsd: codexCostUsd, unknownModelLabel: 'gpt (codex est.)' },
+  labels: { liveTitle: false, summaryFirst: true },
+  statusSource: 'codex-rollout',
+  presentation: { icon: 'codex', color: '#10a37f', estimatedCost: true },
+  controls: {
+    switchModel: false,
+    permissionModes: ['auto'],
+    autoCompact: { min: 50000, presets: [50000, 100000, 250000] },
+  },
+  launch: { grantPaths: 'realpath', availabilityOverride: 'codexAvailable', trust: 'codex', gitMetadataGrants: true, codexPolicy: true, recoverMissingConversation: true },
+  terminal: {
+    readySignal: 'composer',
+    contextSource: 'analysis',
+    modelLabel: () => null,
+    contextPercent: () => null,
+    imageCount: () => null,
+    backgroundShellPattern: /\d+\s+background terminals?\s+running/i,
+    classify: (text, options, parse) => parse(text, options),
+    editingKeys: { newline: '\x1b\r', wordLeft: '\x1bb', wordRight: '\x1bf', clearLine: '\x15' },
+    clearKeys: ['C-u'],
+    composerIsReady: (text) => paneComposerIsReady(text, 'codex'),
+    composerIsEmpty: (text, options) => paneComposerIsEmpty(text, 'codex', options),
+    composerDraft: () => null,
+    suggestion: () => null,
+    composerMark: '›',
+    paneMetadata: false,
+    restoreDraft: false,
+    allowWhileWorking: true,
+    imageAcknowledgement: false,
+    interruptKeys: ['Escape'],
+  },
+  contextWindow: codexContextWindow,
+  reviewPriority: 20,
   label: 'Codex',
+  unavailableMessage: "This is a Codex conversation, but the `codex` binary isn't on PATH — install it (or put it on the launchd PATH) to resume Codex sessions.",
   tmuxPrefix: 'cx_',
   presetsSessionId: false,
   // `codex resume` takes no trailing prompt, so buildResume can't thread an `intent`

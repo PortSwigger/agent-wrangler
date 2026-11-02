@@ -1,3 +1,4 @@
+import { adapterFor } from '../../agents/index.js';
 // Self-lookup of spend: the caller's cost exactly as its board card shows it, read
 // off the same graph row (deps.graph(), rebuilt every ~4s) rather than re-costing
 // the transcript here — two computations would drift, and the card is the number
@@ -24,7 +25,7 @@ export const getSessionCostTool = {
     const structuredContent = {
       sessionId: caller,
       usd: row.usd ?? null,
-      estimated: row.agent === 'codex',
+      estimated: adapterFor(row.agent).presentation.estimatedCost === true,
       subAgentUsd,
       advisorUsd: row.advisorUsd ?? 0,
       tokens: row.tokens ?? null,

@@ -7,9 +7,17 @@
 
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist
 
-  Restart after changes with:
+  Restart it with:
 
     launchctl kickstart -k gui/$(id -u)/net.portswigger.agent-wrangler
+
+  launchd reads this file only when it loads the job, at login or with
+  bootout + bootstrap, so a restart doesn't pick up edits to it. Reload instead
+  (rerun bootstrap if it fails with "5: Input/output error": the bootout hadn't
+  finished):
+
+    launchctl bootout gui/$(id -u)/net.portswigger.agent-wrangler
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.portswigger.agent-wrangler.plist
 -->
 <plist version="1.0">
 <dict>
@@ -48,6 +56,10 @@
 
     <key>RunAtLoad</key>
     <true/>
+
+    <!-- Unset, launchd throttles this as a background daemon, and every session inherits that priority. -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
 
     <!-- launchd appends to these forever and never rotates them. bin/agent-wrangler
          trims them at startup, but it can't ask launchd where they are: if you

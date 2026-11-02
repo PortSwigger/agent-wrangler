@@ -18,7 +18,7 @@ export const SEPARATOR = 0x00; // record delimiter: cannot occur in a query, so 
 // `from` is a byte offset that is always a line boundary (the parent stores the
 // offset just past the last complete line it consumed), so a tail read never
 // starts mid-line.
-export function parseChunk(file, agent, from) {
+export function parseChunk(file, agent, from, resolveAdapter) {
   let fd;
   try {
     fd = fs.openSync(file, 'r');
@@ -50,7 +50,7 @@ export function parseChunk(file, agent, from) {
     let firstTs = 0;
     let lastTs = 0;
     for (const line of body.split('\n')) {
-      const got = extractLine(line, agent);
+      const got = extractLine(line, agent, resolveAdapter);
       if (!got) continue;
       if (got.meta) Object.assign(meta, got.meta);
       if (!got.record) continue;

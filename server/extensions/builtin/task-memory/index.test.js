@@ -49,7 +49,7 @@ test('launchContext (claude): binds the session, hands back the STABLE symlink p
 
 test('launchContext (codex): the RESOLVED real path, never the symlink', () => {
   const store = new MemoryStore(MEMORY_DIR);
-  const out = launchContext({ sid: 'tm-codex', task: { id: 'T2' }, agent: 'codex', host: hostFor(store) });
+  const out = launchContext({ sid: 'tm-codex', task: { id: 'T2' }, agent: 'codex', grantPaths: 'realpath', host: hostFor(store) });
   const real = fs.realpathSync(store.taskDir('T2'));
   assert.deepEqual(out, { env: { AW_TASK_MEMORY: path.join(real, 'memory.md') }, addDirs: [real] });
   assert.ok(!JSON.stringify(out).includes('by-session'));
@@ -67,6 +67,22 @@ test('launchContext: no task binds the session to its scratch folder; a reassign
 test('launchContext: an unsafe session id contributes nothing and escapes nothing', () => {
   const store = new MemoryStore(MEMORY_DIR);
   assert.deepEqual(launchContext({ sid: '../evil', task: null, agent: 'claude', host: hostFor(store) }), {});
+});
+
+test('headless context leaves existing memory bindings unchanged and creates no archived or cardless binding', (t) => {
+  const store = tmpStore();
+  t.after(() => fs.rmSync(store.dir, { recursive: true, force: true }));
+  const host = hostFor(store);
+  store.bindSession('live', 'original');
+  const before = fs.readlinkSync(store.linkPath('live'));
+  for (const agent of ['claude', 'codex']) {
+    for (const sid of ['live', 'archived', null]) {
+      assert.deepEqual(launchContext({ sid, task: { id: 'other' }, agent, reason: 'headless', host }), {});
+    }
+  }
+  assert.equal(fs.readlinkSync(store.linkPath('live')), before);
+  assert.equal(fs.existsSync(store.linkPath('archived')), false);
+  assert.equal(fs.existsSync(store.taskDir('other')), false);
 });
 
 test('graph: stamps hasMemory on each task, and tolerates the boot-time empty graph', () => {
