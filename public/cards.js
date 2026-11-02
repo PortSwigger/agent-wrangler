@@ -20,6 +20,10 @@ import { formatAutoCompactTokens } from './auto-compact-presets.js';
 
 export const STATUS_WORDS = { working: 'busy', 'needs-you': 'reply', idle: 'idle', job: 'job' };
 
+export function waitingStatusWord(reason) {
+  return reason === 'api-error' || reason === 'api-error-blocking' ? 'error' : STATUS_WORDS['needs-you'];
+}
+
 // Sub-agents finished within this window still show under the default "Recent" filter
 // (a starting point — not tuned against real usage yet).
 export const SUBAGENT_RECENT_MS = 5 * 60 * 1000;
@@ -421,11 +425,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
 // for a dormant one.
 export function workerStatusWord(s, ctx) {
   if (!s.managed && !s.restarting) return 'resume';
-  // An api-error needs-you is retryable by sending another message — the
-  // generic 'reply' word wrongly implies the same "go answer a prompt in the
-  // terminal" affordance as a permission prompt or OAuth screen.
-  if (s.status === 'needs-you' && s.waitingReason === 'api-error') return 'error';
-  if (s.status === 'needs-you') return STATUS_WORDS['needs-you'];
+  if (s.status === 'needs-you') return waitingStatusWord(s.waitingReason);
   if (ctx.justFinished.has(s.sessionId)) return 'done';
   return STATUS_WORDS[displayStatus(s)] || s.status || '';
 }

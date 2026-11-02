@@ -3,6 +3,19 @@
 This is the operational reference for controls that are easy to miss. See the README for installation
 and product concepts.
 
+## API errors
+
+A live Claude session whose latest transcript message is a terminal API error shows **ERROR**
+on its board card and chat header. The chat notice carries the error text. Connection failures
+allow another message to retry; blocking errors such as an expired login keep the composer disabled
+and offer **Terminal →** to resolve the cause. Ordinary permission prompts show **REPLY**.
+A new user turn or a successful assistant response clears the transcript error signal.
+
+This detection uses Claude's structured `isApiErrorMessage` flag, including errors followed by
+system bookkeeping. Codex's current rollout reader has no equivalent terminal API-error signal;
+API-error wording in an ordinary reply does not trigger this label. Codex continues to use its
+pane and turn markers for status.
+
 ## Dispatch a session
 
 Choose **New session**, then select a task, folder, agent, and model. Leave the folder blank for a
