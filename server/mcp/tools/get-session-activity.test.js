@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { getSessionActivityTool } from './get-session-activity.js';
@@ -187,4 +188,37 @@ test('tolerates a session with no transcript on disk at all', async () => {
   const out = await getSessionActivityTool.handler({ deps: deps(dir, { entries }) }, { date: '2026-07-01' });
 
   assert.deepEqual(out.structuredContent.sessions, []);
+});
+
+test('uses Codex transcripts without traversing the board scratch sessions directory', async (t) => {
+  const root = makeProjects();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const scratchDir = path.join(root, 'scratch');
+  const codexDir = path.join(root, 'codex');
+  fs.mkdirSync(path.join(scratchDir, 'workspace', 'node_modules'), { recursive: true });
+  fs.mkdirSync(codexDir);
+  const uuid = '33333333-3333-3333-3333-333333333333';
+  writeRollout(codexDir, uuid, [
+    turn('user_message', '2026-07-01T09:00:00.000Z'),
+    turn('agent_message', '2026-07-01T09:00:05.000Z'),
+  ]);
+  const reads = [];
+  const readdir = fsp.readdir;
+  t.mock.method(fsp, 'readdir', async (dir, ...args) => {
+    reads.push(String(dir));
+    return readdir.call(fsp, dir, ...args);
+  });
+  const entries = [{ sessionId: 'CARD10', liveSessionId: uuid, agent: 'codex' }];
+  const activityDeps = { ...deps(root, { entries, codexSessionsDir: codexDir }), sessionsDir: scratchDir };
+
+  const out = await getSessionActivityTool.handler({ deps: activityDeps }, { date: '2026-07-01' });
+
+  assert.deepEqual(reads.filter((dir) => dir === scratchDir || dir.startsWith(scratchDir + path.sep)), []);
+  assert.equal(out.structuredContent.sessions.length, 1);
+  const session = out.structuredContent.sessions[0];
+  assert.equal(session.sessionId, 'CARD10');
+  assert.equal(session.agent, 'codex');
+  assert.equal(session.messageCount, 2);
+  assert.equal(session.firstActivity, '2026-07-01T09:00:00.000Z');
+  assert.equal(session.lastActivity, '2026-07-01T09:00:05.000Z');
 });
