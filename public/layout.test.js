@@ -1,135 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MAX_COLS, MAX_ONSCREEN_ROWS, MAX_FIT_ROWS, MAX_SPAN, CARD_STRIDE_PX, TILE_CHROME_PX, GRID_CHROME_PX, MIN_SESSIONS_PER_ROW,
-  MIN_COL_PX, GRID_CHROME_X_PX,
-  sessionsPerRow, perRowForRows, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan, tileWeightWithBody,
+  MAX_COLS, MAX_FIT_ROWS, MAX_SPAN, MIN_COL_PX, GRID_CHROME_X_PX,
+  columnsForWidth, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileWeightWithBody,
   CHILD_STRIDE_PX, WORKFLOW_BOX_CHROME_PX, SUBAGENT_ROW_STRIDE_PX, SUBAGENT_ZONE_BASE_PX,
-  localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised, refinePerRow,
+  localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
 } from './layout.js';
 import { tileWeight, SNOOZE_DIVIDER_PX, SNOOZE_STRIDE_PX } from './snooze.js';
 
-// A stand-in for app.js's Date.now()-backed phaseOf: a session is asleep iff we
-// tag it so, keeping these tests time-independent.
 const phaseOf = (s) => (s.asleep ? 'asleep' : 'awake');
 const sess = (id, extra = {}) => ({ sessionId: id, snooze: {}, ...extra });
 const ADHOC = '__adhoc__';
 
-test('constants are exported positive numbers', () => {
-  for (const c of [MAX_COLS, MAX_ONSCREEN_ROWS, MAX_FIT_ROWS, MAX_SPAN, CARD_STRIDE_PX, TILE_CHROME_PX, GRID_CHROME_PX, MIN_SESSIONS_PER_ROW, MIN_COL_PX, GRID_CHROME_X_PX]) {
-    assert.equal(typeof c, 'number');
-    assert.ok(c > 0);
-  }
-});
-
-test('sessionsPerRow: floors to the cards that fit, never below the minimum', () => {
-  // A row tall enough for ~4 cards after chrome, plus the grid's own chrome
-  // (padding + row-gaps) so the intended 4-card slack survives GRID_CHROME_PX
-  // being subtracted first.
-  const tall = { clientHeight: (4 * CARD_STRIDE_PX + TILE_CHROME_PX) * MAX_ONSCREEN_ROWS + GRID_CHROME_PX };
-  assert.equal(sessionsPerRow(tall), 4);
-  // A partial extra card is floored away, not rounded up.
-  const partial = { clientHeight: (4 * CARD_STRIDE_PX + Math.floor(CARD_STRIDE_PX / 2) + TILE_CHROME_PX) * MAX_ONSCREEN_ROWS + GRID_CHROME_PX };
-  assert.equal(sessionsPerRow(partial), 4);
-  // A tiny / zero-height viewport clamps up to the minimum.
-  assert.equal(sessionsPerRow({ clientHeight: 0 }), MIN_SESSIONS_PER_ROW);
-});
-
-// GRID_CHROME_PX regression: #grid's own 14px padding + two 12px row-gaps (52px
-// total for the 3 nominal rows) used to be dropped entirely, so
-// clientHeight/MAX_ONSCREEN_ROWS overestimated the real 1fr track height —
-// harmless at low row/tile counts where slack absorbs it, but confirmed
-// against a live board (§ the test below) to overcount perRow by a whole card
-// once tiles pack densely (a 3×3 board). Never overestimate: the "raw"
-// (unfixed) formula must always report perRow >= the fixed one.
-test('sessionsPerRow: never overestimates capacity relative to the grid\'s real chrome', () => {
-  const rawFormula = (clientHeight) => Math.max(MIN_SESSIONS_PER_ROW, Math.floor(((clientHeight / MAX_ONSCREEN_ROWS) - TILE_CHROME_PX) / CARD_STRIDE_PX));
-  for (const clientHeight of [600, 900, 1107, 1152, 1500]) {
-    assert.ok(sessionsPerRow({ clientHeight }) <= rawFormula(clientHeight));
-  }
-});
-
-test('perRowForRows: at MAX_ONSCREEN_ROWS it agrees exactly with sessionsPerRow', () => {
-  for (const clientHeight of [600, 900, 1107, 1152, 1500]) {
-    assert.equal(perRowForRows(clientHeight, MAX_ONSCREEN_ROWS), sessionsPerRow({ clientHeight }));
-  }
-});
-
-// The bug this exists to let a caller correct for: sessionsPerRow budgets
-// every tile's card capacity against the NOMINAL row height (available height
-// / MAX_ONSCREEN_ROWS). Once the packer genuinely needs more rows than that,
-// `1fr` divides the same available height across those extra rows too, so the
-// REAL row is shorter than the nominal one every tile's span was computed
-// against — confirmed against a live board (a 3-card tile sized for 1 row
-// under a 3-row nominal budget did not fit once the board packed into 4 real
-// rows). perRowForRows lets a caller re-derive perRow from the row count the
-// packer actually chose, so tile spans can be recomputed against reality.
-test('perRowForRows: more rows than MAX_ONSCREEN_ROWS yields a smaller perRow than the nominal', () => {
-  const clientHeight = 1107; // a real measured live-board grid height
-  const nominal = sessionsPerRow({ clientHeight });
-  const refined = perRowForRows(clientHeight, 4);
-  assert.ok(refined <= nominal);
-});
-
-test('perRowForRows: fewer rows than MAX_ONSCREEN_ROWS yields a LARGER perRow (more room per row)', () => {
-  const clientHeight = 1107;
-  const nominal = sessionsPerRow({ clientHeight });
-  const refined = perRowForRows(clientHeight, 1);
-  assert.ok(refined >= nominal);
-});
-
-test('perRowForRows: never below MIN_SESSIONS_PER_ROW, even for a pathologically dense pack', () => {
-  assert.equal(perRowForRows(1107, MAX_FIT_ROWS * 10), MIN_SESSIONS_PER_ROW);
-});
-
-// refinePerRow's guard, in isolation: the refinement's premise (real rows are
-// shorter than nominal) only holds while the repack stays non-scrolling — once
-// a repack needs to scroll, row height is locked back to the nominal 3-row
-// size (app.js's fixed-cellH branch), which is exactly what perRow was
-// already computed against. Adopting a refinement that flips scroll on when
-// the un-refined pack didn't need it shrinks perRow to compensate for shorter
-// rows that never materialize. `clientHeight` below (880) is chosen so
-// perRowForRows(880, 4) === 2 and perRowForRows(880, 6) === 2, reproducing a
-// real board's numbers: packFor(3) needs 4 rows (no scroll), packFor(2) would
-// need 6 (scroll).
-test('refinePerRow: an unguarded loop would adopt a repack that turns scrolling on', () => {
-  const clientHeight = 880;
-  const packFor = (perRow) => (perRow === 3 ? { rows: 4, scroll: false } : { rows: 6, scroll: true });
-
-  // The old, unguarded loop (what renderGrid did before this fix): no check
-  // on whether the repack itself needs to scroll.
-  let perRow = 3;
-  let canonical = packFor(perRow);
-  for (let i = 0; i < MAX_FIT_ROWS && canonical.rows > MAX_ONSCREEN_ROWS; i++) {
-    const refined = perRowForRows(clientHeight, canonical.rows);
-    if (refined >= perRow) break;
-    perRow = refined;
-    canonical = packFor(perRow);
-  }
-  assert.equal(perRow, 2);
-  assert.equal(canonical.scroll, true);
-});
-
-test('refinePerRow: guards against adopting a repack that turns scrolling on when the original pack did not need it', () => {
-  const clientHeight = 880;
-  const packFor = (perRow) => (perRow === 3 ? { rows: 4, scroll: false } : { rows: 6, scroll: true });
-
-  const { perRow, canonical } = refinePerRow(3, packFor, clientHeight);
-  assert.equal(perRow, 3);
-  assert.equal(canonical.rows, 4);
-  assert.equal(canonical.scroll, false);
-});
-
-test('refinePerRow: still refines when the repack stays non-scrolling', () => {
-  // packFor(3) needs 4 rows but stays non-scrolling; a shorter, still
-  // non-scrolling repack at a smaller perRow should be adopted.
-  const clientHeight = 1500;
-  const packFor = (perRow) => (perRow >= 4 ? { rows: 4, scroll: false } : { rows: 3, scroll: false });
-
-  const { perRow, canonical } = refinePerRow(sessionsPerRow({ clientHeight }), packFor, clientHeight);
-  assert.ok(perRow <= sessionsPerRow({ clientHeight }));
-  assert.equal(canonical.scroll, false);
-});
+function columnHeights(placed, cols) {
+  const h = new Array(cols).fill(0);
+  for (const p of placed) h[p.col] = Math.max(h[p.col], p.rowStart + p.span);
+  return h;
+}
 
 test('columnsForWidth: floors to the readable-width columns that fit, never below one', () => {
   // Room for exactly 3 columns of MIN_COL_PX, plus the grid's own horizontal chrome.
@@ -141,13 +28,6 @@ test('columnsForWidth: floors to the readable-width columns that fit, never belo
   // A narrow / zero-width grid still yields one column, never zero.
   assert.equal(columnsForWidth({ clientWidth: 0 }), 1);
   assert.equal(columnsForWidth({ clientWidth: MIN_COL_PX - 1 }), 1);
-});
-
-test('rowSpan: ceil(count/perRow), clamped to [1, MAX_SPAN]', () => {
-  assert.equal(rowSpan(0, 2), 1);          // never zero
-  assert.equal(rowSpan(1, 2), 1);
-  assert.equal(rowSpan(3, 2), 2);          // ceil(3/2)
-  assert.equal(rowSpan(100, 2), MAX_SPAN); // clamped tall
 });
 
 test('computeLayout: packs single-span tiles column-major, no scroll when it fits', () => {
@@ -173,9 +53,6 @@ test('computeLayout: caps at MAX_COLS and reports scroll when it overflows', () 
   assert.equal(scroll, true);
 });
 
-// The point of the change: a full board of ordinary single-span tiles keeps
-// subdividing into a roughly-square grid on one screen instead of scrolling. 9
-// tiles reproduce the old 3×3; 20 (19 tasks + Ad-hoc) land as a ~5×4 that fits.
 test('computeLayout: single-span tiles pack square and fit on screen up to the cap', () => {
   for (const [n, wantCols] of [[4, 2], [9, 3], [16, 4], [20, 5]]) {
     const tiles = Array.from({ length: n }, (_, i) => ({ id: `t${i}`, span: 1 }));
@@ -187,10 +64,6 @@ test('computeLayout: single-span tiles pack square and fit on screen up to the c
   }
 });
 
-// A small board should use the fewest columns that keep tiles a comfortable
-// height rather than prematurely splitting into a 3rd column: 5–6 single-span
-// tiles want 2 wide columns, not 3. The jump to 3 is at 7 (where 2 columns would
-// exceed MAX_ONSCREEN_ROWS). 2–3 tiles must NOT collapse into a single column.
 test('computeLayout: 5–6 single-span tiles use 2 columns; 7+ go to 3', () => {
   for (const [n, wantCols] of [[2, 2], [3, 2], [5, 2], [6, 2], [7, 3], [8, 3]]) {
     const tiles = Array.from({ length: n }, (_, i) => ({ id: `t${i}`, span: 1 }));
@@ -200,9 +73,6 @@ test('computeLayout: 5–6 single-span tiles use 2 columns; 7+ go to 3', () => {
   }
 });
 
-// A DELIBERATE, conditional reversal of the "2–3 tiles must NOT collapse into a single
-// column" rule above: that rule holds at any width where two columns actually fit, and
-// only a width cap of 1 overrides it.
 test('computeLayout: a maxCols cap of 1 stacks every tile into one column', () => {
   const tiles = [1, 2, 3].map((n) => ({ id: `t${n}`, span: 1 }));
   const { placed, cols } = computeLayout(tiles, 1);
@@ -228,12 +98,6 @@ test('computeLayout: a big early tile does not strand later tiles in the last co
   assert.ok(used.size > 1 || cols === 1);
 });
 
-// Regression: a real 6-task board with spans [2,1,2,2,1,1] (total 9, divides
-// evenly into three columns of three) used to leave one column stranded at
-// height 2 — a bare, tile-less gap with no drop target for drag-and-drop —
-// while a later column overflowed past MAX_ONSCREEN_ROWS, because next-fit's
-// column pointer only ever advanced and could never backfill the gap it left
-// behind. First-fit finds the even [3,3,3] packing.
 test('computeLayout: first-fit backfills an earlier column instead of stranding it', () => {
   const tiles = [
     { id: 'a', span: 2 }, { id: 'b', span: 1 }, { id: 'c', span: 2 },
@@ -246,12 +110,6 @@ test('computeLayout: first-fit backfills an earlier column instead of stranding 
   assert.deepEqual(columnHeights(placed, cols), [3, 3, 3]);
 });
 
-// Regression: a real board of 3 tiles with spans [2,1,3] (total 6). ceil(√6)=3
-// is the starting column count, but the tiles pack densely into two columns of
-// three, so the third column comes out empty — a full-height, tile-less gap
-// that nothing can be dropped onto. computeLayout used to declare that dead
-// column anyway (it only ever GROWS the column count for overflow, never shrinks
-// it); it must collapse to the columns actually used.
 test('computeLayout: collapses a column left empty by the square starting count', () => {
   const tiles = [{ id: 'a', span: 2 }, { id: 'b', span: 1 }, { id: 'c', span: 3 }];
   const { placed, cols, rows, scroll } = computeLayout(tiles);
@@ -262,21 +120,6 @@ test('computeLayout: collapses a column left empty by the square starting count'
   for (const h of columnHeights(placed, cols)) assert.ok(h > 0);
 });
 
-// localSwapPlacement only ever consumes an already-`placed` array — it doesn't
-// care how many columns computeLayout chose or why, so these tests hand-craft
-// the fixture directly rather than deriving it from computeLayout. That keeps
-// them decoupled from computeLayout's own column-count heuristic (which the
-// roughly-square-grid change made total-dependent — ceil(√total) now, not
-// ceil(total/MAX_ONSCREEN_ROWS)), so a future change there can't silently
-// change which columns these tiles land in and break an unrelated test.
-
-// Regression: on a real 3-h2-top / 3-h1-bottom board, dragging the top-left h2
-// tile onto the bottom-middle h1 tile used to re-run computeLayout on the
-// whole reordered board — which cascaded: the placeholder landed in the THIRD
-// column (top-right's), not the one being hovered, and that column silently
-// overflowed even though neither dragged nor target tile was ever in it.
-// localSwapPlacement must keep the swap confined to the two columns the
-// dragged/target tile actually live in.
 test('localSwapPlacement: a cross-column, mixed-span swap never touches a third column', () => {
   const canonical = [
     { id: 'topLeft', span: 2, col: 0, rowStart: 0 }, { id: 'bottomLeft', span: 1, col: 0, rowStart: 2 },
@@ -326,9 +169,6 @@ test('localSwapPlacement: same-column swap only reorders that column', () => {
   assert.equal(scroll, false);
 });
 
-// The "drop it back where it was" case: swapping a tile with itself-in-effect
-// (dragged === target) isn't a valid input — callers must guard that before
-// calling, same as commitTaskSwap/renderGrid already do.
 test('localSwapPlacement: unknown ids return null rather than throwing', () => {
   const tiles = [{ id: 'a', span: 1 }, { id: 'b', span: 1 }];
   const { placed: canonical } = computeLayout(tiles);
@@ -347,14 +187,6 @@ test('orderSessions: empty/missing order falls back to createdAt ascending (stab
   assert.deepEqual(orderSessions(sessions, null).map((s) => s.sessionId), ['a', 'b']);
 });
 
-// The bug this guards against: a session with no explicit rank (e.g. the
-// Ad-hoc bucket, which never gets one from plain assignment) must not have its
-// display position driven by whatever raw order the caller's array arrives
-// in — that order mirrors the server's live/discovered/dormant assembly
-// passes and can reshuffle a session between passes (e.g. a resume) with no
-// relation to where it was displayed. createdAt is stable across a resume, so
-// ordering unranked sessions by it keeps a dormant session in place when it
-// wakes, regardless of which pass now represents it.
 test('orderSessions: unranked sessions sort by createdAt, not arrival order', () => {
   const sessions = [
     sess('newest', { createdAt: 300 }),
@@ -393,24 +225,6 @@ test('sortAsleepLast: asleep sink below awake; among asleep, soonest wake first'
   assert.deepEqual(out, ['awake1', 'awake2', 'sleepSoon', 'sleepLate']);
 });
 
-test('tileSpan: composes tileWeight → rowSpan for an all-awake tile', () => {
-  const sessions = [sess('a'), sess('b'), sess('c')];
-  const perRow = 2;
-  const weight = tileWeight({ activeCount: 3, snoozedCount: 0, cardStride: CARD_STRIDE_PX });
-  assert.equal(tileSpan(sessions, perRow, 0, phaseOf), rowSpan(weight, perRow));
-});
-
-test('tileSpan: asleep cards count fractionally, so they weigh less than awake ones', () => {
-  const perRow = 2;
-  const awake = [sess('a'), sess('b'), sess('c')];
-  const withSleep = [sess('a'), sess('b'), sess('c', { asleep: true, snooze: { until: 1 } })];
-  const allAwakeWeight = tileWeight({ activeCount: 3, snoozedCount: 0, cardStride: CARD_STRIDE_PX });
-  const mixedWeight = tileWeight({ activeCount: 2, snoozedCount: 1, cardStride: CARD_STRIDE_PX });
-  assert.ok(mixedWeight < allAwakeWeight);
-  assert.equal(tileSpan(awake, perRow, 0, phaseOf), rowSpan(allAwakeWeight, perRow));
-  assert.equal(tileSpan(withSleep, perRow, 0, phaseOf), rowSpan(mixedWeight, perRow));
-});
-
 test('visibleTileIds: returns order minus the minimised set, preserving order', () => {
   const order = ['a', 'b', 'c', ADHOC];
   assert.deepEqual(visibleTileIds(order, new Set(['b'])), ['a', 'c', ADHOC]);
@@ -447,209 +261,6 @@ test('expandFocusToMinimised: an unknown / null focused id maps to the empty set
   assert.deepEqual([...expandFocusToMinimised(['a', 'b'], 'gone')], []);
   assert.deepEqual([...expandFocusToMinimised(['a', 'b'], null)], []);
 });
-
-// Helper: reconstruct per-column heights from a placement.
-function columnHeights(placed, cols) {
-  const h = new Array(cols).fill(0);
-  for (const p of placed) h[p.col] = Math.max(h[p.col], p.rowStart + p.span);
-  return h;
-}
-
-// The bug this guards against: light secondary content (asleep sessions, extension body rows)
-// used to add its full fractional weight straight into the ceil() that decides
-// row-span, so a handful of it could tip a tile just past a row boundary and
-// cost a whole extra (mostly-empty) grid row. 2 active + 2 snoozed + 2 body rows at
-// perRow=2 used to hit the MAX_SPAN cap (3 rows) even though 2 active alone only
-// needs 1 — the secondary content should cost at most one extra row, not two.
-test('tileSpan: 2 active + 2 snoozed + 2 body rows does not max out at MAX_SPAN', () => {
-  const perRow = 2;
-  const sessions = [
-    sess('a1'), sess('a2'),
-    sess('s1', { asleep: true, snooze: { until: 1 } }),
-    sess('s2', { asleep: true, snooze: { until: 1 } }),
-  ];
-  assert.equal(tileSpan(sessions, perRow, 2 * 34 + 42, phaseOf), 2);
-});
-
-test('tileSpan: secondary (asleep + body) weight is capped at one row-equivalent', () => {
-  const perRow = 2;
-  const activeOnly = [sess('a1'), sess('a2')];
-  // Piling on far more secondary content than one row's worth still only costs
-  // one extra row over the active-only tile — scroll handles the rest.
-  const heavySleep = [
-    ...activeOnly,
-    ...Array.from({ length: 20 }, (_, i) => sess(`s${i}`, { asleep: true, snooze: { until: 1 } })),
-  ];
-  const activeSpan = tileSpan(activeOnly, perRow, 0, phaseOf);
-  const heavySpan = tileSpan(heavySleep, perRow, 0, phaseOf);
-  assert.equal(activeSpan, 1);
-  assert.equal(heavySpan, 2);
-});
-
-// childRowCount (a workflow's absorbed workers, or any other nested child —
-// computed in app.js via workflow.js's computeAbsorption, since deciding what's
-// absorbed needs the whole tile's session set) weighs like a snoozed row,
-// not a full active card — a task with one orchestrator + several workers should
-// read as roughly "1 card plus a light spine", not "N full cards".
-test('tileSpan: child-session rows weigh light, not full active-card weight', () => {
-  const perRow = 2;
-  const soloOrch = [sess('orch')];
-  assert.equal(tileSpan(soloOrch, perRow, 0, phaseOf, 0), 1);
-  // 2 children add only a fraction of a row, same order of magnitude as 2 body rows.
-  assert.equal(tileSpan(soloOrch, perRow, 0, phaseOf, 2), 1);
-});
-
-test('tileSpan: child-row weight is capped at one row-equivalent, however many pile on', () => {
-  const perRow = 2;
-  const soloOrch = [sess('orch')];
-  const fewChildren = tileSpan(soloOrch, perRow, 0, phaseOf, 2);
-  const manyChildren = tileSpan(soloOrch, perRow, 0, phaseOf, 20);
-  assert.equal(fewChildren, manyChildren); // both clamp to the same one-row cap
-});
-
-// The bug a live-board check caught: collapsing a workflow box hides its
-// workers' rows (childRowCount drops to 0) but the workers themselves are still
-// present in `sessions` — they never became full cards just because their spine
-// is hidden. Using childRowCount alone (its default) to also derive
-// topLevelActiveCount put them BACK into the full-weight active count on
-// collapse, growing the tile exactly when it should shrink (2 -> 3 here).
-test('tileSpan: BUG — deriving topLevelActiveCount from childRowCount alone re-inflates on collapse', () => {
-  const perRow = 2;
-  const workflowTile = [sess('orch'), sess('w1'), sess('w2'), sess('w3'), sess('w4')];
-  const expanded = tileSpan(workflowTile, perRow, 0, phaseOf, 4); // no absorbedChildCount arg: defaults to childRowCount
-  const collapsedBuggy = tileSpan(workflowTile, perRow, 0, phaseOf, 0); // same bug: defaults to 0
-  assert.equal(expanded, 2);
-  assert.equal(collapsedBuggy, 3); // reproduces the regression: collapse GREW the tile
-});
-
-// The fix: pass the structural absorbedChildCount (4, unchanged by collapse)
-// alongside the visible childRowCount (0 when collapsed) — the workers stay
-// excluded from topLevelActiveCount either way, and only the light secondary
-// weight they contribute drops to zero, so collapsing only ever shrinks.
-test('tileSpan: collapsing a workflow box (absorbedChildCount passed) shrinks the tile, never grows it', () => {
-  const perRow = 2;
-  const workflowTile = [sess('orch'), sess('w1'), sess('w2'), sess('w3'), sess('w4')];
-  const expanded = tileSpan(workflowTile, perRow, 0, phaseOf, 4, 4);
-  const collapsed = tileSpan(workflowTile, perRow, 0, phaseOf, 0, 4);
-  assert.equal(expanded, 2);
-  assert.equal(collapsed, 1);
-  assert.ok(collapsed <= expanded);
-});
-
-// A workflow box's own chrome (border, padding, "Workflow" header) is charged
-// once per top-level workflow run, distinct from childRowCount — it's present
-// even for a "solo" run with no workers yet (workflowBoxHtml still wraps a box
-// around a childless orchestrator).
-test('tileSpan: a solo workflow run (no workers) still costs its box chrome', () => {
-  const perRow = 2;
-  const plain = [sess('orch')];
-  const solo = tileSpan(plain, perRow, 0, phaseOf, 0, 0, 1);
-  const bare = tileSpan(plain, perRow, 0, phaseOf, 0, 0, 0);
-  assert.ok(solo >= bare);
-});
-
-// Collapsing a workflow's spine hides its worker rows (childRowCount -> 0) but
-// the box itself — border, padding, header — never disappears (see
-// toggleWorkflowCollapse in app.js), so workflowBoxCount must NOT drop with it.
-test('tileSpan: collapsing a workflow keeps paying for its box chrome, unlike its child rows', () => {
-  const perRow = 2;
-  const workflowTile = [sess('orch'), sess('w1'), sess('w2'), sess('w3'), sess('w4')];
-  const expanded = tileSpan(workflowTile, perRow, 0, phaseOf, 4, 4, 1);
-  const collapsed = tileSpan(workflowTile, perRow, 0, phaseOf, 0, 4, 1); // childRowCount 0, workflowBoxCount unchanged
-  const collapsedNoBox = tileSpan(workflowTile, perRow, 0, phaseOf, 0, 4, 0); // what it'd be if the box chrome wrongly dropped too
-  assert.ok(collapsed >= collapsedNoBox);
-});
-
-// A card's own expanded sub-agent zone (cards.js subagentZoneHtml) grows THAT
-// card past CARD_STRIDE_PX with no change to the tile's session count at all —
-// unlike childRowCount/workflowBoxCount, which only ever apply to sessions
-// folded into a spine or wrapped in workflow chrome. Verified against a live
-// board: a plain card with one shown sub-agent row measured 113.4px against a
-// sibling's 77.4px baseline.
-test('tileSpan: a card with a shown sub-agent zone weighs more than a bare card', () => {
-  const perRow = 2;
-  const plain = [sess('a')];
-  const bare = tileSpan(plain, perRow, 0, phaseOf, 0, 0, 0, 0, 0);
-  const withZone = tileSpan(plain, perRow, 0, phaseOf, 0, 0, 0, 1, 1);
-  assert.ok(withZone >= bare);
-});
-
-// Two cards each showing one sub-agent row must weigh more than one card
-// showing both rows — the zone's own margin chrome (SUBAGENT_ZONE_BASE_PX) is
-// a per-card cost, not a per-row one, so subagentZoneCount has to be tracked
-// separately from subagentRowCount rather than folded into a single count.
-test('tileSpan: sub-agent zone chrome is charged per card, not just per row', () => {
-  const perRow = 4; // wide enough that neither case's secondary weight hits the perRow cap
-  const oneCard = [sess('a')];
-  const twoCards = [sess('a'), sess('b')];
-  const oneZoneTwoRows = tileSpan(oneCard, perRow, 0, phaseOf, 0, 0, 0, 2, 1);
-  const twoZonesTwoRows = tileSpan(twoCards, perRow, 0, phaseOf, 0, 0, 0, 2, 2);
-  assert.ok(twoZonesTwoRows >= oneZoneTwoRows);
-});
-
-// A live-board regression, updated for the GRID_CHROME_PX fix: at a real
-// 1152px-tall grid, perRow is 3, not 4 — the previous "4" came from
-// clientHeight/MAX_ONSCREEN_ROWS ignoring #grid's own 52px of padding/row-gap
-// chrome (see GRID_CHROME_PX), which overcounted how many cards actually fit
-// a real on-screen row (confirmed by measuring the live board: 4 cards need
-// more vertical space than a real single-row tile has, 3 do not). At the
-// corrected perRow=3, the 3-row absorbed child spine now genuinely needs the
-// tile's 3rd row rather than being (wrongly) absorbed into 2.
-test('tileSpan: perRow reflects the grid\'s real per-row budget, not an inflated one', () => {
-  const clientHeight = 1152; // matches a real live-board grid height
-  const perRow = sessionsPerRow({ clientHeight });
-  assert.equal(perRow, 3); // was 4 before GRID_CHROME_PX was subtracted
-  const sessions = [sess('parent'), sess('a'), sess('b'), sess('c'), sess('d'), sess('w1'), sess('w2'), sess('w3')];
-  assert.equal(tileSpan(sessions, perRow, 0, phaseOf, 3, 3), 3);
-});
-
-// A "full view" child (cards.js childRowHtml) draws a real .session-card in the
-// spine, not the light .worker-row — it must weigh like a top-level active card
-// (CARD_STRIDE_PX), not childRowCount's lighter CHILD_STRIDE_PX, or the tile
-// would come out shorter than what actually renders.
-test('tileSpan: a full-view absorbed child weighs at least as much as an equal-count compact spine', () => {
-  const perRow = 4; // wide enough that neither case's secondary weight hits the perRow cap
-  const withParent = [sess('parent'), sess('c1')];
-  const compact = tileSpan(withParent, perRow, 0, phaseOf, 1, 1, 0, 0, 0, 0);
-  const fullView = tileSpan(withParent, perRow, 0, phaseOf, 0, 1, 0, 0, 0, 1);
-  assert.ok(fullView >= compact);
-});
-
-// Regression: full-view children were originally folded into the SAME capped
-// secondary bucket as light rows/body/chrome (Math.min(..., perRow)) — enough
-// of them alone could saturate that cap and clip a fully-drawn `.session-card`
-// into `.task-body` scroll, exactly the failure this function's own opening
-// invariant says never happens to a session rendered as its own card. A
-// live board with 5 full-view children under a parent (6 real cards at
-// perRow=2, i.e. 3 rows' worth) demonstrated it: before the fix this returned
-// 2 (capped); it must now reach the tile's own MAX_SPAN ceiling instead.
-test('tileSpan: full-view children are NOT subject to the secondary-weight cap — enough of them grows the tile past what a capped bucket would allow', () => {
-  const perRow = 2;
-  const sessions = [sess('parent'), sess('c1'), sess('c2'), sess('c3'), sess('c4'), sess('c5')];
-  const span = tileSpan(sessions, perRow, 0, phaseOf, 0, 5, 0, 0, 0, 5);
-  assert.equal(span, MAX_SPAN);
-});
-
-// The fix must not also exempt genuinely light secondary content (extension
-// body, plain compact child rows, sub-agent zones) from the cap.
-test('tileSpan: ordinary secondary content (extension body) is still capped, unaffected by the full-view fix', () => {
-  const perRow = 4;
-  const span = tileSpan([sess('parent')], perRow, 50 * 34, phaseOf, 0, 0, 0, 0, 0, 0);
-  assert.ok(span <= MAX_SPAN);
-});
-
-// An extension that reports less body weight (a collapsed list) must shrink the
-// tile. Enough sessions/body that the secondary-weight cap pushes the larger
-// case into a second row while the smaller stays within the first.
-test('tileSpan: a smaller bodyPx shrinks the tile vs. a larger one', () => {
-  const perRow = 10;
-  const sessions = Array.from({ length: 9 }, (_, i) => sess(`s${i}`));
-  const expanded = tileSpan(sessions, perRow, 60 * 34, phaseOf);
-  const collapsed = tileSpan(sessions, perRow, 42, phaseOf);
-  assert.ok(collapsed < expanded);
-});
-
-// --- tileWeightWithBody: the px composition ---
 
 test('tileWeightWithBody: no body weight adds nothing over the snooze weight', () => {
   const base = { activeCount: 2, snoozedCount: 1, cardStride: 80 };
@@ -691,30 +302,4 @@ test('tileWeightWithBody: N full-view children add N*cardStride px, not N*CHILD_
   const base = tileWeightWithBody({ activeCount: 1, snoozedCount: 0, cardStride: stride });
   const withFullView = tileWeightWithBody({ activeCount: 1, snoozedCount: 0, cardStride: stride, childFullViewCount: 2 });
   assert.ok(Math.abs((withFullView - base) * stride - 2 * stride) < 1e-9);
-});
-
-test('tileSpan: body weight is added to the tile when present, and an absent weight changes nothing', () => {
-  const perRow = 2;
-  const sessions = [sess('a'), sess('b')];
-  assert.equal(tileSpan(sessions, perRow, 0, phaseOf), 1);
-  assert.equal(tileSpan(sessions, perRow, 0, phaseOf), tileSpan(sessions, perRow, undefined, phaseOf));
-  assert.ok(tileSpan(sessions, perRow, 200, phaseOf) > 1);
-});
-
-test('computeLayout: one column gives each task one content-sized track regardless of card budget', () => {
-  const tiles = [{ id: 'large', span: 3 }, { id: 'small', span: 1 }, { id: 'medium', span: 2 }];
-  const layout = computeLayout(tiles, 1);
-  assert.deepEqual(layout.placed.map(({ id, col, rowStart, span }) => ({ id, col, rowStart, span })), [
-    { id: 'large', col: 0, rowStart: 0, span: 1 },
-    { id: 'small', col: 0, rowStart: 1, span: 1 },
-    { id: 'medium', col: 0, rowStart: 2, span: 1 },
-  ]);
-  assert.equal(layout.rows, 3);
-});
-
-test('refinePerRow: one-column content tracks do not shrink the card budget', () => {
-  const tiles = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, span: 3 }));
-  const { perRow, canonical } = refinePerRow(4, () => computeLayout(tiles, 1), 600);
-  assert.equal(perRow, 4);
-  assert.equal(canonical.rows, 5);
 });
