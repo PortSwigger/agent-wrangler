@@ -82,6 +82,13 @@ attachable terminal only after being resumed through the board.
 Tasks are board columns for related sessions. Drag cards between tasks; moving a parent also moves its
 nested descendants.
 
+The board divides its visible task area into five fixed-height rows. Tasks use as many rows as their
+visible content needs, normally up to four, with excess content scrolling inside the task. A large
+task can use a spare fifth row when this keeps every other task within the visible board. Short
+tasks stay short. When the tasks need more space, the board scrolls vertically; neighbouring tasks
+keep their own row allocations. These limits also apply when the board narrows to one column.
+Focus mode gives the selected task the full available height.
+
 While you drag a session, each card and child row it can nest under shows a **Nest** zone on its
 right-hand side. Its own descendants never do.
 Drop on the zone to make the session that card's child. Dropping anywhere else reorders cards as usual.

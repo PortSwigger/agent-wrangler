@@ -113,7 +113,7 @@ export function snoozeSetMessage(sessionId, until, comment = '') {
 
 // Tile height as fractional card-equivalents: active cards full weight, snoozed
 // rows a fraction (their px height / card stride), plus a one-time divider cost
-// when any are snoozed. Feeds rowSpan(weight, perRow) in app.js.
+// when any are snoozed.
 // A collapsed snoozed block keeps its divider but drops the rows.
 export function tileWeight({ activeCount, snoozedCount, cardStride, snoozedCollapsed = false }) {
   const px = activeCount * cardStride

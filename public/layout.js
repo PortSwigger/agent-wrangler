@@ -1,8 +1,3 @@
-// Pure grid geometry for the Task Grid view: how many cards fit a row, how tall a
-// tile grows, and the column-major packing that keeps the board a roughly-square
-// grid. Kept dependency-light (only snooze.js's tileWeight) and free of DOM/board state so it can be unit-tested —
-// the phase-dependent sorts take an injected `phaseOf(session)` predicate rather
-// than reaching for Date.now(), matching how snooze.js keeps `now` explicit.
 import { tileWeight, listedAsleep } from './snooze.js';
 
 // A nested child session (a workflow worker, or any other spawn absorbed into a
@@ -48,14 +43,6 @@ export const WORKFLOW_BOX_CHROME_PX = 52;
 export const SUBAGENT_ROW_STRIDE_PX = 32; // row (26) + inter-row gap (6)
 export const SUBAGENT_ZONE_BASE_PX = 4;   // margin-top(12) + margin-bottom(-2) - one row's gap folded into the stride above
 
-// Tile height as fractional card-equivalents, composing the snooze weight with the
-// `task.body` extension weight and any absorbed child-session rows: snooze px
-// (active cards + snoozed rows + their divider) plus `bodyPx` (the summed
-// `weight()` of the tile's `task.body` contributions, slots.taskBodyWeight — 0
-// when there are none, which is also what a disabled extension contributes), plus
-// a fractional stride per visible child row (no divider — see CHILD_STRIDE_PX).
-// Feeds rowSpan(weight, perRow). Computed off snooze.js's tileWeight so that
-// module stays untouched (multiply back to px, add the rest, divide back to units).
 export function tileWeightWithBody({
   activeCount, snoozedCount, cardStride, bodyPx = 0, childRowCount = 0,
   workflowBoxCount = 0, subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0, snoozedCollapsed = false,
@@ -72,163 +59,47 @@ export function tileWeightWithBody({
 }
 
 
-// The board keeps subdividing into a roughly-square grid as tiles are added
-// (3×3 at 9 tiles, 5×4 at 20) rather than scrolling once past a fixed 3×3 — so a
-// higher task cap fills the viewport denser instead of running off the bottom.
-// `MAX_COLS` bounds how wide it goes; `MAX_FIT_ROWS` is how tall it grows before
-// falling back to the fixed-height scrolling layout (only for pathological session
-// counts, well past the task cap). Small counts are unaffected: a square target of
-// ceil(√total) reproduces the old 3×3 at 9 tiles and 2×2 at 4.
 export const MAX_COLS = 6;
-export const MAX_FIT_ROWS = 5;
-// The tile-SIZING nominal (distinct from MAX_FIT_ROWS, the scroll threshold): the
-// on-screen row height a tile's card capacity and the scrolling cell height are
-// both figured against, so per-tile spans stay stable regardless of how many rows
-// the packed grid ends up using. Deliberately NOT raised alongside MAX_FIT_ROWS —
-// doing so would shrink every tile's card budget and cascade span growth.
-export const MAX_ONSCREEN_ROWS = 3;
-export const MAX_SPAN = 3;         // tallest a tile can grow (rows)
-// Per-card vertical stride and the fixed chrome subtracted before dividing, both
-// measured off the rendered DOM (not the source box model, which misled an
-// earlier estimate). A .session-card is 77px and .task-body adds an 8px gap
-// before each subsequent card, so STRIDE = 85px per card. A tile of N cards is
-// 85N + 37 tall: .task-head (29) + body padding (16), minus the one 8px gap
-// STRIDE over-counts. Unlike an earlier version, this does NOT fold in the
-// scrolling path's own -12px cell trim (app.js's cellH computes that
-// separately, straight off clientHeight, never reading this constant) — doing
-// so here just under-counted the on-screen perRow for no one's benefit, and was
-// the reason a handful of absorbed child rows could tip a tile a whole
-// mostly-empty row past where it needed to land. Re-measure if the card/tile
-// chrome changes in public/styles.css.
+export const MAX_ONSCREEN_ROWS = 5;
+export const MAX_FIT_ROWS = MAX_ONSCREEN_ROWS;
+export const MAX_SPAN = 4;
 export const CARD_STRIDE_PX = 85;
 export const TILE_CHROME_PX = 37;
-export const MIN_SESSIONS_PER_ROW = 2;
-// #grid's own chrome (styles.css): 14px padding top+bottom (28) plus the two
-// 12px row-gaps a 3-row `repeat(3, 1fr)` bakes into every track (24). Re-measure
-// alongside CARD_STRIDE_PX/TILE_CHROME_PX if #grid's padding/gap change.
-export const GRID_CHROME_PX = 52;
-// The narrowest a task column stays readable before .card-name / .card-repo /
-// .branch-name start ellipsising (they have no min-width — see styles.css — so
-// nothing else stops a column shrinking). Judged by eye on one laptop board, NOT
-// measured off the box model: 420 collapsed to one column while two were still
-// comfortable, 380 felt right. Re-tune the same way if the card chrome changes.
+export const GRID_GAP_PX = 12;
+export const GRID_PADDING_PX = 14;
 export const MIN_COL_PX = 380;
-// #grid's horizontal chrome (styles.css): 14px padding left+right. The 12px column
-// gaps are deliberately left out — that makes the cap optimistic by under 10px at
-// every breakpoint (6px at 2 columns, 9px at 4), well inside the tolerance of an
-// eye-tuned MIN_COL_PX, and folding them in would shift the 2-column breakpoint by
-// 12px and mean re-tuning it.
-export const GRID_CHROME_X_PX = 28;
+export const GRID_CHROME_X_PX = 2 * GRID_PADDING_PX;
 
-// How many session cards comfortably fit (no internal scroll) in a grid row of
-// the given pixel height. Floored, never rounded up: a partially-visible card
-// would clip and force the body to scroll, which is exactly what "comfortably
-// fits" rules out. Floor of MIN_SESSIONS_PER_ROW so a very cramped viewport
-// still gets a usable (if optimistic) budget rather than 0 or negative.
-export function perRowForRowHeight(rowH) {
-  return Math.max(MIN_SESSIONS_PER_ROW, Math.floor((rowH - TILE_CHROME_PX) / CARD_STRIDE_PX));
+export function gridRowHeight(clientHeight, trayHeight = null, { gap = GRID_GAP_PX, paddingY = 2 * GRID_PADDING_PX } = {}) {
+  const trayPx = trayHeight == null ? 0 : trayHeight + gap;
+  return Math.max(1, (clientHeight - trayPx - paddingY - (MAX_ONSCREEN_ROWS - 1) * gap) / MAX_ONSCREEN_ROWS);
 }
 
-// How many session cards comfortably fit (no internal scroll) in one grid row,
-// for the current viewport. The basis is the nominal on-screen row height
-// (clientHeight, minus #grid's own chrome, / MAX_ONSCREEN_ROWS) — the same
-// height the scrolling path locks cells to — so it's conservative when few
-// tiles make rows taller than that.
-export function sessionsPerRow(gridEl) {
-  return perRowForRowHeight(((gridEl.clientHeight || 0) - GRID_CHROME_PX) / MAX_ONSCREEN_ROWS);
-}
-
-// The self-consistency twin of sessionsPerRow: once the packer genuinely needs
-// more than MAX_ONSCREEN_ROWS rows, `1fr` divides the SAME available height
-// across those extra rows too, so each real row is shorter than the nominal
-// one sessionsPerRow budgeted against — every tile's span was computed as if
-// it had more room per row than it actually gets, which can clip a full
-// top-level active card into `.task-body`'s scroll (never allowed — see
-// tileSpan). This re-derives perRow from the row count the packer actually
-// chose, so a caller can repack against the real, shorter row and grow the
-// affected tiles' spans until they genuinely fit. Never used to lower the
-// NOMINAL budget for small boards (that would shrink every tile's card
-// capacity even when rows never left MAX_ONSCREEN_ROWS — see MAX_ONSCREEN_ROWS
-// above) — only to correct for a packer that already needed more rows.
-export function perRowForRows(clientHeight, rows) {
-  return perRowForRowHeight(((clientHeight || 0) - GRID_CHROME_PX) / Math.max(1, rows));
-}
-
-// Repacks perRow down while the pack needs more than MAX_ONSCREEN_ROWS, per
-// perRowForRows above — but ONLY while the repack itself stays non-scrolling.
-// Past MAX_FIT_ROWS the board switches to the fixed-cellH scrolling layout
-// (app.js), which locks row height back to the SAME nominal 3-row size
-// sessionsPerRow already budgeted `perRow` against — so a repack that flips
-// scrolling on invalidates the very premise (shorter real rows) that
-// justified shrinking perRow in the first place. Adopting it anyway shrinks
-// perRow to compensate for shorter rows that then never materialize,
-// inflating every tile's span for no reason (confirmed against a live
-// board). `packFor` is injected (the caller's tile-building closure) so this
-// stays DOM-free and testable with canned {rows, scroll} results.
-export function refinePerRow(perRow, packFor, clientHeight) {
-  let canonical = packFor(perRow);
-  if (canonical.cols === 1) return { perRow, canonical };
-  for (let i = 0; i < MAX_FIT_ROWS && canonical.rows > MAX_ONSCREEN_ROWS; i++) {
-    const refined = perRowForRows(clientHeight, canonical.rows);
-    if (refined >= perRow) break;
-    const repacked = packFor(refined);
-    if (repacked.scroll && !canonical.scroll) break;
-    perRow = refined;
-    canonical = repacked;
-  }
-  return { perRow, canonical };
-}
-
-// How many readable-width columns fit the grid's CURRENT width — the horizontal
-// twin of sessionsPerRow, and for the same reason: the packer is otherwise blind to
-// the viewport, so 2 columns at 1600px and 2 at 400px look identical to it. Widening
-// the terminal (drag-to-resize shrinks #grid, a flex: 1 sibling of #sidebar) used to
-// split that narrow grid into two half-width columns and truncate every card; capping
-// by width stacks them into one full-width column instead.
-export function columnsForWidth(gridEl) {
-  const usable = (gridEl.clientWidth || 0) - GRID_CHROME_X_PX;
+export function columnsForWidth(gridEl, paddingX = GRID_CHROME_X_PX) {
+  const usable = (gridEl.clientWidth || 0) - paddingX;
   return Math.max(1, Math.floor(usable / MIN_COL_PX));
 }
 
-// Tile height (in grid rows) derived from how many sessions it holds.
-export function rowSpan(sessionCount, perRow) {
-  return Math.min(Math.max(Math.ceil(sessionCount / perRow), 1), MAX_SPAN);
+function expandSpareRows(placed, eligibleCols = null) {
+  const heights = new Map();
+  for (const tile of placed) heights.set(tile.col, Math.max(heights.get(tile.col) || 0, tile.rowStart + tile.span));
+  if (Math.max(...heights.values(), 1) <= MAX_ONSCREEN_ROWS) {
+    for (const tile of placed) {
+      if (eligibleCols && !eligibleCols.has(tile.col)) continue;
+      if ((tile.requestedSpan ?? tile.span) <= MAX_SPAN || tile.span >= MAX_ONSCREEN_ROWS || heights.get(tile.col) >= MAX_ONSCREEN_ROWS) continue;
+      const oldEnd = tile.rowStart + tile.span;
+      tile.span++;
+      for (const below of placed) {
+        if (below.col === tile.col && below.rowStart >= oldEnd) below.rowStart++;
+      }
+      heights.set(tile.col, heights.get(tile.col) + 1);
+    }
+  }
+  return Math.max(...heights.values(), 1);
 }
 
-// Column-major packing: tiles flow down a column, then into the next, in their
-// `order` sequence. The Ad-hoc tile is just one of them now, so it packs wherever
-// its order position falls. Returns each tile's grid position plus the dimensions
-// and whether the board must scroll.
-// Starts at a roughly-square column count (ceil(√total)) so the board subdivides
-// evenly — 3×3 at 9 tiles, 5×4 at 20 — instead of stacking into few tall columns.
-// Retries with one extra column if the greedy result still overflows MAX_FIT_ROWS:
-// a large-span tile early in the order can otherwise strand all subsequent tiles
-// in the last column while earlier columns sit nearly empty. Only once columns hit
-// the cap (`maxCols`, at most MAX_COLS) and rows still overflow does it fall back to
-// the scrolling layout.
-//
-// First-fit, not next-fit: each tile goes into the leftmost column that still
-// has room under `target`, not just "the current column, advancing forward
-// only." A monotonic ci (next-fit) can permanently strand a column short — e.g.
-// spans [2,1,2,2,1,1] (a real 6-task board) used to leave one column at height 2
-// of a target 3 (a bare gap with no tile, hence no drop target for
-// drag-and-drop) while another column overflowed, even though the total (9)
-// divides evenly into three columns of three. First-fit backfills that column
-// instead. When no column has room under `target` (every column already full,
-// or a single tile's span alone exceeds it), the fallback is the least-loaded
-// column — the placement that minimizes the worst overflow.
-// `maxCols` caps how wide the board may go — normally MAX_COLS, but app.js passes
-// columnsForWidth(#grid) so a narrow grid stacks into fewer (down to one) full-width
-// columns instead of splitting into unreadably narrow ones.
 export function computeLayout(tiles, maxCols = MAX_COLS) {
-  if (maxCols <= 1) {
-    return {
-      placed: tiles.map((tile, rowStart) => ({ ...tile, col: 0, rowStart, span: 1 })),
-      cols: 1,
-      rows: Math.max(tiles.length, 1),
-      scroll: tiles.length > MAX_FIT_ROWS,
-    };
-  }
+  tiles = tiles.map((tile) => ({ ...tile, requestedSpan: tile.requestedSpan ?? tile.span, span: Math.max(1, Math.min(tile.span, MAX_SPAN)) }));
   const total = tiles.reduce((a, t) => a + t.span, 0);
   const maxSpan = Math.max(1, ...tiles.map((t) => t.span));
   const pack = (cols) => {
@@ -243,25 +114,14 @@ export function computeLayout(tiles, maxCols = MAX_COLS) {
     }
     return { placed, cols, heights, rows: Math.max(...heights, 1) };
   };
-  // Seed with the fewest columns that keep tiles a comfortable height
-  // (≤ MAX_ONSCREEN_ROWS) so a small board uses big panels instead of prematurely
-  // splitting into a 3rd column — 5–6 tiles land as 2 wide columns, not 3; the square
-  // count (ceil√total) keeps big boards subdivided. They cross at 9 (3×3).
-  // Don't delete the `Math.max(2, …)` floor to reach one column — it is the width cap
-  // that does that, so a WIDE board still can't collapse into one tall column.
   const squareCols = Math.ceil(Math.sqrt(total));
   const cap = Math.max(1, Math.min(MAX_COLS, maxCols));
-  const seed = Math.min(squareCols, Math.max(2, Math.ceil(total / MAX_ONSCREEN_ROWS)));
+  const seed = Math.min(squareCols, Math.max(2, Math.ceil(total / 3)));
   let best;
   for (let cols = Math.min(cap, Math.max(1, seed)); ; cols++) {
     best = pack(cols);
     if (best.rows <= MAX_FIT_ROWS || cols >= cap) break;
   }
-  // The square starting count can over-provision columns for a few dense tiles
-  // (spans [2,1,3] pack into two columns of three, leaving a third empty — a
-  // tile-less gap with no drop target). First-fit always leaves the empties
-  // rightmost, so collapse to the columns actually used, as long as the denser
-  // repack still fits; never below one column.
   while (best.cols > 1) {
     const used = best.heights.filter((h) => h > 0).length;
     if (used >= best.cols) break;
@@ -269,10 +129,11 @@ export function computeLayout(tiles, maxCols = MAX_COLS) {
     if (shrunk.rows > MAX_FIT_ROWS) break;
     best = shrunk;
   }
-  return { placed: best.placed, cols: best.cols, rows: best.rows, scroll: best.rows > MAX_FIT_ROWS };
+  const rows = expandSpareRows(best.placed);
+  return { placed: best.placed, cols: best.cols, rows, scroll: rows > MAX_FIT_ROWS };
 }
 
-// Preview (and commit) a two-tile drag swap without re-running computeLayout on
+// Preview a two-tile drag swap without re-running computeLayout on
 // the whole board: only the one or two columns that actually hold `draggedId`/
 // `targetId` are restacked; every other column's placement passes through
 // untouched. Re-running the packer on the whole reordered array (the original
@@ -313,18 +174,33 @@ export function localSwapPlacement(placed, draggedId, targetId) {
   const draggedEntry = draggedList[draggedIdx];
   const targetEntry = targetList[targetIdx];
   draggedList[draggedIdx] = { ...targetEntry, col: draggedCol };
-  targetList[targetIdx] = { kind: 'placeholder', id: draggedEntry.id, span: draggedEntry.span, col: targetCol };
+  targetList[targetIdx] = { kind: 'placeholder', id: draggedEntry.id, span: draggedEntry.span, requestedSpan: draggedEntry.requestedSpan ?? draggedEntry.span, col: targetCol };
 
   const result = [];
   for (const [col, list] of byCol) {
     if (col === draggedCol || col === targetCol) {
       let row = 0;
-      for (const p of list) { result.push({ ...p, rowStart: row }); row += p.span; }
+      for (const p of list) {
+        const span = Math.min(p.span, MAX_SPAN);
+        result.push({ ...p, requestedSpan: p.requestedSpan ?? p.span, span, rowStart: row });
+        row += span;
+      }
     } else {
       result.push(...list);
     }
   }
-  const rows = Math.max(...result.map((p) => p.rowStart + p.span), 1);
+  let rows = expandSpareRows(result, new Set([draggedCol, targetCol]));
+  if (rows > MAX_ONSCREEN_ROWS) {
+    const removedByCol = new Map();
+    for (let i = 0; i < result.length; i++) {
+      const tile = result[i];
+      const removed = removedByCol.get(tile.col) || 0;
+      const span = Math.min(tile.span, MAX_SPAN);
+      if (span !== tile.span || removed) result[i] = { ...tile, span, rowStart: tile.rowStart - removed };
+      removedByCol.set(tile.col, removed + tile.span - span);
+    }
+    rows = Math.max(...result.map((tile) => tile.rowStart + tile.span), 1);
+  }
   return { placed: result, rows, scroll: rows > MAX_FIT_ROWS };
 }
 
@@ -396,71 +272,9 @@ export function expandFocusToMinimised(orderIds, focusedId) {
   return new Set(orderIds.filter((id) => id !== focusedId));
 }
 
-// Tile row-span: top-level active cards drive it at full weight (never clipped —
-// a session rendered as its own card must stay fully visible), while asleep
-// rows, extension body content, and absorbed child-session rows (workflow workers, or any other
-// nested spawn — see workflow.js computeAbsorption) are secondary (see snooze.js) and are capped at one row-equivalent's worth of extra height
-// combined. Without the cap, a handful of light rows can tip the ceil() just
-// past a row boundary and cost a whole mostly-empty grid row (or hit MAX_SPAN) —
-// e.g. 2 active + 2 snoozed + 2 extension rows was maxing out at 3 rows. Past the cap,
-// `.task-body`'s own scroll (styles.css) shows the rest.
-// `childRowCount`/`absorbedChildCount` are injected (like `phaseOf`) rather than
-// derived here: knowing which sessions are absorbed needs the whole tile's
-// session set (computeAbsorption) plus workflow-collapse state, both of which
-// app.js already has to hand.
-//
-// The two counts differ on purpose and must NOT be collapsed into one: a session
-// absorbed into a parent's spine never renders as its own full card, whether or
-// not that spine is currently shown — so `absorbedChildCount` (structural, always
-// the true count) is what's subtracted out of the raw session count to get
-// `topLevelActiveCount`, while `childRowCount` (only the rows actually visible —
-// 0 for a collapsed workflow box's workers) is what feeds the light secondary
-// weight. Conflating them was a real bug: using the collapse-affected count for
-// BOTH meant collapsing put those sessions back into `topLevelActiveCount` as if
-// they were newly-visible full cards, growing the tile exactly when it should
-// shrink (verified against a live board).
-//
-// `workflowBoxCount` is a THIRD, distinct secondary term: a workflow run's own
-// box chrome (border, padding, "Workflow" header — see
-// WORKFLOW_BOX_CHROME_PX), never counted per child row. Unlike
-// `childRowCount`, collapsing a workflow's spine does NOT drop this to 0 — the
-// box, border and header stay on screen either way (only the spine's rows
-// disappear); only removing the workflow run itself (or it having none at all)
-// should change it.
-//
-// `subagentRowCount`/`subagentZoneCount` are a FOURTH secondary term, and the
-// only one charged against a plain top-level card rather than an absorbed
-// child: a card whose sub-agent pill is toggled on renders its own
-// `.subagent-zone` (cards.js), growing that ONE card past CARD_STRIDE_PX with
-// no other change to the tile's session count. `subagentZoneCount` (how many
-// cards actually render a zone right now) and `subagentRowCount` (the total
-// rows across all of them) are summed separately because the zone's own
-// margins are a per-card one-time cost, not a per-row one — see
-// SUBAGENT_ZONE_BASE_PX/SUBAGENT_ROW_STRIDE_PX.
-//
-// `childFullViewCount` is a FIFTH term, but — unlike the other four — it does
-// NOT go in the capped secondary bucket. An absorbed child rendered full (see
-// cards.js childRowHtml / app.js isChildFullView) draws a real `.session-card`,
-// not a compact `.worker-row`: it's still excluded from `topLevelActiveCount`
-// (it never becomes its own top-level card — see absorbedChildCount above),
-// but this function's own opening invariant is "a session rendered as its own
-// card must stay fully visible, never clipped" — true of a full-view child
-// exactly as much as a real top-level one. Folding it into the capped
-// secondary bucket alongside light rows/chrome meant enough full-view
-// children alone (their weight is a whole CARD_STRIDE_PX each, not
-// CHILD_STRIDE_PX) could saturate the `perRow`-wide cap and clip a fully-drawn
-// card into `.task-body` scroll — the exact failure mode the cap exists to
-// prevent, just triggered by content the cap was never meant to bound. So it's
-// added to the UNCAPPED primary count instead, alongside `topLevelActiveCount`;
-// `totalWeight` already charges it at a full `cardStride` (see tileWeightWithBody), so
-// this only moves it from capped to uncapped — never a double count.
-//
-// `bodyPx` is the tile's `task.body` weight in px (an extension's rows, e.g. the
-// TODO list), already collapse-aware on the extension's side. It is secondary
-// content like the rest: part of the capped bucket.
 export function tileSpan(
-  sessions, perRow, bodyPx = 0, phaseOf, childRowCount = 0, absorbedChildCount = childRowCount, workflowBoxCount = 0,
-  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0, snoozedCollapsed = false,
+  sessions, rowHeight, bodyPx = 0, phaseOf, childRowCount = 0, absorbedChildCount = childRowCount, workflowBoxCount = 0,
+  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0, snoozedCollapsed = false, gap = GRID_GAP_PX,
 ) {
   const snoozedCount = listedAsleep(sessions, phaseOf).length;
   const asleepCount = sessions.filter((s) => phaseOf(s) === 'asleep').length;
@@ -469,7 +283,6 @@ export function tileSpan(
     activeCount: topLevelActiveCount, snoozedCount, cardStride: CARD_STRIDE_PX, bodyPx, childRowCount, workflowBoxCount,
     subagentRowCount, subagentZoneCount, childFullViewCount, snoozedCollapsed,
   });
-  const uncappedCount = topLevelActiveCount + childFullViewCount;
-  const secondaryWeight = Math.min(totalWeight - uncappedCount, perRow);
-  return rowSpan(uncappedCount + secondaryWeight, perRow);
+  const contentPx = totalWeight * CARD_STRIDE_PX + TILE_CHROME_PX;
+  return Math.max(1, Math.min(MAX_ONSCREEN_ROWS, Math.ceil((contentPx + gap) / (rowHeight + gap))));
 }
