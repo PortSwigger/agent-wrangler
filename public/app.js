@@ -5,7 +5,7 @@ import { effortsOf } from './model-front.js';
 import { createSoundMigration } from './sound-migration.js';
 /* global Terminal, FitAddon, WebLinksAddon, ClipboardAddon, Unicode11Addon */
 import {
-  snoozePhase, resolveUntil, wakeLabel, tileWeight,
+  snoozePhase, resolveUntil, wakeLabel,
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
@@ -14,9 +14,9 @@ import { createAdditionalFolders } from './additional-folders.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import { focusReturnTarget } from './terminal-dialog.js';
 import {
-  MAX_ONSCREEN_ROWS,
-  sessionsPerRow, columnsForWidth, rowSpan, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
-  localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised, refinePerRow,
+  gridRowHeight,
+  columnsForWidth, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
+  localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
 } from './layout.js';
 import { workflowPhaseLabel, isWorkflowRun, isWorkflowWorker, computeAbsorption, sessionGroups, MAX_SPINE_INDENT } from './workflow.js';
 import { complementaryModel, REVIEW_PROMPT, reviewDispatchOpts } from './review.js';
@@ -1129,8 +1129,6 @@ function setExtViewBadge(key, label, count) {
 }
 
 // ── Task Grid view ─────────────────────────────────────────────────────────
-// Grid geometry (constants + packing math) lives in ./layout.js; MAX_ONSCREEN_ROWS
-// is imported back for the scrolling cellH below.
 const ADHOC_ID = 'adhoc';   // reserved order id for the movable Ad-hoc tile (see TaskStore.ADHOC)
 // Sessions that finished (working→idle) and want your eyes. A persisted set, not
 // a transient timer: the cyan alarm holds until you click the card (acknowledge),
@@ -2040,7 +2038,7 @@ const trayHost = document.createElement('div');
 trayHost.className = 'tray-pills';
 let extensionTrayActive = false;
 
-function renderGrid() {
+function renderGrid(trayPass = 0) {
   // Only the grid view lays the board out: focus mode's `display: flex` would
   // otherwise bring a hidden board back beside Search or an extension view.
   // setView('grid') renders it again on the way back.
@@ -2067,11 +2065,15 @@ function renderGrid() {
   }
   const adhocOrdered = sortBucketSessions(noTask, ADHOC_ID);
   const adhocSessions = sortAsleepLast(adhocOrdered, phaseOf);
-  // One tile per id in the stored display order; the Ad-hoc tile is an ordinary,
-  // movable member of that order (no longer pinned). Pulled into a closure of
-  // `perRow` so the self-consistency refinement below can repack against a
-  // corrected perRow without duplicating tile construction.
-  function buildTiles(perRow) {
+  const gridStyle = getComputedStyle(el);
+  const gap = parseFloat(gridStyle.rowGap) || 0;
+  const paddingY = parseFloat(gridStyle.paddingTop) + parseFloat(gridStyle.paddingBottom);
+  const paddingX = parseFloat(gridStyle.paddingLeft) + parseFloat(gridStyle.paddingRight);
+  el.style.setProperty('--board-row-gap', `${gap}px`);
+  const hasTray = extensionTrayActive || minimisedIds.size > 0;
+  const trayHeight = hasTray ? el.querySelector(':scope > .focus-switcher')?.getBoundingClientRect().height || 0 : null;
+  const rowHeight = gridRowHeight(el.clientHeight, trayHeight, { gap, paddingY });
+  function buildTiles() {
     const tileById = new Map(
       latestTasks.tasks.map((task) => {
         const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
@@ -2080,7 +2082,7 @@ function renderGrid() {
         // when none is registered, which is also what a disabled one contributes.
         const bodyPx = slots.taskBodyWeight(task.id, latestGraph);
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, perRow, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id)) }];
+        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
       })
     );
     const {
@@ -2088,23 +2090,13 @@ function renderGrid() {
       subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount, fullView: adhocChildFullViewCount,
     } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
     const adhocBodyPx = slots.taskBodyWeight(ADHOC_ID, latestGraph);
-    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, perRow, adhocBodyPx, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, collapsedSnoozed.has(ADHOC_ID)) });
+    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, rowHeight, adhocBodyPx, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, collapsedSnoozed.has(ADHOC_ID), gap) });
     const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
-    return computeLayout(tiles, columnsForWidth(el));
+    return computeLayout(tiles, columnsForWidth(el, paddingX));
   }
 
-  // Self-consistency refinement (layout.js refinePerRow): sessionsPerRow
-  // budgets cards-per-row against the NOMINAL row height (available height /
-  // MAX_ONSCREEN_ROWS). Once the packer genuinely needs more rows than that,
-  // `1fr` divides the same available height across those extra rows too, so
-  // the REAL row height is shorter than every tile's span was budgeted
-  // against — undersizing a tile and clipping a full active card into
-  // `.task-body`'s scroll (never allowed — see layout.js tileSpan's "never
-  // clipped" invariant; confirmed against a live board), UNLESS the repack
-  // itself needs to scroll, in which case row height locks back to the same
-  // nominal size and the correction must not be adopted (see refinePerRow).
-  const { perRow, canonical } = refinePerRow(sessionsPerRow(el), buildTiles, el.clientHeight);
-  let { placed, cols, rows, scroll } = canonical;
+  const canonical = buildTiles();
+  let { placed, cols, rows } = canonical;
   if (taskDragActive && draggedTaskId && taskDropTargetId && taskDropTargetId !== draggedTaskId) {
     if (cols === 1) {
       const height = taskCellRects?.find((cell) => cell.id === draggedTaskId)?.rect.height;
@@ -2115,34 +2107,15 @@ function renderGrid() {
       });
     } else {
       const swapped = localSwapPlacement(canonical.placed, draggedTaskId, taskDropTargetId);
-      if (swapped) { placed = swapped.placed; rows = swapped.rows; scroll = swapped.scroll; }
+      if (swapped) { placed = swapped.placed; rows = swapped.rows; }
     }
   }
 
-  // The tray (if any minimised tiles) rides one extra full-width row below the
-  // tiles — a content-sized `auto` track so it never steals height from the tiles.
-  // Without its own track it would auto-place into a tile cell, cramped to one
-  // column (the bug this fixes).
-  const hasTray = extensionTrayActive || minimisedIds.size > 0;
-  const trayRow = hasTray ? ' auto' : '';
-  const singleColumn = cols === 1;
-  el.classList.toggle('single-column', singleColumn);
-  el.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-  if (singleColumn) {
-    el.classList.add('scrolling');
-    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, max-content) minmax(0, 1fr) auto` : '';
-    el.style.gridAutoRows = 'max-content';
-  } else if (scroll) {
-    // Past 3×3: lock cell height to the 3-row size and let the board scroll.
-    el.classList.add('scrolling');
-    const cellH = Math.max(90, Math.floor(el.clientHeight / MAX_ONSCREEN_ROWS) - 12);
-    el.style.gridTemplateRows = hasTray ? `repeat(${rows}, ${cellH}px) minmax(0, 1fr) auto` : '';
-    el.style.gridAutoRows = `${cellH}px`;
-  } else {
-    el.classList.remove('scrolling');
-    el.style.gridAutoRows = '';
-    el.style.gridTemplateRows = `repeat(${rows}, 1fr)${trayRow}`;
-  }
+  el.classList.toggle('single-column', cols === 1);
+  el.classList.add('scrolling');
+  el.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  el.style.gridTemplateRows = hasTray ? `repeat(${rows}, ${rowHeight}px) minmax(0, 1fr) auto` : '';
+  el.style.gridAutoRows = `${rowHeight}px`;
   // Ghost "＋ new task" drop targets for every empty cell — invisible until a
   // session drag arms the grid (see armNewTask). Dropping one creates a task.
   const occupied = new Set();
@@ -2161,6 +2134,10 @@ function renderGrid() {
   wireGridEvents(el);
   wireTray(el);
   restoreScrollState(el, scrollState);
+  if (tray && trayPass < 2 && Math.abs(tray.getBoundingClientRect().height - trayHeight) > 0.5) {
+    renderGrid(trayPass + 1);
+    return;
+  }
   // A re-render replaces every element hint mode is pointing at, so re-resolve
   // the markers rather than letting the ~4s graph poll strand them over
   // detached nodes. After the scroll restore, since hint targets depend on what
