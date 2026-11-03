@@ -285,25 +285,36 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column') === ${width < 800}`)), 'board did not switch column mode');
     };
     await resize(500);
-    assert.equal(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
-    const sizing = await evaluateChecked(`(() => {
+    assert.notEqual(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
+    const probeSizing = async () => evaluateChecked(`(() => {
       const grid = document.getElementById('grid');
       const cells = [...grid.querySelectorAll('.task-cell')];
+      const before = cells.map((cell) => cell.getBoundingClientRect().height);
       const body = cells[0].querySelector('.task-body');
       const extra = document.createElement('div');
-      extra.style.height = '700px';
+      extra.style.cssText = 'height: 700px; flex: 0 0 700px';
       body.append(extra);
-      const first = cells[0].getBoundingClientRect();
-      const next = cells[1].getBoundingClientRect();
-      return { firstHeight: first.height, gap: next.top - first.bottom, expectedGap: parseFloat(getComputedStyle(grid).rowGap),
+      const after = cells.map((cell) => cell.getBoundingClientRect().height);
+      const style = getComputedStyle(grid);
+      const rowHeight = parseFloat(style.gridAutoRows);
+      const taskHeight = grid.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+      const result = { before, after, rowHeight, taskHeight, gap: parseFloat(style.rowGap),
         gridScrollHeight: grid.scrollHeight, gridHeight: grid.clientHeight,
         bodyScrollHeight: body.scrollHeight, bodyHeight: body.clientHeight };
+      extra.remove();
+      return result;
     })()`);
-    assert.ok(sizing.firstHeight >= 700 && Math.abs(sizing.gap - sizing.expectedGap) < 1
-      && sizing.gridScrollHeight > sizing.gridHeight && sizing.bodyScrollHeight <= sizing.bodyHeight,
-    `single-column tasks should fit their contents and scroll at board level: ${JSON.stringify(sizing)}`);
-    await resize(1400);
-    assert.notEqual(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
+    for (const width of [500, 1400]) {
+      await resize(width);
+      const sizing = await probeSizing();
+      assert.deepEqual(sizing.after, sizing.before, 'overflowing content must not stretch its task or neighbours');
+      assert.ok(Math.abs(sizing.rowHeight * 5 + sizing.gap * 4 - sizing.taskHeight) < 1,
+        `five fixed rows must fill the available task area: ${JSON.stringify(sizing)}`);
+      assert.ok(sizing.bodyScrollHeight > sizing.bodyHeight,
+        `content beyond a task's allocation must scroll internally: ${JSON.stringify(sizing)}`);
+      if (width === 500) assert.ok(sizing.gridScrollHeight > sizing.gridHeight,
+        'a crowded single-column board must scroll without shrinking rows');
+    }
     await resize(500);
     const action = async (label) => {
       // Keep this programmatic action in one browser task. The layout probes
