@@ -9,6 +9,7 @@ import {
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
+import { watchTaskScrollEdges } from './task-scroll.js';
 import { createAdditionalFolders } from './additional-folders.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import { focusReturnTarget } from './terminal-dialog.js';
@@ -2304,12 +2305,16 @@ function mountTaskBodies(el) {
   slots.syncHosts('task.body', entries, extApi, latestGraph);
 }
 
+let stopTaskScrollEdges = null;
+
 function wireGridEvents(el) {
   // Both render paths (renderGrid and renderFocusedTile) end here, so this is
   // the one place the freshly-built cards' extension pill hosts can be filled
   // without the two sites drifting apart.
   mountCardPills(el);
   mountTaskBodies(el);
+  stopTaskScrollEdges?.();
+  stopTaskScrollEdges = watchTaskScrollEdges(el);
   // A worker spine row opens/menus exactly like a card (same data-sid contract), so
   // it shares this binding rather than a parallel one. A sub-agent row is included
   // here (not just via the panel's own binding) so the board's flat zone rows open

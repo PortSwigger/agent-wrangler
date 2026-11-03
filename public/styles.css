@@ -1248,9 +1248,18 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 #new-task.drop { background: var(--surface-2); border: 1px dashed var(--blue); color: var(--blue-fg); box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 30%, transparent); }
 
 .task-cell {
+  position: relative;
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
   border: 1px dotted var(--border); border-radius: 10px;
   background: var(--tile-bg); overflow: hidden;
+}
+.task-cell.task-more-below::before {
+  content: ''; position: absolute; bottom: 0; left: 0; right: var(--task-scrollbar-width, 0px);
+  height: var(--task-edge-height, 28px); z-index: 2; pointer-events: none;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  background: color-mix(in srgb, var(--tile-bg) 35%, transparent);
+  mask-image: linear-gradient(transparent, black);
+  -webkit-mask-image: linear-gradient(transparent, black);
 }
 .task-move-target { position: relative; border-style: solid; border-color: var(--blue); }
 .task-move-target::after { content: ''; position: absolute; left: 0; right: 0; height: 3px; background: var(--blue); pointer-events: none; }
