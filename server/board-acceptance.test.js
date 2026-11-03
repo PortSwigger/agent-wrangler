@@ -472,7 +472,6 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
           markerTop: marker?.getBoundingClientRect().top, pointerY: y, viewportHeight: innerHeight };
         grid.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
         header.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: transfer }));
-        style.remove();
         return preview;
       })()`);
       assert.ok(Math.abs(result.placeholderHeight - result.sourceHeight) < 1
