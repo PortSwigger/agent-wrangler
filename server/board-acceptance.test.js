@@ -110,7 +110,19 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
   const probeDir = join(dataDir, 'extensions', 'probe');
   mkdirSync(join(probeDir, 'public'), { recursive: true });
   writeFileSync(join(probeDir, 'index.js'), `export default { id: 'probe', dir: new URL('.', import.meta.url).pathname, label: 'Probe', defaultEnabled: true, requires: ['cards:hideChips'], client: 'public/client.js' };`);
-  writeFileSync(join(probeDir, 'public', 'client.js'), `export default { register(r) { window.__probeApi = r.api; r.register('view', { id: 'main', label: 'Probe', mount(el) { el.textContent = 'probe view'; } }); } };`);
+  writeFileSync(join(probeDir, 'public', 'client.js'), `
+    function paint(el, ctx) {
+      const height = window.__probeHeights?.[ctx.taskId] || 0;
+      el.style.cssText = 'height: ' + height + 'px; flex: none; display: ' + (height ? 'block' : 'none');
+      el.textContent = height ? 'Layout probe' : '';
+    }
+    export default { register(r) {
+      window.__probeApi = r.api;
+      r.register('view', { id: 'main', label: 'Probe', mount(el) { el.textContent = 'probe view'; } });
+      r.register('task.body', { id: 'sizing', mount(el, api, ctx) { paint(el, ctx); }, update: paint,
+        weight(id) { return window.__probeHeights?.[id] || 0; } });
+    } };
+  `);
   writeFileSync(join(dataDir, 'extensions.json'), JSON.stringify({ probe: { id: 'probe', requires: ['cards:hideChips'] } }));
   writeFileSync(join(dataDir, 'schedules.json'), JSON.stringify({ schedules: [{
     id: 'sch_pick', name: 'Explicit model', enabled: false,
@@ -284,6 +296,11 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       await ack('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
       assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column') === ${width < 800}`)), 'board did not switch column mode');
     };
+    const setProbeHeights = async (heights) => evaluateChecked(`(async () => {
+      window.__probeHeights = ${JSON.stringify(heights)};
+      window.__probeApi.requestBoardRender();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    })()`);
     await resize(500);
     assert.notEqual(await evaluateChecked(`getComputedStyle(document.getElementById('grid')).gridAutoRows`), 'max-content');
     const probeSizing = async () => evaluateChecked(`(() => {
@@ -298,7 +315,9 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       const style = getComputedStyle(grid);
       const rowHeight = parseFloat(style.gridAutoRows);
       const taskHeight = grid.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-      const result = { before, after, rowHeight, taskHeight, gap: parseFloat(style.rowGap),
+      const contentBottom = grid.getBoundingClientRect().bottom - parseFloat(style.paddingBottom);
+      const lastBottom = Math.max(...cells.map((cell) => cell.getBoundingClientRect().bottom));
+      const result = { before, after, rowHeight, taskHeight, contentBottom, lastBottom, gap: parseFloat(style.rowGap),
         gridScrollHeight: grid.scrollHeight, gridHeight: grid.clientHeight,
         bodyScrollHeight: body.scrollHeight, bodyHeight: body.clientHeight };
       extra.remove();
@@ -312,8 +331,30 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
         `five fixed rows must fill the available task area: ${JSON.stringify(sizing)}`);
       assert.ok(sizing.bodyScrollHeight > sizing.bodyHeight,
         `content beyond a task's allocation must scroll internally: ${JSON.stringify(sizing)}`);
+      assert.ok(sizing.after.every((height) => Math.abs(height - sizing.rowHeight) < 1),
+        'empty tasks must render at one fixed row tall');
       if (width === 500) assert.ok(sizing.gridScrollHeight > sizing.gridHeight,
         'a crowded single-column board must scroll without shrinking rows');
+      else assert.ok(sizing.lastBottom <= sizing.contentBottom + 1 && sizing.gridScrollHeight <= sizing.gridHeight,
+        'fitting tasks must stay inside the viewport without a board scrollbar');
+    }
+    for (const width of [500, 1400]) {
+      await resize(width);
+      await setProbeHeights({ 'layout-0': 1200 });
+      const sizing = await evaluateChecked(`(() => {
+        const grid = document.getElementById('grid');
+        const tile = grid.querySelector('[data-taskid="layout-0"]');
+        const body = tile.querySelector('.task-body');
+        const rowHeight = parseFloat(getComputedStyle(grid).gridAutoRows);
+        const gap = parseFloat(getComputedStyle(grid).rowGap);
+        return { span: parseInt(tile.style.gridRowEnd.replace('span', '')), height: tile.getBoundingClientRect().height,
+          rowHeight, gap, overflow: body.scrollHeight > body.clientHeight };
+      })()`);
+      const span = width === 500 ? 4 : 5;
+      assert.equal(sizing.span, span, 'a large task must use the normal cap or its spare fifth row');
+      assert.ok(Math.abs(sizing.height - (span * sizing.rowHeight + (span - 1) * sizing.gap)) < 1 && sizing.overflow,
+        'a large task must render at its allocation and scroll excess content internally');
+      await setProbeHeights({});
     }
     await resize(500);
     const action = async (label) => {
@@ -347,28 +388,51 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     assert.ok(await evaluateChecked(`document.getElementById('grid').classList.contains('focus-mode')`), 'returning to the board must restore focus mode');
     await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
     assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column')`)), 'restoring tasks must restore single-column mode');
+    const checkTrayBounds = async (width, wrapped = false) => {
+      await resize(width);
+      const sizing = await evaluateChecked(`(() => {
+        const grid = document.getElementById('grid');
+        grid.scrollTop = grid.scrollHeight;
+        const style = getComputedStyle(grid);
+        const bounds = grid.getBoundingClientRect();
+        const cells = [...grid.querySelectorAll('.task-cell')].map((cell) => cell.getBoundingClientRect());
+        const tray = grid.querySelector('.focus-switcher').getBoundingClientRect();
+        const pillRows = new Set([...grid.querySelector('.tray-pills').children].map((el) => Math.round(el.getBoundingClientRect().top))).size;
+        return { trayTop: tray.top, trayBottom: tray.bottom, trayWidth: tray.width,
+          contentTop: bounds.top + parseFloat(style.paddingTop), contentBottom: bounds.bottom - parseFloat(style.paddingBottom),
+          firstTop: Math.min(...cells.map((cell) => cell.top)), lastBottom: Math.max(...cells.map((cell) => cell.bottom)),
+          tileWidth: cells[0].width, count: cells.length, scrollHeight: grid.scrollHeight, height: grid.clientHeight, pillRows };
+      })()`);
+      assert.ok(sizing.trayTop >= sizing.lastBottom && sizing.trayWidth >= sizing.tileWidth - 1
+        && Math.abs(sizing.trayBottom - sizing.contentBottom) < 2,
+      `the tray must render below tasks at the padding edge: ${JSON.stringify(sizing)}`);
+      if (width === 1400 || sizing.count <= 5) {
+        assert.ok(sizing.scrollHeight <= sizing.height && sizing.firstTop >= sizing.contentTop - 1
+          && sizing.lastBottom <= sizing.contentBottom + 1,
+        `a fitting board and tray must stay within the viewport: ${JSON.stringify(sizing)}`);
+      }
+      if (wrapped) assert.ok(sizing.pillRows > 1, 'the wrapped-tray probe must exercise multiple pill rows');
+    };
     for (let i = 0; i < 3; i++) {
       await action('Minimise');
-      assert.ok(await evaluateChecked(`(() => {
-        const grid = document.getElementById('grid');
-        const cells = [...grid.querySelectorAll('.task-cell')];
-        const last = cells.at(-1).getBoundingClientRect();
-        const tray = grid.querySelector('.focus-switcher').getBoundingClientRect();
-        grid.scrollTop = grid.scrollHeight;
-        const end = grid.getBoundingClientRect().bottom - parseFloat(getComputedStyle(grid).paddingBottom);
-        const placed = grid.querySelector('.focus-switcher').getBoundingClientRect();
-        return tray.top >= last.bottom && tray.width >= last.width - 1 && Math.abs(placed.bottom - end) < 2;
-      })()`), 'the minimised-task tray must sit below the stacked tasks, at the bottom of the board');
+      await checkTrayBounds(500);
+      await checkTrayBounds(1400);
+      await resize(500);
     }
-
-    await evaluateChecked(`(() => {
+    await evaluateChecked(`(async () => {
       const style = document.createElement('style');
-      style.id = 'tray-scroll-probe';
-      style.textContent = '.task-cell .task-body { min-height: 1200px; }';
+      style.id = 'wrapped-tray-probe';
+      style.textContent = '.tray-pills { max-width: 120px; }';
       document.head.append(style);
-      const grid = document.getElementById('grid');
-      grid.scrollTop = grid.scrollHeight;
+      window.__probeApi.requestBoardRender();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     })()`);
+    await checkTrayBounds(500, true);
+    await checkTrayBounds(1400, true);
+    await evaluateChecked(`document.getElementById('wrapped-tray-probe').remove()`);
+    await resize(500);
+    await setProbeHeights(Object.fromEntries([...tasks.map((task) => task.id), 'adhoc'].map((id) => [id, 1200])));
+    await evaluateChecked(`document.getElementById('grid').scrollTop = document.getElementById('grid').scrollHeight`);
     const restoredId = await evaluateChecked(`(() => {
       const pill = document.querySelector('.switcher-pill');
       const id = pill.dataset.taskid;
@@ -381,14 +445,12 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       const r = cell?.getBoundingClientRect();
       return !!r && r.bottom > grid.top && r.top < grid.bottom;
     })()`)), 'a task restored from the tray must be scrolled into view');
-    await evaluateChecked(`document.getElementById('tray-scroll-probe').remove()`);
+    await setProbeHeights({});
 
     await evaluateChecked(`document.querySelector('.tray-restore-all').click()`);
     const dragTask = async (sourceId, targetId, after) => {
+      await setProbeHeights({ 'layout-2': 1200 });
       const result = await evaluateChecked(`(() => {
-        const style = document.createElement('style');
-        style.textContent = '.task-cell[data-taskid="layout-2"] .task-body { min-height: 1200px; }';
-        document.head.append(style);
         const grid = document.getElementById('grid');
         const source = grid.querySelector('[data-taskid="${sourceId}"]');
         const targetCell = grid.querySelector('[data-taskid="${targetId}"]');

@@ -133,7 +133,7 @@ export function computeLayout(tiles, maxCols = MAX_COLS) {
   return { placed: best.placed, cols: best.cols, rows, scroll: rows > MAX_FIT_ROWS };
 }
 
-// Preview (and commit) a two-tile drag swap without re-running computeLayout on
+// Preview a two-tile drag swap without re-running computeLayout on
 // the whole board: only the one or two columns that actually hold `draggedId`/
 // `targetId` are restacked; every other column's placement passes through
 // untouched. Re-running the packer on the whole reordered array (the original
@@ -189,7 +189,18 @@ export function localSwapPlacement(placed, draggedId, targetId) {
       result.push(...list);
     }
   }
-  const rows = expandSpareRows(result, new Set([draggedCol, targetCol]));
+  let rows = expandSpareRows(result, new Set([draggedCol, targetCol]));
+  if (rows > MAX_ONSCREEN_ROWS) {
+    const removedByCol = new Map();
+    for (let i = 0; i < result.length; i++) {
+      const tile = result[i];
+      const removed = removedByCol.get(tile.col) || 0;
+      const span = Math.min(tile.span, MAX_SPAN);
+      if (span !== tile.span || removed) result[i] = { ...tile, span, rowStart: tile.rowStart - removed };
+      removedByCol.set(tile.col, removed + tile.span - span);
+    }
+    rows = Math.max(...result.map((tile) => tile.rowStart + tile.span), 1);
+  }
   return { placed: result, rows, scroll: rows > MAX_FIT_ROWS };
 }
 

@@ -26,7 +26,7 @@ test('five fixed sections exactly fill the viewport including padding and gaps',
   }
 });
 
-test('row height remains usable before the board has a measurable height', () => {
+test('row height stays positive before the board has a measurable height', () => {
   assert.ok(gridRowHeight(0) > 0);
 });
 
@@ -178,5 +178,15 @@ test('drag placeholders use a newly available fifth row without changing other c
   const swapped = localSwapPlacement(placed, 't0', 't2');
   assert.equal(swapped.placed.find((t) => t.kind === 'placeholder').span, 5);
   assert.deepEqual(swapped.placed.filter((t) => t.col === 2), before);
+  assertNoOverlap(swapped);
+});
+
+test('scrolling swap previews return spare rows in every column without mutating the canonical layout', () => {
+  const layout = computeLayout(tiles([1, 2, 4, 5]), 3);
+  const before = structuredClone(layout.placed);
+  const swapped = localSwapPlacement(layout.placed, 't0', 't2');
+  assert.equal(swapped.scroll, true);
+  assert.ok(swapped.placed.every((t) => t.span <= 4));
+  assert.deepEqual(layout.placed, before);
   assertNoOverlap(swapped);
 });
