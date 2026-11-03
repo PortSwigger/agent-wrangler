@@ -70,19 +70,36 @@ export const GRID_PADDING_PX = 14;
 export const MIN_COL_PX = 380;
 export const GRID_CHROME_X_PX = 2 * GRID_PADDING_PX;
 
-export function gridRowHeight(clientHeight, trayHeight = null) {
-  const trayPx = trayHeight == null ? 0 : trayHeight + GRID_GAP_PX;
-  return Math.max(1, (clientHeight - trayPx - 2 * GRID_PADDING_PX - (MAX_ONSCREEN_ROWS - 1) * GRID_GAP_PX) / MAX_ONSCREEN_ROWS);
+export function gridRowHeight(clientHeight, trayHeight = null, { gap = GRID_GAP_PX, paddingY = 2 * GRID_PADDING_PX } = {}) {
+  const trayPx = trayHeight == null ? 0 : trayHeight + gap;
+  return Math.max(1, (clientHeight - trayPx - paddingY - (MAX_ONSCREEN_ROWS - 1) * gap) / MAX_ONSCREEN_ROWS);
 }
 
-export function columnsForWidth(gridEl) {
-  const usable = (gridEl.clientWidth || 0) - GRID_CHROME_X_PX;
+export function columnsForWidth(gridEl, paddingX = GRID_CHROME_X_PX) {
+  const usable = (gridEl.clientWidth || 0) - paddingX;
   return Math.max(1, Math.floor(usable / MIN_COL_PX));
 }
 
+function expandSpareRows(placed, eligibleCols = null) {
+  const heights = new Map();
+  for (const tile of placed) heights.set(tile.col, Math.max(heights.get(tile.col) || 0, tile.rowStart + tile.span));
+  if (Math.max(...heights.values(), 1) <= MAX_ONSCREEN_ROWS) {
+    for (const tile of placed) {
+      if (eligibleCols && !eligibleCols.has(tile.col)) continue;
+      if ((tile.requestedSpan ?? tile.span) <= MAX_SPAN || tile.span >= MAX_ONSCREEN_ROWS || heights.get(tile.col) >= MAX_ONSCREEN_ROWS) continue;
+      const oldEnd = tile.rowStart + tile.span;
+      tile.span++;
+      for (const below of placed) {
+        if (below.col === tile.col && below.rowStart >= oldEnd) below.rowStart++;
+      }
+      heights.set(tile.col, heights.get(tile.col) + 1);
+    }
+  }
+  return Math.max(...heights.values(), 1);
+}
+
 export function computeLayout(tiles, maxCols = MAX_COLS) {
-  const wanted = new Map(tiles.map((tile) => [tile.id, tile.span]));
-  tiles = tiles.map((tile) => ({ ...tile, span: Math.max(1, Math.min(tile.span, MAX_SPAN)) }));
+  tiles = tiles.map((tile) => ({ ...tile, requestedSpan: tile.requestedSpan ?? tile.span, span: Math.max(1, Math.min(tile.span, MAX_SPAN)) }));
   const total = tiles.reduce((a, t) => a + t.span, 0);
   const maxSpan = Math.max(1, ...tiles.map((t) => t.span));
   const pack = (cols) => {
@@ -112,19 +129,8 @@ export function computeLayout(tiles, maxCols = MAX_COLS) {
     if (shrunk.rows > MAX_FIT_ROWS) break;
     best = shrunk;
   }
-  if (best.rows <= MAX_ONSCREEN_ROWS) {
-    for (const tile of best.placed) {
-      if (wanted.get(tile.id) <= MAX_SPAN || best.heights[tile.col] >= MAX_ONSCREEN_ROWS) continue;
-      const oldEnd = tile.rowStart + tile.span;
-      tile.span++;
-      for (const below of best.placed) {
-        if (below.col === tile.col && below.rowStart >= oldEnd) below.rowStart++;
-      }
-      best.heights[tile.col]++;
-    }
-    best.rows = Math.max(...best.heights, 1);
-  }
-  return { placed: best.placed, cols: best.cols, rows: best.rows, scroll: best.rows > MAX_FIT_ROWS };
+  const rows = expandSpareRows(best.placed);
+  return { placed: best.placed, cols: best.cols, rows, scroll: rows > MAX_FIT_ROWS };
 }
 
 // Preview (and commit) a two-tile drag swap without re-running computeLayout on
@@ -168,23 +174,22 @@ export function localSwapPlacement(placed, draggedId, targetId) {
   const draggedEntry = draggedList[draggedIdx];
   const targetEntry = targetList[targetIdx];
   draggedList[draggedIdx] = { ...targetEntry, col: draggedCol };
-  targetList[targetIdx] = { kind: 'placeholder', id: draggedEntry.id, span: draggedEntry.span, col: targetCol };
+  targetList[targetIdx] = { kind: 'placeholder', id: draggedEntry.id, span: draggedEntry.span, requestedSpan: draggedEntry.requestedSpan ?? draggedEntry.span, col: targetCol };
 
   const result = [];
   for (const [col, list] of byCol) {
     if (col === draggedCol || col === targetCol) {
-      const overflow = list.reduce((height, tile) => height + tile.span, 0) > MAX_ONSCREEN_ROWS;
       let row = 0;
       for (const p of list) {
-        const span = overflow ? Math.min(p.span, MAX_SPAN) : p.span;
-        result.push({ ...p, span, rowStart: row });
+        const span = Math.min(p.span, MAX_SPAN);
+        result.push({ ...p, requestedSpan: p.requestedSpan ?? p.span, span, rowStart: row });
         row += span;
       }
     } else {
       result.push(...list);
     }
   }
-  const rows = Math.max(...result.map((p) => p.rowStart + p.span), 1);
+  const rows = expandSpareRows(result, new Set([draggedCol, targetCol]));
   return { placed: result, rows, scroll: rows > MAX_FIT_ROWS };
 }
 
@@ -258,7 +263,7 @@ export function expandFocusToMinimised(orderIds, focusedId) {
 
 export function tileSpan(
   sessions, rowHeight, bodyPx = 0, phaseOf, childRowCount = 0, absorbedChildCount = childRowCount, workflowBoxCount = 0,
-  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0, snoozedCollapsed = false,
+  subagentRowCount = 0, subagentZoneCount = 0, childFullViewCount = 0, snoozedCollapsed = false, gap = GRID_GAP_PX,
 ) {
   const snoozedCount = listedAsleep(sessions, phaseOf).length;
   const asleepCount = sessions.filter((s) => phaseOf(s) === 'asleep').length;
@@ -268,5 +273,5 @@ export function tileSpan(
     subagentRowCount, subagentZoneCount, childFullViewCount, snoozedCollapsed,
   });
   const contentPx = totalWeight * CARD_STRIDE_PX + TILE_CHROME_PX;
-  return Math.max(1, Math.min(MAX_ONSCREEN_ROWS, Math.ceil((contentPx + GRID_GAP_PX) / (rowHeight + GRID_GAP_PX))));
+  return Math.max(1, Math.min(MAX_ONSCREEN_ROWS, Math.ceil((contentPx + gap) / (rowHeight + gap))));
 }

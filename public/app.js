@@ -2038,7 +2038,7 @@ const trayHost = document.createElement('div');
 trayHost.className = 'tray-pills';
 let extensionTrayActive = false;
 
-function renderGrid() {
+function renderGrid(trayPass = 0) {
   // Only the grid view lays the board out: focus mode's `display: flex` would
   // otherwise bring a hidden board back beside Search or an extension view.
   // setView('grid') renders it again on the way back.
@@ -2065,9 +2065,14 @@ function renderGrid() {
   }
   const adhocOrdered = sortBucketSessions(noTask, ADHOC_ID);
   const adhocSessions = sortAsleepLast(adhocOrdered, phaseOf);
+  const gridStyle = getComputedStyle(el);
+  const gap = parseFloat(gridStyle.rowGap) || 0;
+  const paddingY = parseFloat(gridStyle.paddingTop) + parseFloat(gridStyle.paddingBottom);
+  const paddingX = parseFloat(gridStyle.paddingLeft) + parseFloat(gridStyle.paddingRight);
+  el.style.setProperty('--board-row-gap', `${gap}px`);
   const hasTray = extensionTrayActive || minimisedIds.size > 0;
   const trayHeight = hasTray ? el.querySelector(':scope > .focus-switcher')?.getBoundingClientRect().height || 0 : null;
-  const rowHeight = gridRowHeight(el.clientHeight, trayHeight);
+  const rowHeight = gridRowHeight(el.clientHeight, trayHeight, { gap, paddingY });
   function buildTiles() {
     const tileById = new Map(
       latestTasks.tasks.map((task) => {
@@ -2077,7 +2082,7 @@ function renderGrid() {
         // when none is registered, which is also what a disabled one contributes.
         const bodyPx = slots.taskBodyWeight(task.id, latestGraph);
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id)) }];
+        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
       })
     );
     const {
@@ -2085,9 +2090,9 @@ function renderGrid() {
       subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount, fullView: adhocChildFullViewCount,
     } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
     const adhocBodyPx = slots.taskBodyWeight(ADHOC_ID, latestGraph);
-    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, rowHeight, adhocBodyPx, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, collapsedSnoozed.has(ADHOC_ID)) });
+    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, rowHeight, adhocBodyPx, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, collapsedSnoozed.has(ADHOC_ID), gap) });
     const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
-    return computeLayout(tiles, columnsForWidth(el));
+    return computeLayout(tiles, columnsForWidth(el, paddingX));
   }
 
   const canonical = buildTiles();
@@ -2129,8 +2134,8 @@ function renderGrid() {
   wireGridEvents(el);
   wireTray(el);
   restoreScrollState(el, scrollState);
-  if (tray && Math.abs(tray.getBoundingClientRect().height - trayHeight) > 0.5) {
-    renderGrid();
+  if (tray && trayPass < 2 && Math.abs(tray.getBoundingClientRect().height - trayHeight) > 0.5) {
+    renderGrid(trayPass + 1);
     return;
   }
   // A re-render replaces every element hint mode is pointing at, so re-resolve

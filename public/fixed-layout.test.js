@@ -144,3 +144,39 @@ test('workflow and subagent chrome remain part of content height', () => {
   assert.ok(workflow > bare);
   assert.ok(subagents > bare);
 });
+
+test('compressed screen chrome fills all five rows with and without a tray', () => {
+  const chrome = { gap: 8, paddingY: 20 };
+  for (const trayHeight of [null, 35, 70]) {
+    const row = gridRowHeight(900, trayHeight, chrome);
+    const tray = trayHeight == null ? 0 : trayHeight + chrome.gap;
+    assert.equal(row * 5 + chrome.gap * 4 + chrome.paddingY + tray, 900);
+  }
+});
+
+test('task spans use the rendered compressed-screen gap at the fit boundary', () => {
+  assert.equal(tileSpan(sessions(2), 100, 1, awake, 0, 0, 0, 0, 0, 0, false, 8), 2);
+  assert.equal(tileSpan(sessions(2), 100, 2, awake, 0, 0, 0, 0, 0, 0, false, 8), 3);
+});
+
+test('swapped tasks use a newly available fifth row in the preview', () => {
+  const layout = computeLayout(tiles([5, 1, 4]), 2);
+  const swapped = localSwapPlacement(layout.placed, 't2', 't0');
+  assert.equal(swapped.placed.find((t) => t.id === 't0').span, 5);
+  assert.equal(swapped.scroll, false);
+  assertNoOverlap(swapped);
+});
+
+test('drag placeholders use a newly available fifth row without changing other columns', () => {
+  const placed = [
+    { id: 't0', span: 4, requestedSpan: 5, col: 0, rowStart: 0 },
+    { id: 't1', span: 1, col: 0, rowStart: 4 },
+    { id: 't2', span: 4, col: 1, rowStart: 0 },
+    { id: 't3', span: 1, col: 2, rowStart: 0 },
+  ];
+  const before = placed.filter((t) => t.col === 2);
+  const swapped = localSwapPlacement(placed, 't0', 't2');
+  assert.equal(swapped.placed.find((t) => t.kind === 'placeholder').span, 5);
+  assert.deepEqual(swapped.placed.filter((t) => t.col === 2), before);
+  assertNoOverlap(swapped);
+});

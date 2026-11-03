@@ -1361,7 +1361,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 /* The scrolling board's tray sits in the last row, below a flexible spacer row, so a
    short board still ends with it at the bottom. The spacer adds a second row gap;
    the negative margin takes it back. */
-#grid.scrolling > .focus-switcher { margin-top: -12px; }
+#grid.scrolling > .focus-switcher { margin-top: calc(-1 * var(--board-row-gap, 12px)); }
 /* Restore-all + one pill per minimised task, all wrapping and scrolling together.
    min-width:0 lets this box shrink so overflow scrolls inside it instead of pushing
    the strip past the board (the flex min-width trap that let pills run off-screen). */
