@@ -361,6 +361,16 @@ test('spawn remoteControl rides dispatch as { name } for Claude, and is absent o
   assert.equal('remoteControl' in seen.dispatch[2], false, 'an ordinary spawn never asks for Remote Control');
 });
 
+test('spawn disallowedTools rides dispatch deduplicated for Claude, and is absent otherwise', async () => {
+  const { seen, host } = spawnWiring();
+  await host.sessions.spawn({ cwd: '/repo', disallowedTools: ['AskUserQuestion', 'AskUserQuestion', 'mcp__srv__tool'] });
+  await host.sessions.spawn({ cwd: '/repo', agent: 'claude', disallowedTools: [] });
+  await host.sessions.spawn({ cwd: '/repo' });
+  assert.deepEqual(seen.dispatch[0].disallowedTools, ['AskUserQuestion', 'mcp__srv__tool'], 'the default agent is Claude');
+  assert.equal('disallowedTools' in seen.dispatch[1], false, 'an empty list is no option');
+  assert.equal('disallowedTools' in seen.dispatch[2], false);
+});
+
 test('a mistyped spawn option is REFUSED by name, never launched around', async () => {
   const { seen, host } = spawnWiring();
   const bad = [
@@ -385,6 +395,14 @@ test('a mistyped spawn option is REFUSED by name, never launched around', async 
     [{ remoteControl: { name: 'a\nb' } }, /remoteControl\.name must be a non-empty single-line string/],
     [{ remoteControl: { name: '--help' } }, /remoteControl\.name must not start with "-"/],
     [{ agent: 'codex', remoteControl: { name: 'Phone' } }, /codex.*does not support Remote Control/],
+    [{ disallowedTools: 'AskUserQuestion' }, /disallowedTools must be an array/],
+    [{ disallowedTools: [''] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: [7] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(rm:*)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['-p'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Ask User'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: Array(65).fill('Read') }, /disallowedTools holds at most 64/],
+    [{ agent: 'codex', disallowedTools: ['AskUserQuestion'] }, /codex.*does not support disallowedTools/],
   ];
   for (const [args, re] of bad) {
     await assert.rejects(() => host.sessions.spawn({ cwd: '/repo', ...args }), re, JSON.stringify(args));

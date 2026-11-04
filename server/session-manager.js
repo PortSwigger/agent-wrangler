@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
-import { adapterFor, isOwnedTmux, discoveryFloor, supportsRemoteControl } from './agents/index.js';
+import { adapterFor, isOwnedTmux, discoveryFloor, supportsRemoteControl, supportsDisallowedTools } from './agents/index.js';
 import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError } from './runtimes/index.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName } from './worktree.js';
@@ -228,6 +228,10 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     runtime: parentEntry?.runtime,
     runtimeExt: parentEntry?.runtimeExt,
     ...(parentEntry?.addDirs ? { addDirs: [...parentEntry.addDirs] } : {}),
+    // Unlike remoteControl (one phone name, one session), a removed tool is a
+    // property of the conversation: a fork of an unwatched session is no more
+    // watched than its parent, so it keeps the same --disallowed-tools.
+    ...(parentEntry?.disallowedTools?.length ? { disallowedTools: [...parentEntry.disallowedTools] } : {}),
     // Same argv-is-current-code reasoning as resumeEntry — a fork's launch also
     // runs buildInnerCommand/allowedToolsArg fresh, so it always carries
     // read_mail/list_mail. NOT inherited from parentEntry: a fork gets a fresh
@@ -315,7 +319,9 @@ export function ownLaunchRefusal(rt, launchContext) {
 // the per-child full/compact display override (childFullView — same reasoning),
 // the extension hosting an off-board card (offBoard — a resume must not drop it
 // onto the board), and the Remote Control name (remoteControl — every relaunch
-// passes it again, or the phone loses the session after an idle-suspend);
+// passes it again, or the phone loses the session after an idle-suspend), and
+// the tools it launched without (disallowedTools — a mail or snooze wake must not
+// hand an unwatched pane back the tool its host removed);
 // note `entry.snooze` is deliberately NOT here — it's dropped unconditionally by this
 // function's own field list, not because callers reliably clearSnooze() before resume
 // — some resume() call sites don't) all survive.
@@ -356,6 +362,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     childFullView: prev?.childFullView,
     offBoard: prev?.offBoard,
     remoteControl: prev?.remoteControl,
+    disallowedTools: prev?.disallowedTools,
     // The relaunch below always runs buildInnerCommand/allowedToolsArg from the
     // CURRENT code, so a resumed session's argv always carries read_mail/list_mail
     // regardless of what it was launched with originally — stamp it true
@@ -1128,6 +1135,7 @@ export class SessionManager {
     if (refusal) throw new Error(refusal);
     const agent = prev?.agent ?? 'claude';
     if (prev?.remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
+    if (prev?.disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
     const adapter = adapterFor(agent);
     const runtime = runtimeFor(prev?.runtime);
     // Read what we're waking BEFORE the kill destroys the evidence: a resume off a
@@ -1235,6 +1243,7 @@ export class SessionManager {
       intent: freshAfterUpdate ? prev?.intent || '' : intent,
       spawnedBy: prev?.spawnedBy,
       remoteControl: prev?.remoteControl,
+      disallowedTools: prev?.disallowedTools,
       disabledSkills,
       codexPolicy,
     });
@@ -1287,6 +1296,7 @@ export class SessionManager {
     const refusal = relaunchRefusal(parentEntry);
     if (refusal) throw new Error(refusal);
     const agent = parentEntry?.agent ?? 'claude';
+    if (parentEntry?.disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
     const adapter = adapterFor(agent);
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
@@ -1321,6 +1331,7 @@ export class SessionManager {
       launchContext,
       disabledSkills,
       codexPolicy,
+      disallowedTools: parentEntry?.disallowedTools,
     });
     const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
       inner, cwd: dir, sessionId, parentId, worktree: parentEntry?.worktree, launchContext,
@@ -1851,10 +1862,12 @@ export class SessionManager {
 
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false, offBoard, remoteControl } = {}) {
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false, offBoard, remoteControl, disallowedTools } = {}) {
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
+    if (disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
+    if (!disallowedTools?.length) disallowedTools = undefined;
     permissionMode ??= 'auto';
     const autoCompactError = autoCompactTokensError(autoCompactTokens, agent);
     if (autoCompactError) throw new Error(autoCompactError);
@@ -1985,7 +1998,7 @@ export class SessionManager {
     const inner = builds
       ? await rt.buildLaunch({ phase: 'dispatch', intent: launchIntent, cwd, sessionId, model, ext: ext || null })
       : await rt.wrapLaunch({
-        inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, permissionMode, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy, remoteControl }),
+        inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, permissionMode, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy, remoteControl, disallowedTools }),
         cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext,
       });
     const launchedAt = Date.now();
@@ -2013,7 +2026,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });

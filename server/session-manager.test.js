@@ -163,6 +163,14 @@ test('forkEntry inherits the parent auto-compaction threshold', () => {
   assert.equal(entry.autoCompactTokens, 250000);
 });
 
+test('forkEntry inherits disallowedTools as its own copy, and adds none to a plain parent', () => {
+  const parentEntry = { disallowedTools: ['AskUserQuestion'] };
+  const entry = forkEntry({ short: 'x', tmux: 'cc_x', cwd: '/c', parentEntry, parentId: 'p', createdAt: 1 });
+  assert.deepEqual(entry.disallowedTools, ['AskUserQuestion']);
+  assert.notEqual(entry.disallowedTools, parentEntry.disallowedTools);
+  assert.equal('disallowedTools' in forkEntry({ short: 'x', tmux: 'cc_x', cwd: '/c', parentEntry: {}, parentId: 'p', createdAt: 1 }), false);
+});
+
 test('forkEntry never inherits Remote Control: two sessions under one name would race for the phone', () => {
   const entry = forkEntry({ short: 'x', tmux: 'cc_x', cwd: '/c', parentEntry: { remoteControl: { name: 'Phone' } }, parentId: 'p', createdAt: 1 });
   assert.equal('remoteControl' in entry, false);
@@ -362,6 +370,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
     offBoard: 'jobs',
     autoCompactTokens: 250000,
     remoteControl: { name: 'Phone' },
+    disallowedTools: ['AskUserQuestion'],
     nameInherited: true,
     priorLiveSessionIds: ['CLEARED1'],
   };
@@ -382,6 +391,7 @@ test('resumeEntry carries workflow, worktree, forkedFrom, spawnedBy, parentSessi
   assert.equal(e.offBoard, 'jobs'); // an extension-hosted card must not land on the board after resume
   assert.equal(e.autoCompactTokens, 250000);
   assert.deepEqual(e.remoteControl, { name: 'Phone' }); // every relaunch must pass --remote-control again
+  assert.deepEqual(e.disallowedTools, ['AskUserQuestion']); // ...and --disallowed-tools
   assert.equal(e.nameInherited, true); // the [FORK] marker must survive on a still-unnamed fork
   assert.equal(e.liveSessionId, 'L');
   assert.equal(e.intent, 'fix');
@@ -2119,6 +2129,56 @@ test('fork Remote Control isolation omits the flag and persisted name from the c
   assert.equal('remoteControl' in sm.map.get(sessionId), false);
   assert.deepEqual(parentEntry.remoteControl, { name: 'Phone' });
 });
+
+test('a Claude session spawned with disallowedTools carries --disallowed-tools AskUserQuestion on launch, every resume reason and a fork', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-disallowed-'));
+  const sm = smForDispatch();
+  sm.killForSession = async () => [];
+  const inners = [];
+  sm._newSession = async (_tmux, _dir, inner) => { inners.push(inner); };
+  // Stand in for the transcript the resume guard looks for, so the real local
+  // resume path runs (no runtime that skips the guard).
+  const history = adapterFor('claude').history;
+  const { findFile, launchCwd } = history;
+  history.findFile = async () => path.join(dir, 't.jsonl');
+  history.launchCwd = async () => dir;
+  try {
+    const { sessionId } = await sm.dispatch({ cwd: dir, intent: 'plan', disallowedTools: ['AskUserQuestion'] });
+    assert.match(inners.at(-1), /'--disallowed-tools' 'AskUserQuestion'/, 'launch');
+    assert.deepEqual(sm.map.get(sessionId).disallowedTools, ['AskUserQuestion']);
+    for (const reason of ['unspecified', 'message', 'snooze-wake']) {
+      await sm._doResume(sessionId, dir, { reason });
+      assert.match(inners.at(-1), /'--resume' .*'--disallowed-tools' 'AskUserQuestion'/, `resume (${reason})`);
+      assert.deepEqual(sm.map.get(sessionId).disallowedTools, ['AskUserQuestion'], `still stored after ${reason}`);
+    }
+    const fork = await sm.fork({ sourceId: sm.map.get(sessionId).liveSessionId, parentId: sessionId, parentEntry: sm.map.get(sessionId), cwd: dir });
+    assert.match(inners.at(-1), /'--fork-session' .*'--disallowed-tools' 'AskUserQuestion'/, 'fork');
+    assert.deepEqual(sm.map.get(fork.sessionId).disallowedTools, ['AskUserQuestion']);
+    const plain = await sm.dispatch({ cwd: dir, intent: 'y', disallowedTools: [] });
+    assert.doesNotMatch(inners.at(-1), /--disallowed-tools/);
+    assert.equal(sm.map.get(plain.sessionId).disallowedTools, undefined);
+  } finally {
+    Object.assign(history, { findFile, launchCwd });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const agent of ['codex', 'future-agent']) {
+  test(`disallowedTools refuses ${agent} on dispatch and inherited resume before any launch`, async () => {
+    const sm = smForDispatch();
+    const effects = [];
+    sm.killForSession = async () => { effects.push('kill'); return []; };
+    sm._newSession = async () => { effects.push('launch'); };
+    sm._save = () => { effects.push('save'); };
+    await assert.rejects(() => sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent, disallowedTools: ['AskUserQuestion'] }),
+      new RegExp(`Agent "${agent}" does not support disallowedTools`));
+    const prev = { agent, cwd: os.tmpdir(), disallowedTools: ['AskUserQuestion'] };
+    sm.map.set('dt', prev);
+    await assert.rejects(() => sm._doResume('dt', os.tmpdir(), {}), new RegExp(`${agent}.*does not support disallowedTools`));
+    assert.deepEqual(effects, []);
+    assert.equal(sm.map.get('dt'), prev);
+  });
+}
 
 for (const agent of ['codex', 'future-agent']) {
   test(`dispatch Remote Control refuses ${agent} before card, directory, worktree or session creation`, async () => {
