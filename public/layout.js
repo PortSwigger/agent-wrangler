@@ -283,6 +283,23 @@ export function tileSpan(
     activeCount: topLevelActiveCount, snoozedCount, cardStride: CARD_STRIDE_PX, bodyPx, childRowCount, workflowBoxCount,
     subagentRowCount, subagentZoneCount, childFullViewCount, snoozedCollapsed,
   });
-  const contentPx = totalWeight * CARD_STRIDE_PX + TILE_CHROME_PX;
+  return spanForHeight(totalWeight * CARD_STRIDE_PX + TILE_CHROME_PX, rowHeight, gap);
+}
+
+// Rows a tile of `contentPx` needs: N rows hold N*rowHeight plus the N-1 gaps
+// between them. Capped at the five on-screen rows like tileSpan; computeLayout
+// applies MAX_SPAN and the spare-fifth-row rule on top.
+export function spanForHeight(contentPx, rowHeight, gap = GRID_GAP_PX) {
   return Math.max(1, Math.min(MAX_ONSCREEN_ROWS, Math.ceil((contentPx + gap) / (rowHeight + gap))));
+}
+
+// tileSpan is an estimate from fixed strides, but a card's real height depends
+// on its column width: in a narrow single column the repo/branch line and the
+// chip row (a checklist pill, the worktree badge) wrap, so two cards measured
+// 94px and 112px against the 85px stride and the bottom one was clipped while
+// the board had free rows below. app.js measures each rendered tile's own
+// content and passes the result here: the span only ever grows past the
+// estimate, never shrinks below it, and stays capped by computeLayout.
+export function fittedSpan(estimate, measured) {
+  return Math.max(estimate, Math.min(MAX_ONSCREEN_ROWS, measured || 0));
 }

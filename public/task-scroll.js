@@ -1,3 +1,22 @@
+// The height a task tile's content wants, whatever height it was given: its
+// head and borders plus the body's padding and children as laid out, read from
+// the children rather than the body's scrollHeight, which never drops below the
+// body's own height and so would keep a tile that has since shrunk at its old
+// size. An empty task's "New session" prompt is left out: an empty task stays
+// one row and lets that prompt scroll when rows are short.
+export function taskContentHeight(cell) {
+  const body = cell.querySelector(':scope > .task-body');
+  if (!body) return cell.offsetHeight;
+  const top = body.getBoundingClientRect().top;
+  let bottom = parseFloat(getComputedStyle(body).paddingTop);
+  for (const child of body.children) {
+    if (child.classList.contains('cell-empty-body')) continue;
+    const rect = child.getBoundingClientRect();
+    if (rect.height) bottom = Math.max(bottom, rect.bottom - top + body.scrollTop);
+  }
+  return cell.offsetHeight - body.clientHeight + bottom + parseFloat(getComputedStyle(body).paddingBottom);
+}
+
 export function watchTaskScrollEdges(grid) {
   const bodies = [...grid.querySelectorAll('.task-body')];
   const update = (body) => {

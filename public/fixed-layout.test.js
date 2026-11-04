@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridRowHeight, computeLayout, tileSpan, localSwapPlacement } from './layout.js';
+import { gridRowHeight, computeLayout, tileSpan, localSwapPlacement, spanForHeight, fittedSpan } from './layout.js';
 
 const awake = () => 'awake';
 const sessions = (n) => Array.from({ length: n }, (_, i) => ({ sessionId: `s${i}` }));
@@ -189,4 +189,40 @@ test('scrolling swap previews return spare rows in every column without mutating
   assert.ok(swapped.placed.every((t) => t.span <= 4));
   assert.deepEqual(layout.placed, before);
   assertNoOverlap(swapped);
+});
+
+// The reported board: a narrow single column (row 214.6px) whose last task has
+// two cards that wrapped to 94px and 112px. tileSpan's 85px stride fits them in
+// one row, so the bottom card was clipped while rows below sat empty.
+test('a task whose rendered cards outgrow the estimate takes free rows below it', () => {
+  const row = 214.6;
+  const estimate = tileSpan(sessions(2), row, 0, awake);
+  assert.equal(estimate, 1);
+  const measured = spanForHeight(37 + 8 + 94 + 8 + 112 + 8, row);
+  assert.equal(measured, 2);
+  const layout = computeLayout([
+    { id: 'short-a', span: 1 },
+    { id: 'short-b', span: 1 },
+    { id: 'wrapped', span: fittedSpan(estimate, measured) },
+  ], 1);
+  assert.deepEqual(layout.placed.map((t) => [t.id, t.rowStart, t.span]), [['short-a', 0, 1], ['short-b', 1, 1], ['wrapped', 2, 2]]);
+  assert.equal(layout.scroll, false);
+  assertNoOverlap(layout);
+});
+
+test('measured content only grows a task, within the five on-screen rows', () => {
+  assert.equal(fittedSpan(2, 1), 2);
+  assert.equal(fittedSpan(2, undefined), 2);
+  assert.equal(fittedSpan(1, 3), 3);
+  assert.equal(fittedSpan(1, 9), 5);
+  assert.equal(spanForHeight(5000, 100), 5);
+});
+
+test('measured content keeps the four-row cap and spare fifth row', () => {
+  const crowded = computeLayout(tiles([1, 1, fittedSpan(1, 5)]), 1);
+  assert.equal(crowded.placed[2].span, 4);
+  assert.equal(crowded.scroll, true);
+  const alone = computeLayout(tiles([fittedSpan(1, 5)]), 1);
+  assert.equal(alone.placed[0].span, 5);
+  assert.equal(alone.scroll, false);
 });

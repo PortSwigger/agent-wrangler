@@ -120,7 +120,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       window.__probeApi = r.api;
       r.register('view', { id: 'main', label: 'Probe', mount(el) { el.textContent = 'probe view'; } });
       r.register('task.body', { id: 'sizing', mount(el, api, ctx) { paint(el, ctx); }, update: paint,
-        weight(id) { return window.__probeHeights?.[id] || 0; } });
+        weight(id) { return window.__probeUnweighted ? 0 : window.__probeHeights?.[id] || 0; } });
     } };
   `);
   writeFileSync(join(dataDir, 'extensions.json'), JSON.stringify({ probe: { id: 'probe', requires: ['cards:hideChips'] } }));
@@ -356,7 +356,31 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
         'a large task must render at its allocation and scroll excess content internally');
       await setProbeHeights({});
     }
+    // Content the span estimate never saw (cards whose chip rows wrap in a narrow
+    // column; here a body the extension reports no weight for) is measured after
+    // render: the tile grows into the free rows below instead of clipping, its
+    // neighbours stay one row, and rows keep their fixed height.
     await resize(500);
+    await evaluateChecked('window.__probeUnweighted = true');
+    for (const height of [300, 0]) {
+      await setProbeHeights(height ? { 'layout-5': height } : {});
+      const fit = await evaluateChecked(`(() => {
+        const grid = document.getElementById('grid');
+        const style = getComputedStyle(grid);
+        const spanOf = (tile) => parseInt(tile.style.gridRowEnd.replace('span', ''));
+        const tile = grid.querySelector('[data-taskid="layout-5"]');
+        const body = tile.querySelector('.task-body');
+        const last = [...body.children].filter((child) => child.getBoundingClientRect().height).at(-1);
+        return { span: spanOf(tile), clipped: body.scrollHeight > body.clientHeight + 1, rowHeight: parseFloat(style.gridAutoRows),
+          gap: parseFloat(style.rowGap), content: last.getBoundingClientRect().bottom - tile.getBoundingClientRect().top,
+          others: [...grid.querySelectorAll('.task-cell')].filter((cell) => cell !== tile).map(spanOf) };
+      })()`);
+      assert.equal(fit.span > 1, height > 0, `only content beyond one row may grow the task: ${JSON.stringify(fit)}`);
+      assert.ok(fit.content > (fit.span - 1) * (fit.rowHeight + fit.gap), `the task must take no more rows than it needs: ${JSON.stringify(fit)}`);
+      assert.ok(!fit.clipped, `a task with free rows must not clip its content: ${JSON.stringify(fit)}`);
+      assert.ok(fit.others.every((n) => n === 1), `neighbours must not grow with it: ${JSON.stringify(fit)}`);
+    }
+    await evaluateChecked('window.__probeUnweighted = false');
     const action = async (label) => {
       // Keep this programmatic action in one browser task. The layout probes
       // scroll the grid; a pending scroll event can dismiss the menu between
