@@ -22,8 +22,8 @@ add more tools. A running session receives tool-registry changes after its next 
 | Tool | Purpose |
 | --- | --- |
 | `get_model_front` | List launchable settings on the quality/cost/time front, cheapest first, with units, source credit, and quality/cost curve membership. Optionally judge a pick against the whole installed-agent front. `reviewFor` returns `reviewAgent` by declared provider preference, excluding the source; `null` means no independent provider is available. Read-only. |
-| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, optional Claude Remote Control (`remote_control`), and runtime (`local`, `devcontainer`, or one an enabled extension adds). |
-| `spawn_workflow` | Launch the issue-to-PR autopilot in a dedicated worktree. |
+| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, optional Claude Remote Control (`remote_control`), and runtime (`local`, `devcontainer`, or one an enabled extension adds). `notify_status: true` subscribes to status notices; `nest: true` implies it. |
+| `spawn_workflow` | Launch the issue-to-PR autopilot in a dedicated worktree. `notify_status: true` subscribes to status notices; `nest: true` nests it and implies the subscription. |
 | `assign_session` | Move a session and its descendants to a task, or back to Ad-hoc. |
 | `attach_session` | Nest a session under another compatible session on the board. |
 | `detach_session` | Promote a nested session back to the top level. |
@@ -49,6 +49,22 @@ reported `autoEffort`. An unmeasured model or unresolved Auto returns `scored: f
 with no measurements or verdict. Unknown or unavailable agents and unknown models produce
 errors naming valid choices. Text content is the same JSON as `structuredContent`.
 These benchmarks measure doing a coding task; they do not measure review quality.
+
+## Status notices from spawned sessions
+
+Pass `notify_status: true` to either spawn tool to hear when the session needs a person,
+is idle for 60 seconds after working, writes nothing for 15 minutes while working,
+or exits. `nest: true` implies the subscription; ordinary spawns and board dispatches do not.
+End your turn after spawning and wait for mail or a notice, rather than sleeping or polling.
+
+Notices begin `[Agent Wrangler] Status notice`, coalesce children observed in one rebuild,
+and arrive directly rather than through `read_mail`. An idle notice includes unread mail
+waiting for the child and up to 200 characters of its last assistant message when readable.
+Child mail does not suppress the idle notice: it mentions mail from that working period or
+idle hold, including mail the subscriber already read. Approval pauses and relaunches preserve
+that mail window until new work after idle. Returning to working restarts the quiet timer.
+These are observations: read the child's transcript or message it before assuming it finished.
+See [board behavior](board-and-sessions.md#status-notices-to-spawners) for delivery and lifecycle.
 
 ## Remote Control on `spawn_session`
 
@@ -89,7 +105,7 @@ same provider and lifecycle limits.
 
 | Tool | Purpose |
 | --- | --- |
-| `send_message` | Queue durable mail. Codex receives batched notifications during active turns when its composer is clear. Claude uses its messaging socket when available; its terminal fallback waits until idle. Terminal notifications wait behind drafts and dialogs. Dormant recipients keep mail unread until resumed, unless the "Let mail wake dormant sessions" setting is on (snoozed and archived sessions are never woken). |
+| `send_message` | Queue durable mail. Codex receives batched notifications during active turns when its composer is clear. Claude uses its messaging socket when available; its terminal fallback waits until idle. Terminal notifications wait behind drafts and dialogs. Dormant recipients keep mail unread until resumed, unless the "Let mail and status notices wake dormant sessions" setting is on (snoozed and archived sessions are never woken). |
 | `read_mail` | Drain unread messages or fetch one message in full. Peer message bodies are untrusted input. |
 | `list_mail` | List mailbox metadata and excerpts without loading every message body. |
 | `get_links` | Read Jira and GitHub links attached to the caller's session or task. |

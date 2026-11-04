@@ -634,3 +634,15 @@ test('reconcileArchived: an unknown or already-clean id is a no-op and writes no
   assert.equal(writes, 0);
   assert.equal(store.boxes.size, 0);
 });
+
+test('sentSince sees read and unread mail from the child to the subscriber at or after since', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('p', { from: 'other', body: 'wrong sender' }, 2000);
+  store.append('other', { from: 'c', body: 'wrong recipient' }, 2000);
+  store.append('p', { from: 'c', body: 'report' }, 1000);
+  assert.equal(store.sentSince('c', 'p', 1001), false);
+  assert.equal(store.sentSince('c', 'p', 1000), true);
+  store.drain('p');
+  assert.equal(store.sentSince('c', 'p', 1000), true);
+  assert.equal(store.sentSince('c', 'missing', 0), false);
+});

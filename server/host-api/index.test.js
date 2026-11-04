@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { adapterFor } from '../agents/index.js';
 import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
 import { buildHostApi, buildExtSettings } from './index.js';
@@ -417,6 +419,47 @@ test('sessions:read hands back projections, never live entries', () => {
   assert.equal(row.sessionId, 'c1');
   assert.ok(Object.isFrozen(row));
   assert.equal(host.sessions.get('nope'), null);
+});
+
+test('sessions:read joins the latest graph for get, list and forTask', () => {
+  const entries = [{ sessionId: 'c1' }, { sessionId: 'c2' }];
+  let nodes = [{ sessionId: 'c1', status: 'idle', managed: false, hasBackgroundShell: false }];
+  let graphReads = 0;
+  const host = buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring({
+    core: {
+      sessionManager: { activeEntries: () => entries, entryFor: (id) => entries.find((e) => e.sessionId === id) },
+      taskStore: { taskFor: () => ({ id: 't1' }) },
+      graph: () => { graphReads++; return { sessions: nodes }; },
+    },
+  }) });
+  assert.equal(host.sessions.get('c1').dormant, true);
+  assert.equal(host.sessions.get('c2').status, null);
+  graphReads = 0;
+  assert.deepEqual(host.sessions.list().map((r) => r.status), ['idle', null]);
+  assert.equal(graphReads, 1);
+  nodes = [{ sessionId: 'c1', status: 'needs-you', managed: true, waitingReason: 'permission', hasBackgroundShell: true }];
+  const row = host.sessions.get('c1');
+  assert.equal(row.status, 'needs-you');
+  assert.equal(row.waitingReason, 'permission');
+  assert.equal(row.hasBackgroundShell, true);
+  assert.equal(row.dormant, false);
+  assert.deepEqual(host.sessions.forTask('t1').map((r) => r.status), ['needs-you', null]);
+  assert.deepEqual(host.sessions.forTask('other'), []);
+});
+
+test('the server core wiring supplies live graph status to extension sessions', () => {
+  const src = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+  const binding = src.match(/const extCore = ([\s\S]*?);/)[1];
+  const context = {
+    ...wiring().core,
+    lastGraph: { sessions: [{ sessionId: 'c1', status: 'working', managed: true }] },
+  };
+  const core = runInNewContext(`(${binding})`, context);
+  const host = buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring({ core }) });
+  assert.equal(host.sessions.get('c1').status, 'working');
+  context.lastGraph = { sessions: [{ sessionId: 'c1', status: 'idle', managed: false }] };
+  assert.equal(host.sessions.list()[0].status, 'idle');
+  assert.equal(host.sessions.get('c1').dormant, true);
 });
 
 test('sessions:read reports the hosting extension of an off-board card, null for a board card', () => {

@@ -159,3 +159,30 @@ If unsure, and the user hasn't used language like this, leave it unset — the
 new session is a plain, independent top-level session on the board. If you do
 get it wrong, `attach_session`/`detach_session` can reparent a session after
 the fact — see the `session-hierarchy` skill.
+
+## Hearing back from the session
+
+Pass `notify_status: true` to `spawn_session` or `spawn_workflow` when you need
+status notices without nesting. `nest: true` implies the same subscription;
+plain spawns do not subscribe. After spawning, end your turn and wait for the
+child's mail or a status notice. Never `sleep` or poll `list_sessions` to wait.
+
+Agent Wrangler sends you a `[Agent Wrangler] Status notice` when the child is
+idle for a minute, needs a person, goes quiet for
+15 minutes mid-turn, or exits. Startup idle does not count until the child has
+worked, and a background shell keeps it out of the idle hold. Notices are sent
+directly, not through mail or `read_mail`. An idle notice includes the child's
+unread-mail count and, when readable, its last assistant words. Child mail does
+not suppress the notice; it mentions mail from the current working period or
+idle hold, including mail you have already read.
+
+A notice is an observation, not the child's report. Read the transcript or
+`send_message` the child before assuming it finished. Live Claude gets notices
+over its messaging socket when available; terminal delivery waits for clear
+input and no dialog, and Claude's terminal fallback waits until idle. A dormant
+subscriber is woken only when **Let mail and status notices wake dormant sessions**
+is enabled (off by default). With it off, dormant status notices are skipped,
+not saved for later delivery; mail remains unread. The setting does not affect
+live delivery. Snoozed subscribers receive nothing; an archived subscriber loses
+its subscriptions. Subscriptions survive resume, end when the child exits, and
+are not inherited by forks.

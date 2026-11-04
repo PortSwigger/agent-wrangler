@@ -87,6 +87,7 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
       autoCompactTokens: args.auto_compact_tokens,
       ...buildDispatch({ caller, callerEntry }),
       spawnedBy: caller || undefined,
+      statusNotify: (args.nest || args.notify_status) && caller ? { to: caller } : undefined,
       // The resolved task, so the launch context (session.launchContext) sees it
       // BEFORE launch — dispatch mints the card id, so the assign below can only
       // land afterwards.

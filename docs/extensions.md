@@ -1663,12 +1663,32 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (later extensions are not asked); `warnings` toast on the board and the
   launch goes ahead. A hook that throws or takes over 60s is logged and
   skipped. Resume and fork never fire it. `server/session-prepare.js`.
+- **Session status projections** (`sessions:read`, 1.59.0): `host.sessions.get(id)`,
+  `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
+  `hasBackgroundShell` from the latest board graph. Without a graph node, status
+  and waitingReason are `null`, and the booleans are `false`. Conversation ids
+  (`liveSessionId` and `priorLiveSessionIds`) remain omitted.
 - **`host.events`** (capability `events`, 1.17.0): `on(name, fn)` and `emit(name, payload)`.
   Subscriber errors are caught and logged per handler, `emit` does not wait, and
   an extension's subscriptions are dropped when it deactivates, so a disabled
   extension hears nothing. `emit` publishes `ext:<id>:<name>` (forced), so an
   extension cannot forge a core event. Core event: `archive-review:completed
   { sid, taskId, markdown }` (the review is skipped when nobody listens).
+  Since 1.59.0, `session-status:needs-you`, `session-status:idle-held`,
+  `session-status:quiet` and `session-status:exited` publish
+  `{ sid, kind, at, waitingFor, idleMs, quietMs, exitReason }` for every session,
+  including those without spawner subscriptions. `kind` matches the event suffix;
+  `at` is the rebuild time in milliseconds. `idleMs`, `quietMs` and `exitReason`
+  are set for their corresponding kind only; exitReason is `exited`, `archived`
+  or `gone`. `waitingFor` is the board summary or `null`; it can contain scraped
+  approval or prompt text. The `events` capability grants access to these payloads
+  without requiring `sessions:read`. Idle-held is the 60-second hold after working,
+  excluding background shells. Child mail affects the spawner
+  notice wording; it suppresses neither the notice nor this event. Events occur
+  once per episode; unknown readings preserve the last known episode. Quiet timing uses
+  the latest launch, transcript activity or observed transition into working, so returning
+  from an approval wait starts a fresh 15-minute interval. The first
+  rebuild after restart only seeds the watcher.
 - **`activate({ host })` / `deactivate({ host })`** (1.17.0) manifest functions run when the
   extension turns on or off; a throwing `activate` quarantines it.
 - **`host.memory.*`** (1.17.0) is provided by the task-memory extension. While it is off,

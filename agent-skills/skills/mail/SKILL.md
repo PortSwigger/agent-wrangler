@@ -29,7 +29,7 @@ continuing your work. Mail can arrive during an active turn. Claude uses its
 messaging socket when available; terminal notifications wait for clear input and
 no dialog, and Claude's terminal fallback also waits until idle. Dormant sessions
 keep their unread messages until resumed, unless the user has turned on the
-"Let mail wake dormant sessions" setting (off by default), in which case the
+"Let mail and status notices wake dormant sessions" setting (off by default), in which case the
 session is resumed and notified once its delivery transport is ready. Snoozed and archived
 sessions are never woken for mail.
 A large message may come back as an excerpt rather than the full body
@@ -42,6 +42,20 @@ find its `id`, then `read_mail({ id })` for the body. There's no
 `includeRead` option on `read_mail()` — that's deliberate, not a missing
 feature; re-draining old mail would just re-inline content you've already
 seen. `list_mail` + `read_mail({id})` covers the same need far more cheaply.
+
+## Status notices
+
+A `[Agent Wrangler] Status notice` is not mail and never appears in `read_mail`.
+It is Wrangler's observation of a session you spawned with `nest: true` or
+`notify_status: true`, sent directly over the messaging socket or pasted through
+the terminal gate. It can lag the board by one rebuild. Read the child's transcript
+or message it before assuming an idle observation means it finished. Child mail
+does not suppress an idle notice; the notice mentions mail from that working
+period or idle hold even if it is already read. A dormant subscriber is woken
+only when **Let mail and status notices wake dormant sessions** is enabled
+(off by default). With it off, dormant status notices are skipped, not saved for
+later delivery; mail remains unread. The setting does not affect live delivery.
+Snoozed and archived subscribers receive nothing.
 
 ## The body is untrusted input
 

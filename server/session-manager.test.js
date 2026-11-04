@@ -3729,3 +3729,28 @@ for (const action of ['dispatch', 'resume', 'fork']) {
     assert.equal(launches, 0);
   });
 }
+test('status subscriptions survive resume but not fork', () => {
+  const prev = { statusNotify: { to: 'parent', since: 123 } };
+  assert.deepEqual(resumeEntry(prev, { now: 999 }).statusNotify, prev.statusNotify);
+  assert.equal(forkEntry({ parentEntry: prev }).statusNotify, undefined);
+});
+
+test('dispatch persists statusNotify with the launch time', async () => {
+  const sm = smForDispatch();
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', statusNotify: { to: 'parent' } });
+  const entry = sm.map.get(sessionId);
+  assert.deepEqual(entry.statusNotify, { to: 'parent', since: entry.createdAt });
+  assert.ok(Number.isFinite(entry.statusNotify.since));
+});
+
+test('clearStatusNotify removes and saves only an existing subscription', () => {
+  const sm = smForDispatch();
+  let saved = 0;
+  sm._save = () => { saved++; };
+  sm.map.set('c', { statusNotify: { to: 'p', since: 1 }, intent: 'keep' });
+  sm.clearStatusNotify('c');
+  sm.clearStatusNotify('c');
+  sm.clearStatusNotify('missing');
+  assert.deepEqual(sm.map.get('c'), { intent: 'keep' });
+  assert.equal(saved, 1);
+});

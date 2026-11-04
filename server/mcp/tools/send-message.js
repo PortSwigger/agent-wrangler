@@ -32,7 +32,7 @@ export const sendMessageTool = {
     + 'during an active turn when its composer is clear. Claude uses its messaging socket when '
     + 'available; its terminal fallback waits until idle. Terminal notifications wait behind '
     + 'drafts and dialogs. Dormant mail-capable recipients keep '
-    + 'mail queued until they are resumed, unless the user enabled the "Let mail wake dormant sessions" '
+    + 'mail queued until they are resumed, unless the user enabled the "Let mail and status notices wake dormant sessions" '
     + 'setting (off by default), which resumes them; snoozed and archived sessions are never woken. A legacy recipient without mailbox '
     + 'support must have a live terminal. Use it to coordinate '
     + 'with a peer session — nudge a worker, report back, hand off a result. Works on any session '

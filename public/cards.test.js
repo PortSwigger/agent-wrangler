@@ -837,3 +837,9 @@ test('mailBlockedHtml: only unread mail held by a draft shows the notice', () =>
   assert.equal(mailBlockedHtml(sess({ mail: { unread: 0, draftBlocked: true } })), '');
   assert.match(mailBlockedHtml(sess({ mail: { unread: 1, draftBlocked: true } })), /Mail waiting: an unsent draft in the prompt box is blocking it/);
 });
+
+test('a held status notice is visible without unread mail', () => {
+  const html = sessionCardHtml(sess({ statusNoticeBlocked: true, mail: null }), ctx(), { expanded: true });
+  assert.match(html, /Status notice waiting/);
+  assert.doesNotMatch(sessionCardHtml(sess({ statusNoticeBlocked: false }), ctx(), { expanded: true }), /Status notice waiting/);
+});

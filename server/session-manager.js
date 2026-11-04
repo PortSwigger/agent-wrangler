@@ -176,8 +176,8 @@ export function suspendEnabled(config = {}) {
 // than a short grace period: the relaunch is real activity, and a session someone
 // resumed and has not typed into yet must not evaporate while they read it.
 // Deliberately NOT folded into the graph's own `lastActivity` — that field is the
-// conversation's age, which is what the board means by "idle 3h"; only the suspend
-// decision wants the relaunch counted.
+// conversation's age, which is what the board means by "idle 3h"; suspend and
+// quiet-notice timers also count relaunches.
 export function lastActiveAt(c) {
   const stamps = [c?.lastActivity, c?.relaunchedAt, c?.createdAt].filter((t) => typeof t === 'number');
   return stamps.length ? Math.max(...stamps) : null;
@@ -350,6 +350,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     socket,
     forkedFrom: prev?.forkedFrom,
     spawnedBy: prev?.spawnedBy,
+    statusNotify: prev?.statusNotify,
     worktree: prev?.worktree,
     addDirs: prev?.addDirs,
     workflow: prev?.workflow,
@@ -1856,13 +1857,20 @@ export class SessionManager {
     return dir;
   }
 
+  clearStatusNotify(childId) {
+    const entry = this.map.get(childId);
+    if (!entry?.statusNotify) return;
+    delete entry.statusNotify;
+    this._save();
+  }
+
   dispatch(opts) {
     return this._whileLaunching(() => this._doDispatch(opts));
   }
 
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, ext, deferIntent = false, offBoard, remoteControl, disallowedTools } = {}) {
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools } = {}) {
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
@@ -2026,7 +2034,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });

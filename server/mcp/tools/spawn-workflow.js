@@ -4,7 +4,7 @@ import { performSpawn, errorResult } from './spawn-common.js';
 import { workflowLaunchPrompt } from '../../workflow.js';
 import { slugFromIntent } from '../../worktree.js';
 
-// Kick off a brand-new TOP-LEVEL autopilot issue→PR run (an orchestrator), as
+// Kick off a brand-new autopilot issue→PR run (an orchestrator), as
 // opposed to spawn_session which hands current work off to a peer. Mirrors the
 // workflow branch of the /ws `dispatch` handler (server/control/handlers/
 // dispatch.js): wrap the raw issue into a skill-naming launch prompt, force a
@@ -25,7 +25,7 @@ export const spawnWorkflowTool = {
     + 'issue-to-pr skill, in its own fresh git worktree. Use this to kick off autopilot on an '
     + 'issue — NOT to hand off your current work (that is spawn_session). Pass the issue (a Jira '
     + 'key, a GitHub issue URL/number, or a free-text description) in `issue`. The run is always '
-    + 'top-level even when you start it from another session. Returns the new session id and its '
+    + 'top-level by default; nest: true nests it under you. Returns the new session id and its '
     + 'label — prefer the label when telling the user about it, but labels aren\'t guaranteed '
     + 'unique (see the `session-hierarchy` skill), so if more than one session is in view pair it '
     + 'with a short id.',
@@ -43,6 +43,8 @@ export const spawnWorkflowTool = {
     agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     add_dirs: z.array(z.string()).optional().describe('Extra directories to grant the run (--add-dir).'),
     auto_compact_tokens: z.number().int().min(50000).max(1000000).optional().describe('Optional immutable auto-compaction threshold / working context budget in tokens (50000–1000000; 50000 is Codex-only).'),
+    nest: z.boolean().optional().describe('Nest the new session under your card and subscribe to status notices.'),
+    notify_status: z.boolean().optional().describe('Notify you when this session is idle for a minute after working, needs a person, goes quiet mid-turn, or exits. Implied by nest: true.'),
     into: z.string().optional().describe(
       'Task id to put the run on, sourced from list_tasks. An id not sourced from list_tasks '
       + 'silently lands the run in Unassigned instead of erroring. Defaults to your current '
@@ -62,6 +64,7 @@ export const spawnWorkflowTool = {
       // tagging — and the worktree is forced on with an auto-suffixed branch
       // seeded from the raw issue, exactly as the /ws workflow dispatch does.
       buildDispatch: () => ({
+        parentSession: (args.nest && caller) || undefined,
         intent: workflowLaunchPrompt(rawIssue),
         worktree: true,
         worktreeBranch: slugFromIntent(rawIssue),

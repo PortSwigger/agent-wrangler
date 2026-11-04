@@ -142,6 +142,37 @@ kept under `~/.agent-wrangler/codex-turns/`.
 The **parent** controls board nesting and can change; the **spawner** records who launched the session
 and cannot. **Attach to…** and **Promote to full session** change nesting, not launch lineage.
 
+## Status notices to spawners
+
+A session can subscribe to sessions it launches with `spawn_session` or `spawn_workflow`:
+`notify_status: true` opts in, and `nest: true` implies it. Plain spawns and board dispatches
+have no subscription. The subscriber hears when a child needs a person, is idle for one minute
+after working, goes quiet for 15 minutes while working, or exits or is archived.
+The quiet timer starts from the latest launch, transcript activity or observed return to working.
+Returning from an approval wait or idle starts a fresh 15-minute interval.
+Idle notices start only after the child has worked; background shells keep an idle child out
+of the hold. Child mail does not suppress the notice: it mentions mail from the preceding
+working period or idle hold, including mail the subscriber already read. Approval pauses and
+process relaunches preserve that mail window; leaving idle for a known non-idle status starts
+a new window. After a server restart, mail attribution starts at the first observation. Unknown
+status readings preserve the previous notification episode until a different known status is observed.
+
+The `[Agent Wrangler] Status notice` is an observation of the board, not peer mail or a report
+that the child finished. It never appears in `read_mail`. Each rebuild coalesces the subscriber's
+child events into one notice. Idle lines include the child's unread mail count and the first
+200 characters of its last assistant message when its transcript is readable.
+
+Live Claude subscribers receive notices over the messaging socket when available. Terminal
+fallback waits for a clear composer and no dialog; Codex can receive a notice during a turn,
+while Claude's terminal fallback waits until idle. A notice held for two minutes shows a
+**Status notice waiting** tag on the card. Dormant subscribers wake with the notice only when
+**Let mail and status notices wake dormant sessions** is enabled (off by default). With it off,
+dormant status notices are skipped, not saved for later delivery; mail remains unread. This
+setting does not affect live delivery. Snoozed and archived subscribers receive nothing;
+notices skipped during snooze are discarded rather than delivered when the snooze ends.
+Subscriptions survive resume, are not inherited by forks, and end when the child exits or the
+subscriber is archived or missing. A server restart seeds observations without sending notices.
+
 ## Session actions
 
 Right-click a card or open **Actions** to find:

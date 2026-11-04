@@ -90,9 +90,8 @@ export function archiveReviewEnabled(cfg = readConfig()) {
   return cfg.archiveReviewEnabled === true;
 }
 
-// Whether a mail notification wakes a dormant recipient (resuming it, then
-// notifying it once idle) instead of leaving the mail unread until someone
-// resumes it. Default OFF — a wake spends a session's context and
+// Whether mail or status notices wake a dormant recipient. Default OFF — mail
+// stays unread and status notices are skipped. A wake spends a session's context and
 // launches a process nobody asked for. Takes cfg so tests never write the
 // shared config.json.
 export function mailWakesDormant(cfg = readConfig()) {

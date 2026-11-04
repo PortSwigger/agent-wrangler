@@ -386,6 +386,10 @@ export class MailboxStore {
     return [...box.messages].sort((a, b) => a.at - b.at).map((m) => ({ ...m }));
   }
 
+  sentSince(from, to, sinceMs) {
+    return this.boxes.get(to)?.messages.some((m) => m.from === from && m.at >= sinceMs) ?? false;
+  }
+
   // { unread, notifiedAt, amber, senders } for the board's mail pill: the count
   // and amber boolean drive the pill itself, `senders` (deduped, in message
   // order, identity-less senders dropped — see composeMailNotification for why)

@@ -86,8 +86,8 @@ export const SETTINGS = [
     id: 'mailWakesDormant',
     type: 'toggle',
     scope: 'server',
-    label: 'Let mail wake dormant sessions',
-    help: 'When mail arrives for a dormant session, resume it and then deliver the mail notification once it is idle, instead of leaving the message unread until you resume it yourself. Off by default — a wake relaunches the session and spends its context. Archived and snoozed sessions are never woken.',
+    label: 'Let mail and status notices wake dormant sessions',
+    help: 'Allow mail and subscribed status notices to resume dormant sessions. Off by default: mail stays unread and status notices for dormant sessions are skipped. Waking a session spends context. Archived and snoozed sessions are never woken.',
     default: false,
   },
   {

@@ -40,7 +40,40 @@ export async function deliverMailNotification(to, text, deps) {
   return delivery === 'deferred' ? { mode: 'deferred', reason } : { mode: 'live' };
 }
 
-async function wakeDormant(to, entry, deps) {
+export async function deliverNotice(to, text, deps) {
+  const entry = deps.sessionManager.entryFor(to);
+  if (!entry || entry.archivedAt || entry.snooze) return { mode: 'skip' };
+  const target = deps.tmuxFor(to);
+  if (!target) {
+    if (!deps.wakesDormant?.()) return { mode: 'skip' };
+    return wakeDormant(to, entry, deps, text);
+  }
+  return sendNotice(to, entry, target, text, deps.socketFor(to), deps);
+}
+
+async function sendNotice(to, entry, target, text, socket, deps) {
+  let reason = null;
+  const canDeliver = () => {
+    const current = deps.sessionManager.entryFor(to);
+    return Boolean(current && !current.archivedAt && !current.snooze);
+  };
+  const beforeSend = async () => {
+    const since = entry.relaunchedAt;
+    const timeout = deps.mcpReadyTimeoutMs ?? MCP_READY_TIMEOUT_MS;
+    const seen = deps.mcpSeenAt ?? defaultMcpSeenAt;
+    if (typeof since === 'number' && Date.now() - since >= 0 && Date.now() - since <= timeout && seen(to) <= since) {
+      await waitForMcpReady(to, since, seen, timeout, deps.mcpReadyPollMs ?? MCP_READY_POLL_MS);
+    }
+    return canDeliver();
+  };
+  const result = await liveTransport(to, entry, target, text, socket, deps.paneDeferral, beforeSend,
+    (r) => { reason = r; }, deps, true, canDeliver);
+  const current = deps.sessionManager.entryFor(to);
+  if (result === 'skip' || !current || current.archivedAt || current.snooze) return { mode: 'skip' };
+  return result === 'deferred' ? { mode: 'deferred', reason } : { mode: 'live' };
+}
+
+async function wakeDormant(to, entry, deps, notice = null) {
   const { sessionManager, tmuxFor } = deps;
   let dir = await resolveResumeDir(entry.liveSessionId || to, { entryCwd: entry.cwd });
   if (!dir || !fs.existsSync(dir)) {
@@ -48,14 +81,23 @@ async function wakeDormant(to, entry, deps) {
   }
   const fresh = sessionManager.entryFor(to);
   if (!fresh || fresh.archivedAt) return { mode: 'skip' };
-  if (fresh.snooze) return { mode: 'deferred', reason: 'snoozed, not waking' };
-  if (tmuxFor(to)) return { mode: 'deferred', reason: 'woken by another resume, delivering next sweep' };
+  if (fresh.snooze) return notice === null ? { mode: 'deferred', reason: 'snoozed, not waking' } : { mode: 'skip' };
+  if (tmuxFor(to)) return notice === null ? { mode: 'deferred', reason: 'woken by another resume, delivering next sweep' } : sendNotice(to, fresh, tmuxFor(to), notice, deps.socketFor(to), deps);
   try {
-    await sessionManager.resume(to, dir, { reason: 'mail', automatic: true });
+    const carriesIntent = notice !== null && !sessionManager.isResuming?.(to) && adapterFor(fresh.agent).resumeCarriesIntent;
+    const result = await sessionManager.resume(to, dir, notice === null
+      ? { reason: 'mail', automatic: true }
+      : { intent: notice, reason: 'status-notice', automatic: true });
+    if (notice !== null) {
+      const current = sessionManager.entryFor(to);
+      if (!current || current.archivedAt || current.snooze) return { mode: 'skip' };
+      if (!carriesIntent) await sendNotice(to, current, result?.tmux ?? tmuxFor(to), notice, current.socket ?? deps.socketFor(to), deps);
+      return { mode: 'dormant' };
+    }
   } catch (err) {
     const now = sessionManager.entryFor(to);
     if (now?.archivedAt) return { mode: 'skip' };
-    if (now?.snooze) return { mode: 'deferred', reason: 'snoozed, not waking' };
+    if (now?.snooze) return notice === null ? { mode: 'deferred', reason: 'snoozed, not waking' } : { mode: 'skip' };
     throw err;
   }
   return { mode: 'deferred', reason: 'woken dormant session, delivering next sweep' };
@@ -67,12 +109,12 @@ async function wakeDormant(to, entry, deps) {
 // socket, or a failed send falls back to the pane paste, gated by paneDeferral so
 // it can never land in the middle of a prompt. beforeSend (the MCP-ready wait
 // after a relaunch) runs before either.
-async function liveTransport(id, entry, tmux, text, socket, paneDeferral, beforeSend, onDefer, deps) {
+async function liveTransport(id, entry, tmux, text, socket, paneDeferral, beforeSend, onDefer, deps, queueOnDefer = false, canDeliver) {
   if (adapterFor(entry.agent).terminal.socketMail) {
     const target = (deps.findSocket ?? defaultFindSocket)(entry.liveSessionId || id);
     if (target) {
       try {
-        await beforeSend();
+        if (await beforeSend() === false) return 'skip';
         // Claude suppresses identical peer content even after a successful
         // socket write. Give each notification fresh content, including when
         // successive batches have the same unread count. Keep pane text intact.
@@ -84,7 +126,7 @@ async function liveTransport(id, entry, tmux, text, socket, paneDeferral, before
   // Codex accepts guidance during a turn, but the paste still needs clear input
   // and no dialog. Claude's paste fallback continues to wait until idle.
   return paneDeferral.deliverOrDefer({
-    id, text, tmux, socket, deferWhileWorking: true, allowWhileWorking: adapterFor(entry.agent).terminal.allowWhileWorking, queueOnDefer: false, beforeSend, onDefer,
+    id, text, tmux, socket, deferWhileWorking: true, allowWhileWorking: adapterFor(entry.agent).terminal.allowWhileWorking, queueOnDefer, beforeSend, onDefer, canDeliver,
   });
 }
 

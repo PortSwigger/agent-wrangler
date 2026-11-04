@@ -246,6 +246,12 @@ export function mailBlockedHtml(s) {
   return `<span class="card-tag mail-blocked" title="${esc(text)}">${text}</span>`;
 }
 
+function statusNoticeBlockedHtml(s) {
+  if (!s.statusNoticeBlocked) return '';
+  const text = 'Status notice waiting to be delivered';
+  return `<span class="card-tag mail-blocked" title="${esc(text)}">${text}</span>`;
+}
+
 // The `card.pill` slot's host (public/slots.js), one per card, sitting between
 // the core chips and the right-aligned links — the same place in the row as the
 // panel's `.sess-meta-ext`, and `display: contents` for the same reason (the
@@ -413,7 +419,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
       <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
     </div>
     <div class="card-loc"><span class="card-repo" title="${esc(s.cwd)}">${locationLabel(s.cwd)}</span>${branchBadge(s.branch)}</div>
-    <div class="card-meta">${keyChip(age, 'core:age', ctx)}${keyChip(costEl, 'core:cost', ctx)}${keyChip(modelPill, 'core:model', ctx)}${keyChip(tokenChip, 'core:tokens', ctx)}${keyChip(compactPill, 'core:compact', ctx)}${keyChip(subAgentPill, 'core:subagents', ctx)}${keyChip(restarting, 'core:restarting', ctx)}${keyChip(automerge, 'core:automerge', ctx)}${keyChip(runtimeChip, 'core:runtime', ctx)}${keyChip(wt, 'core:worktree', ctx)}${mailBlockedHtml(s)}${cardPillHostHtml()}${metaLinks}</div>
+    <div class="card-meta">${keyChip(age, 'core:age', ctx)}${keyChip(costEl, 'core:cost', ctx)}${keyChip(modelPill, 'core:model', ctx)}${keyChip(tokenChip, 'core:tokens', ctx)}${keyChip(compactPill, 'core:compact', ctx)}${keyChip(subAgentPill, 'core:subagents', ctx)}${keyChip(restarting, 'core:restarting', ctx)}${keyChip(automerge, 'core:automerge', ctx)}${keyChip(runtimeChip, 'core:runtime', ctx)}${keyChip(wt, 'core:worktree', ctx)}${mailBlockedHtml(s)}${statusNoticeBlockedHtml(s)}${cardPillHostHtml()}${metaLinks}</div>
     ${subAgentZone}
   </div>`;
 }

@@ -48,11 +48,11 @@ export function createPaneDeferral({
   // otherwise both read the same queue and paste it twice.
   const inFlight = new Set();
 
-  function enqueue(id, text) {
+  function enqueue(id, notice) {
     const q = pending.get(id) || [];
     // A repeat of the line already at the tail says nothing new — the same
     // poll-driven transition can be re-detected while the queue waits.
-    if (q.at(-1) !== text) q.push(text);
+    if (q.at(-1)?.text !== notice.text) q.push(notice);
     while (q.length > MAX_PENDING_PER_CARD) q.shift();
     pending.set(id, q);
   }
@@ -86,9 +86,9 @@ export function createPaneDeferral({
   // was held back. Returns 'sent' | 'deferred'.
   // `allowWhileWorking` lets Codex mail through the notification gate during a
   // turn, while still checking for dialogs and a confirmed-empty composer.
-  async function deliverOrDefer({ id, text, tmux, socket, deferWhileWorking = false, allowWhileWorking = false, queueOnDefer = true, beforeSend, onDefer }) {
+  async function deliverOrDefer({ id, text, tmux, socket, deferWhileWorking = false, allowWhileWorking = false, queueOnDefer = true, beforeSend, onDefer, canDeliver = () => true }) {
     const defer = (reason) => {
-      if (queueOnDefer) enqueue(id, text);
+      if (queueOnDefer) enqueue(id, { text, deferWhileWorking, allowWhileWorking, beforeSend, canDeliver });
       try { onDefer?.(reason); } catch { /* a reporting hook must never change delivery */ }
       return 'deferred';
     };
@@ -119,6 +119,13 @@ export function createPaneDeferral({
     return 'sent';
   }
 
+  function prunePending(id) {
+    const lines = (pending.get(id) || []).filter((line) => line.canDeliver());
+    if (lines.length) pending.set(id, lines);
+    else pending.delete(id);
+    return lines;
+  }
+
   // Re-check every card holding queued lines and deliver those whose composer
   // has since cleared, as ONE paste each. Costs nothing when the map is empty,
   // which is the normal state. Returns the ids delivered.
@@ -126,24 +133,51 @@ export function createPaneDeferral({
     const delivered = [];
     for (const id of [...pending.keys()]) {
       if (inFlight.has(id)) continue;
-      const q = pending.get(id);
-      if (!q?.length) { pending.delete(id); continue; }
+      const q = prunePending(id);
+      if (!q.length) continue;
       const name = tmuxFor?.(id) ?? null;
       if (!name) continue;
       const sock = socketFor?.(id) ?? '';
       inFlight.add(id);
       try {
-        // Apply the same draft/dialog guard as the initial delivery, including
-        // accepting a clear Codex composer while its current turn is working.
-        if (await blocker(id, name, sock)) continue;
         // Snapshot before the await: anything enqueued while the paste is in
         // flight belongs to the next drain, not this one.
         const lines = [...q];
+        const groups = new Map();
+        for (const line of lines) {
+          const key = `${line.deferWhileWorking}:${line.allowWhileWorking}`;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(line);
+        }
+        const ready = new Set();
+        let needsRecheck = false;
+        for (const group of groups.values()) {
+          const { deferWhileWorking, allowWhileWorking } = group[0];
+          if (await blocker(id, name, sock, deferWhileWorking, allowWhileWorking)) continue;
+          for (const line of group) {
+            try {
+              needsRecheck ||= Boolean(line.beforeSend);
+              if (!line.beforeSend || await line.beforeSend() !== false) ready.add(line);
+            } catch {}
+          }
+        }
+        if (needsRecheck) {
+          for (const group of groups.values()) {
+            const { deferWhileWorking, allowWhileWorking } = group[0];
+            if (group.some((line) => ready.has(line))
+              && await blocker(id, name, sock, deferWhileWorking, allowWhileWorking)) {
+              for (const line of group) ready.delete(line);
+            }
+          }
+        }
+        const eligible = new Set(prunePending(id));
+        const sending = lines.filter((line) => ready.has(line) && eligible.has(line));
+        if (!sending.length) continue;
         // One bracketed paste (pasteBlock), so a backlog arrives as a single
         // turn — two back-to-back pastes to one pane interleave, which is the
         // same hazard index.js's checkStatusKeys suppression already guards.
-        await sendText(name, lines.join('\n'), sock);
-        const rest = pending.get(id).slice(lines.length);
+        await sendText(name, sending.map((line) => line.text).join('\n'), sock);
+        const rest = pending.get(id).filter((line) => !sending.includes(line));
         if (rest.length) pending.set(id, rest);
         else pending.delete(id);
         delivered.push(id);
@@ -159,7 +193,7 @@ export function createPaneDeferral({
   return {
     deliverOrDefer,
     drain,
-    pending: (id) => [...(pending.get(id) || [])],
+    pending: (id) => (pending.get(id) || []).map((line) => line.text),
     pendingCount: () => [...pending.values()].reduce((n, q) => n + q.length, 0),
   };
 }
