@@ -9,12 +9,12 @@ import {
   toDatetimeLocalValue, parseDatetimeLocal, customSnoozeValid, snoozeSetMessage,
 } from './snooze.js';
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
-import { watchTaskScrollEdges } from './task-scroll.js';
+import { taskContentHeight, watchTaskScrollEdges } from './task-scroll.js';
 import { createAdditionalFolders } from './additional-folders.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import { focusReturnTarget } from './terminal-dialog.js';
 import {
-  gridRowHeight,
+  gridRowHeight, fittedSpan, spanForHeight,
   columnsForWidth, computeLayout, orderSessions, sortByLastActivity, sortAsleepLast, tileSpan,
   localSwapPlacement, visibleTileIds, pruneMinimised, expandFocusToMinimised,
 } from './layout.js';
@@ -2038,7 +2038,13 @@ const trayHost = document.createElement('div');
 trayHost.className = 'tray-pills';
 let extensionTrayActive = false;
 
-function renderGrid(trayPass = 0) {
+// Rows each task tile's rendered content was measured to need at its current
+// column width, keyed by tile id (see layout.js fittedSpan). Only a tile whose
+// content outgrows its estimate has an entry; it is re-measured on every render,
+// so a tile whose content shrinks drops back to its estimate.
+const measuredTileSpans = new Map();
+
+function renderGrid(trayPass = 0, fitPass = 0) {
   // Only the grid view lays the board out: focus mode's `display: flex` would
   // otherwise bring a hidden board back beside Search or an extension view.
   // setView('grid') renders it again on the way back.
@@ -2082,7 +2088,7 @@ function renderGrid(trayPass = 0) {
         // when none is registered, which is also what a disabled one contributes.
         const bodyPx = slots.taskBodyWeight(task.id, latestGraph);
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, span: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
+        return [task.id, { kind: 'task', id: task.id, task, sessions, estimate: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
       })
     );
     const {
@@ -2090,8 +2096,9 @@ function renderGrid(trayPass = 0) {
       subagentRowCount: adhocSubagentRowCount, subagentZoneCount: adhocSubagentZoneCount, fullView: adhocChildFullViewCount,
     } = childRowCounts(adhocSessions.filter((s) => phaseOf(s) !== 'asleep'));
     const adhocBodyPx = slots.taskBodyWeight(ADHOC_ID, latestGraph);
-    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, span: tileSpan(adhocSessions, rowHeight, adhocBodyPx, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, collapsedSnoozed.has(ADHOC_ID), gap) });
-    const tiles = visible.map((id) => tileById.get(id)).filter(Boolean);
+    tileById.set(ADHOC_ID, { kind: 'notask', id: ADHOC_ID, sessions: adhocSessions, estimate: tileSpan(adhocSessions, rowHeight, adhocBodyPx, phaseOf, adhocChildRowCount, adhocAbsorbedChildCount, adhocWorkflowBoxCount, adhocSubagentRowCount, adhocSubagentZoneCount, adhocChildFullViewCount, collapsedSnoozed.has(ADHOC_ID), gap) });
+    const tiles = visible.map((id) => tileById.get(id)).filter(Boolean)
+      .map((tile) => ({ ...tile, span: fittedSpan(tile.estimate, measuredTileSpans.get(tile.id)) }));
     return computeLayout(tiles, columnsForWidth(el, paddingX));
   }
 
@@ -2135,7 +2142,16 @@ function renderGrid(trayPass = 0) {
   wireTray(el);
   restoreScrollState(el, scrollState);
   if (tray && trayPass < 2 && Math.abs(tray.getBoundingClientRect().height - trayHeight) > 0.5) {
-    renderGrid(trayPass + 1);
+    renderGrid(trayPass + 1, fitPass);
+    return;
+  }
+  // Grow a tile whose cards wrapped taller than tileSpan's estimate into the
+  // rows it needs, then lay out once more. Each tile is measured on its own
+  // content only, so neighbours never size each other and rows keep their fixed
+  // height. Skipped mid-drag so the preview's spans hold still. Bounded: a
+  // re-layout can change the column count and so the wrapping it measured.
+  if (!taskDragActive && fitPass < 2 && fitTilesToContent(el, placed, rowHeight, gap)) {
+    renderGrid(trayPass, fitPass + 1);
     return;
   }
   // A re-render replaces every element hint mode is pointing at, so re-resolve
@@ -2151,6 +2167,24 @@ function renderGrid(trayPass = 0) {
     if (cell) beginTaskRename(cell);
   }
   scheduleSnoozeWake();
+}
+
+// Re-measure every rendered task tile into measuredTileSpans; true when any
+// tile's span would change, so the caller lays the board out again.
+function fitTilesToContent(el, placed, rowHeight, gap) {
+  let changed = false;
+  for (const tile of placed) {
+    if (tile.kind !== 'task' && tile.kind !== 'notask') continue;
+    const cell = el.querySelector(tile.kind === 'notask' ? ':scope > .task-cell.no-task' : `:scope > .task-cell[data-taskid="${CSS.escape(tile.id)}"]`);
+    if (!cell) continue;
+    const measured = spanForHeight(taskContentHeight(cell), rowHeight, gap);
+    const previous = measuredTileSpans.get(tile.id) || 0;
+    const next = measured > tile.estimate ? measured : 0;
+    if (next) measuredTileSpans.set(tile.id, next);
+    else measuredTileSpans.delete(tile.id);
+    if (next !== previous) changed = true;
+  }
+  return changed;
 }
 
 function renderFocusedTile(el, id) {
