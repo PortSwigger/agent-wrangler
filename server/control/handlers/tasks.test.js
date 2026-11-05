@@ -1,14 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
-import { taskAssignHandler, taskCreateHandler, taskArchiveHandler, taskUnarchiveHandler, taskDeleteHandler } from './tasks.js';
+import { taskAssignHandler, taskCreateHandler, taskArchiveHandler, taskUnarchiveHandler, taskDeleteHandler, taskRenameHandler } from './tasks.js';
 
 function ctx(overrides = {}) {
   const calls = {
-    assign: [], bind: [], rebuild: 0, syncNotes: [], createTask: [],
+    assign: [], bind: [], rebuild: 0, syncNotes: [], createTask: [], reply: [],
   };
   return {
     calls,
+    reply: (msg) => calls.reply.push(msg),
     taskStore: {
       assign: (sid, taskId) => calls.assign.push({ sid, taskId }),
       createTask: (opts) => { calls.createTask.push(opts); return overrides.createdTask ?? { id: 'T1' }; },
@@ -83,6 +84,7 @@ test('task-create with no sessionId (plain "+ New task") does not touch taskStor
   const c = ctx();
   await taskCreateHandler.handler({ type: 'task-create' }, c);
   assert.deepEqual(c.calls.assign, []);
+  assert.deepEqual(c.calls.reply, [{ type: 'task-created', taskId: 'T1' }]);
 });
 
 // A fuller ctx for task-archive: it calls the REAL archiveCascade (imported, not
@@ -247,4 +249,113 @@ test('task-delete: works with no extension bag at all', async () => {
   delete c.ext;
   await taskDeleteHandler.handler({ type: 'task-delete', taskId: 'T1' }, c);
   assert.deepEqual(c.calls.del, ['T1']);
+});
+
+async function draftContext(t, { assigned = true, moved = 'child' } = {}) {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { TaskStore } = await import('../../task-store.js');
+  const dir = mkdtempSync(join(os.tmpdir(), 'aw-task-cancel-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = new TaskStore(join(dir, 'tasks.json'));
+  const origin = store.createTask({ name: 'Original' });
+  if (assigned) for (const sid of ['before', 'parent', 'child', 'grandchild', 'after']) store.assign(sid, origin.id);
+  store.reorderSession(assigned ? origin.id : 'adhoc', ['before', 'parent', 'child', 'grandchild', 'after']);
+  const sessions = [
+    { sessionId: 'parent' },
+    { sessionId: 'child', parentSession: 'parent' },
+    { sessionId: 'grandchild', parentSession: 'child' },
+  ];
+  const initial = store.snapshot();
+  const c = ctx({ sessions, ctx: {
+    taskStore: store,
+    sessionManager: {
+      entryFor: (id) => sessions.find((s) => s.sessionId === id),
+      detachSession: (id) => { delete sessions.find((s) => s.sessionId === id).parentSession; },
+      attachSession: (id, parent) => { sessions.find((s) => s.sessionId === id).parentSession = parent; },
+    },
+  } });
+  await taskCreateHandler.handler({ type: 'task-create', sessionId: moved, draft: true }, c);
+  const taskId = c.calls.reply[0].taskId;
+  return { c, store, sessions, initial, taskId, origin };
+}
+
+for (const assigned of [true, false]) for (const moved of ['parent', 'child']) test(`cancelling a draft restores ${moved} and descendants to ${assigned ? 'their task' : 'Unassigned'}, in order`, async (t) => {
+  const { c, store, sessions, initial, taskId } = await draftContext(t, { assigned, moved });
+  assert.equal(store.taskFor('child').id, taskId);
+  assert.equal(store.taskFor('grandchild').id, taskId);
+  assert.equal(sessions[1].parentSession, moved === 'child' ? undefined : 'parent');
+  await taskDeleteHandler.handler({ type: 'task-delete', taskId, undoCreate: true }, c);
+  assert.deepEqual(store.snapshot(), initial);
+  assert.equal(sessions[1].parentSession, 'parent');
+  assert.equal(sessions[2].parentSession, 'child');
+  const { TaskStore } = await import('../../task-store.js');
+  assert.deepEqual(new TaskStore(store.file).snapshot(), initial);
+});
+
+for (const mutation of ['archive origin', 'move parent', 'add member']) test(`cancellation refuses ${mutation} without partially undoing the move`, async (t) => {
+  const { c, store, taskId, origin } = await draftContext(t);
+  if (mutation === 'archive origin') store.archiveTask(origin.id);
+  if (mutation === 'move parent') store.assign('parent', taskId);
+  if (mutation === 'add member') store.assign('new-member', taskId);
+  const before = store.snapshot();
+  await assert.rejects(taskDeleteHandler.handler({ type: 'task-delete', taskId, undoCreate: true }, c));
+  assert.deepEqual(store.snapshot(), before);
+});
+
+test('accepted initial naming clears rollback state', async (t) => {
+  const { c, store, taskId } = await draftContext(t);
+  await taskRenameHandler.handler({ type: 'task-rename', taskId, name: 'New task' }, c);
+  const before = store.snapshot();
+  await assert.rejects(taskDeleteHandler.handler({ type: 'task-delete', taskId, undoCreate: true }, c), /no longer be cancelled/);
+  assert.deepEqual(store.snapshot(), before);
+});
+
+test('a different connection cannot cancel a draft', async (t) => {
+  const { c, store, taskId } = await draftContext(t);
+  const before = store.snapshot();
+  await assert.rejects(taskDeleteHandler.handler({ type: 'task-delete', taskId, undoCreate: true }, { ...c, reply() {} }));
+  assert.deepEqual(store.snapshot(), before);
+});
+
+test('cancelling without a draft snapshot refuses to delete the task', async () => {
+  const c = ctx({ ctx: { taskStore: { deleteTask() { assert.fail('must not delete without rollback state'); } } } });
+  await assert.rejects(taskDeleteHandler.handler({ type: 'task-delete', taskId: 'T1', undoCreate: true }, c), /no longer be cancelled/);
+});
+
+test('cancellation preserves a concurrent reorder of sessions left in the original task', async (t) => {
+  const { c, store, taskId, origin } = await draftContext(t);
+  store.reorderSession(origin.id, ['after', 'parent', 'before']);
+  await taskDeleteHandler.handler({ type: 'task-delete', taskId, undoCreate: true }, c);
+  assert.deepEqual(store.snapshot().sessionOrder[origin.id], ['after', 'parent', 'child', 'grandchild', 'before']);
+});
+
+test('a failed descendant move rolls back the partially created draft', async (t) => {
+  const { c, store } = await draftContext(t);
+  const before = store.snapshot();
+  const assign = store.assign.bind(store);
+  let failed = false;
+  store.assign = (sid, tid) => {
+    if (sid === 'grandchild' && !failed) { failed = true; throw new Error('move failed'); }
+    return assign(sid, tid);
+  };
+  await assert.rejects(taskCreateHandler.handler({ type: 'task-create', sessionId: 'child', draft: true }, c), /move failed/);
+  assert.deepEqual(store.snapshot(), before);
+});
+
+test('draft creation refuses workflow workers before creating or moving anything', async () => {
+  const entries = { child: { parentSession: 'parent' }, parent: { workflow: 'run' } };
+  const c = ctx({ ctx: { sessionManager: { entryFor: (sid) => entries[sid] } } });
+  await assert.rejects(taskCreateHandler.handler({ type: 'task-create', sessionId: 'child', draft: true }, c), /workflow worker/);
+  assert.deepEqual(c.calls.createTask, []);
+  assert.deepEqual(c.calls.assign, []);
+});
+
+test('cancelling an empty draft deletes only that task', async (t) => {
+  const { c, store } = await draftContext(t);
+  const before = store.snapshot();
+  await taskCreateHandler.handler({ type: 'task-create', draft: true }, c);
+  const taskId = c.calls.reply.at(-1).taskId;
+  await taskDeleteHandler.handler({ type: 'task-delete', taskId, undoCreate: true }, c);
+  assert.deepEqual(store.snapshot(), before);
 });
