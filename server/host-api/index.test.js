@@ -489,26 +489,66 @@ test('host.log prefixes the message and keeps an Error its own argument', () => 
 
 // ---- usage:read ----------------------------------------------------------
 // A scanAllDaily result in the shape the scanner produces: one row per transcript
-// a card owned, each with per-day bags carrying `usd` and the Codex-estimate
-// slice `estimatedUsd`.
-const day = (usd, estimatedUsd = 0) => ({ usd, estimatedUsd });
+// a card owned, each with per-day bags carrying `usd`, the Codex-estimate slice
+// `estimatedUsd` and the per-model split `byModel` (which also carries tokens the
+// façade does not hand on).
+const tok = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 };
+const day = (usd, estimatedUsd = 0, byModel) => ({ usd, estimatedUsd, ...(byModel && { byModel }) });
 const SCAN = { sessions: [
-  { file: '/t/a.jsonl', cardId: 'c1', days: { '2026-09-01': day(1), '2026-09-02': day(2) } },
-  // A `/clear` left an earlier transcript behind: a second row on the SAME card.
-  { file: '/t/b.jsonl', cardId: 'c1', days: { '2026-09-03': day(4) } },
+  { file: '/t/a.jsonl', cardId: 'c1', days: {
+    '2026-09-01': day(1, 0, { 'claude-opus-4-1': { usd: 1, estimatedUsd: 0, tokens: tok } }),
+    '2026-09-02': day(2, 0, {
+      'claude-opus-4-1': { usd: 1.5, estimatedUsd: 0, tokens: tok },
+      'claude-haiku-4-5': { usd: 0.5, estimatedUsd: 0, tokens: tok },
+    }),
+  } },
+  // A `/clear` left an earlier transcript behind: a second row on the SAME card,
+  // one of whose days overlaps the first row's.
+  { file: '/t/b.jsonl', cardId: 'c1', days: {
+    '2026-09-02': day(1, 0, { 'claude-opus-4-1': { usd: 1, estimatedUsd: 0, tokens: tok } }),
+    '2026-09-03': day(3, 0, { 'claude-sonnet-4-5': { usd: 3, estimatedUsd: 0, tokens: tok } }),
+  } },
   // A Codex card: the whole bag is estimated.
-  { file: null, cardId: 'c2', days: { '2026-09-01': day(0.5, 0.5) } },
+  { file: null, cardId: 'c2', days: { '2026-09-01': day(0.5, 0.5, { 'gpt-5-codex': { usd: 0.5, estimatedUsd: 0.5, tokens: tok } }) } },
   // A row the scanner could not tie to a card contributes to nobody.
   { file: '/t/z.jsonl', cardId: null, days: { '2026-09-01': day(99) } },
 ] };
 
+const BY_CARD = [
+  { cardId: 'c1', usd: 7, estimatedUsd: 0, days: {
+    '2026-09-01': { usd: 1, estimatedUsd: 0, byModel: { 'claude-opus-4-1': { usd: 1, estimatedUsd: 0 } } },
+    '2026-09-02': { usd: 3, estimatedUsd: 0, byModel: {
+      'claude-opus-4-1': { usd: 2.5, estimatedUsd: 0 },
+      'claude-haiku-4-5': { usd: 0.5, estimatedUsd: 0 },
+    } },
+    '2026-09-03': { usd: 3, estimatedUsd: 0, byModel: { 'claude-sonnet-4-5': { usd: 3, estimatedUsd: 0 } } },
+  } },
+  { cardId: 'c2', usd: 0.5, estimatedUsd: 0.5, days: {
+    '2026-09-01': { usd: 0.5, estimatedUsd: 0.5, byModel: { 'gpt-5-codex': { usd: 0.5, estimatedUsd: 0.5 } } },
+  } },
+];
+
 test('usdByCard sums every row and day a card owned, keeping the estimate as a dollar slice', () => {
-  assert.deepEqual(usdByCard(SCAN), [
-    { cardId: 'c1', usd: 7, estimatedUsd: 0 },
-    { cardId: 'c2', usd: 0.5, estimatedUsd: 0.5 },
-  ]);
+  assert.deepEqual(usdByCard(SCAN), BY_CARD);
   assert.deepEqual(usdByCard(null), []);
-  assert.deepEqual(usdByCard({ sessions: [{ cardId: 'c', days: undefined }] }), [{ cardId: 'c', usd: 0, estimatedUsd: 0 }]);
+  assert.deepEqual(usdByCard({ sessions: [{ cardId: 'c', days: undefined }] }), [{ cardId: 'c', usd: 0, estimatedUsd: 0, days: {} }]);
+});
+
+test('usdByCard splits each day by model, merging rows that share a day, and keeps no tokens', () => {
+  const [c1] = usdByCard(SCAN);
+  const dayTotal = Object.values(c1.days).reduce((sum, d) => sum + d.usd, 0);
+  assert.equal(dayTotal, c1.usd, 'the days add up to the card total');
+  for (const d of Object.values(c1.days)) {
+    const modelTotal = Object.values(d.byModel).reduce((sum, m) => sum + m.usd, 0);
+    assert.equal(modelTotal, d.usd, 'each day\'s models add up to the day');
+    for (const m of Object.values(d.byModel)) assert.deepEqual(Object.keys(m), ['usd', 'estimatedUsd']);
+  }
+});
+
+test('usdByCard keeps a day whose bag has no byModel, with an empty model split', () => {
+  assert.deepEqual(usdByCard({ sessions: [{ cardId: 'c', days: { '2026-09-01': day(2, 1) } }] }), [
+    { cardId: 'c', usd: 2, estimatedUsd: 1, days: { '2026-09-01': { usd: 2, estimatedUsd: 1, byModel: {} } } },
+  ]);
 });
 
 test('usage.byCard goes THROUGH the shared scan memo and hands back a frozen result', async () => {
@@ -519,11 +559,13 @@ test('usage.byCard goes THROUGH the shared scan memo and hands back a frozen res
     const first = await host.usage.byCard();
     const second = await host.usage.byCard();
     assert.equal(scans, 1, 'two reads inside the TTL are one scan');
-    assert.deepEqual(first, [{ cardId: 'c1', usd: 7, estimatedUsd: 0 }, { cardId: 'c2', usd: 0.5, estimatedUsd: 0.5 }]);
+    assert.deepEqual(first, BY_CARD);
     assert.deepEqual(second, first);
     assert.ok(Object.isFrozen(first));
     assert.ok(Object.isFrozen(first[0]));
     assert.throws(() => { first[0].usd = 0; }, TypeError);
+    assert.ok(Object.isFrozen(first[0].days['2026-09-02'].byModel['claude-opus-4-1']));
+    assert.throws(() => { first[0].days['2026-09-02'].byModel['claude-opus-4-1'].usd = 0; }, TypeError);
   } finally {
     _resetUsageCache();
   }
