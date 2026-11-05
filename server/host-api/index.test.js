@@ -808,6 +808,11 @@ test('sessions:env returns hook env for both agents and narrows ext for a card o
   assert.equal('sessions' in buildHostApi({ id: 'none', ...wiring() }), false);
 });
 
+test('sessions:env returns secretEnv merged into env, for the caller to hand its child process in-process', async () => {
+  const host = buildHostApi({ id: 'launcher', requires: ['sessions:env'], ...envWiring(() => ({ env: { AW_PLAIN: 'p', SHARED: 'plain' }, secretEnv: { ACME_TOKEN: 'fixture-secret', SHARED: 'secret' } })) });
+  assert.deepEqual(await host.sessions.launchEnv({ sessionId: 'c1' }), { env: { AW_PLAIN: 'p', ACME_TOKEN: 'fixture-secret', SHARED: 'secret' } });
+});
+
 test('sessions:env rejects a launch refusal with its reason', async () => {
   const host = buildHostApi({ id: 'launcher', requires: ['sessions:env'], ...envWiring(() => ({ refuse: 'context unavailable' })) });
   await assert.rejects(host.sessions.launchEnv({ sessionId: 'c1' }), /context unavailable/);

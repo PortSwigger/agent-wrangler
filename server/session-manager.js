@@ -18,7 +18,8 @@ import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js'
 import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault } from './config-store.js';
 import { ensureCodexTrust } from './codex-trust.js';
 import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
-import { launchEnvOf } from './launch-context.js';
+import { launchEnvOf, launchSecretEnvOf, withoutSecretEnv } from './launch-context.js';
+import { writeSecretEnvFile } from './launch-secrets.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
@@ -295,6 +296,13 @@ export function shouldReloadWorkflowSkill(workflow) {
   return Boolean(workflow) && !isLegacyWorkerWorkflow(workflow);
 }
 
+// The launch context a runtime's wrapLaunch is shown: without `secretEnv` unless
+// the runtime takes secrets (`secretEnv: true`), so an extension's runtime never
+// sees the values.
+export function runtimeLaunchContext(rt, launchContext) {
+  return rt?.secretEnv && !rt.buildLaunch ? launchContext : withoutSecretEnv(launchContext);
+}
+
 // A runtime that builds its own launch has no pane-side `refuseIfSet` check, so
 // a dispatch, resume or fork that asks for one is refused. Resume and fork are
 // already refused upstream for such a runtime (it must be `resumable: false`);
@@ -468,6 +476,9 @@ export class SessionManager {
     // the loader and façades closed over; the default answers nothing, so every
     // existing launch is byte-identical and every test stays inert.
     this._launchContext = async () => ({ env: {}, addDirs: [] });
+    // Seam for writing a launch's secretEnv file (launch-secrets.js), so a test
+    // can point it at its own directory or observe it.
+    this._writeSecretEnv = writeSecretEnvFile;
     // Seam for the `session.prepare` hook (server/session-prepare.js): asked by
     // a NEW dispatch before any worktree or pane exists, answering
     // `{ abort, warnings }`. server/index.js binds collectPrepare and toasts the
@@ -498,6 +509,20 @@ export class SessionManager {
     await this._mirrorWorktreeTrust(dir);
     const loginDir = launchEnvOf(launchContext).CLAUDE_CONFIG_DIR;
     if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, sessionsDir: SESSIONS_DIR });
+  }
+
+  // The secret-variable file for one pane launch (launch-secrets.js), or null.
+  // Only a runtime declaring `secretEnv: true` is handed one: any other (an
+  // extension's wrapLaunch, or a buildLaunch runtime) would leave the file
+  // unread, so its variables are skipped and logged by NAME only.
+  _secretEnvFileFor(rt, tmux, launchContext) {
+    const names = Object.keys(launchSecretEnvOf(launchContext));
+    if (!names.length) return null;
+    if (!rt?.secretEnv || rt.buildLaunch) {
+      logWarn(`[launch-context] runtime ${rt?.id || 'unknown'} cannot take secret variables; skipped ${names.join(', ')}`);
+      return null;
+    }
+    return this._writeSecretEnv(tmux, launchSecretEnvOf(launchContext));
   }
 
   async _fireExtHooks(name, payload) {
@@ -1248,7 +1273,8 @@ export class SessionManager {
       disabledSkills,
       codexPolicy,
     });
-    const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext });
+    const secretEnvFile = this._secretEnvFileFor(runtime, tmux, launchContext);
+    const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext: runtimeLaunchContext(runtime, launchContext), secretEnvFile });
     const launchedAt = Date.now();
     const paneId = await this._newSession(tmux, dir, launchCmd, this.socket);
     if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt }) || undefined;
@@ -1334,8 +1360,10 @@ export class SessionManager {
       codexPolicy,
       disallowedTools: parentEntry?.disallowedTools,
     });
-    const launchCmd = await runtimeFor(parentEntry?.runtime).wrapLaunch({
-      inner, cwd: dir, sessionId, parentId, worktree: parentEntry?.worktree, launchContext,
+    const forkRuntime = runtimeFor(parentEntry?.runtime);
+    const launchCmd = await forkRuntime.wrapLaunch({
+      inner, cwd: dir, sessionId, parentId, worktree: parentEntry?.worktree, launchContext: runtimeLaunchContext(forkRuntime, launchContext),
+      secretEnvFile: this._secretEnvFileFor(forkRuntime, tmux, launchContext),
     });
     const launchedAt = Date.now();
     const paneId = await this._newSession(tmux, dir, launchCmd, this.socket);
@@ -2003,11 +2031,13 @@ export class SessionManager {
     // the only way a first prompt can carry images (dispatch-runner.js). A launch
     // argument has no composer for an image path to be absorbed into.
     const launchIntent = deferIntent ? '' : intent;
+    // Asked on both paths so a buildLaunch runtime logs the secrets it skips.
+    const secretEnvFile = this._secretEnvFileFor(rt, tmux, launchContext);
     const inner = builds
       ? await rt.buildLaunch({ phase: 'dispatch', intent: launchIntent, cwd, sessionId, model, ext: ext || null })
       : await rt.wrapLaunch({
         inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, permissionMode, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy, remoteControl, disallowedTools }),
-        cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext,
+        cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext: runtimeLaunchContext(rt, launchContext), secretEnvFile,
       });
     const launchedAt = Date.now();
     const paneId = await this._newSession(tmux, cwd, inner, this.socket);
