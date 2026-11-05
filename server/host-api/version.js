@@ -436,7 +436,13 @@ import semver from 'semver';
 // estimatedUsd } } } }`, summed from the same day bags as `usd`. The existing
 // fields are unchanged. An older server's rows have no `days`, so a manifest that
 // reads it declares `^1.60.0`.
-export const HOST_API_VERSION = '1.60.0';
+//
+// 1.61.0 widens session rows' `waitingReason` for Claude: 'permission' for a
+// prompt (null before), and 'auto-block' for Claude Code's timed auto-mode
+// safety check, which denies itself when its countdown runs out. It adds
+// `autoBlockSeconds`, the seconds that countdown had left when the board last
+// read the pane. A manifest that tells the two apart declares `^1.61.0`.
+export const HOST_API_VERSION = '1.61.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

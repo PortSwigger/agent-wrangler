@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import chokidar from 'chokidar';
-import { discoverClaudeSessions, capturePane, classifyPane, claudeTitle, hasBackgroundShell as detectBackgroundShell } from './tmux-scraper.js';
+import { discoverClaudeSessions, capturePane, classifyPane, claudeTitle, hasBackgroundShell as detectBackgroundShell, autoBlockCountdown } from './tmux-scraper.js';
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
 import { codexStatus as realCodexStatus } from './agents/codex-status.js';
 import { adapterFor, modelPillFor, maxContextWindowFor, discoveryFloor } from './agents/index.js';
@@ -288,6 +288,19 @@ export function apiErrorReason(text) {
   return text && TRANSIENT_API_ERRORS.some((re) => re.test(text)) ? 'api-error' : 'api-error-blocking';
 }
 
+// Why a Claude card whose session file says 'waiting' waits: 'auto-block' for the
+// timed auto-mode safety check, which Claude Code denies by itself when its
+// countdown runs out (autoBlockCountdown), else 'permission'. Null for any other
+// status or agent. The board still shows both as needs-you; extensions read the
+// reason to tell a prompt that resolves itself from one that needs the human.
+export function claudeWaitingReason(agentId, rawStatus, paneText) {
+  if (agentId !== 'claude' || rawStatus !== 'waiting') return null;
+  const autoBlock = autoBlockCountdown(paneText);
+  return autoBlock
+    ? { waitingReason: 'auto-block', autoBlockSeconds: autoBlock.secondsLeft }
+    : { waitingReason: 'permission', autoBlockSeconds: null };
+}
+
 export function apiErrorPromotion(status, apiError, apiErrorText) {
   if (!apiError || status === 'working' || status === 'needs-you') return null;
   return { status: 'needs-you', waitingFor: apiErrorText || 'API error', waitingReason: apiErrorReason(apiErrorText) };
@@ -536,6 +549,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // apiError tracking). Skipped when the file already says working/needs-you.
     const apiError = apiErrorPromotion(status, enrichment?.apiError, enrichment?.apiErrorText);
     if (apiError) status = apiError.status;
+    const waiting = status === 'needs-you' ? claudeWaitingReason(agentId, s.status, paneText) : null;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
     const hasBackgroundShell = tmux ? detectBackgroundShell(paneText, agentId) : false;
@@ -553,7 +567,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       hasBackgroundShell,
       rawStatus: s.status || null,
       waitingFor: apiError ? apiError.waitingFor : (s.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : null,
+      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? null),
+      autoBlockSeconds: waiting?.autoBlockSeconds ?? null,
       kind: s.kind || worker?.dispatch?.source || 'unknown',
       cwd,
       branch: await branchFor(cwd),
@@ -698,6 +713,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // without a permission request, so surface it as needs-you rather than idle.
     const apiError = apiErrorPromotion(status, enr?.apiError, enr?.apiErrorText);
     if (apiError) status = apiError.status;
+    const waiting = status === 'needs-you' ? claudeWaitingReason(agentId, live?.rawStatus, paneText) : null;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
     const hasBackgroundShell = detectBackgroundShell(paneText, agentId);
@@ -730,7 +746,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       hasBackgroundShell,
       rawStatus: null,
       waitingFor: apiError ? apiError.waitingFor : (live?.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : null,
+      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? null),
+      autoBlockSeconds: waiting?.autoBlockSeconds ?? null,
       kind: 'tmux',
       cwd: fcwd,
       branch: await branchFor(fcwd),

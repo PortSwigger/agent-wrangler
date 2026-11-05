@@ -1667,7 +1667,13 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
   `hasBackgroundShell` from the latest board graph. Without a graph node, status
   and waitingReason are `null`, and the booleans are `false`. Conversation ids
-  (`liveSessionId` and `priorLiveSessionIds`) remain omitted.
+  (`liveSessionId` and `priorLiveSessionIds`) remain omitted. `waitingReason` on a
+  needs-you card is 'api-error' (a transient API error that the same prompt can
+  retry), 'api-error-blocking' (any other API error), and, from 1.61.0 for Claude,
+  'permission' (a prompt) or 'auto-block'. 'auto-block' is Claude Code's timed
+  auto-mode safety check, which denies itself when its countdown runs out, and
+  `autoBlockSeconds` (1.61.0) is the time it had left when the board last read the
+  pane (`null` otherwise). The board still shows it as needs-you.
 - **`host.events`** (capability `events`, 1.17.0): `on(name, fn)` and `emit(name, payload)`.
   Subscriber errors are caught and logged per handler, `emit` does not wait, and
   an extension's subscriptions are dropped when it deactivates, so a disabled
