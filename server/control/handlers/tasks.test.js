@@ -5,10 +5,11 @@ import { taskAssignHandler, taskCreateHandler, taskArchiveHandler, taskUnarchive
 
 function ctx(overrides = {}) {
   const calls = {
-    assign: [], bind: [], rebuild: 0, syncNotes: [], createTask: [],
+    assign: [], bind: [], rebuild: 0, syncNotes: [], createTask: [], reply: [],
   };
   return {
     calls,
+    reply: (msg) => calls.reply.push(msg),
     taskStore: {
       assign: (sid, taskId) => calls.assign.push({ sid, taskId }),
       createTask: (opts) => { calls.createTask.push(opts); return overrides.createdTask ?? { id: 'T1' }; },
@@ -83,6 +84,7 @@ test('task-create with no sessionId (plain "+ New task") does not touch taskStor
   const c = ctx();
   await taskCreateHandler.handler({ type: 'task-create' }, c);
   assert.deepEqual(c.calls.assign, []);
+  assert.deepEqual(c.calls.reply, [{ type: 'task-created', taskId: 'T1' }]);
 });
 
 // A fuller ctx for task-archive: it calls the REAL archiveCascade (imported, not
@@ -247,4 +249,45 @@ test('task-delete: works with no extension bag at all', async () => {
   delete c.ext;
   await taskDeleteHandler.handler({ type: 'task-delete', taskId: 'T1' }, c);
   assert.deepEqual(c.calls.del, ['T1']);
+});
+
+for (const assigned of [true, false]) for (const moved of ['parent', 'child']) test(`cancelling a draft restores ${moved} and descendants to ${assigned ? 'their task' : 'Unassigned'}, in order`, async (t) => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { TaskStore } = await import('../../task-store.js');
+  const dir = mkdtempSync(join(os.tmpdir(), 'aw-task-cancel-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = new TaskStore(join(dir, 'tasks.json'));
+  const origin = store.createTask({ name: 'Original' });
+  if (assigned) for (const sid of ['before', 'parent', 'child', 'grandchild', 'after']) store.assign(sid, origin.id);
+  store.reorderSession(assigned ? origin.id : 'adhoc', ['before', 'parent', 'child', 'grandchild', 'after']);
+  const sessions = [
+    { sessionId: 'parent' },
+    { sessionId: 'child', parentSession: 'parent' },
+    { sessionId: 'grandchild', parentSession: 'child' },
+  ];
+  const initial = store.snapshot();
+  const c = ctx({ sessions, ctx: {
+    taskStore: store,
+    sessionManager: {
+      entryFor: (id) => sessions.find((s) => s.sessionId === id),
+      detachSession: (id) => { delete sessions.find((s) => s.sessionId === id).parentSession; },
+      attachSession: (id, parent) => { sessions.find((s) => s.sessionId === id).parentSession = parent; },
+    },
+  } });
+  await taskCreateHandler.handler({ type: 'task-create', sessionId: moved, draft: true }, c);
+  const taskId = c.calls.reply[0].taskId;
+  assert.equal(store.taskFor('child').id, taskId);
+  assert.equal(store.taskFor('grandchild').id, taskId);
+  assert.equal(sessions[1].parentSession, moved === 'child' ? undefined : 'parent');
+  await taskDeleteHandler.handler({ type: 'task-delete', taskId, undoCreate: true }, c);
+  assert.deepEqual(store.snapshot(), initial);
+  assert.equal(sessions[1].parentSession, 'parent');
+  assert.equal(sessions[2].parentSession, 'child');
+  assert.deepEqual(new TaskStore(join(dir, 'tasks.json')).snapshot(), initial);
+});
+
+test('cancelling without a draft snapshot refuses to delete the task', async () => {
+  const c = ctx({ ctx: { taskStore: { deleteTask() { assert.fail('must not delete without rollback state'); } } } });
+  await assert.rejects(taskDeleteHandler.handler({ type: 'task-delete', taskId: 'T1', undoCreate: true }, c), /no longer be cancelled/);
 });

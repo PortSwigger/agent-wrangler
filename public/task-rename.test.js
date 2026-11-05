@@ -44,8 +44,8 @@ for (const value of ['New task', 'Uncommitted name']) {
     h.input.value = value;
     h.key('Escape');
     h.blur();
-    assert.deepEqual(h.messages, [{ type: 'task-delete', taskId: 't_new' }]);
-    assert.equal(h.renders(), 1);
+    assert.deepEqual(h.messages, [{ type: 'task-delete', taskId: 't_new', undoCreate: true }]);
+    assert.equal(h.renders(), 0);
   });
 }
 
@@ -73,6 +73,58 @@ for (const action of ['Enter', 'blur']) {
 test('accepting the default name keeps the task', () => {
   const h = editor();
   h.key('Enter');
-  assert.deepEqual(h.messages, []);
+  assert.deepEqual(h.messages, [{ type: 'task-rename', taskId: 't_new', name: 'New task' }]);
   assert.equal(h.task.name, 'New task');
+});
+
+function creationFlow() {
+  const messages = [], renamed = [];
+  const start = source.indexOf('function createTask(');
+  const end = source.indexOf('// Turn the "＋ New task"', start);
+  assert.ok(start >= 0 && end > start);
+  const run = new Function('send', 'beginTaskRename', `
+    let latestTasks = { tasks: [] }, autoEditTaskId = null;
+    const CSS = { escape: (id) => id };
+    const el = { querySelector: (selector) => {
+      const task = latestTasks.tasks.find((t) => selector.includes('"' + t.id + '"'));
+      return task ? { dataset: { taskid: task.id } } : null;
+    } };
+    function renderGridIfVisible() { ${autoRename} }
+    ${source.slice(start, end)}
+    return {
+      createTask,
+      graph(tasks) {
+        latestTasks = { tasks };
+        renderGridIfVisible();
+      },
+      reply: onTaskCreated,
+    };
+  `)((msg) => messages.push(msg), (cell, isNew) => renamed.push({ taskId: cell.dataset.taskid, isNew }));
+  return { ...run, messages, renamed };
+}
+
+test('a foreign task appearing after a create request is never opened as our new task', () => {
+  const h = creationFlow();
+  h.createTask();
+  h.graph([{ id: 'foreign' }]);
+  assert.deepEqual(h.renamed, []);
+  h.reply({ taskId: 'ours' });
+  h.graph([{ id: 'foreign' }, { id: 'ours' }]);
+  assert.deepEqual(h.renamed, [{ taskId: 'ours', isNew: true }]);
+});
+
+test('creation reply opens the exact task even when its graph arrived first', () => {
+  const h = creationFlow();
+  h.createTask();
+  h.graph([{ id: 'foreign' }, { id: 'ours' }]);
+  h.reply({ taskId: 'ours' });
+  assert.deepEqual(h.renamed, [{ taskId: 'ours', isNew: true }]);
+});
+
+test('a failed creation with no success reply never opens a later foreign task', () => {
+  const h = creationFlow();
+  h.createTask();
+  h.graph([]);
+  h.graph([{ id: 'foreign' }]);
+  assert.deepEqual(h.renamed, []);
 });

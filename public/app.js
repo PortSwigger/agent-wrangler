@@ -914,7 +914,6 @@ function applyGraph(graph) {
   syncSessionEmbed();
   trackJustFinished(latestSessions);
   refreshInputGates();
-  detectNewTask();
   // The Schedules panel is data-driven off the live rebuild (no server timer) —
   // re-render it whenever it's open so toggles/edits/fires reflect at once.
   if (!document.getElementById('schedules-modal').classList.contains('hidden')) renderSchedules();
@@ -1189,8 +1188,6 @@ function isAcknowledged(s) {
 
 // Task creation: after asking the server to make a task, focus its title for
 // editing as soon as the new tile arrives in the graph.
-let prevTaskIds = new Set();
-let awaitingNewTask = false;
 let autoEditTaskId = null;
 
 // Session reorder drag-and-drop: the dragged card is hidden and a single
@@ -2163,8 +2160,10 @@ function renderGrid(trayPass = 0, fitPass = 0) {
   // Freshly created task → drop straight into naming it.
   if (autoEditTaskId) {
     const cell = el.querySelector(`.task-cell[data-taskid="${CSS.escape(autoEditTaskId)}"]`);
-    autoEditTaskId = null;
-    if (cell) beginTaskRename(cell, true);
+    if (cell) {
+      autoEditTaskId = null;
+      beginTaskRename(cell, true);
+    }
   }
   scheduleSnoozeWake();
 }
@@ -3237,7 +3236,7 @@ function wireGridDnd(el) {
       g.classList.remove('drop');
       let p;
       try { p = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
-      if (p.kind === 'session' && releaseChildForMove(p.sessionId)) createTask(p.sessionId);
+      if (p.kind === 'session') createTask(p.sessionId);
     });
   });
 
@@ -3436,12 +3435,15 @@ function beginTaskRename(cell, isNew = false) {
   const finish = (save) => {
     if (settled) return;
     settled = true;
-    if (!save && isNew) send({ type: 'task-delete', taskId });
+    if (!save && isNew) {
+      send({ type: 'task-delete', taskId, undoCreate: true });
+      return;
+    }
     const name = input.value.trim();
-    if (save && name && name !== current) {
-      send({ type: 'task-rename', taskId, name });
+    if (save && (isNew || (name && name !== current))) {
+      send({ type: 'task-rename', taskId, name: name || current });
       const t = latestTasks.tasks.find((x) => x.id === taskId);
-      if (t) t.name = name; // optimistic; server confirms on next graph
+      if (t) t.name = name || current; // optimistic; server confirms on next graph
     }
     renderGrid();
   };
@@ -3538,20 +3540,14 @@ function wireTaskControls(el) {
 }
 
 
-// Ask the server to create a task; awaitingNewTask makes the new tile open in
-// rename mode when it arrives. Optionally seed it with a session.
+// Ask the server to create a task. Optionally seed it with a session.
 function createTask(sessionId) {
-  awaitingNewTask = true;
-  send({ type: 'task-create', sessionId });
+  send({ type: 'task-create', sessionId, draft: true });
 }
 
-function detectNewTask() {
-  const ids = latestTasks.tasks.map((t) => t.id);
-  if (awaitingNewTask) {
-    const fresh = ids.find((id) => !prevTaskIds.has(id));
-    if (fresh) { autoEditTaskId = fresh; awaitingNewTask = false; }
-  }
-  prevTaskIds = new Set(ids);
+function onTaskCreated(msg) {
+  autoEditTaskId = msg.taskId;
+  renderGridIfVisible();
 }
 
 // Turn the "＋ New task" button into (armed) / out of a drop landing area.
@@ -7575,6 +7571,7 @@ function connect() {
         ? 'Archived — the background job may have been interrupted uncleanly'
         : 'Background jobs stopped — archived cleanly', worktree, archivedIds);
     }
+    else if (msg.type === 'task-created') onTaskCreated(msg);
     // The single toast for task-archive (no separate immediate one when the task
     // had no live sessions — see archiveTask() — so this never double-fires).
     else if (msg.type === 'task-archived') {

@@ -1,17 +1,41 @@
 import { archiveCascade, descendantsOf } from './archive.js';
 import { resumeSession } from './resume.js';
+import { detachError } from './detach.js';
+import { attachError } from './attach.js';
+import { ADHOC } from '../../task-store.js';
+
+const draftTasks = new WeakMap();
+function draftsFor(store) {
+  if (!draftTasks.has(store)) draftTasks.set(store, new Map());
+  return draftTasks.get(store);
+}
 
 export const taskCreateHandler = {
   type: 'task-create',
   async handler(msg, ctx) {
+    const sessions = ctx.graph?.()?.sessions || [];
+    const parentSession = msg.draft && msg.sessionId
+      ? ctx.sessionManager.entryFor(msg.sessionId)?.parentSession : null;
+    if (parentSession) {
+      const error = detachError(msg.sessionId, ctx.sessionManager);
+      if (error) throw new Error(error);
+    }
+    const snapshot = msg.draft ? ctx.taskStore.snapshot() : null;
     const task = ctx.taskStore.createTask({ name: msg.name, sessionId: msg.sessionId });
     // Dragging a parent-with-children onto "+ New task" seeds the task with just
     // the parent (createTask's own contract); bring its family along too, or a
     // child is left behind on the old task/Ad-hoc — same fix as taskAssignHandler.
     if (msg.sessionId) {
-      const sessions = ctx.graph?.()?.sessions || [];
       for (const child of descendantsOf(msg.sessionId, sessions)) ctx.taskStore.assign(child.sessionId, task.id);
     }
+    if (msg.draft) {
+      draftsFor(ctx.taskStore).set(task.id, {
+        snapshot, sessionId: msg.sessionId, parentSession,
+        sessionIds: msg.sessionId ? [msg.sessionId, ...descendantsOf(msg.sessionId, sessions).map((s) => s.sessionId)] : [],
+      });
+      if (parentSession) ctx.sessionManager.detachSession(msg.sessionId);
+    }
+    ctx.reply({ type: 'task-created', taskId: task.id });
     await ctx.rebuild();
   },
 };
@@ -20,6 +44,7 @@ export const taskRenameHandler = {
   type: 'task-rename',
   async handler(msg, ctx) {
     ctx.taskStore.renameTask(msg.taskId, msg.name);
+    draftsFor(ctx.taskStore).delete(msg.taskId);
     await ctx.rebuild();
   },
 };
@@ -142,6 +167,32 @@ export const taskReorderSessionsHandler = {
 export const taskDeleteHandler = {
   type: 'task-delete',
   async handler(msg, ctx) {
+    const drafts = draftsFor(ctx.taskStore);
+    if (msg.undoCreate) {
+      const draft = drafts.get(msg.taskId);
+      if (!draft) throw new Error('This task can no longer be cancelled.');
+      const current = ctx.taskStore.snapshot();
+      const restored = draft.sessionIds.filter((sid) => current.assignments[sid] === msg.taskId);
+      const buckets = new Set();
+      for (const sid of restored) {
+        const original = draft.snapshot.assignments[sid] || null;
+        ctx.taskStore.assign(sid, original);
+        buckets.add(original || ADHOC);
+      }
+      const updated = ctx.taskStore.snapshot();
+      for (const bucket of buckets) {
+        if (!draft.snapshot.sessionOrder[bucket] && !updated.sessionOrder[bucket]) continue;
+        ctx.taskStore.reorderSession(bucket, [
+          ...(draft.snapshot.sessionOrder[bucket] || []), ...(updated.sessionOrder[bucket] || []),
+        ]);
+      }
+      if (draft.parentSession && restored.includes(draft.sessionId)
+          && !ctx.sessionManager.entryFor(draft.sessionId)?.parentSession
+          && !attachError(draft.sessionId, draft.parentSession, { sessions: ctx.graph?.()?.sessions || [], taskStore: ctx.taskStore })) {
+        ctx.sessionManager.attachSession(draft.sessionId, draft.parentSession);
+      }
+    }
+    drafts.delete(msg.taskId);
     const unassigned = ctx.taskStore.deleteTask(msg.taskId);
     if (!unassigned) {
       await ctx.rebuild();
