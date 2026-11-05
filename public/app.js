@@ -3437,6 +3437,8 @@ function beginTaskRename(cell, isNew = false) {
     settled = true;
     if (!save && isNew) {
       send({ type: 'task-delete', taskId, undoCreate: true });
+      input.blur();
+      renderGrid();
       return;
     }
     const name = input.value.trim();

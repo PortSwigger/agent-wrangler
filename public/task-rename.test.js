@@ -9,7 +9,13 @@ const autoRename = source.slice(source.indexOf('  if (autoEditTaskId) {'), sourc
 function editor({ initial = true, name = 'New task' } = {}) {
   const messages = [], listeners = {};
   const task = { id: 't_new', name, links: [] };
-  const input = { value: name, focus() {}, select() {}, addEventListener(type, fn) { listeners[type] = fn; } };
+  let focused = false;
+  const input = {
+    value: name,
+    focus() { focused = true; },
+    blur() { focused = false; listeners.blur?.(); },
+    select() {}, addEventListener(type, fn) { listeners[type] = fn; },
+  };
   let editing = false, renders = 0;
   const nameEl = {
     textContent: name,
@@ -32,7 +38,7 @@ function editor({ initial = true, name = 'New task' } = {}) {
   `)(...Object.values(scope));
   open(initial, cell);
   return {
-    messages, task, input, renders: () => renders,
+    messages, task, input, renders: () => renders, focused: () => focused,
     key(key) { listeners.keydown({ key, preventDefault() {}, stopPropagation() {} }); },
     blur() { listeners.blur(); },
   };
@@ -45,7 +51,8 @@ for (const value of ['New task', 'Uncommitted name']) {
     h.key('Escape');
     h.blur();
     assert.deepEqual(h.messages, [{ type: 'task-delete', taskId: 't_new', undoCreate: true }]);
-    assert.equal(h.renders(), 0);
+    assert.equal(h.focused(), false);
+    assert.equal(h.renders(), 1);
   });
 }
 
