@@ -1842,6 +1842,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Resolves `{ archived, sessionIds, unclean }`; `archived` is false for an unknown or
   already-archived task. It is separate from `tasks:write` so a consent to rename
   and assign never grows into one that stops sessions.
+- **`host.usage.byCard()`** (capability `usage:read`, 1.6.0) resolves every card's
+  spend recomputed from transcripts, through the same cached scan as the Usage
+  panel: one frozen row per card, `{ cardId, usd, estimatedUsd, days }`. A card's
+  earlier transcripts (`/clear`) and billed headless conversations add onto it;
+  spend no card owns is left out. `estimatedUsd` is the Codex-estimate part of
+  `usd`, in dollars, so anything above 0 means the figure is partly an estimate.
+  `days` (1.60.0) splits the same spend by UTC day and model:
+  `{ 'YYYY-MM-DD': { usd, estimatedUsd, byModel: { [model]: { usd, estimatedUsd } } } }`.
+  The days add up to `usd`, and `byModel` is the scan's own per-model split of
+  that day (`{}` when the scan recorded none). A Codex conversation's whole
+  estimate sits on the UTC day it started. A manifest reading `days` declares
+  `^1.60.0`.
 
 ## Runtimes
 

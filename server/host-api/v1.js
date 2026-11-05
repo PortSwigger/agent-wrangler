@@ -497,21 +497,33 @@ const mailSend = ({ id, mailStore }) => ({
   },
 });
 
-// cardId -> { cardId, usd, estimatedUsd } over a scanAllDaily result. Two rows can
-// share a card (a `/clear` leaves an earlier transcript behind and each is its own
-// row, and a billed headless conversation is another), so rows ACCUMULATE onto the
-// card rather than replacing each other. `estimatedUsd` is the Codex-estimate
-// SLICE of `usd`, a dollar amount and not a flag: any of it means the card's total
-// carries an estimate. A row the scanner could not attribute to a card is skipped —
-// there is nothing board-shaped to hand it to.
+// cardId -> { cardId, usd, estimatedUsd, days } over a scanAllDaily result. Two
+// rows can share a card (a `/clear` leaves an earlier transcript behind and each is
+// its own row, and a billed headless conversation is another), so rows ACCUMULATE
+// onto the card rather than replacing each other. `estimatedUsd` is the
+// Codex-estimate SLICE of `usd`, a dollar amount and not a flag: any of it means
+// the card's total carries an estimate. `days` (1.60.0) is the same spend split by
+// the scan's UTC day bags, `{ 'YYYY-MM-DD': { usd, estimatedUsd, byModel: { model:
+// { usd, estimatedUsd } } } }`, summed across the card's rows. Tokens stay behind;
+// a bag without `byModel` still lands in its day with an empty model split. A row
+// the scanner could not attribute to a card is skipped — there is nothing
+// board-shaped to hand it to.
 export function usdByCard(scan) {
   const out = new Map();
   for (const row of scan?.sessions || []) {
     if (!row.cardId) continue;
-    const cur = out.get(row.cardId) || { cardId: row.cardId, usd: 0, estimatedUsd: 0 };
-    for (const bag of Object.values(row.days || {})) {
+    const cur = out.get(row.cardId) || { cardId: row.cardId, usd: 0, estimatedUsd: 0, days: {} };
+    for (const [date, bag] of Object.entries(row.days || {})) {
       cur.usd += bag.usd || 0;
       cur.estimatedUsd += bag.estimatedUsd || 0;
+      const dayCell = (cur.days[date] ||= { usd: 0, estimatedUsd: 0, byModel: {} });
+      dayCell.usd += bag.usd || 0;
+      dayCell.estimatedUsd += bag.estimatedUsd || 0;
+      for (const [model, mb] of Object.entries(bag.byModel || {})) {
+        const modelCell = (dayCell.byModel[model] ||= { usd: 0, estimatedUsd: 0 });
+        modelCell.usd += mb?.usd || 0;
+        modelCell.estimatedUsd += mb?.estimatedUsd || 0;
+      }
     }
     out.set(row.cardId, cur);
   }
