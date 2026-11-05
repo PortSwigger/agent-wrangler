@@ -445,3 +445,78 @@ test('codexConfig: Claude launches and launches without the field are unchanged'
   assert.deepEqual(launchCodexConfigArgs(undefined), []);
   assert.deepEqual(launchCodexConfigArgs({ env: {}, addDirs: [] }), []);
 });
+
+// ── claudeHooks: extension hooks merged into a Claude launch's --settings ────
+
+const settingsOf = (cmd) => {
+  const m = cmd.match(/'--settings' '((?:[^']|'\\'')*)'/);
+  assert.ok(m, 'command carries --settings');
+  return JSON.parse(m[1].replace(/'\\''/g, "'"));
+};
+const MASKER = { matcher: 'Bash', hooks: [{ type: 'command', command: '/ext/secrets/mask-bash.mjs', timeout: 10 }] };
+
+test('claudeHooks merge across extensions in order and are absent when empty', async () => {
+  const ext = registry(
+    ['a', () => ({ claudeHooks: { PreToolUse: [MASKER] } })],
+    ['b', () => ({ claudeHooks: { PreToolUse: [{ hooks: [{ type: 'command', command: '/b/pre' }] }], PostToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: '/b/post' }] }] } })],
+  );
+  const out = await collectLaunchContext({ sid: 'h' }, { ext, onError: () => {} });
+  assert.deepEqual(out.claudeHooks, {
+    PreToolUse: [MASKER, { hooks: [{ type: 'command', command: '/b/pre' }] }],
+    PostToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: '/b/post' }] }],
+  });
+  assert.deepEqual(await collectLaunchContext({ sid: 'h2' }, { ext: registry(['a', () => ({ claudeHooks: {} })]), onError: () => {} }), { env: {}, addDirs: [] });
+});
+
+for (const name of ['claude buildLaunch', 'claude buildResume', 'claude buildFork']) {
+  test(`claudeHooks: ${name} puts the extension's PreToolUse beside core's PostToolUse, which stays first`, async () => {
+    const core = settingsOf(await BUILDERS[name]({ env: {}, addDirs: [] }));
+    const merged = settingsOf(await BUILDERS[name]({ env: {}, addDirs: [], claudeHooks: { PreToolUse: [MASKER], PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '/ext/post' }] }] } }));
+    assert.deepEqual(merged.hooks.PreToolUse, [MASKER]);
+    assert.equal(merged.hooks.PostToolUse.length, 2);
+    assert.deepEqual(merged.hooks.PostToolUse[0], core.hooks.PostToolUse[0], 'core\'s PR-attach hook is kept, first');
+    assert.match(merged.hooks.PostToolUse[0].hooks[0].command, /pr-attach-hook\.mjs$/);
+    assert.equal(merged.hooks.PostToolUse[1].hooks[0].command, '/ext/post');
+    assert.equal(merged.tui, 'fullscreen');
+    assert.equal(merged.crossSessionInbound, 'accept');
+  });
+}
+
+test('claudeHooks: Codex launches ignore them and a Claude launch without them is unchanged', async () => {
+  const without = { env: {}, addDirs: [] };
+  const withIt = { ...without, claudeHooks: { PreToolUse: [MASKER] } };
+  for (const name of ['codex buildLaunch', 'codex buildResume', 'codex buildFork']) assert.equal(BUILDERS[name](withIt), BUILDERS[name](without), name);
+  assert.deepEqual(Object.keys(settingsOf(BUILDERS['claude buildLaunch'](without)).hooks), ['PostToolUse']);
+});
+
+test('claudeHooks: malformed groups and unknown events are dropped and logged; the builder re-validates', async () => {
+  const { errors, onError } = quiet();
+  const bad = [
+    'not-a-group',
+    { matcher: 7, hooks: [{ type: 'command', command: '/x' }] },
+    { hooks: [] },
+    { hooks: [{ type: 'http', url: 'https://example.com' }] },
+    { hooks: [{ type: 'command', command: '' }] },
+    { hooks: [{ type: 'command', command: 'a\nb' }] },
+    { hooks: [{ type: 'command', command: '/x', timeout: -1 }] },
+  ];
+  const ext = registry(['x', () => ({ claudeHooks: { PreToolUse: [...bad, MASKER], Stop: [MASKER], PostToolUse: 'nope' } })]);
+  const out = await collectLaunchContext({ sid: 'h' }, { ext, onError });
+  assert.deepEqual(out.claudeHooks, { PreToolUse: [MASKER] });
+  assert.equal(errors.length, bad.length + 2);
+  assert.ok(errors.includes('[ext:x] session.launchContext claudeHooks "Stop" dropped (events are PreToolUse, PostToolUse)'));
+  const odd = quiet();
+  assert.deepEqual(await collectLaunchContext({ sid: 'h' }, { ext: registry(['y', () => ({ claudeHooks: [MASKER] })]), onError: odd.onError }), { env: {}, addDirs: [] });
+  assert.equal(odd.errors.length, 1);
+  const direct = settingsOf(claude.buildLaunch({ sessionId: 'MX', launchContext: { claudeHooks: { PreToolUse: [{ hooks: [{ type: 'command', command: '' }] }, MASKER], Stop: [MASKER] } } }));
+  assert.deepEqual(direct.hooks.PreToolUse, [MASKER]);
+  assert.equal(direct.hooks.Stop, undefined);
+});
+
+test('claudeHooks: in a devcontainer, a hook under a granted dir is rewritten to the container copy', async () => {
+  const lc = { env: {}, addDirs: ['/ext/secrets'], claudeHooks: { PreToolUse: [MASKER] } };
+  const script = await BUILDERS['devcontainer wrapLaunch'](lc);
+  assert.ok(script.includes(`docker cp -L '/ext/secrets' "$CID":'/tmp/aw-MX/launch-dirs/0'`));
+  assert.ok(script.includes('/tmp/aw-MX/launch-dirs/0/mask-bash.mjs'));
+  assert.ok(!script.slice(script.indexOf('sh -lc')).includes('/ext/secrets/mask-bash.mjs'));
+});

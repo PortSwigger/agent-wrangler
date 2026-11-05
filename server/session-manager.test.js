@@ -3754,3 +3754,106 @@ test('clearStatusNotify removes and saves only an existing subscription', () => 
   assert.deepEqual(sm.map.get('c'), { intent: 'keep' });
   assert.equal(saved, 1);
 });
+
+// ── secretEnv: values reach the pane through a 0600 file, never the command ──
+
+const SECRET_VALUE = 'fixture-secret-value-42';
+const SECRET_CONTEXT = async () => ({ env: { ACME_MASKED_NAMES: 'ACME_TOKEN' }, addDirs: [], secretEnv: { ACME_TOKEN: SECRET_VALUE } });
+
+function withSecretCapture(sm) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-sm-secrets-'));
+  const written = [];
+  sm._launchContext = SECRET_CONTEXT;
+  sm._writeSecretEnv = (name, env) => {
+    const file = path.join(dir, `${name}.env`);
+    fs.writeFileSync(file, Object.entries(env).map(([k, v]) => `export ${k}='${v}'\n`).join(''), { mode: 0o600 });
+    written.push(file);
+    return file;
+  };
+  return { dir, written, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+for (const agent of ['claude', 'codex']) {
+  test(`secretEnv: a ${agent} dispatch sources a secret file and the tmux command never carries the value`, async () => {
+    const sm = smForDispatch();
+    sm._ensureCodexTrust = () => {};
+    sm._resolveLiveId = async () => 'live';
+    const cap = withSecretCapture(sm);
+    let cmd = '';
+    sm._newSession = async (_t, _d, inner) => { cmd = inner; };
+    try {
+      const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent });
+      assert.equal(cap.written.length, 1);
+      assert.ok(cmd.startsWith(`. '${cap.written[0]}' && rm -f '${cap.written[0]}' && `), cmd.slice(0, 160));
+      assert.ok(!cmd.includes(SECRET_VALUE), 'value absent from the pane command');
+      assert.ok(cmd.includes("ACME_MASKED_NAMES='ACME_TOKEN'"), 'plain env still inline');
+      assert.ok(!JSON.stringify(sm.map.get(sessionId)).includes(SECRET_VALUE), 'value absent from the mapping entry');
+    } finally {
+      cap.cleanup();
+    }
+  });
+}
+
+test('secretEnv: resume and fork write a fresh file and keep the value out of the command', async () => {
+  const sm = resumableCodex('secret-resume');
+  sm.killForSession = async () => [];
+  sm._ensureCodexTrust = () => {};
+  const cap = withSecretCapture(sm);
+  const cmds = [];
+  sm._newSession = async (_t, _d, inner) => { cmds.push(inner); };
+  try {
+    await sm.resume('secret-resume', os.tmpdir());
+    await sm.fork({ sourceId: 'SRC', parentId: 'secret-resume', parentEntry: { agent: 'claude', cwd: os.tmpdir() }, cwd: os.tmpdir() });
+    assert.equal(cmds.length, 2);
+    assert.equal(cap.written.length, 2);
+    cmds.forEach((c, i) => {
+      assert.ok(c.startsWith(`. '${cap.written[i]}' && `), c.slice(0, 120));
+      assert.ok(!c.includes(SECRET_VALUE));
+    });
+  } finally {
+    cap.cleanup();
+  }
+});
+
+test('secretEnv: a devcontainer dispatch hands the file to the runtime, which copies it in', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-dc-secret-'));
+  fs.mkdirSync(path.join(dir, '.devcontainer'));
+  fs.writeFileSync(path.join(dir, '.devcontainer', 'devcontainer.json'), '{}');
+  const sm = smForDispatch();
+  const cap = withSecretCapture(sm);
+  let cmd = '';
+  sm._newSession = async (_t, _d, inner) => { cmd = inner; };
+  try {
+    const { sessionId } = await sm.dispatch({ cwd: dir, intent: 'x', runtime: 'devcontainer' });
+    assert.ok(cmd.includes(`docker cp '${cap.written[0]}' "$CID":'/tmp/aw-secret-${sessionId}.env'`), cmd);
+    assert.ok(!cmd.includes(SECRET_VALUE));
+  } finally {
+    cap.cleanup();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('secretEnv: an extension runtime gets no file and no values, and the skip names the variable only', async (t) => {
+  const sm = smForDispatch();
+  const cap = withSecretCapture(sm);
+  const warned = [];
+  t.mock.method(console, 'warn', (...a) => warned.push(a.join(' ')));
+  const seen = [];
+  try {
+    await withRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async (args) => { seen.push(args); return args.inner; } }, 'toy', async () => {
+      await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'toyrt' });
+    });
+    await withRuntime({ ...CLOUDISH, buildLaunch: async () => 'echo handed-off' }, 'cloud', async () => {
+      await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'cloudt' });
+    });
+  } finally {
+    cap.cleanup();
+  }
+  assert.equal(cap.written.length, 0);
+  assert.equal(seen[0].secretEnvFile, null);
+  assert.equal(seen[0].launchContext.secretEnv, undefined, 'the runtime is not shown the values');
+  assert.equal(seen[0].launchContext.env.ACME_MASKED_NAMES, 'ACME_TOKEN');
+  assert.ok(!seen[0].inner.includes(SECRET_VALUE));
+  assert.equal(warned.filter((w) => /cannot take secret variables; skipped ACME_TOKEN/.test(w)).length, 2);
+  assert.ok(warned.every((w) => !w.includes(SECRET_VALUE)));
+});

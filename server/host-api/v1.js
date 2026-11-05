@@ -6,7 +6,7 @@ import { ADHOC } from '../task-store.js';
 import { linkMatches } from '../mcp/links.js';
 import { MAX_ATTACHMENTS_PER_MESSAGE, isPasteFileName } from '../paste-image.js';
 import { imageAvailable, claimExtImages, keepStagedPaste, readKeptPaste, removeKeptPaste } from '../paste-store.js';
-import { collectLaunchContext } from '../launch-context.js';
+import { collectLaunchContext, launchProcessEnv } from '../launch-context.js';
 import { deliverFirstPrompt } from '../dispatch-runner.js';
 import { requestOrigin } from '../request-origin.js';
 import { supportsRemoteControl, supportsDisallowedTools } from '../agents/index.js';
@@ -190,8 +190,9 @@ const sessionsEnv = ({ core, hostApiFor, launchContext = collectLaunchContext })
       if (ext !== null) checkExt(ext, fail);
       const task = sessionId === null ? null : core.taskStore.taskFor(sessionId);
       const runtime = sessionId === null ? 'local' : core.sessionManager.entryFor(sessionId)?.runtime || 'local';
-      const { env } = await launchContext({ sid: sessionId, task, agent, runtime, reason: 'headless', ext }, { hostApiFor });
-      return { env };
+      // env and secretEnv together: a headless caller hands the result to its
+      // child process in-process (execFile's env), never to argv or a pane.
+      return { env: launchProcessEnv(await launchContext({ sid: sessionId, task, agent, runtime, reason: 'headless', ext }, { hostApiFor })) };
     },
   },
 });
