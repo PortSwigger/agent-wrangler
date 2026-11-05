@@ -53,6 +53,8 @@ export function projectSession(entry, id, { taskId = null, node = null } = {}) {
     status: node?.status ?? null,
     dormant: Boolean(node && !node.managed && !node.exitOutput),
     waitingReason: node?.waitingReason ?? null,
+    // Seconds until Claude Code's timed safety check denies itself ('auto-block').
+    autoBlockSeconds: node?.autoBlockSeconds ?? null,
     hasBackgroundShell: Boolean(node?.hasBackgroundShell),
     archived: Boolean(e.archivedAt),
     archivedAt: e.archivedAt ?? null,

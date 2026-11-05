@@ -513,6 +513,28 @@ export function hasBackgroundShell(paneText, agent = 'claude') {
   return pattern.test(recent);
 }
 
+// Claude Code's timed auto-mode safety check: a permission prompt that denies
+// itself when the countdown runs out ("⚠ Claude Code will automatically block
+// this request in 1:47, to avoid holding up an unattended session", or "in about
+// 2 minutes" / "in about 40 seconds" under reduced motion). Its session file says
+// 'waiting' like any other prompt, so only the pane tells it apart.
+// Only the live dialog counts: the last line that starts with the ⚠ banner, with
+// no transcript bullet (⏺) after it, so the same words quoted earlier in the
+// conversation never mark a later ordinary prompt. The banner wraps on a narrow
+// pane, so the next few lines are joined before matching.
+// Returns the seconds left (rounded, for the "about" form), or null.
+const AUTO_BLOCK_START_RE = /^\s*⚠\s+Claude Code will automatically block/;
+const AUTO_BLOCK_RE = /^⚠ Claude Code will automatically block this request in (?:about (\d+) (minute|second)s?|(\d+):(\d{2})), to avoid holding up an unattended session/;
+export function autoBlockCountdown(paneText) {
+  const lines = stripAnsi(paneText || '').split('\n');
+  const start = lines.findLastIndex((l) => AUTO_BLOCK_START_RE.test(l));
+  if (start < 0 || lines.slice(start + 1).some((l) => /^\s*⏺/.test(l))) return null;
+  const m = AUTO_BLOCK_RE.exec(lines.slice(start, start + 4).join(' ').replace(/\s+/g, ' ').trim());
+  if (!m) return null;
+  const secondsLeft = m[1] ? Number(m[1]) * (m[2] === 'minute' ? 60 : 1) : Number(m[3]) * 60 + Number(m[4]);
+  return { secondsLeft };
+}
+
 // Send literal keys / named keys (e.g. "Enter", "Up", "2") to a session.
 export async function sendKeys(name, keys, socket = '') {
   await tmux(socket, ['send-keys', '-t', name, ...keys]);

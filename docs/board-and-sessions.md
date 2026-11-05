@@ -9,6 +9,9 @@ A live Claude session whose latest transcript message is a terminal API error sh
 on its board card and chat header. The chat notice carries the error text. Connection failures
 allow another message to retry; blocking errors such as an expired login keep the composer disabled
 and offer **Terminal →** to resolve the cause. Ordinary permission prompts show **REPLY**.
+Claude Code's timed auto-mode safety check ("Claude Code will automatically block this request
+in …") shows **CHECK**: it still needs you, but Claude Code denies the request by itself when the
+countdown runs out.
 A new user turn or a successful assistant response clears the transcript error signal.
 
 This detection uses Claude's structured `isApiErrorMessage` flag, including errors followed by

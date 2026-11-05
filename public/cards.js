@@ -20,7 +20,10 @@ import { formatAutoCompactTokens } from './auto-compact-presets.js';
 
 export const STATUS_WORDS = { working: 'busy', 'needs-you': 'reply', idle: 'idle', job: 'job' };
 
+// 'auto-block' is Claude Code's timed safety check, which denies itself if left:
+// still needs-you on the board, only worded as a check rather than a reply.
 export function waitingStatusWord(reason) {
+  if (reason === 'auto-block') return 'check';
   return reason === 'api-error' || reason === 'api-error-blocking' ? 'error' : STATUS_WORDS['needs-you'];
 }
 
