@@ -2164,7 +2164,7 @@ function renderGrid(trayPass = 0, fitPass = 0) {
   if (autoEditTaskId) {
     const cell = el.querySelector(`.task-cell[data-taskid="${CSS.escape(autoEditTaskId)}"]`);
     autoEditTaskId = null;
-    if (cell) beginTaskRename(cell);
+    if (cell) beginTaskRename(cell, true);
   }
   scheduleSnoozeWake();
 }
@@ -3422,7 +3422,7 @@ function commitTaskReorder() {
 }
 
 // Swap a task's name span for an inline input. Enter/blur commits, Escape cancels.
-function beginTaskRename(cell) {
+function beginTaskRename(cell, isNew = false) {
   const taskId = cell.dataset.taskid;
   if (!taskId) return;
   const nameEl = cell.querySelector('.task-name');
@@ -3436,6 +3436,7 @@ function beginTaskRename(cell) {
   const finish = (save) => {
     if (settled) return;
     settled = true;
+    if (!save && isNew) send({ type: 'task-delete', taskId });
     const name = input.value.trim();
     if (save && name && name !== current) {
       send({ type: 'task-rename', taskId, name });

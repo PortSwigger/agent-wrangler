@@ -1,0 +1,78 @@
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+const rename = source.slice(source.indexOf('function beginTaskRename('), source.indexOf('\nfunction fitTaskLinkLists('));
+const autoRename = source.slice(source.indexOf('  if (autoEditTaskId) {'), source.indexOf('  scheduleSnoozeWake();', source.indexOf('  if (autoEditTaskId) {')));
+
+function editor({ initial = true, name = 'New task' } = {}) {
+  const messages = [], listeners = {};
+  const task = { id: 't_new', name, links: [] };
+  const input = { value: name, focus() {}, select() {}, addEventListener(type, fn) { listeners[type] = fn; } };
+  let editing = false, renders = 0;
+  const nameEl = {
+    textContent: name,
+    set innerHTML(value) { editing = true; },
+    querySelector: () => editing ? input : null,
+  };
+  const cell = { dataset: { taskid: task.id }, querySelector: () => nameEl };
+  const scope = {
+    latestTasks: { tasks: [task] }, send: (msg) => messages.push(msg),
+    renderGrid: () => { renders++; }, esc: (s) => s,
+    el: { querySelector: () => cell }, CSS: { escape: (s) => s },
+  };
+  const open = new Function(...Object.keys(scope), `
+    ${rename}
+    return (initial, cell) => {
+      let autoEditTaskId = initial ? 't_new' : null;
+      ${autoRename}
+      if (!initial) beginTaskRename(cell);
+    };
+  `)(...Object.values(scope));
+  open(initial, cell);
+  return {
+    messages, task, input, renders: () => renders,
+    key(key) { listeners.keydown({ key, preventDefault() {}, stopPropagation() {} }); },
+    blur() { listeners.blur(); },
+  };
+}
+
+for (const value of ['New task', 'Uncommitted name']) {
+  test(`Escape in initial task naming permanently deletes the task with input ${JSON.stringify(value)}`, () => {
+    const h = editor();
+    h.input.value = value;
+    h.key('Escape');
+    h.blur();
+    assert.deepEqual(h.messages, [{ type: 'task-delete', taskId: 't_new' }]);
+    assert.equal(h.renders(), 1);
+  });
+}
+
+test('Escape during a later rename keeps an existing task with the default name', () => {
+  const h = editor({ initial: false });
+  h.input.value = 'Discard this';
+  h.key('Escape');
+  h.blur();
+  assert.deepEqual(h.messages, []);
+  assert.equal(h.task.name, 'New task');
+});
+
+for (const action of ['Enter', 'blur']) {
+  test(`${action} saves the initial task name without deleting it`, () => {
+    const h = editor();
+    h.input.value = '  My task  ';
+    if (action === 'blur') h.blur();
+    else h.key(action);
+    h.blur();
+    assert.deepEqual(h.messages, [{ type: 'task-rename', taskId: 't_new', name: 'My task' }]);
+    assert.equal(h.task.name, 'My task');
+  });
+}
+
+test('accepting the default name keeps the task', () => {
+  const h = editor();
+  h.key('Enter');
+  assert.deepEqual(h.messages, []);
+  assert.equal(h.task.name, 'New task');
+});
