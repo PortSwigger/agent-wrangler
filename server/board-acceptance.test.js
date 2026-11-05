@@ -292,6 +292,9 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       'the .diff-row side-by-side rule is missing from the stylesheet',
     );
 
+    // The grid can render before the probe extension's client has registered.
+    assert.ok(await waitFor(() => evaluate(`!!window.__probeApi`)), 'the probe extension never registered');
+
     const resize = async (width) => {
       await ack('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
       assert.ok(await waitFor(() => evaluate(`document.getElementById('grid').classList.contains('single-column') === ${width < 800}`)), 'board did not switch column mode');
