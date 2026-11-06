@@ -3,6 +3,7 @@ import path from 'node:path';
 import { DATA_DIR } from './data-dir.js';
 import { generateSocketName } from './tmux-socket.js';
 import { writeJsonAtomic } from './atomic-json.js';
+import { CODEX_SANDBOXES, CODEX_APPROVALS } from './extensions/codex-policy.js';
 
 // Persistent per-install settings (the tmux socket this data dir is bound to,
 // and later the migration-complete flag). Distinct from the ephemeral
@@ -156,6 +157,25 @@ export function autoFixPrChecksDefault(cfg = readConfig()) {
 // config.json — `node --test` runs files in parallel against the same real file.
 export function chatViewDefault(cfg = readConfig()) {
   return cfg.chatViewDefault === true;
+}
+
+// The Codex sandbox/approval policy a new Codex session starts from: what the
+// dispatch dialog's Advanced options prefill, and what a dispatch with no dialog
+// (spawn_session, a schedule) is stored with. Every field is always present, so
+// the dialog and Settings show a value rather than "unset"; the defaults are
+// exactly the flags core always launched Codex with. Set from Settings ›
+// Sessions (config.json `codexPolicyDefaults`); a hand-edited bad value falls
+// back field by field. Takes cfg so tests never write the shared config.json.
+export const CODEX_POLICY_DEFAULTS = Object.freeze({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false });
+
+export function codexPolicyDefaults(cfg = readConfig()) {
+  const raw = cfg.codexPolicyDefaults && typeof cfg.codexPolicyDefaults === 'object' ? cfg.codexPolicyDefaults : {};
+  return {
+    sandbox: CODEX_SANDBOXES.includes(raw.sandbox) ? raw.sandbox : CODEX_POLICY_DEFAULTS.sandbox,
+    approval: CODEX_APPROVALS.includes(raw.approval) ? raw.approval : CODEX_POLICY_DEFAULTS.approval,
+    approveForMe: typeof raw.approveForMe === 'boolean' ? raw.approveForMe : CODEX_POLICY_DEFAULTS.approveForMe,
+    bypass: typeof raw.bypass === 'boolean' ? raw.bypass : CODEX_POLICY_DEFAULTS.bypass,
+  };
 }
 
 // Flags that were core config keys before their feature became an extension,

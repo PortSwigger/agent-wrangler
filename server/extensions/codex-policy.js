@@ -56,6 +56,32 @@ export function normalizeCodexPolicy(raw, { extId = '?', onError = () => {} } = 
   return Object.keys(out).length ? out : undefined;
 }
 
+// Core's own sandbox/approval choice (Settings defaults, the dispatch dialog's
+// Advanced options, the per-session copy on the mapping entry): the same
+// vocabulary as an extension's answer, but quiet. An empty select ('') and an
+// unticked box mean "unset", a stray field is dropped without a log, and the
+// result is undefined when nothing is left. Unlike an extension's answer, a
+// ticked approve-for-me REPLACES the sandbox and approval choices rather than
+// losing to them: Settings and the dialog both say it overrides them, and the
+// dialog greys them out while it is ticked. Bypass replaces everything.
+export function cleanCodexPolicy(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const picked = {};
+  for (const k of Object.keys(FIELDS)) if (raw[k] !== '' && raw[k] != null && FIELDS[k](raw[k])) picked[k] = raw[k];
+  if (picked.bypass) return { bypass: true };
+  if (picked.approveForMe) return { approveForMe: true };
+  return normalizeCodexPolicy(picked);
+}
+
+// Whether a launch under this policy may carry `--add-dir` grants. Verified on
+// codex-cli 0.166.0: under `--sandbox read-only` Codex refuses to start at all
+// ("Ignoring --add-dir (...) because the effective permissions do not allow
+// additional writable roots", exit 1), and read-only already reads everywhere,
+// so the grants are left out rather than the launch failing.
+export function codexPolicyAllowsAddDirs(policy) {
+  return policy?.sandbox !== 'read-only' || Boolean(policy?.bypass || policy?.approveForMe);
+}
+
 const NETWORK_GRANT = ['-c', 'sandbox_workspace_write.network_access=true'];
 
 // The policy half of Codex's launch argv. `undefined` is byte-identical to the

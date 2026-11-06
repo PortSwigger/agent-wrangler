@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CODEX_SANDBOXES, CODEX_APPROVALS, INCOMPATIBLE, normalizeCodexPolicy, codexPolicyArgs } from './codex-policy.js';
+import { CODEX_SANDBOXES, CODEX_APPROVALS, INCOMPATIBLE, normalizeCodexPolicy, codexPolicyArgs, cleanCodexPolicy, codexPolicyAllowsAddDirs } from './codex-policy.js';
 
 function norm(raw) {
   const logs = [];
@@ -94,4 +94,31 @@ test('codexPolicyArgs: approve-for-me stands alone (codex rejects it beside -s/-
 
 test('codexPolicyArgs: bypass is the only flag', () => {
   assert.deepEqual(codexPolicyArgs({ bypass: true }), ['--dangerously-bypass-approvals-and-sandbox']);
+});
+
+test('cleanCodexPolicy: empty values and unticked boxes are unset, stray fields dropped quietly', () => {
+  assert.equal(cleanCodexPolicy(undefined), undefined);
+  assert.equal(cleanCodexPolicy([]), undefined);
+  assert.equal(cleanCodexPolicy({ sandbox: '', approval: '', approveForMe: false, bypass: false }), undefined);
+  assert.deepEqual(cleanCodexPolicy({ sandbox: 'read-only', approval: 'never', approveForMe: false, bypass: false, colour: 'red' }), { sandbox: 'read-only', approval: 'never' });
+  assert.deepEqual(cleanCodexPolicy({ sandbox: 'nope', approval: 'on-request' }), { approval: 'on-request' });
+});
+
+test('cleanCodexPolicy: approve-for-me replaces sandbox and approval; bypass replaces everything', () => {
+  assert.deepEqual(cleanCodexPolicy({ sandbox: 'read-only', approval: 'never', approveForMe: true }), { approveForMe: true });
+  assert.deepEqual(cleanCodexPolicy({ sandbox: 'read-only', approveForMe: true, bypass: true }), { bypass: true });
+});
+
+test('cleanCodexPolicy of the shipped Settings defaults launches byte-identical to no policy', () => {
+  const p = cleanCodexPolicy({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false });
+  assert.deepEqual(codexPolicyArgs(p), codexPolicyArgs(undefined));
+});
+
+test('codexPolicyAllowsAddDirs: only a read-only sandbox refuses them', () => {
+  assert.equal(codexPolicyAllowsAddDirs(undefined), true);
+  assert.equal(codexPolicyAllowsAddDirs({ sandbox: 'workspace-write' }), true);
+  assert.equal(codexPolicyAllowsAddDirs({ sandbox: 'danger-full-access' }), true);
+  assert.equal(codexPolicyAllowsAddDirs({ sandbox: 'read-only', approval: 'never' }), false);
+  assert.equal(codexPolicyAllowsAddDirs({ approveForMe: true }), true);
+  assert.equal(codexPolicyAllowsAddDirs({ bypass: true }), true);
 });

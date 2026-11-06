@@ -68,6 +68,7 @@ import { onBoard } from './off-board.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
+import { CODEX_POLICY_FALLBACK, syncCodexPolicyControls, fillCodexPolicyControls, readCodexPolicyControls } from './codex-policy-field.js';
 import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
@@ -178,6 +179,12 @@ let archiveReviewEnabled = false; // server config flag, carried on every graph 
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
+// Settings › Sessions' Codex sandbox/approval defaults (server config, every
+// graph push): what the dialog's Codex controls prefill from.
+let codexPolicyDefaults = { ...CODEX_POLICY_FALLBACK };
+// Whether the dispatch draft was already on a Codex model at the last sync, so
+// switching TO Codex prefills from Settings and re-syncs while it stays keep edits.
+let codexPolicyDraftWasCodex = false;
 // The server's loaded extensions [{id, enabled, label, help, defaultEnabled}],
 // carried on every graph push — what the generic `ext:<id>` settings toggles
 // read back, and what mounts/unmounts each one's slot contributions. The
@@ -852,6 +859,7 @@ function applyGraph(graph) {
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
+  codexPolicyDefaults = graph.codexPolicyDefaults && typeof graph.codexPolicyDefaults === 'object' ? { ...CODEX_POLICY_FALLBACK, ...graph.codexPolicyDefaults } : { ...CODEX_POLICY_FALLBACK };
   autoUpdate = graph.autoUpdate || 'notify';
   refreshSessionsAfterUpdate = graph.refreshSessionsAfterUpdate === true;
   const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
@@ -5962,6 +5970,19 @@ function syncRuntimeToggle() {
   const foldersEnabled = rt.value === 'local';
   additionalFolders.setEnabled(foldersEnabled);
   document.getElementById('m-add-dirs-note').classList.toggle('hidden', foldersEnabled);
+  syncCodexPolicyRow(agent);
+}
+
+// The Codex sandbox/approval controls show for a Codex draft only. Switching TO
+// Codex prefills them from Settings as they are now; re-syncs while the draft
+// stays on Codex keep what was picked.
+function syncCodexPolicyRow(agent) {
+  const row = document.getElementById('m-codex-policy-row');
+  if (!row) return;
+  const codex = agent === 'codex';
+  row.classList.toggle('hidden', !codex);
+  if (codex && !codexPolicyDraftWasCodex) fillCodexPolicyControls(row, codexPolicyDefaults);
+  codexPolicyDraftWasCodex = codex;
 }
 
 // Extension-contributed runtimes (manifest `runtimes`, carried per extension
@@ -6168,6 +6189,7 @@ function readCoreDispatchFields() {
     worktreeAuto: wfOn,
     parentSession: parentSessionId || undefined,
     runtime: runtime !== 'local' ? runtime : undefined,
+    codexPolicy: agent === 'codex' ? readCodexPolicyControls(document.getElementById('m-codex-policy-row')) : undefined,
   };
 }
 
@@ -6326,6 +6348,10 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   rtSel.value = wantRuntime;
   if (rtSel.value !== wantRuntime) rtSel.value = 'local';
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
+  // A saved schedule restores its Codex pick; a new draft starts from Settings.
+  // Marked as already-Codex so the syncs below do not refill over a schedule's.
+  fillCodexPolicyControls(document.getElementById('m-codex-policy-row'), schedule && d.codexPolicy ? d.codexPolicy : codexPolicyDefaults);
+  codexPolicyDraftWasCodex = autoCompactAgent === 'codex';
   document.getElementById('m-advanced-options').open = false;
   dispatchModelPicker?.reset();
   populateEffortSelect();
@@ -7076,6 +7102,9 @@ function openExtConsent(payload) {
   modal.addEventListener('mousedown', onBackdrop);
 }
 
+// Settings row id -> its field of graph.codexPolicyDefaults.
+const CODEX_DEFAULT_SETTINGS = { codexDefaultSandbox: 'sandbox', codexDefaultApproval: 'approval', codexDefaultApproveForMe: 'approveForMe', codexDefaultBypass: 'bypass' };
+
 initSettings({
   server: {
     get: (id) => {
@@ -7090,6 +7119,7 @@ initSettings({
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'defaultRuntime') return defaultRuntime;
+      if (CODEX_DEFAULT_SETTINGS[id]) return codexPolicyDefaults[CODEX_DEFAULT_SETTINGS[id]];
       if (id === 'autoUpdate') return autoUpdate;
       if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
       // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
@@ -7135,6 +7165,10 @@ initSettings({
       } else if (id === 'defaultRuntime') {
         defaultRuntime = String(value || 'local');
         send({ type: 'set-default-runtime', runtime: defaultRuntime });
+      } else if (CODEX_DEFAULT_SETTINGS[id]) {
+        const key = CODEX_DEFAULT_SETTINGS[id];
+        codexPolicyDefaults = { ...codexPolicyDefaults, [key]: value };
+        send({ type: 'set-codex-policy-default', key, value });
       } else if (id === 'autoUpdate') {
         autoUpdate = value;
         send({ type: 'set-auto-update-mode', mode: autoUpdate });
@@ -7215,6 +7249,9 @@ document.getElementById('m-model').addEventListener('change', () => {
 // sees ctx.draft.runtime, a function `hides` the same draft).
 document.getElementById('m-runtime').addEventListener('change', syncRuntimeToggle);
 document.getElementById('m-runtime').addEventListener('change', syncDispatchExtFields);
+for (const id of ['m-codex-approve-for-me', 'm-codex-bypass']) {
+  document.getElementById(id).addEventListener('change', () => syncCodexPolicyControls(document.getElementById('m-codex-policy-row')));
+}
 document.getElementById('m-auto-compact-presets').addEventListener('click', (e) => {
   const button = e.target.closest('.auto-compact-preset');
   if (!button) return;

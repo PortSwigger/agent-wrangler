@@ -74,6 +74,14 @@ Optional launch controls include:
 - **Runtime:** launch Claude locally, inside the project's devcontainer, or on a runtime an enabled extension adds. Codex currently runs on the
   host. **Settings → Sessions → Default runtime for new sessions** picks which one is pre-selected; a runtime that is
   no longer offered or can't run the chosen agent falls back to Local.
+- **Codex sandbox and approvals:** for a Codex model only, pick the sandbox (read-only, workspace-write or
+  danger-full-access), the approval policy (on-request or never), **Approve for me** (Codex's automatic review,
+  which implies workspace-write and on-request) or **Bypass sandbox and approvals** (no sandbox, no approvals; the
+  dialog warns when it is ticked). The controls start from **Settings → Sessions**' Codex defaults, which is also
+  what a launch without the dialog (`spawn_session`, an extension) gets. A session keeps its choice across resume
+  and fork, and a scheduled launch saves it. An extension that answers `codexPolicy` (see
+  [extensions](extensions.md)) overrides it for the sessions it answers for. This replaces the separate
+  `aw-codex-policy` extension, which Wrangler no longer loads: uninstall it from Settings → Extensions.
 - **Workflow:** run the issue-to-PR autopilot in a fresh worktree.
 - **Quick launch:** use a model button or `Command+1` through `Command+3`. An extension can replace these with its own quick launches (see [extensions](extensions.md)); its buttons and shortcuts then take their place.
 
@@ -244,7 +252,8 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 **Settings** has Appearance, Sessions, Automation, Extensions, and Shortcuts tabs, covering:
 
 - Theme, terminal side, terminal font size, and chat font size.
-- Child-card and Chat defaults, and the default folder for new sessions.
+- Child-card and Chat defaults, the default folder for new sessions, and the Codex sandbox and approval
+  defaults a new Codex session starts from (workspace-write and never unless you change them).
 - PR auto-fix, Codex and Claude folder trust, and optional extraction of archive learnings into task memory.
   Codex folder trust uses the resolved directory path, so a symlink and its target share one trust
   entry. If the directory cannot be resolved or trust cannot be saved, the launch reports an error.

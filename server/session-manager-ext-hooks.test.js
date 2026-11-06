@@ -242,3 +242,68 @@ test('the Codex policy is never consulted for a Claude launch', async () => {
   assert.equal(asked, 0);
   assert.doesNotMatch(built, /dangerously-bypass-approvals/);
 });
+
+// ── Core's own Codex policy (the built-in picker) ──────────────────────────
+test('a dispatch with no dialog pick stores and launches with the Settings defaults', async () => {
+  const sm = codexManager();
+  sm._codexPolicyDefaults = () => ({ sandbox: 'read-only', approval: 'on-request', approveForMe: false, bypass: false });
+  let built = '';
+  sm._newSession = async (_t, _d, inner) => { built = inner; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
+  assert.match(built, /'--sandbox' 'read-only' '--ask-for-approval' 'on-request'/);
+  assert.deepEqual(sm.entryFor(sessionId).codexPolicy, { sandbox: 'read-only', approval: 'on-request' });
+});
+
+test('the dialog pick is the whole policy: it is stored and launched, never merged with Settings', async () => {
+  const sm = codexManager();
+  sm._codexPolicyDefaults = () => ({ sandbox: 'read-only', approval: 'on-request', approveForMe: false, bypass: true });
+  let built = '';
+  sm._newSession = async (_t, _d, inner) => { built = inner; };
+  const codexPolicy = { sandbox: 'danger-full-access', approval: 'never', approveForMe: false, bypass: false };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex', codexPolicy });
+  assert.match(built, /'--sandbox' 'danger-full-access' '--ask-for-approval' 'never'/);
+  assert.doesNotMatch(built, /dangerously-bypass/);
+  assert.deepEqual(sm.entryFor(sessionId).codexPolicy, { sandbox: 'danger-full-access', approval: 'never' });
+});
+
+test('an extension codexPolicy answer wins over the dialog pick, which is still stored', async () => {
+  const sm = codexManager();
+  sm._extCodexPolicy = () => ({ approval: 'on-request' });
+  let built = '';
+  sm._newSession = async (_t, _d, inner) => { built = inner; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex', codexPolicy: { bypass: true } });
+  assert.match(built, /'--sandbox' 'workspace-write' '--ask-for-approval' 'on-request'/);
+  assert.deepEqual(sm.entryFor(sessionId).codexPolicy, { bypass: true });
+});
+
+test('resume and fork launch with the stored policy, not Settings as they are now', async () => {
+  const sm = codexManager();
+  sm._codexPolicyDefaults = () => ({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false });
+  const built = [];
+  sm._newSession = async (_t, _d, inner) => { built.push(inner); };
+  sm.map.set('CARD1', { tmux: 'cx_a', cwd: os.tmpdir(), agent: 'codex', liveSessionId: 'ROLL-1', codexPolicy: { approveForMe: true } });
+  await sm.resume('CARD1', os.tmpdir());
+  assert.deepEqual(sm.entryFor('CARD1').codexPolicy, { approveForMe: true }, 'resumeEntry keeps it');
+  const { sessionId } = await sm.fork({ sourceId: 'ROLL-1', parentId: 'CARD1', parentEntry: sm.entryFor('CARD1'), cwd: os.tmpdir() });
+  assert.deepEqual(sm.entryFor(sessionId).codexPolicy, { approveForMe: true }, 'forkEntry copies it');
+  for (const cmd of built) {
+    assert.match(cmd, /'--approve-for-me'/);
+    assert.doesNotMatch(cmd, /--sandbox|--ask-for-approval/);
+  }
+});
+
+test('a Codex card stored before core kept a policy resumes under Settings as they are now', async () => {
+  const sm = codexManager();
+  sm._codexPolicyDefaults = () => ({ sandbox: 'workspace-write', approval: 'on-request', approveForMe: false, bypass: false });
+  let built = '';
+  sm._newSession = async (_t, _d, inner) => { built = inner; };
+  sm.map.set('CARD1', { tmux: 'cx_a', cwd: os.tmpdir(), agent: 'codex', liveSessionId: 'ROLL-1' });
+  await sm.resume('CARD1', os.tmpdir());
+  assert.match(built, /'--ask-for-approval' 'on-request'/);
+});
+
+test('a Claude dispatch stores no Codex policy, whatever the dialog sent', async () => {
+  const sm = manager();
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'claude', codexPolicy: { bypass: true } });
+  assert.equal(sm.entryFor(sessionId).codexPolicy, undefined);
+});

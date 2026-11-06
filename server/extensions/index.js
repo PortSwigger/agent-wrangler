@@ -67,7 +67,7 @@ export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
   'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'childFullViewByDefault',
   'autoFixPrChecksDefault', 'archiveReviewEnabled', 'mailWakesDormant', 'prModelFooter', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
-  'quarantinedBuiltins',
+  'codexPolicyDefaults', 'quarantinedBuiltins',
 ]);
 
 // The CLOSED capability vocabulary a manifest's `requires` is drawn from. It

@@ -38,7 +38,8 @@ export async function deliverFirstPrompt({ tmux, socket = '', agent, text, image
 // NOT rebuild or reply — callers (the /ws handler, the firing engine) own that.
 //
 // opts = { cwd, intent, model, agent, runtime, taskId, addDirs, worktree, worktreeBranch,
-//          worktreeFolderName, worktreeAuto, workflow, autoMergeOnPass, parentSession, imageNames }
+//          worktreeFolderName, worktreeAuto, workflow, autoMergeOnPass, parentSession, imageNames,
+//          codexPolicy }
 export async function runDispatch(opts, { sessionManager, taskStore, deliverFirstPrompt: deliver = deliverFirstPrompt }, now = Date.now()) {
   // Both callers can carry an agent/model this install doesn't offer, and both
   // have somewhere to report it: the /ws dispatch handler turns a throw into the
@@ -84,6 +85,9 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     worktreeFolderName: workflow ? '' : (opts.worktreeFolderName || ''),
     worktreeAuto: workflow ? true : Boolean(opts.worktreeAuto),
     autoMergeOnPass: opts.autoMergeOnPass ? true : undefined,
+    // The dialog's Codex sandbox/approval pick (Advanced options, Codex drafts
+    // only). Absent — spawn_session, an older tab — means the Settings defaults.
+    codexPolicy: opts.codexPolicy && typeof opts.codexPolicy === 'object' && !Array.isArray(opts.codexPolicy) ? opts.codexPolicy : undefined,
     workflow: workflow
       ? { issue: rawIssue, phase: { label: 'starting', kind: 'active', at: now }, startedAt: now }
       : (opts.workflow || undefined),
