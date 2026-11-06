@@ -95,7 +95,7 @@ export const SETTINGS = [
     type: 'toggle',
     scope: 'server',
     label: 'Tag new PRs with the session\'s model',
-    help: 'When a session opens a PR with gh pr create, add a last line to its description naming the model the session is running, e.g. "Model: claude-opus-5-5", so you can search PRs by model with gh search prs \'"Model: claude-opus-5-5" in:body\'. A description that already has a Model: line is left alone. This never attaches the PR to a card.',
+    help: 'When a session opens a PR with gh pr create, add a last line to its description naming the model the session is running, e.g. "Model: claude-opus-5-5", so you can search PRs by model with gh search prs \'"Model: claude-opus-5-5" in:body\'. It is followed by a "Made with Agent Wrangler" line. Lines the description already has are not added again. This never attaches the PR to a card.',
     default: true,
   },
   {
