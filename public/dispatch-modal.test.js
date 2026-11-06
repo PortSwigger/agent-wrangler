@@ -185,7 +185,7 @@ function runtimeHarness(agent = 'claude') {
     createElement: () => stubOption(),
   };
   const app = loadApp(
-    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncExtRuntimeOptions() {'],
+    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function syncExtRuntimeOptions() {'],
     ['syncExtRuntimeOptions', 'syncRuntimeToggle', 'setExtensions'],
     'let latestExtensions = []; const setExtensions = (v) => { latestExtensions = v; };',
     { document, additionalFolders },
@@ -449,18 +449,21 @@ test('Codex quick launch restores retained grants when switching from a non-loca
       getElementById: (id) => ({
         'm-runtime': rt, 'm-model': model,
         'm-add-dirs-note': { classList: { toggle() {} } },
+        'm-codex-policy-row': { classList: { toggle() {} } },
       })[id] || { value: '', checked: false },
     };
     const additionalFolders = createAdditionalFolders({ list: element(), add: element(), document, send() {} });
     additionalFolders.reset(['/extra']);
     const app = loadApp(
-      ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function readCoreDispatchFields() {'],
+      ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function readCoreDispatchFields() {'],
       ['quickLaunch', 'syncRuntimeToggle', 'dispatched'],
       `let modelEdited = false; const dispatchMode = 'standard'; const reviewMode = false;
        const autoCompactTokens = undefined; const parentSessionId = null;
+       let codexPolicyDraftWasCodex = false; const codexPolicyDefaults = {};
        const dispatched = []; const submitDispatch = () => dispatched.push(readCoreDispatchFields());`,
       { document, additionalFolders, modal: { classList: { contains: () => false } },
-        scheduleMode: () => false, cwdField: () => '/repo', populateEffortSelect() {}, rememberDispatchPick() {} },
+        scheduleMode: () => false, cwdField: () => '/repo', populateEffortSelect() {}, rememberDispatchPick() {},
+        fillCodexPolicyControls() {}, readCodexPolicyControls: () => ({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false }) },
     );
     rt.value = runtime;
     app.syncRuntimeToggle();
@@ -470,6 +473,65 @@ test('Codex quick launch restores retained grants when switching from a non-loca
     assert.equal(app.dispatched[0].runtime, undefined);
     assert.deepEqual(app.dispatched[0].addDirs, ['/extra']);
   }
+});
+
+// The Codex sandbox/approval row: the real syncRuntimeToggle → syncCodexPolicyRow
+// → readCoreDispatchFields chain with the real codex-policy-field.js helpers
+// against a stub row.
+async function codexPolicyHarness() {
+  const field = await import('./codex-policy-field.js');
+  const rt = stubSelect(['local']);
+  const model = stubSelect(['claude-model', 'codex-model']);
+  model.options[0].dataset.agent = 'claude';
+  model.options[1].dataset.agent = 'codex';
+  const hidden = new Set(['row']);
+  const ctl = {
+    'm-codex-sandbox': stubSelect(['read-only', 'workspace-write', 'danger-full-access']),
+    'm-codex-approval': stubSelect(['on-request', 'never']),
+    'm-codex-approve-for-me': { checked: false, disabled: false },
+    'm-codex-bypass': { checked: false, disabled: false },
+    'm-codex-danger': { hidden: true },
+  };
+  const row = {
+    classList: { toggle: (c, on) => { if (on) hidden.add('row'); else hidden.delete('row'); } },
+    querySelector: (sel) => ctl[sel.slice(1)],
+  };
+  const document = {
+    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': { classList: { toggle() {} } }, 'm-codex-policy-row': row })[id] || { value: '', checked: false },
+  };
+  const app = loadApp(
+    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function readCoreDispatchFields() {'],
+    ['syncRuntimeToggle', 'readCoreDispatchFields', 'setDefaults'],
+    `const dispatchMode = 'standard'; const reviewMode = false; const autoCompactTokens = undefined; const parentSessionId = null;
+     let codexPolicyDraftWasCodex = false; let codexPolicyDefaults = {};
+     const setDefaults = (v) => { codexPolicyDefaults = v; };`,
+    { document, additionalFolders: { setEnabled() {}, values: () => [] }, cwdField: () => '/repo', ...field },
+  );
+  return { ...app, model, ctl, rowHidden: () => hidden.has('row') };
+}
+
+test('the Codex sandbox/approval row shows for a Codex draft only, prefilled from Settings, and rides the payload', async () => {
+  const h = await codexPolicyHarness();
+  h.setDefaults({ sandbox: 'read-only', approval: 'on-request', approveForMe: false, bypass: false });
+  h.model.value = 'claude-model';
+  h.syncRuntimeToggle();
+  assert.equal(h.rowHidden(), true);
+  assert.equal(h.readCoreDispatchFields().codexPolicy, undefined, 'a Claude draft sends no Codex policy');
+
+  h.model.value = 'codex-model';
+  h.syncRuntimeToggle();
+  assert.equal(h.rowHidden(), false);
+  assert.equal(h.ctl['m-codex-sandbox'].value, 'read-only');
+  assert.equal(h.ctl['m-codex-approval'].value, 'on-request');
+  assert.deepEqual(h.readCoreDispatchFields().codexPolicy, { sandbox: 'read-only', approval: 'on-request', approveForMe: false, bypass: false });
+
+  // An edit survives a re-sync while the draft stays on Codex.
+  h.ctl['m-codex-sandbox'].value = 'danger-full-access';
+  h.syncRuntimeToggle();
+  assert.equal(h.ctl['m-codex-sandbox'].value, 'danger-full-access');
+
+  h.ctl['m-codex-bypass'].checked = true;
+  assert.deepEqual(h.readCoreDispatchFields().codexPolicy, { bypass: true });
 });
 
 function scheduleHarness(kind = 'dispatch', editing = false) {

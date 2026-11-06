@@ -370,6 +370,22 @@
               <option value="devcontainer">Devcontainer</option>
             </select>
           </div>
+          <div class="dispatch-field codex-policy-field hidden" id="m-codex-policy-row">
+            <label for="m-codex-sandbox">Codex sandbox</label>
+            <select id="m-codex-sandbox">
+              <option value="read-only">read-only</option>
+              <option value="workspace-write">workspace-write</option>
+              <option value="danger-full-access">danger-full-access</option>
+            </select>
+            <label for="m-codex-approval">Codex approvals</label>
+            <select id="m-codex-approval">
+              <option value="on-request">on-request</option>
+              <option value="never">never</option>
+            </select>
+            <label class="check-row"><input type="checkbox" id="m-codex-approve-for-me" /> Approve for me (auto review, workspace-write)</label>
+            <label class="check-row"><input type="checkbox" id="m-codex-bypass" /> Bypass sandbox and approvals</label>
+            <p class="codex-policy-danger" id="m-codex-danger" hidden>Runs model-generated commands with no sandbox and no approvals.</p>
+          </div>
           <label class="check-row hidden" id="m-wf-auto-merge-row"><input type="checkbox" id="m-wf-auto-merge" /> Auto-merge when checks pass</label>
           <div class="ext-dispatch-slot" data-at="advanced"></div>
         </div>

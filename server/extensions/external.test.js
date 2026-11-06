@@ -182,3 +182,15 @@ test('admitExternal applies the id-match and consent checks the install path sha
   assert.equal(ok.entry.dir, '/tmp/toy', 'the discovered path wins over the manifest\'s own');
   assert.equal(ok.entry.external, true);
 });
+
+test('an installed aw-codex-policy is quarantined without being imported, and admitExternal refuses it', async () => {
+  const root = tempRoot();
+  writeExt(root, 'aw-codex-policy', { body: 'throw new Error("must not be imported");\n' });
+  const found = await discoverExternal({ dir: root, provenance: {} });
+  assert.equal(found.length, 1);
+  assert.equal(found[0].id, 'aw-codex-policy');
+  assert.match(found[0].quarantine, /built in now/);
+  const admitted = admitExternal({ id: 'aw-codex-policy', requires: [] }, { id: 'aw-codex-policy', dir: root, external: true, provenance: null });
+  assert.equal(admitted.ok, false);
+  assert.match(admitted.quarantine, /uninstall this extension/);
+});

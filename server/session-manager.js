@@ -15,7 +15,8 @@ import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
-import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault } from './config-store.js';
+import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, codexPolicyDefaults } from './config-store.js';
+import { cleanCodexPolicy } from './extensions/codex-policy.js';
 import { ensureCodexTrust } from './codex-trust.js';
 import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
 import { launchEnvOf } from './launch-context.js';
@@ -222,6 +223,9 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     model: parentEntry?.model ?? null,
     permissionMode: parentEntry?.permissionMode ?? 'auto',
     ...(parentEntry?.autoCompactTokens === undefined ? {} : { autoCompactTokens: parentEntry.autoCompactTokens }),
+    // The Codex sandbox/approval choice is the conversation's, like its model:
+    // a fork launches under the parent's and keeps it for its own resumes.
+    ...(parentEntry?.codexPolicy ? { codexPolicy: { ...parentEntry.codexPolicy } } : {}),
     createdAt,
     forkedFrom: parentId,
     liveSessionId: undefined,
@@ -336,6 +340,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     effort: prev?.effort ?? null,
     permissionMode: prev?.permissionMode ?? 'auto',
     ...(prev?.autoCompactTokens === undefined ? {} : { autoCompactTokens: prev.autoCompactTokens }),
+    ...(prev?.codexPolicy ? { codexPolicy: prev.codexPolicy } : {}),
     createdAt: prev?.createdAt ?? now,
     // When THIS relaunch happened, as distinct from createdAt (the card's birth,
     // preserved across every resume). Read only by the suspend timer — see
@@ -487,7 +492,18 @@ export class SessionManager {
     // launch only. Returns a normalised policy or undefined; the default answers
     // nothing, so every existing launch keeps the core sandbox/approval flags.
     this._extCodexPolicy = () => undefined;
+    // Settings › Sessions' Codex defaults, a seam so tests never read config.json.
+    this._codexPolicyDefaults = () => codexPolicyDefaults();
     this._load();
+  }
+
+  // The policy a Codex launch runs under. An extension's codexPolicy answer
+  // wins outright; otherwise the session's own stored choice (the dispatch
+  // dialog's, or the Settings defaults it was dispatched with), and for a card
+  // with none — launched before core stored one — Settings as they are now.
+  // Undefined only when that leaves nothing, i.e. core's historical flags.
+  _codexPolicyFor(context, stored) {
+    return this._extCodexPolicy(context) ?? cleanCodexPolicy(stored ?? this._codexPolicyDefaults());
   }
 
   // Called after the launch context is collected, so a launch whose context
@@ -1227,7 +1243,7 @@ export class SessionManager {
     if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
     const addDirs = await withGitDirAddDirs(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
-    const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._extCodexPolicy({ phase: 'resume', sessionId, entry: prev }) : undefined;
+    const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'resume', sessionId, entry: prev }, prev?.codexPolicy) : undefined;
     const inner = adapter[freshAfterUpdate ? 'buildLaunch' : 'buildResume']({
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, permissionMode: prev?.permissionMode, autoCompactTokens: prev?.autoCompactTokens,
       worktree: prev?.worktree || null,
@@ -1325,7 +1341,7 @@ export class SessionManager {
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: parentEntry, parentId, agent, phase: 'fork' });
     // `parentId` too: onFork (which could copy the parent's stored policy) only
     // fires after this launch, so the parent's card id is how an extension finds it.
-    const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._extCodexPolicy({ phase: 'fork', sessionId, entry: parentEntry, parentId }) : undefined;
+    const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'fork', sessionId, entry: parentEntry, parentId }, parentEntry?.codexPolicy) : undefined;
     const inner = adapter.buildFork({
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
       addDirs,
@@ -1870,7 +1886,7 @@ export class SessionManager {
 
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools } = {}) {
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, codexPolicy: pickedCodexPolicy } = {}) {
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
@@ -1997,7 +2013,11 @@ export class SessionManager {
     // runtime's own command takes no adapter flags. Not branched around, so the
     // two paths can't drift in what they announce.
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: null, agent, phase: 'dispatch', intent, cwd });
-    const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._extCodexPolicy({ phase: 'dispatch', sessionId, entry: null }) : undefined;
+    // The dialog's pick is the whole policy (it prefills from Settings and sends
+    // every field); a dispatch without one is stored with the Settings defaults
+    // as they are now, so a later Settings change never moves a running card.
+    const storedCodexPolicy = adapterFor(agent).launch.codexPolicy ? (cleanCodexPolicy(pickedCodexPolicy ?? this._codexPolicyDefaults()) ?? {}) : undefined;
+    const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'dispatch', sessionId, entry: null }, storedCodexPolicy) : undefined;
     // `deferIntent` launches with no first prompt while still recording the intent
     // as the card's: the caller pastes it into the booted composer itself, which is
     // the only way a first prompt can carry images (dispatch-runner.js). A launch
@@ -2034,7 +2054,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });

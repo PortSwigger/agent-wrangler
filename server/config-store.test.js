@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, CODEX_POLICY_DEFAULTS, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -270,4 +270,14 @@ test('migrateRetiredFlags: a blank or non-string old value just drops the key; n
   assert.deepEqual(migrateJira({ jiraBaseUrl: '' }), { cfg: {}, changed: true });
   assert.deepEqual(migrateJira({ jiraBaseUrl: 123 }), { cfg: {}, changed: true });
   assert.deepEqual(migrateJira({ tmuxSocket: 's' }), { cfg: { tmuxSocket: 's' }, changed: false });
+});
+
+test('codexPolicyDefaults: unset is core\'s historical flags; a bad field falls back on its own', () => {
+  assert.deepEqual(codexPolicyDefaults({}), { sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false });
+  assert.deepEqual(codexPolicyDefaults({}), { ...CODEX_POLICY_DEFAULTS });
+  assert.deepEqual(
+    codexPolicyDefaults({ codexPolicyDefaults: { sandbox: 'read-only', approval: 'sometimes', approveForMe: 'yes', bypass: true } }),
+    { sandbox: 'read-only', approval: 'never', approveForMe: false, bypass: true },
+  );
+  assert.deepEqual(codexPolicyDefaults({ codexPolicyDefaults: 'nope' }), { ...CODEX_POLICY_DEFAULTS });
 });

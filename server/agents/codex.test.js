@@ -181,8 +181,19 @@ test('codexPolicy reaches the argv on launch, resume and fork', () => {
   for (const cmd of cmds) {
     assert.match(cmd, /'--sandbox' 'read-only' '--ask-for-approval' 'on-request'/);
     assert.doesNotMatch(cmd, /workspace-write|network_access/);
-    assert.match(cmd, /'--add-dir' '\/memory\/tasks\/T1'/);
+    // Codex refuses to start with any --add-dir under read-only.
+    assert.doesNotMatch(cmd, /--add-dir/);
   }
+});
+
+test('add-dir grants ride every sandbox but read-only', () => {
+  for (const sandbox of ['workspace-write', 'danger-full-access']) {
+    const cmd = codex.buildLaunch({ ...base, intent: '', addDirs: ['/a'], codexPolicy: { sandbox, approval: 'on-request' } });
+    assert.match(cmd, /'--add-dir' '\/memory\/tasks\/T1'/);
+    assert.match(cmd, /'--add-dir' '\/a'/);
+  }
+  const ro = codex.buildLaunch({ ...base, intent: '', addDirs: ['/a'], codexPolicy: { sandbox: 'read-only' } });
+  assert.doesNotMatch(ro, /--add-dir/);
 });
 
 test('codexPolicy bypass drops sandbox, approval and network grant but keeps add-dirs and MCP', () => {
