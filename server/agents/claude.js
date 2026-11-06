@@ -6,7 +6,7 @@ import { claudeHistory } from './claude-history.js';
 import { claudePermissionArgs } from './permission-mode.js';
 import path from 'node:path';
 import { INSTALL_ROOT } from '../install-root.js';
-import { launchAddDirArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
+import { launchAddDirArgs, launchClaudeHooksOf, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { analyze, listResumable, activityInRange, findTranscript, subagentDetail } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
@@ -47,11 +47,15 @@ export const PR_FOOTER_DEP_PATH = path.join(INSTALL_ROOT, 'server', 'pr-footer.j
 //     notifications) through. These sessions bypass permissions, so without it
 //     Claude holds every inbound message for approval, then drops it. Set here,
 //     per session, never in the user's own settings.
-function launchSettings() {
+//   - the enabled extensions' `claudeHooks` (launch-context.js), appended AFTER
+//     core's groups per event, so they add to core's hooks and never replace them.
+export function launchSettings(launchContext) {
+  const hooks = { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: PR_HOOK_PATH }] }] };
+  for (const [event, groups] of Object.entries(launchClaudeHooksOf(launchContext))) hooks[event] = [...(hooks[event] || []), ...groups];
   return JSON.stringify({
     tui: 'fullscreen',
     crossSessionInbound: 'accept',
-    hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: PR_HOOK_PATH }] }] },
+    hooks,
   });
 }
 
@@ -135,7 +139,7 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   full.push(
     '--mcp-config', claudeMcpConfigArg(sessionId),
     '--allowedTools', allowedToolsArg(),
-    '--settings', launchSettings(),
+    '--settings', launchSettings(launchContext),
     // The wrangler-meta skills (task-memory, links, spawn-session) load on every
     // launch, fork, and resume — cwd-independent, surviving a mid-session cd.
     '--plugin-dir', AGENT_SKILLS_PLUGIN_DIR,

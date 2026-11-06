@@ -20,13 +20,22 @@ import { devcontainer } from './devcontainer.js';
 //                dialog disables the option for one. `local` takes every agent;
 //                devcontainer leaves it out, since its status and cost hooks read
 //                Claude paths. See runtimeAgentError.
-//   wrapLaunch   async ({ inner, cwd, sessionId, parentId, worktree, workflow, launchContext })
+//   wrapLaunch   async ({ inner, cwd, sessionId, parentId, worktree, workflow, launchContext, secretEnvFile })
 //                → the command tmux actually runs. Receives the agent's already-built
 //                inner command and returns it decorated (local: identity;
 //                devcontainer: a `devcontainer up && docker cp && exec` script).
 //                `workflow` is absent on fork (forks don't carry it). `parentId` is
 //                present on fork ONLY: the parent card's id, so a runtime can find
 //                state it keyed by the parent (onFork fires after the launch).
+//   secretEnv    (optional, default falsey) true ⇒ wrapLaunch is handed
+//                `secretEnvFile`, the host path of the launch's secret-variable file
+//                (launch-secrets.js), or null, and MUST get the variables to the
+//                agent and delete the file (local: `sourceSecretEnv` on the host;
+//                devcontainer: copy in, delete on the host, source and delete inside).
+//                Any other runtime is never handed one: its secret variables are
+//                skipped and logged by name, since an unread file would linger.
+//                Built-in only: an extension's runtime cannot declare it, and its
+//                wrapLaunch sees the launchContext without `secretEnv`.
 //   buildLaunch  async ({ phase, intent, cwd, sessionId, model, ext }) → the WHOLE
 //                pane command, replacing the agent adapter's (for a runtime whose
 //                agent is not a local process at all, e.g. a hand-off to a remote

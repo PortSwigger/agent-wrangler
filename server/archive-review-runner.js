@@ -1,7 +1,7 @@
 import { adapterFor } from './agents/index.js';
 import { findTranscript, readLines, textOf, usageSince } from './transcript-reader.js';
 import { runHeadlessClaude } from './headless-claude.js';
-import { collectLaunchContext } from './launch-context.js';
+import { collectLaunchContext, launchProcessEnv } from './launch-context.js';
 import { logError } from './log.js';
 import { archiveReviewEnabled } from './config-store.js';
 
@@ -181,7 +181,8 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
   return runQueued(async () => {
     let env;
     try {
-      ({ env } = await launchContext({ sid: sessionId, task, agent: 'claude', runtime: entry?.runtime || 'local', reason: 'headless' }));
+      // env and secretEnv together, in-process: the review's child env, not argv.
+      env = launchProcessEnv(await launchContext({ sid: sessionId, task, agent: 'claude', runtime: entry?.runtime || 'local', reason: 'headless' }));
     } catch (err) {
       onError(`archive review skipped for ${sessionId}: ${err.message}`);
       return 'skipped';

@@ -1,3 +1,4 @@
+import { sourceSecretEnv } from '../launch-secrets.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -125,6 +126,15 @@ export function launchInputs(sessionId, { workflow = false, launchContext = null
   return inputs;
 }
 
+// Where a launch's secret-variable file (launch-secrets.js) lands in the container.
+// Directly under /tmp, not in /tmp/aw-<sid>: that directory is created by root, so
+// the container user could read a file it owns there but not delete it, and the
+// `rm` before the agent starts would fail the launch. /tmp is sticky and
+// world-writable, so a file's owner may always remove it.
+export function secretEnvDest(sessionId) {
+  return `/tmp/aw-secret-${sessionId}.env`;
+}
+
 // The whole launch as ONE shell script the tmux pane runs (the pane is a host tmux,
 // so docker/devcontainer resolve on the host — which is why input copy works on a
 // COLD dispatch: `up` first, then discover the container id by label, copy each input
@@ -132,9 +142,17 @@ export function launchInputs(sessionId, { workflow = false, launchContext = null
 // src→dest substitution in the inner command. `-L` follows the notes symlink; parents
 // are mkdir'd because docker cp won't create the destination parent. The URL rewrite
 // (127.0.0.1 → host.docker.internal) runs last, over the already-path-translated inner.
+//
+// A launch with secret variables (`secretEnvFile`, launch-secrets.js) copies that
+// host file to secretEnvDest, deletes it on the host, and hands it to the
+// container user: `docker cp` leaves it owned by root or the host uid, and the
+// file is 0600, so it is chowned (as root) to the uid `devcontainer exec` runs as.
+// The in-container command sources and deletes it before the agent starts. It is
+// deliberately not an `input`: it is never substituted into the command and
+// never followed with -L.
 export function buildPaneScript({
   inner, hostDir, sessionId, workflow = false, hostAddr = DEFAULT_HOST_ADDR, launchContext = null,
-  inputs = launchInputs(sessionId, { workflow, launchContext }),
+  inputs = launchInputs(sessionId, { workflow, launchContext }), secretEnvFile = null,
 }) {
   const wf = shellQuote(hostDir);
   let translated = inner;
@@ -145,6 +163,8 @@ export function buildPaneScript({
     if (substitute) translated = translated.split(src).join(dest);
   }
   translated = rewriteHostUrls(translated, hostAddr);
+  const secretDest = secretEnvFile ? secretEnvDest(sessionId) : null;
+  if (secretDest) translated = sourceSecretEnv(secretDest) + translated;
   const parents = [...new Set(inputs.map(({ dest }) => dest.slice(0, dest.lastIndexOf('/'))))];
   return [
     `devcontainer up --workspace-folder ${wf}`,
@@ -156,6 +176,12 @@ export function buildPaneScript({
     // nor root, so a plain `docker exec chmod` hits EPERM and — being `&&`-chained —
     // aborts the whole launch before claude ever starts. Root can always chmod.
     ...inputs.filter((i) => i.chmodX).map(({ dest }) => `docker exec -u root "$CID" chmod +x ${shellQuote(dest)}`),
+    ...(secretDest ? [
+      `docker cp ${shellQuote(secretEnvFile)} "$CID":${shellQuote(secretDest)}`,
+      `rm -f ${shellQuote(secretEnvFile)}`,
+      `docker exec -u root "$CID" chown "$(devcontainer exec --workspace-folder ${wf} id -u)" ${shellQuote(secretDest)}`,
+      `docker exec -u root "$CID" chmod 600 ${shellQuote(secretDest)}`,
+    ] : []),
     `devcontainer exec --workspace-folder ${wf} sh -lc ${shellQuote(translated)}`,
   ].join(' && ');
 }
@@ -164,8 +190,9 @@ export const devcontainer = {
   id: 'devcontainer',
   label: 'Devcontainer',
   skipsHostResumeGuard: true,
-  async wrapLaunch({ inner, cwd, sessionId, workflow = false, launchContext = null }) {
-    return buildPaneScript({ inner, hostDir: cwd, sessionId, workflow, launchContext });
+  secretEnv: true,
+  async wrapLaunch({ inner, cwd, sessionId, workflow = false, launchContext = null, secretEnvFile = null }) {
+    return buildPaneScript({ inner, hostDir: cwd, sessionId, workflow, launchContext, secretEnvFile });
   },
   // Dispatch preflight: refuse when the target repo has no devcontainer config,
   // rather than let `devcontainer up` try to synthesize one and die with an opaque

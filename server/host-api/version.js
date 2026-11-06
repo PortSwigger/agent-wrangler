@@ -443,12 +443,20 @@ import semver from 'semver';
 // `autoBlockSeconds`, the seconds that countdown had left when the board last
 // read the pane. A manifest that tells the two apart declares `^1.61.0`.
 //
-// 1.62.0 extends `waitingReason: 'permission'` to Codex: a Codex session row at
+// 1.62.0 adds `secretEnv` and `claudeHooks` to session.launchContext. `secretEnv`
+// is env whose values never reach argv, the tmux start command, logs or the
+// graph: a pane launch (local or devcontainer) sources and deletes a 0600 file
+// before the agent starts, and a headless launch, `sessions.launchEnv` included,
+// gets it in-process. `claudeHooks` adds PreToolUse and PostToolUse groups to a
+// Claude launch's --settings after core's own. An older server ignores both, so
+// a manifest that relies on either declares `^1.62.0`.
+//
+// 1.63.0 extends `waitingReason: 'permission'` to Codex: a Codex session row at
 // its command or patch approval prompt (`--ask-for-approval on-request`) is
 // needs-you with waitingFor 'Codex is asking for approval' and waitingReason
 // 'permission' (null before). A manifest that relies on Codex approvals
-// carrying the reason declares `^1.62.0`.
-export const HOST_API_VERSION = '1.62.0';
+// carrying the reason declares `^1.63.0`.
+export const HOST_API_VERSION = '1.63.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
