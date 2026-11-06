@@ -66,6 +66,7 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.60.0 per-day, per-model `days` on usage.byCard rows,
 // and 1.61.0 `waitingReason` 'permission' / 'auto-block' and `autoBlockSeconds` on session rows,
 // and 1.62.0 launch-context `secretEnv` and `claudeHooks`,
+// and 1.63.0 `waitingReason` 'permission' on Codex approval prompts,
 // and 1.64.0 the client `api.updateStatus()`,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the

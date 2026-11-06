@@ -512,7 +512,7 @@ export class SessionManager {
   // wins outright; otherwise the session's own stored choice (the dispatch
   // dialog's, or the Settings defaults it was dispatched with), and for a card
   // with none — launched before core stored one — Settings as they are now.
-  // Undefined only when that leaves nothing, i.e. core's historical flags.
+  // Undefined only when that leaves nothing, i.e. core's default flags.
   _codexPolicyFor(context, stored) {
     return this._extCodexPolicy(context) ?? cleanCodexPolicy(stored ?? this._codexPolicyDefaults());
   }

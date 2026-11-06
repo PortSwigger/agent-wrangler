@@ -225,6 +225,25 @@ export function codexUpdateState(paneText) {
   return null;
 }
 
+// Codex's approval overlay under `--ask-for-approval on-request`: "Would you like
+// to run the following command?" or "…make the following edits?" over a numbered
+// menu of two or three options. Verified live against codex-cli 0.166.0
+// (server/fixtures/codex-approval/). Anchored on the trailing menu and footer,
+// not the question: a long or multi-line command can push the question out of
+// the tail window, while nothing renders after the footer while Codex waits. The turn is blocked until the human answers,
+// so this runs before the working check and carries waitingReason 'permission'
+// like a Claude permission prompt.
+export function codexApprovalState(recent) {
+  if (
+    /^[\s›]*1\.\s*yes,\s*proceed\b/im.test(recent)
+    && /^[\s›]*\d\.\s*no,\s*and\s+tell\s+codex\s+what\s+to\s+do\s+differently\b/im.test(recent)
+    && /^\s*press\s+enter\s+to\s+confirm\s+or\s+esc\s+to\s+cancel\b/im.test(recent)
+  ) {
+    return { status: 'needs-you', waitingFor: 'Codex is asking for approval', waitingReason: 'permission' };
+  }
+  return null;
+}
+
 // Derive live state from the pane: only the "esc to interrupt" working signal
 // vs idle. The "needs you" (waiting) state comes from Claude's own session
 // file (status: 'waiting'), not from scraping the pane — pane scraping produced
@@ -234,6 +253,8 @@ export function classify(paneText, { tailLines = 12, strictWorking = false } = {
   const update = codexUpdateState(plain);
   if (update) return update;
   const recent = plain.split('\n').filter((l) => l.trim()).slice(-tailLines).join('\n');
+  const approval = codexApprovalState(recent);
+  if (approval) return approval;
   if (strictWorking ? paneHasWorkingStatus(recent) : /esc to interrupt/i.test(recent)) return { status: 'working' };
   // Verified against the real fresh-container login flow (Group G E2E capture):
   // the method-picker ("Select login method: 1. Claude account with

@@ -163,10 +163,10 @@ export function chatViewDefault(cfg = readConfig()) {
 // dispatch dialog's Advanced options prefill, and what a dispatch with no dialog
 // (spawn_session, a schedule) is stored with. Every field is always present, so
 // the dialog and Settings show a value rather than "unset"; the defaults are
-// exactly the flags core always launched Codex with. Set from Settings ›
+// core's own default flags (codexPolicyArgs(undefined)). Set from Settings ›
 // Sessions (config.json `codexPolicyDefaults`); a hand-edited bad value falls
 // back field by field. Takes cfg so tests never write the shared config.json.
-export const CODEX_POLICY_DEFAULTS = Object.freeze({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false });
+export const CODEX_POLICY_DEFAULTS = Object.freeze({ sandbox: 'workspace-write', approval: 'on-request', approveForMe: false, bypass: false });
 
 export function codexPolicyDefaults(cfg = readConfig()) {
   const raw = cfg.codexPolicyDefaults && typeof cfg.codexPolicyDefaults === 'object' ? cfg.codexPolicyDefaults : {};

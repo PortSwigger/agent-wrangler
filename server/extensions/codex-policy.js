@@ -84,15 +84,17 @@ export function codexPolicyAllowsAddDirs(policy) {
 
 const NETWORK_GRANT = ['-c', 'sandbox_workspace_write.network_access=true'];
 
-// The policy half of Codex's launch argv. `undefined` is byte-identical to the
-// flags core always used. The network grant is emitted only when the effective
+// The policy half of Codex's launch argv. `undefined` is core's default:
+// workspace-write with on-request approvals, so a command the sandbox would
+// block stops at Codex's approval prompt and the card shows needs-you
+// (tmux-scraper.js) rather than Codex carrying on unseen. The network grant is emitted only when the effective
 // sandbox is workspace-write: verified on 0.158.0 that it changes nothing under
 // read-only (network stays restricted) or danger-full-access (already enabled).
 export function codexPolicyArgs(policy) {
   if (policy?.bypass) return ['--dangerously-bypass-approvals-and-sandbox'];
   if (policy?.approveForMe) return ['--approve-for-me', ...NETWORK_GRANT];
   const sandbox = policy?.sandbox ?? 'workspace-write';
-  const args = ['--sandbox', sandbox, '--ask-for-approval', policy?.approval ?? 'never'];
+  const args = ['--sandbox', sandbox, '--ask-for-approval', policy?.approval ?? 'on-request'];
   if (sandbox === 'workspace-write') args.push(...NETWORK_GRANT);
   return args;
 }

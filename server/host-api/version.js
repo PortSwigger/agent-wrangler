@@ -451,6 +451,12 @@ import semver from 'semver';
 // Claude launch's --settings after core's own. An older server ignores both, so
 // a manifest that relies on either declares `^1.62.0`.
 //
+// 1.63.0 extends `waitingReason: 'permission'` to Codex: a Codex session row at
+// its command or patch approval prompt (`--ask-for-approval on-request`) is
+// needs-you with waitingFor 'Codex is asking for approval' and waitingReason
+// 'permission' (null before). A manifest that relies on Codex approvals
+// carrying the reason declares `^1.63.0`.
+//
 // 1.64.0 is the CLIENT half: `api.updateStatus()` (public/slots.js), the calling
 // extension's own `{ behind, commits, capped, branch, checkedAt }` from the
 // update checks its Extensions row reads, or null (built-in, hand-placed,
