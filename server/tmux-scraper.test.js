@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel, paneContextPercent, trustDialogState, isCompacting } from './tmux-scraper.js';
+import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel, paneContextPercent, trustDialogState, isCompacting, codexApprovalState } from './tmux-scraper.js';
 
 const ID = '53fa5416-3437-4126-897c-e1c0b3daa2ac';
 
@@ -803,4 +803,38 @@ test('isCompacting: needs both the compaction text and the working footer', () =
   assert.equal(isCompacting('• Compacting context (3s • esc to interrupt)\n'), true);
   assert.equal(isCompacting('I read about Compacting conversation earlier\n❯ \n'), false);
   assert.equal(isCompacting('✻ Thinking… (esc to interrupt)\n'), false);
+});
+
+// Captured live from codex-cli 0.166.0 under `--ask-for-approval on-request`,
+// local paths replaced with generic ones.
+const classifyTail = (text) => text.split('\n').filter((l) => l.trim()).slice(-12).join('\n');
+const codexApproval = (name) => fs.readFileSync(new URL(`./fixtures/codex-approval/${name}.txt`, import.meta.url), 'utf8');
+
+test('classify: Codex command and patch approval prompts are needs-you with waitingReason permission', () => {
+  for (const name of ['command', 'patch', 'command-two-options']) {
+    assert.deepEqual(classify(codexApproval(name)), {
+      status: 'needs-you', waitingFor: 'Codex is asking for approval', waitingReason: 'permission',
+    }, name);
+  }
+});
+
+test('classify: a Codex approval prompt wins over a stale working footer above it', () => {
+  const pane = `• Working (2s • esc to interrupt)\n${codexApproval('command')}`;
+  assert.equal(classify(pane, { tailLines: 30 }).status, 'needs-you');
+});
+
+test('classify: a long command that pushes the question out of the tail still reads as approval', () => {
+  // The two-option capture is already one: its heredoc pushes "Would you like
+  // to run…" past the 12-line tail.
+  assert.doesNotMatch(classifyTail(codexApproval('command-two-options')), /would you like/i);
+  assert.equal(classify(codexApproval('command-two-options')).status, 'needs-you');
+  const pane = codexApproval('command').replace('$ curl', `$ ${Array.from({ length: 20 }, (_, i) => `echo ${i} &&`).join('\n  ')} curl`);
+  assert.equal(classify(pane).status, 'needs-you');
+});
+
+test('codexApprovalState ignores prose and an answered prompt', () => {
+  assert.equal(codexApprovalState('I said "Yes, proceed" and press enter to confirm or esc to cancel.'), null);
+  assert.equal(classify('• Ran curl -sI https://example.com\n  └ HTTP/2 200\n\n› Ask Codex to do anything\n  ? for shortcuts').status, 'idle');
+  // The Claude trust fallback and Codex's own trust dialog keep their own labels.
+  assert.equal(classify('  1. Yes, continue\n  2. No, quit\n  Press enter to continue').waitingFor, 'Codex is asking whether to trust this folder');
 });

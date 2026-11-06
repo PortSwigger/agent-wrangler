@@ -1673,7 +1673,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   'permission' (a prompt) or 'auto-block'. 'auto-block' is Claude Code's timed
   auto-mode safety check, which denies itself when its countdown runs out, and
   `autoBlockSeconds` (1.61.0) is the time it had left when the board last read the
-  pane (`null` otherwise). The board still shows it as needs-you.
+  pane (`null` otherwise). The board still shows it as needs-you. From 1.62.0 a
+  Codex session at its command or patch approval prompt is needs-you with
+  waitingReason 'permission' and waitingFor 'Codex is asking for approval'.
 - **`host.events`** (capability `events`, 1.17.0): `on(name, fn)` and `emit(name, payload)`.
   Subscriber errors are caught and logged per handler, `emit` does not wait, and
   an extension's subscriptions are dropped when it deactivates, so a disabled

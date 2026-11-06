@@ -526,12 +526,14 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     const paneTarget = sessionManager?.paneTargetFor?.(s.sessionId) ?? tmux;
     const paneText = paneTarget ? await capture(paneTarget, 60, sessionManager?.socketOf?.(tmux) ?? '') : '';
     let scrapeWaitingFor = null;
+    let scrapeWaitingReason = null;
     if (status === 'scrape') {
       if (!tmux) status = 'unknown';
       else if (adapterFor(agentId).statusSource === 'codex-rollout') {
         const c = await codexStatus({ liveSid: mapEntry?.liveSessionId, paneText });
         status = c.status;
         scrapeWaitingFor = c.waitingFor;
+        scrapeWaitingReason = c.waitingReason || null;
       } else status = paneText === '' ? 'unknown' : classifyPane(paneText, agentId).status;
     }
     // Claude's own 'shell' status (→ working) means "a Bash tool is tracked as
@@ -567,7 +569,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       hasBackgroundShell,
       rawStatus: s.status || null,
       waitingFor: apiError ? apiError.waitingFor : (s.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? null),
+      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? (status === 'needs-you' ? scrapeWaitingReason : null)),
       autoBlockSeconds: waiting?.autoBlockSeconds ?? null,
       kind: s.kind || worker?.dispatch?.source || 'unknown',
       cwd,
@@ -697,12 +699,14 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // the status — only meaningful on the scrape branch, since a recognized live
     // status above already has its own waitingFor (needs-you) or none (working/idle).
     let scrapeWaitingFor = null;
+    let scrapeWaitingReason = null;
     if (status === 'scrape') {
       const c = adapterFor(agentId).statusSource === 'codex-rollout'
         ? await codexStatus({ liveSid: live?.liveSid || appEntry.liveSessionId, paneText })
         : paneText === '' ? { status: 'unknown' } : classifyPane(paneText, agentId);
       status = c.status;
       scrapeWaitingFor = c.waitingFor || null;
+      scrapeWaitingReason = c.waitingReason || null;
     }
     // Same override as the managed-session pass above: Claude's 'shell' status
     // can go stale for as long as a detached background job runs, well past the
@@ -746,7 +750,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       hasBackgroundShell,
       rawStatus: null,
       waitingFor: apiError ? apiError.waitingFor : (live?.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? null),
+      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? (status === 'needs-you' ? scrapeWaitingReason : null)),
       autoBlockSeconds: waiting?.autoBlockSeconds ?? null,
       kind: 'tmux',
       cwd: fcwd,

@@ -24,5 +24,9 @@ export async function codexStatus({ liveSid, paneText, now = Date.now(), dataDir
   const rollout = liveSid ? await findRollout(liveSid, sessionsDir) : null;
   const marks = await readTurnMarks(rollout);
   const status = codexLiveStatus({ paneStatus: pane.status, marks, turnEnd, now });
-  return { status, waitingFor: pane.waitingFor || null };
+  return {
+    status,
+    waitingFor: pane.waitingFor || null,
+    waitingReason: status === 'needs-you' ? pane.waitingReason || null : null,
+  };
 }

@@ -442,7 +442,13 @@ import semver from 'semver';
 // safety check, which denies itself when its countdown runs out. It adds
 // `autoBlockSeconds`, the seconds that countdown had left when the board last
 // read the pane. A manifest that tells the two apart declares `^1.61.0`.
-export const HOST_API_VERSION = '1.61.0';
+//
+// 1.62.0 extends `waitingReason: 'permission'` to Codex: a Codex session row at
+// its command or patch approval prompt (`--ask-for-approval on-request`) is
+// needs-you with waitingFor 'Codex is asking for approval' and waitingReason
+// 'permission' (null before). A manifest that relies on Codex approvals
+// carrying the reason declares `^1.62.0`.
+export const HOST_API_VERSION = '1.62.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
