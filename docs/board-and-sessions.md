@@ -123,6 +123,7 @@ Each task also has:
 - **Task memory:** shared Markdown that humans and agents can update across sessions or repositories. It is the built-in `task-memory` extension (Settings > Extensions); turning it off removes the memory button, the `AW_TASK_MEMORY` variable, the extra directory grant and the skill, and keeps the notes on disk.
 - **Links:** Jira issues and pull requests shared by the task.
 - **Focus, minimise, and activity sort:** controls for a busy board. Minimise is in both the header menu and the tile's right-click menu.
+- **Clear statuses:** in both task menus, including Unassigned, when something in the task is flashing. It quiets every session in the task, nested ones included: done and unread alarms clear, woken snoozes are dismissed, and needs-you cards stop flashing but keep their red stripe. Sessions still snoozed are left asleep.
 - **Archive task:** removes the task and live sessions while preserving resumable history.
 
 Use task memory for durable decisions, the checklist for session progress, and `AGENTS.md` or

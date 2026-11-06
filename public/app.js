@@ -65,6 +65,7 @@ import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
 import { createBoardOpen } from './board-open.js';
 import { onBoard } from './off-board.js';
+import { clearableSessions } from './clear-statuses.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
@@ -2979,6 +2980,36 @@ function openModelMenu(sessionId, x, y) {
   ], x, y);
 }
 
+function clearableInTask(taskId) {
+  const isAdhoc = taskId === ADHOC_ID;
+  const sessions = onBoard(latestSessions).filter((s) => {
+    const tid = assignedTaskId(s.sessionId);
+    return isAdhoc ? !tid : tid === taskId;
+  });
+  return clearableSessions(sessions, { justFinished, unread, isAcknowledged, phaseOf });
+}
+
+function clearTaskStatuses(taskId) {
+  let hadUnread = false;
+  let hadJustFinished = false;
+  for (const s of clearableInTask(taskId)) {
+    acknowledgedAt.set(s.sessionId, s.updatedAt ?? null);
+    if (justFinished.delete(s.sessionId)) hadJustFinished = true;
+    if (unread.delete(s.sessionId)) hadUnread = true;
+    if (phaseOf(s) === 'awake') send({ type: 'snooze-clear', sessionId: s.sessionId });
+  }
+  persistAcknowledged();
+  if (hadJustFinished) persistJustFinished();
+  if (hadUnread) persistUnread();
+  if (currentView === 'grid') renderGrid();
+}
+
+function clearStatusesMenuItems(taskId) {
+  return clearableInTask(taskId).length
+    ? [{ label: 'Clear statuses', icon: BELL_ICON, run: () => clearTaskStatuses(taskId) }]
+    : [];
+}
+
 // The task tile's kebab menu combines view actions and extension task actions.
 // Archive is available only for real tasks. Sort stays open as a ticked toggle.
 function openTaskActionsMenu(taskId, x, y) {
@@ -2990,6 +3021,7 @@ function openTaskActionsMenu(taskId, x, y) {
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
     taskMinimiseMenuItem(taskId),
+    ...clearStatusesMenuItems(taskId),
     { label: 'Sort by activity', icon: SORT_ICON, keepOpen: true, trailing: sortOn ? CHECK_ICON : '',
       run: (e) => {
         toggleActivitySort(taskId);
@@ -3095,6 +3127,7 @@ function openTaskMenu(cell, x, y) {
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
     ] : []),
     taskMinimiseMenuItem(isNoTask ? ADHOC_ID : taskId),
+    ...clearStatusesMenuItems(isNoTask ? ADHOC_ID : taskId),
     ...(extItems.length ? [{ sep: true }, ...extItems] : []),
     ...(!isNoTask ? [
       { sep: true },
