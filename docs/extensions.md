@@ -256,7 +256,7 @@ have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 | Capability | Host surface |
 | --- | --- |
 | `sessions:spawn` | `host.sessions.spawn(options)` launches a session with the supplied dispatch fields. |
-| `sessions:env` (1.48.0) | `host.sessions.launchEnv({ agent?, sessionId?, ext? })` collects a headless environment for any card, including credentials from other extensions, rejecting a deliberate hook refusal. |
+| `sessions:env` (1.48.0) | `host.sessions.launchEnv({ agent?, sessionId?, ext? })` collects a headless environment for any card, including credentials from other extensions (their `secretEnv` too, 1.62.0, merged into `env`), rejecting a deliberate hook refusal. |
 
 The remainder is the maintainer reference. Read it before changing `server/extensions/**`,
 `server/host-api/**`, `public/slots.js`, or `public/extensions*.js`.
@@ -1596,7 +1596,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 ## Launch context, events and lifecycle
 
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, grantPaths, runtime,
-  reason, parentId?, ext, host }`, returns `{ env?, addDirs?, codexConfig?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
+  reason, parentId?, ext, host }`, returns `{ env?, secretEnv?, addDirs?, codexConfig?, claudeHooks?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
   collisions logged; names must be `UPPER_SNAKE`, and core's own variables are
   written after, so an extension can never override `AW_SESSION_ID`) and
@@ -1649,6 +1649,52 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   visible in argv, `ps` and the tmux pane, so pass only nonsecret settings such
   as `cli_auth_credentials_store = "keyring"`. A runtime that builds its own
   launch gets none of the context, this field included.
+  `secretEnv` (1.62.0) is `{ NAME: 'value' }` for values that must stay out of
+  argv, the tmux start command, logs and the graph, for Claude and Codex alike.
+  Names follow the `env` rules and merge across extensions the same way
+  (later wins; collisions logged by name). A name set in both `env` and
+  `secretEnv` is delivered as a secret only. For a local or devcontainer
+  dispatch, resume or fork, the server writes `export NAME='value'` lines to a
+  0600 file in `<AW_DATA_DIR>/launch-secrets/` and the pane command carries only
+  its path: the pane sources the file and deletes it before the agent starts. A
+  devcontainer launch copies the file into the container as
+  `/tmp/aw-secret-<sid>.env`, deletes the host copy, hands it to the container
+  user, and sources and deletes it inside. A headless launch, including
+  `host.sessions.launchEnv`, returns the variables merged into `env`, for the
+  caller to pass to its child process in-process. A runtime contributed by an
+  extension, or one that builds its own launch, cannot take them: they are
+  skipped and the skip is logged by name, and its `wrapLaunch` sees the launch
+  context without `secretEnv`. Dropped entries are logged with their name only,
+  never their value. Limits: the agent's own environment is still readable by
+  the same OS user (`ps eww`, `/proc/<pid>/environ`), and every command the
+  agent runs inherits the variables, so keeping them out of the agent's output
+  is up to the extension (see `claudeHooks`). A file left by a pane that never
+  started is deleted after an hour.
+  `claudeHooks` (1.62.0) adds Claude Code hooks to a Claude dispatch, resume and
+  fork: `{ PreToolUse?: [group], PostToolUse?: [group] }`, where a group is
+  `{ matcher?: string, hooks: [{ type: 'command', command: string, timeout?:
+  seconds }] }`, the shape Claude's own settings use. Groups are appended after
+  core's own for each event in the launch's `--settings`, in extension order, so
+  they never displace core's PR-attach `PostToolUse` hook; a user's own
+  `settings.json` hooks still run too. Malformed groups and other events are
+  dropped and logged. Codex launches ignore the field. The `--settings` value is
+  in argv, so a command must carry no secret. In a devcontainer the command runs
+  inside the container: grant its directory through `addDirs` and the path is
+  copied in and rewritten like any other granted path. Example, a PreToolUse
+  hook that rewrites every Bash command:
+
+  ```js
+  hooks: {
+    'session.launchContext': async ({ agent }) => ({
+      secretEnv: { ACME_TOKEN: await readToken() },
+      env: { ACME_MASKED_NAMES: 'ACME_TOKEN' },
+      addDirs: [hookDir],
+      claudeHooks: agent === 'claude'
+        ? { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: `${hookDir}/mask-bash.mjs` }] }] }
+        : undefined,
+    }),
+  },
+  ```
   `ext` (1.48.0) is this extension's narrowed dispatch-data slice or `null`, for
   every reason, including `headless` runs on behalf of a card or stored launch.
   Headless requests must leave the card's live session bindings unchanged; hooks
@@ -1890,7 +1936,8 @@ runtimes: [{
 ```
 
 Each entry needs exactly one of `wrapLaunch({ inner, cwd, sessionId, parentId, worktree,
-workflow, launchContext })` (decorate the agent's command; `parentId`, 1.29.0, is the
+workflow, launchContext })` (`launchContext` never carries `secretEnv`; an extension's
+runtime cannot take secret variables, see `session.launchContext`) (decorate the agent's command; `parentId`, 1.29.0, is the
 parent card's id and is passed on fork only) or `buildLaunch({ phase, intent, cwd,
 sessionId, model, ext })` (return the whole pane command instead). Optional:
 `preflight` (return a string to refuse the dispatch before anything is created),
