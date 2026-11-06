@@ -134,6 +134,44 @@ export const SETTINGS = [
     help: 'Pre-selects the Runtime field when you start a session. If the runtime is no longer offered (its extension is off) or cannot run the chosen agent, the session starts on Local. Resumed and forked sessions keep their own runtime.',
     default: 'local',
   },
+  // Settings › Sessions' Codex defaults: one config.json object
+  // (`codexPolicyDefaults`), one row per field. What the dispatch dialog's Codex
+  // controls prefill from, and what a dispatch with no dialog (spawn_session, a
+  // schedule saved without one) launches with.
+  {
+    id: 'codexDefaultSandbox',
+    type: 'segmented',
+    scope: 'server',
+    options: [{ value: 'read-only', label: 'read-only' }, { value: 'workspace-write', label: 'workspace-write' }, { value: 'danger-full-access', label: 'danger-full-access' }],
+    label: 'Codex sandbox for new sessions',
+    help: 'Where a new Codex session may write. The dispatch dialog\'s Advanced options start from this and can change it per session; a session keeps the choice it was started with across resumes and forks.',
+    default: 'workspace-write',
+  },
+  {
+    id: 'codexDefaultApproval',
+    type: 'segmented',
+    scope: 'server',
+    options: [{ value: 'on-request', label: 'on-request' }, { value: 'never', label: 'never' }],
+    label: 'Codex approvals for new sessions',
+    help: 'Whether Codex stops to ask before a command its sandbox would block. on-request waits for you in the session; never lets Codex carry on without asking.',
+    default: 'never',
+  },
+  {
+    id: 'codexDefaultApproveForMe',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Codex approves for me by default',
+    help: 'Routes approval requests through Codex\'s automatic review instead of you. Implies workspace-write and on-request, so it replaces the two settings above.',
+    default: false,
+  },
+  {
+    id: 'codexDefaultBypass',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Codex bypasses sandbox and approvals by default',
+    help: 'Dangerous: runs model-generated commands with no sandbox and no approvals. Replaces every Codex setting above.',
+    default: false,
+  },
   {
     id: 'terminalSide',
     type: 'segmented',
@@ -172,6 +210,7 @@ export const SETTINGS_TABS = [
     settingIds: [
       'subagentsExpandedByDefault',
       'childFullViewByDefault', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
+      'codexDefaultSandbox', 'codexDefaultApproval', 'codexDefaultApproveForMe', 'codexDefaultBypass',
     ],
   },
   {

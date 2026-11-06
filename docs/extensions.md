@@ -881,11 +881,22 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   bypass }`, validated by `server/extensions/codex-policy.js`: an invalid field
   is dropped and the rest applies, bypass is exclusive, and a combination Codex
   refuses (its `INCOMPATIBLE` table) drops the named field. The first answer
-  wins and a later one is logged as a collision; a throw fails open to the core
-  defaults (`--sandbox workspace-write --ask-for-approval never` plus the
-  network grant). It is synchronous (a Promise is dropped) and consulted only
-  for Codex, through the `_extCodexPolicy` seam; a new launch path must thread
-  `codexPolicy` too. **`hideTool` is the one surface that shapes tools an
+  wins and a later one is logged as a collision. With no answer (none given, or
+  a throw, which fails open) core's own choice applies: the policy stored on the
+  session's mapping entry (`entry.codexPolicy`: the dispatch dialog's Advanced
+  options pick, or Settings › Sessions' Codex defaults for a dispatch without
+  the dialog; copied by forkEntry and resumeEntry, gone with the entry on
+  purge), else Settings as they are now. The shipped Settings defaults are core's
+  historical flags (`--sandbox workspace-write --ask-for-approval never` plus the
+  network grant). So an extension answer always wins over the built-in picker.
+  It is synchronous (a Promise is dropped) and consulted only for Codex, through
+  the `_extCodexPolicy` seam inside `SessionManager._codexPolicyFor`; a new
+  launch path must thread `codexPolicy` too. Under a `read-only` sandbox the
+  adapter leaves out every `--add-dir` grant, because Codex refuses to start
+  with one there (`codexPolicyAllowsAddDirs`). The picker was the `aw-codex-policy`
+  extension before it was built in: an installed copy is quarantined at
+  discovery and refused at install (`FOLDED_INTO_CORE`, `extensions/external.js`)
+  so its hooks never double up with core's. **`hideTool` is the one surface that shapes tools an
   extension does NOT own, and it is a VETO that fails OPEN** — `buildMcpServer`
   filters `activeTools()` per request through `deps.ext.hideTool`, a throwing
   filter hides nothing and is logged, because this is a UX narrowing over an

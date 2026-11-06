@@ -12,7 +12,7 @@ import { analyzeCodex, listResumableCodex, activityInRangeCodex, codexContextWin
 import { discoverCodexLiveId } from './codex-discover.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { codexMcpConfigArgs, MCP_TOKEN_ENV, prModelUrl } from '../mcp/client-config.js';
-import { codexPolicyArgs } from '../extensions/codex-policy.js';
+import { codexPolicyArgs, codexPolicyAllowsAddDirs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
 import { tomlString, notifyOverride } from '../codex-notify-config.js';
 import { postToolHookOverrides } from '../codex-hook-config.js';
@@ -68,8 +68,12 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
   args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
   for (const o of postToolHookOverrides(`${shellQuote(process.execPath)} ${shellQuote(PR_FOOTER_HOOK_PATH)}`)) args.push('-c', o);
-  args.push(...launchAddDirArgs(launchContext));
-  for (const d of addDirs) args.push('--add-dir', d);
+  // A read-only sandbox refuses any --add-dir and the launch dies (see
+  // codexPolicyAllowsAddDirs); it reads every folder anyway.
+  if (codexPolicyAllowsAddDirs(codexPolicy)) {
+    args.push(...launchAddDirArgs(launchContext));
+    for (const d of addDirs) args.push('--add-dir', d);
+  }
   args.push(...codexMcpConfigArgs());
   return args;
 }

@@ -36,7 +36,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, modelsWithDefault, validateDefaultModel, providerMetadata, registeredAgents } from './agents/index.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
@@ -1098,6 +1098,7 @@ async function rebuildOnce() {
   graph.chatViewDefault = chatViewDefault();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();
+  graph.codexPolicyDefaults = codexPolicyDefaults();
   graph.autoUpdate = autoUpdateMode();
   graph.refreshSessionsAfterUpdate = refreshSessionsAfterUpdate();
   graph.codeVersion = codeVersion;

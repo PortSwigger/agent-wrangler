@@ -139,6 +139,8 @@ export function unconsentedCapabilities(requires, record) {
 // `importViolation` is deliberately NOT part of this: it runs BEFORE the import,
 // and both callers have to run it there rather than after the fact.
 export function admitExternal(manifest, base) {
+  const folded = foldedIntoCore(base.id);
+  if (folded) return { ok: false, quarantine: folded };
   if (!manifest || typeof manifest !== 'object') return { ok: false, quarantine: 'index.js has no default-exported manifest object' };
   // EXTERNAL ONLY: the id and the directory name must agree, or the on-disk
   // layout lies about what is installed — the provenance record, the /ext/<id>/
@@ -155,6 +157,18 @@ export function admitExternal(manifest, base) {
   // `dir` from import.meta.url, and for an installed one the discovered path is
   // the authority (validateManifest resolves `client`/`styles` under it).
   return { ok: true, entry: { ...manifest, ...base } };
+}
+
+// Installed extensions whose feature now ships in core, by directory name, each
+// with what replaced it. Core never loads one (its hooks would double up with
+// the built-in), so discovery quarantines it before importing anything and an
+// install refuses it; the row stays visible so it can be uninstalled.
+export const FOLDED_INTO_CORE = {
+  'aw-codex-policy': 'Codex sandbox & approvals is built in now (Settings › Sessions and the dispatch dialog\'s Advanced options) — uninstall this extension',
+};
+
+export function foldedIntoCore(id) {
+  return Object.hasOwn(FOLDED_INTO_CORE, id) ? FOLDED_INTO_CORE[id] : null;
 }
 
 // An interrupted install leaves nothing but a staging directory, which is the
@@ -191,6 +205,8 @@ export async function discoverExternal({ dir = externalDir(), provenance = readP
     // name available then. `provenance: null` is what marks an entry as
     // not-updatable (there is no originUrl to re-clone).
     const base = { id: name, dir: extDir, external: true, provenance: provenance?.[name] ?? null };
+    const folded = foldedIntoCore(name);
+    if (folded) { out.push({ ...base, quarantine: folded }); continue; }
     const violation = importViolation(extDir);
     if (violation) { out.push({ ...base, quarantine: violation }); continue; }
     let manifest;
