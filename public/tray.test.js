@@ -103,6 +103,7 @@ for (const adhoc of [false, true]) test(`both task menus preserve extension acti
     mountMenu: (value) => { items = value; },
     FOCUS_ICON: '', MINIMISE_ICON: '', SORT_ICON: '', CHECK_ICON: '', ARCHIVE_ICON: '', TERMINAL_ICON: '', PENCIL_ICON: '',
     focusOnly() {}, minimise() {},
+    clearStatusesMenuItems: (taskId) => [{ label: 'Clear statuses', run: () => taskId }],
   };
   const menus = new Function(...Object.keys(scope), `
     ${['extTaskMenuItems', 'taskMinimiseMenuItem', 'openTaskActionsMenu', 'openTaskMenu'].map(declaration).join('\n')}
@@ -121,6 +122,7 @@ for (const adhoc of [false, true]) test(`both task menus preserve extension acti
     assert.ok(!items[0].sep && !items.at(-1).sep);
     assert.ok(items.every((item, i) => !item.sep || !items[i - 1]?.sep));
     assert.equal(items.find((x) => x.label === 'Manage profiles…').run(), id);
+    assert.equal(items.find((x) => x.label === 'Clear statuses').run(), id);
   }
   open[0]();
   assert.ok(items.some((x) => x.label === 'Focus'));
