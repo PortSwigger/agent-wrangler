@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldReloadForVersion, updateSummary, updateAvailable, rolledBackText, updateToastText, installDriftNotice, outdatedExtensions, changesText, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdateLineText } from './update-panel.js';
+import { shouldReloadForVersion, updateSummary, updateAvailable, rolledBackText, updateToastText, installDriftNotice, outdatedExtensions, changesText, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdateLineText, extUpdateStatusFor } from './update-panel.js';
 
 test('a page reloads only when a known code version changes', () => {
   assert.equal(shouldReloadForVersion(null, 'abc'), false, 'first connect just records it');
@@ -195,4 +195,44 @@ test('reconnecting after a restart re-enables the Updates restart button', async
   assert.equal(host.children[0].children[0].children[1].disabled, true);
   vm.runInNewContext(configBody, ctx);
   assert.equal(host.children[0].children[0].children[1].disabled, false);
+});
+
+// ── extUpdateStatusFor: what an extension's api.updateStatus() returns ──
+const bgSummary = {
+  checkedAt: 1000,
+  extensions: [
+    { id: 'behind', updatable: true, branch: 'main', sha: 'a', remoteSha: 'b', behind: true, commits: 7, capped: false },
+    { id: 'current', updatable: true, branch: 'next', sha: 'c', remoteSha: 'c', behind: false },
+    { id: 'capped', updatable: true, branch: 'main', sha: 'd', remoteSha: 'e', behind: true, commits: 50, capped: true },
+    { id: 'broken', updatable: true, branch: 'main', error: 'ls-remote failed' },
+  ],
+};
+
+test('extUpdateStatusFor reads the background check: behind, up to date and capped', () => {
+  const at = (id) => extUpdateStatusFor(id, { background: bgSummary });
+  assert.deepEqual(at('behind'), { behind: true, commits: 7, capped: false, branch: 'main', checkedAt: 1000 });
+  assert.deepEqual(at('current'), { behind: false, commits: 0, capped: false, branch: 'next', checkedAt: 1000 });
+  assert.deepEqual(at('capped'), { behind: true, commits: 50, capped: true, branch: 'main', checkedAt: 1000 });
+});
+
+test('extUpdateStatusFor is null for built-in, hand-placed, failed, unchecked and updates-off', () => {
+  assert.equal(extUpdateStatusFor('builtin', { background: bgSummary }), null, 'not in any check');
+  assert.equal(extUpdateStatusFor('handplaced', { background: bgSummary, checkAll: { handplaced: { id: 'handplaced', updatable: false } } }), null);
+  assert.equal(extUpdateStatusFor('broken', { background: bgSummary }), null, 'a failed check is no answer');
+  assert.equal(extUpdateStatusFor('behind', {}), null, 'before the first check');
+  assert.equal(extUpdateStatusFor('behind', { mode: 'off', background: bgSummary }), null);
+  assert.equal(extUpdateStatusFor('behind', { mode: 'off', checkAll: { behind: { id: 'behind', updatable: true, behind: true, remoteSha: 'b' } }, checkAllAt: 5 }), null);
+});
+
+test('extUpdateStatusFor puts Check all over the background check, borrowing its count for the same head', () => {
+  const opts = (checkAll) => ({ mode: 'auto', background: bgSummary, checkAll, checkAllAt: 2000 });
+  assert.deepEqual(extUpdateStatusFor('behind', opts({ behind: { id: 'behind', updatable: true, branch: 'main', remoteSha: 'b', behind: true } })),
+    { behind: true, commits: 7, capped: false, branch: 'main', checkedAt: 2000 });
+  assert.deepEqual(extUpdateStatusFor('behind', opts({ behind: { id: 'behind', updatable: true, branch: 'main', remoteSha: 'z', behind: true } })),
+    { behind: true, commits: 1, capped: true, branch: 'main', checkedAt: 2000 }, 'a moved head is at least one, uncounted');
+  assert.deepEqual(extUpdateStatusFor('behind', opts({ behind: { id: 'behind', updatable: true, branch: 'main', remoteSha: 'a', behind: false } })),
+    { behind: false, commits: 0, capped: false, branch: 'main', checkedAt: 2000 }, 'updated since the tick');
+  assert.deepEqual(extUpdateStatusFor('behind', opts({ behind: { incompatible: 'needs ^2.0.0' } })),
+    { behind: true, commits: 7, capped: false, branch: 'main', checkedAt: 1000 }, 'a bare incompatible patch falls back to the tick');
+  assert.equal(extUpdateStatusFor('current', opts({ current: { id: 'current', updatable: true, error: 'offline' } })), null);
 });

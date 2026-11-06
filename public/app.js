@@ -40,7 +40,7 @@ import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { updatePanelEl, restartPanelEl, shouldReloadForVersion, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
+import { updatePanelEl, restartPanelEl, shouldReloadForVersion, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl, extUpdateStatusFor } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -396,6 +396,8 @@ const extApi = {
   // Back `api.earlyAdopter`; slots binds the id.
   earlyAdopterFor: (extId) => extEarlyAdopter.get(extId),
   setEarlyAdopter: setEarlyAdopterAcked,
+  // Backs `api.updateStatus()`; slots binds the id.
+  updateStatusFor: (extId) => extUpdateStatusFor(extId, { mode: autoUpdate, background: extBgUpdates, checkAll: extUpdateStatuses, checkAllAt: extUpdatesCheckedAt }),
   // Backs `api.agents()`; slots hands each caller a deep copy.
   agents: () => availableAgents,
   modelFront: MODEL_FRONT,
@@ -860,7 +862,9 @@ function applyGraph(graph) {
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
   codexPolicyDefaults = graph.codexPolicyDefaults && typeof graph.codexPolicyDefaults === 'object' ? { ...CODEX_POLICY_FALLBACK, ...graph.codexPolicyDefaults } : { ...CODEX_POLICY_FALLBACK };
+  const prevAutoUpdate = autoUpdate;
   autoUpdate = graph.autoUpdate || 'notify';
+  if (autoUpdate !== prevAutoUpdate) slots.updateStatusChanged();
   refreshSessionsAfterUpdate = graph.refreshSessionsAfterUpdate === true;
   const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
@@ -6688,6 +6692,8 @@ function syncStandingBanner() {
 // results, the progress line describes a run that cannot outlive this tab's
 // socket, and the mount point is rebuilt on every settings open.
 let extUpdateStatuses = {};
+// When this tab's last Check all answered, for api.updateStatus()'s checkedAt.
+let extUpdatesCheckedAt = null;
 // The server's last background extension check (Notify and Auto only), from the
 // connect config and `ext-update-status`. It fills the rows Check all would, so
 // an outdated extension shows its Update button without a manual check.
@@ -6877,7 +6883,12 @@ function noteConfigUpdate(msg) {
   remountUpdatePanel();
 }
 
-const remountExtensions = () => { if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost); };
+// Everything that moves the rows' update data remounts them, so this is also
+// where an extension's api.updateStatus.onChange hears it (deduped in slots).
+const remountExtensions = () => {
+  slots.updateStatusChanged();
+  if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+};
 
 // A settled report — "Up to date.", "Cancelled. Nothing was installed." — is
 // about a moment, not a state, and left on screen it reads as a standing
@@ -7560,6 +7571,7 @@ function connect() {
     }
     else if (msg.type === 'ext-updates') {
       extUpdateStatuses = Object.fromEntries((msg.extensions || []).map((e) => [e.id, e]));
+      extUpdatesCheckedAt = Date.now();
       extChecking = false;
       clearExtTransientLater();
       remountExtensions();

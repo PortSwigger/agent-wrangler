@@ -450,7 +450,14 @@ import semver from 'semver';
 // gets it in-process. `claudeHooks` adds PreToolUse and PostToolUse groups to a
 // Claude launch's --settings after core's own. An older server ignores both, so
 // a manifest that relies on either declares `^1.62.0`.
-export const HOST_API_VERSION = '1.62.0';
+//
+// 1.64.0 is the CLIENT half: `api.updateStatus()` (public/slots.js), the calling
+// extension's own `{ behind, commits, capped, branch, checkedAt }` from the
+// update checks its Extensions row reads, or null (built-in, hand-placed,
+// Automatic updates Off, no check yet), with `api.updateStatus.onChange(fn)`. An
+// older board has no `updateStatus`, so an extension that shows it either checks
+// for the function or declares `^1.64.0`.
+export const HOST_API_VERSION = '1.64.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
