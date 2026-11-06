@@ -197,3 +197,27 @@ export function extUpdatesEl({ summary = null, mode = 'notify', onOpen, now = Da
   wrap.append(el('div', 'setting-help', `${at}Built-in extensions are not checked.`));
   return wrap;
 }
+
+// One extension's own update status, for its client `api.updateStatus()`
+// (1.64.0): `{ behind, commits, capped, branch, checkedAt }`, or null. Read from
+// what the Extensions rows read, Check all's answer over the background check,
+// so the two never disagree. Null with Automatic updates Off, for an id neither
+// check covers (built-in, hand-placed), before any check, and for a failed one.
+// Check all counts nothing, so a behind answer from it borrows the background
+// count when both saw the same remote head, and otherwise says only "at least
+// one, maybe more" (1+), the same thing the server says when it cannot count.
+export function extUpdateStatusFor(extId, { mode = 'notify', background = null, checkAll = {}, checkAllAt = null } = {}) {
+  if (mode === 'off') return null;
+  const bg = (background?.extensions || []).find((e) => e.id === extId) || null;
+  const fresh = checkAll?.[extId];
+  // ext-install-incompatible can leave a bare `{ incompatible }` patch, which is no answer.
+  const useFresh = fresh?.updatable != null;
+  const entry = useFresh ? fresh : bg;
+  if (!entry || entry.updatable === false || entry.error) return null;
+  const checkedAt = useFresh ? checkAllAt : background?.checkedAt;
+  const status = { behind: Boolean(entry.behind), commits: 0, capped: false, branch: entry.branch || null, checkedAt: typeof checkedAt === 'number' ? checkedAt : null };
+  if (!status.behind) return status;
+  const counted = useFresh ? (bg?.behind && bg.remoteSha === entry.remoteSha ? bg : null) : entry;
+  if (counted && typeof counted.commits === 'number') return { ...status, commits: counted.commits, capped: Boolean(counted.capped) };
+  return { ...status, commits: 1, capped: true };
+}

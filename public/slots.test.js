@@ -1308,6 +1308,60 @@ test('agents() is a deep copy of the base list; onChange hears agentsChanged unt
   assert.equal(h.slots.agentsChanged(list), 0, 'subscriptions die with the extension');
 });
 
+test('updateStatus() reads only the calling extension\'s own entry, as a copy', () => {
+  const h = harness();
+  const table = { a: { behind: true, commits: 3, capped: false, branch: 'main', checkedAt: 1 }, b: { behind: false, commits: 0, capped: false, branch: 'next', checkedAt: 1 } };
+  const asked = [];
+  const base = { updateStatusFor: (id, ...rest) => { asked.push([id, ...rest]); return table[id] ?? null; } };
+  const a = h.slots.forExtension('a', base).api;
+  const b = h.slots.forExtension('b', base).api;
+  const c = h.slots.forExtension('c', base).api;
+  assert.deepEqual(a.updateStatus(), table.a);
+  assert.deepEqual(b.updateStatus(), table.b);
+  assert.equal(c.updateStatus(), null, 'no entry reads as null');
+  assert.deepEqual(a.updateStatus('b'), table.a, 'an argument cannot name another extension');
+  assert.ok(asked.every(([id, ...rest]) => ['a', 'b', 'c'].includes(id) && rest.length === 0));
+  assert.deepEqual(asked.filter(([id]) => id === 'b').length, 1, 'only b asked about b');
+  const got = a.updateStatus();
+  got.commits = 99;
+  assert.equal(table.a.commits, 3, 'no write-through into board state');
+  assert.equal(h.slots.forExtension('d', {}).api.updateStatus(), null, 'an older base api has none');
+});
+
+test('updateStatus.onChange hears only its own changes, deduped, until unsubscribed or removed', () => {
+  const h = harness();
+  const table = { a: null, b: null };
+  const base = { updateStatusFor: (id) => table[id] };
+  const a = h.slots.forExtension('a', base).api;
+  const b = h.slots.forExtension('b', base).api;
+  const seenA = [];
+  const seenB = [];
+  const offA = a.updateStatus.onChange((v) => { seenA.push(v); throw new Error('listener bug'); });
+  b.updateStatus.onChange((v) => seenB.push(v));
+  assert.equal(h.slots.updateStatusChanged(), 0, 'nothing moved');
+  table.a = { behind: true, commits: 2, capped: false, branch: 'main', checkedAt: 5 };
+  assert.equal(h.slots.updateStatusChanged(), 1);
+  assert.deepEqual(seenA, [table.a]);
+  assert.notEqual(seenA[0], table.a);
+  assert.deepEqual(seenB, [], 'b never hears a\'s status');
+  assert.match(h.errors.at(-1), /updateStatus\.onChange listener failed/);
+  assert.equal(h.slots.updateStatusChanged(), 0, 'unchanged is not re-sent');
+  table.a = null;
+  assert.equal(h.slots.updateStatusChanged(), 1, 'kept after throwing; null is a change too');
+  assert.deepEqual(seenA.at(-1), null);
+  offA();
+  table.a = { behind: false, commits: 0, capped: false, branch: 'main', checkedAt: 6 };
+  assert.equal(h.slots.updateStatusChanged(), 0);
+  table.b = { behind: false, commits: 0, capped: false, branch: 'next', checkedAt: 6 };
+  assert.equal(h.slots.updateStatusChanged(), 1);
+  assert.deepEqual(seenB, [table.b]);
+  h.slots.removeExtension('b');
+  table.b = null;
+  assert.equal(h.slots.updateStatusChanged(), 0, 'subscriptions die with the extension');
+  assert.doesNotThrow(() => a.updateStatus.onChange('nope'));
+  assert.match(h.errors.at(-1), /updateStatus\.onChange needs a function/);
+});
+
 // ── registrar.api (1.14.0) ──────────────────────────────────────────────────
 test('registrar.api is the contribution api, gated, and cleaned up by removeExtension', () => {
   let chipsChanged = 0;

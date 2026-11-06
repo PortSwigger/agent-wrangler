@@ -67,11 +67,12 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.61.0 `waitingReason` 'permission' / 'auto-block' and `autoBlockSeconds` on session rows,
 // and 1.62.0 launch-context `secretEnv` and `claudeHooks`,
 // and 1.63.0 `waitingReason` 'permission' on Codex approval prompts,
+// and 1.64.0 the client `api.updateStatus()`,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.63.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.63.0');
+test('the served version is 1.64.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.64.0');
   assert.equal(servesRange('^1.47.0'), true);
   assert.equal(servesRange('^1.48.0'), true);
   assert.equal(servesRange('^1.49.0'), true);
@@ -89,7 +90,8 @@ test('the served version is 1.63.0, and every 1.x manifest range it can honour p
   assert.equal(servesRange('^1.61.0'), true);
   assert.equal(servesRange('^1.62.0'), true);
   assert.equal(servesRange('^1.63.0'), true);
-  assert.equal(servesRange('^1.64.0'), false);
+  assert.equal(servesRange('^1.64.0'), true);
+  assert.equal(servesRange('^1.65.0'), false);
   assert.equal(servesRange('^1.46.0'), true);
   assert.equal(servesRange('^1.45.0'), true);
   assert.equal(servesRange('^1.44.0'), true);

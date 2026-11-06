@@ -1391,6 +1391,23 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   origin to follow). The board draws nothing for it, so the extension owns its
   own, typically hidden, switch. Turning it off changes nothing until the next
   update, which comes from the default branch.
+- **`api.updateStatus()`** (1.64.0) returns the calling extension's own update
+  status, `{ behind, commits, capped, branch, checkedAt }`, from the same data its
+  Extensions row shows: the background check (Automatic updates in Notify or
+  Auto) with this tab's latest Check all on top. `commits` is how many commits the
+  install is behind `branch`, the branch it tracks (the early-adopter branch when
+  the install opted in); it is `0` when up to date, and `capped` means "at least
+  this many" (counts stop at 50, and a behind answer from Check all alone, which
+  does not count, reads as `1` capped). `checkedAt` is when that answer was
+  taken, in epoch milliseconds. It is `null` for a built-in or hand-placed
+  extension, before the first check, after a failed one, and with Automatic
+  updates Off. There is no argument: an extension can read only its own entry.
+  **`api.updateStatus.onChange(fn)`** calls `fn` with a fresh copy (or `null`)
+  whenever that value changes, and returns the unsubscribe function;
+  subscriptions die with the extension, and a throwing listener is reported and
+  kept. An extension that still loads on older boards checks
+  `typeof api.updateStatus === 'function'` and shows nothing without it;
+  otherwise it declares `^1.64.0`.
 - **`api.onThemeChange(fn)`** (1.39.0) calls `fn({ id, base })` whenever the
   board applies a different theme palette (`id` the style, `base` `'dark'` or
   `'light'`). Returns an unsubscribe function; listeners go with the extension. A

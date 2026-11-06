@@ -172,6 +172,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const themeListeners = new Map();
   // extId -> its api.earlyAdopter, built once so it compares by identity.
   const earlyAdopterApis = new Map();
+  // extId -> { set: Set<fn>, read, last }: api.updateStatus.onChange subscribers,
+  // fed by updateStatusChanged(); `last` is the JSON they last heard.
+  const updateStatusListeners = new Map();
   // Sample-card failures already reported, `extId:id`, so a pill that throws on
   // the fake session prints once rather than once per render.
   const sampleReported = new Set();
@@ -634,6 +637,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         }),
         settings: settingsApi(extId, baseApi),
         agents: agentsApi(extId, baseApi),
+        updateStatus: updateStatusApi(extId, baseApi),
         dispatchFields: Object.freeze({
           mount: (el, ctx, opts) => mountDispatchFields(extId, baseApi, el, ctx, opts),
         }),
@@ -877,6 +881,28 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         }
         if (!agentsListeners.has(extId)) agentsListeners.set(extId, new Set());
         const set = agentsListeners.get(extId);
+        set.add(fn);
+        return () => { set.delete(fn); };
+      },
+    });
+  }
+
+  // This extension's own update status (1.64.0), the id bound here so there is
+  // no way to ask about another: `{ behind, commits, capped, branch, checkedAt }`
+  // or null (app.js extUpdateStatusFor). A fresh copy per call.
+  function updateStatusApi(extId, baseApi) {
+    const read = () => {
+      const s = baseApi.updateStatusFor?.(extId);
+      return isPlainObject(s) ? { ...s } : null;
+    };
+    return Object.assign(read, {
+      onChange: (fn) => {
+        if (typeof fn !== 'function') {
+          onError(`[ext:${extId}] updateStatus.onChange needs a function`);
+          return () => {};
+        }
+        if (!updateStatusListeners.has(extId)) updateStatusListeners.set(extId, { set: new Set(), read, last: JSON.stringify(read()) });
+        const { set } = updateStatusListeners.get(extId);
         set.add(fn);
         return () => { set.delete(fn); };
       },
@@ -1157,6 +1183,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       agentsListeners.delete(extId);
       themeListeners.delete(extId);
       earlyAdopterApis.delete(extId);
+      updateStatusListeners.delete(extId);
       for (const unbind of [...(keyUnbinds.get(extId) || [])]) unbind();
       keyUnbinds.delete(extId);
       if (hiddenByExt.delete(extId)) chipsChanged();
@@ -1209,6 +1236,26 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         for (const fn of [...set]) {
           called += 1;
           try { fn(copyAgents(agents)); } catch (err) { onError(`[ext:${extId}] agents.onChange listener failed`, err); }
+        }
+      }
+      return called;
+    },
+
+    // app.js calls this whenever the extension update checks it holds may have
+    // moved. Each subscribed extension re-reads ITS OWN status, and its
+    // listeners hear it only when it differs from what they last heard; a
+    // throwing listener is reported and kept. Returns how many were called.
+    updateStatusChanged() {
+      let called = 0;
+      for (const [extId, entry] of updateStatusListeners) {
+        let now;
+        try { now = entry.read(); } catch (err) { onError(`[ext:${extId}] updateStatus read failed`, err); continue; }
+        const key = JSON.stringify(now);
+        if (key === entry.last) continue;
+        entry.last = key;
+        for (const fn of [...entry.set]) {
+          called += 1;
+          try { fn(now && { ...now }); } catch (err) { onError(`[ext:${extId}] updateStatus.onChange listener failed`, err); }
         }
       }
       return called;
