@@ -115,15 +115,18 @@ unresolved review threads.
 
 ## Model footer on new pull requests
 
-When a Claude or Codex session creates a pull request with `gh pr create`, the wrangler adds one last
-line to its description naming the exact model the session was running, with no effort level:
+When a Claude or Codex session creates a pull request with `gh pr create`, the wrangler adds a footer to
+its description naming the exact model the session was running, with no effort level:
 
 ```text
 Model: claude-opus-5-5
+
+Made with Agent Wrangler
 ```
 
 The model is the session's live model, read from its transcript, or its launch model before the
-first reply. A description that already has a `Model:` line is left alone. Search pull requests by
+first reply. Neither line is added when the description already has it: a `Model:` line, or a line starting
+`Made with Agent Wrangler`, such as one an extension wrote. Search pull requests by
 model with:
 
 ```sh

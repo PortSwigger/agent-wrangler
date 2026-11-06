@@ -1,6 +1,7 @@
 // The model footer for PRs an agent creates: after a `gh pr create`, the
 // session's live model id is appended to the PR body as `Model: <id>`, so PRs
-// can be searched by model (`gh search prs '"Model: claude-opus-5-5" in:body'`).
+// can be searched by model (`gh search prs '"Model: claude-opus-5-5" in:body'`),
+// followed by a `Made with Agent Wrangler` line.
 // Shared by every agent's post-tool hook (scripts/pr-model-footer.mjs is the
 // Claude one). Dependency-free beyond node builtins: the devcontainer runtime
 // copies this file into the container beside the hook scripts.
@@ -13,11 +14,26 @@ export function hasModelLine(body) {
   return MODEL_LINE.test(String(body ?? ''));
 }
 
-// The body with the footer appended, or null when it needs none.
+export const ATTRIBUTION = 'Made with Agent Wrangler';
+
+// A line starting with the attribution, ours or a longer variant an extension
+// already wrote (e.g. "Made with Agent Wrangler and the acme/widgets extension").
+const ATTRIBUTION_LINE = /^Made with Agent Wrangler\b/m;
+
+export function hasAttributionLine(body) {
+  return ATTRIBUTION_LINE.test(String(body ?? ''));
+}
+
+// The body with whichever footer lines it lacks appended (Model, then the
+// attribution), or null when it needs none.
 export function withModelFooter(body, model) {
-  if (!model || hasModelLine(body)) return null;
+  if (!model) return null;
+  const lines = [];
+  if (!hasModelLine(body)) lines.push(`Model: ${model}`);
+  if (!hasAttributionLine(body)) lines.push(ATTRIBUTION);
+  if (!lines.length) return null;
   const text = String(body ?? '').replace(/\s+$/, '');
-  return text ? `${text}\n\nModel: ${model}` : `Model: ${model}`;
+  return [text, ...lines].filter(Boolean).join('\n\n');
 }
 
 // Asks the wrangler which model to tag this session's PRs with. Null when the
@@ -43,8 +59,7 @@ export function runGh(args, input) {
   });
 }
 
-// Reads the PR body and appends the footer unless a Model line is already
-// there. Returns 'tagged', 'present' or 'skipped' (no model).
+// Reads the PR body and appends the footer lines it lacks. Returns 'tagged', 'present' or 'skipped' (no model).
 export async function tagPrWithModel({ prUrl, model, gh = runGh }) {
   if (!prUrl || !model) return 'skipped';
   const body = (await gh(['pr', 'view', prUrl, '--json', 'body', '--jq', '.body'])).replace(/\n$/, '');
