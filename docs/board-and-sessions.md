@@ -75,7 +75,8 @@ Optional launch controls include:
   host. **Settings → Sessions → Default runtime for new sessions** picks which one is pre-selected; a runtime that is
   no longer offered or can't run the chosen agent falls back to Local.
 - **Codex sandbox and approvals:** for a Codex model only, pick the sandbox (read-only, workspace-write or
-  danger-full-access), the approval policy (on-request or never), **Approve for me** (Codex's automatic review,
+  danger-full-access), the approval policy (on-request, the default, which shows the card as needs-you while Codex
+  waits for your answer; or never, which lets Codex carry on without asking), **Approve for me** (Codex's automatic review,
   which implies workspace-write and on-request) or **Bypass sandbox and approvals** (no sandbox, no approvals; the
   dialog warns when it is ticked). The controls start from **Settings → Sessions**' Codex defaults, which is also
   what a launch without the dialog (`spawn_session`, an extension) gets. A session keeps its choice across resume

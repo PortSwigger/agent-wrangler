@@ -188,7 +188,7 @@ test('_extCodexPolicy answers undefined by default, so Codex keeps the core flag
   let built = '';
   sm._newSession = async (_t, _d, inner) => { built = inner; };
   await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
-  assert.match(built, /'--sandbox' 'workspace-write' '--ask-for-approval' 'never'/);
+  assert.match(built, /'--sandbox' 'workspace-write' '--ask-for-approval' 'on-request'/);
 });
 
 test('dispatch consults the Codex policy after onBeforeDispatch, with entry null, and threads it to the argv', async () => {

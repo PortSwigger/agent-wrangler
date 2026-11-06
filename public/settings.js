@@ -153,8 +153,8 @@ export const SETTINGS = [
     scope: 'server',
     options: [{ value: 'on-request', label: 'on-request' }, { value: 'never', label: 'never' }],
     label: 'Codex approvals for new sessions',
-    help: 'Whether Codex stops to ask before a command its sandbox would block. on-request waits for you in the session; never lets Codex carry on without asking.',
-    default: 'never',
+    help: 'Whether Codex stops to ask before a command its sandbox would block. on-request (the default) waits for you: the card shows as needs-you until you answer in the session. Choose never instead to let Codex carry on without asking.',
+    default: 'on-request',
   },
   {
     id: 'codexDefaultApproveForMe',

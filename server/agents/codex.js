@@ -43,8 +43,8 @@ function envPrefix(sessionId, spawnedBy, launchContext) {
 // network grant, --approve-for-me or bypass) comes from an extension's
 // `codexPolicy` answer when one answers (codexPolicyArgs,
 // extensions/codex-policy.js); otherwise the core defaults apply:
-// --sandbox workspace-write --ask-for-approval never plus the workspace-write
-// network grant. Everything else is unconditional, bypass included, the
+// --sandbox workspace-write --ask-for-approval on-request plus the workspace-write
+// network grant (an approval prompt shows the card as needs-you). Everything else is unconditional, bypass included, the
 // notify hook and the PR model footer's PostToolUse hook among it (pre-trusted
 // in the same flags, codex-hook-config.js; it never attaches a PR to a card).
 // Developer instructions are the verified equivalent of Claude's

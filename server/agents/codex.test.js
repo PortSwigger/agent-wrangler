@@ -24,7 +24,7 @@ test('codex buildLaunch: sandbox, network, memory, env, prompt', () => {
   assert.match(cmd, /(^|\s)codex /);
   assert.match(cmd, /'-m' 'gpt-5\.5-codex'/);
   assert.match(cmd, /'--sandbox' 'workspace-write'/);
-  assert.match(cmd, /'--ask-for-approval' 'never'/);
+  assert.match(cmd, /'--ask-for-approval' 'on-request'/);
   assert.match(cmd, /'sandbox_workspace_write\.network_access=true'/);
   assert.match(cmd, /Before your first action this session, read the file at AW_TASK_MEMORY/);
   assert.match(cmd, /You have wrangler-meta skills available/);
