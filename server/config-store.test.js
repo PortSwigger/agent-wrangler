@@ -272,12 +272,12 @@ test('migrateRetiredFlags: a blank or non-string old value just drops the key; n
   assert.deepEqual(migrateJira({ tmuxSocket: 's' }), { cfg: { tmuxSocket: 's' }, changed: false });
 });
 
-test('codexPolicyDefaults: unset is core\'s historical flags; a bad field falls back on its own', () => {
-  assert.deepEqual(codexPolicyDefaults({}), { sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false });
+test('codexPolicyDefaults: unset is core\'s default flags (on-request approvals); a bad field falls back on its own', () => {
+  assert.deepEqual(codexPolicyDefaults({}), { sandbox: 'workspace-write', approval: 'on-request', approveForMe: false, bypass: false });
   assert.deepEqual(codexPolicyDefaults({}), { ...CODEX_POLICY_DEFAULTS });
   assert.deepEqual(
     codexPolicyDefaults({ codexPolicyDefaults: { sandbox: 'read-only', approval: 'sometimes', approveForMe: 'yes', bypass: true } }),
-    { sandbox: 'read-only', approval: 'never', approveForMe: false, bypass: true },
+    { sandbox: 'read-only', approval: 'on-request', approveForMe: false, bypass: true },
   );
   assert.deepEqual(codexPolicyDefaults({ codexPolicyDefaults: 'nope' }), { ...CODEX_POLICY_DEFAULTS });
 });

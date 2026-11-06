@@ -71,20 +71,20 @@ test('approve-for-me with the values it implies is compatible', () => {
   assert.equal(INCOMPATIBLE.length, 2);
 });
 
-test('codexPolicyArgs: undefined is byte-identical to the historical defaults', () => {
-  assert.deepEqual(codexPolicyArgs(undefined), ['--sandbox', 'workspace-write', '--ask-for-approval', 'never', ...NET]);
+test('codexPolicyArgs: undefined is the core default, workspace-write with on-request approvals', () => {
+  assert.deepEqual(codexPolicyArgs(undefined), ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', ...NET]);
   assert.deepEqual(codexPolicyArgs({}), codexPolicyArgs(undefined));
 });
 
 test('codexPolicyArgs: each sandbox, network grant only under workspace-write', () => {
-  assert.deepEqual(codexPolicyArgs({ sandbox: 'read-only' }), ['--sandbox', 'read-only', '--ask-for-approval', 'never']);
-  assert.deepEqual(codexPolicyArgs({ sandbox: 'workspace-write' }), ['--sandbox', 'workspace-write', '--ask-for-approval', 'never', ...NET]);
-  assert.deepEqual(codexPolicyArgs({ sandbox: 'danger-full-access' }), ['--sandbox', 'danger-full-access', '--ask-for-approval', 'never']);
+  assert.deepEqual(codexPolicyArgs({ sandbox: 'read-only' }), ['--sandbox', 'read-only', '--ask-for-approval', 'on-request']);
+  assert.deepEqual(codexPolicyArgs({ sandbox: 'workspace-write' }), ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', ...NET]);
+  assert.deepEqual(codexPolicyArgs({ sandbox: 'danger-full-access' }), ['--sandbox', 'danger-full-access', '--ask-for-approval', 'on-request']);
 });
 
 test('codexPolicyArgs: each approval', () => {
-  assert.deepEqual(codexPolicyArgs({ approval: 'on-request' }), ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', ...NET]);
-  assert.deepEqual(codexPolicyArgs({ approval: 'never' }), codexPolicyArgs(undefined));
+  assert.deepEqual(codexPolicyArgs({ approval: 'never' }), ['--sandbox', 'workspace-write', '--ask-for-approval', 'never', ...NET]);
+  assert.deepEqual(codexPolicyArgs({ approval: 'on-request' }), codexPolicyArgs(undefined));
 });
 
 test('codexPolicyArgs: approve-for-me stands alone (codex rejects it beside -s/-a) and keeps the grant', () => {
@@ -110,7 +110,7 @@ test('cleanCodexPolicy: approve-for-me replaces sandbox and approval; bypass rep
 });
 
 test('cleanCodexPolicy of the shipped Settings defaults launches byte-identical to no policy', () => {
-  const p = cleanCodexPolicy({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false });
+  const p = cleanCodexPolicy({ sandbox: 'workspace-write', approval: 'on-request', approveForMe: false, bypass: false });
   assert.deepEqual(codexPolicyArgs(p), codexPolicyArgs(undefined));
 });
 

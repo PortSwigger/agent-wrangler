@@ -147,3 +147,17 @@ test('setRuntimeOptions replaces the Default runtime row\'s options', () => {
   setRuntimeOptions(null);
   assert.deepEqual(def.options, list);
 });
+
+// A Codex approval prompt shows the card as needs-you, so on-request is the
+// default everywhere a new session's policy comes from: the Settings row, the
+// dialog's fallback before the graph carries Settings, and the server's default.
+test('Codex approvals default to on-request in Settings, the dialog fallback and the server', async () => {
+  const { CODEX_POLICY_FALLBACK } = await import('./codex-policy-field.js');
+  const { CODEX_POLICY_DEFAULTS } = await import('../server/config-store.js');
+  const def = SETTINGS.find((d) => d.id === 'codexDefaultApproval');
+  assert.equal(def.default, 'on-request');
+  assert.match(def.help, /needs-you/);
+  assert.match(def.help, /never/);
+  assert.equal(CODEX_POLICY_FALLBACK.approval, 'on-request');
+  assert.deepEqual({ ...CODEX_POLICY_FALLBACK }, { ...CODEX_POLICY_DEFAULTS });
+});
