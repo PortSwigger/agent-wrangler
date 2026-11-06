@@ -2265,12 +2265,24 @@ function wireTray(el) {
   // Shift+click a pill to focus on just that task (everything else minimises),
   // same as the kebab menu's Focus action — a plain click only restores this one
   // alongside whatever's already visible.
-  el.querySelectorAll('.switcher-pill').forEach((b) =>
+  el.querySelectorAll('.switcher-pill').forEach((b) => {
     b.addEventListener('click', (e) => {
       if (e.shiftKey) return focusOnly(b.dataset.taskid);
       unminimise(b.dataset.taskid);
       scrollTaskIntoView(b.dataset.taskid);
-    }));
+    });
+    b.addEventListener('contextmenu', (e) => {
+      const taskId = b.dataset.taskid;
+      if (taskId === ADHOC_ID) return;
+      const task = latestTasks.tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      e.preventDefault();
+      e.stopPropagation();
+      mountMenu([
+        { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTask(taskId, task.name) },
+      ], e.clientX, e.clientY);
+    });
+  });
   const restore = el.querySelector('.tray-restore-all');
   if (restore) restore.addEventListener('click', restoreAll);
 }
