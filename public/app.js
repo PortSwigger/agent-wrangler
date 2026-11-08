@@ -38,6 +38,8 @@ import {
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
+import { createBoardTargets } from './board-targets.js';
+import { createRailButtons } from './rail-buttons.js';
 import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
 import { updatePanelEl, restartPanelEl, shouldReloadForVersion, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl, extUpdateStatusFor } from './update-panel.js';
@@ -250,9 +252,17 @@ function noteExtClientFacts(list) {
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
 // slots.apiFor, which is the only place the extension id is known.
 const notifications = createNotifications({ document });
+// Back api.targets / api.front and api.rail (slots binds the extension id).
+const boardTargets = createBoardTargets({
+  doc: document,
+  view: () => currentView,
+  session: () => selectedSessionId,
+  extOfView: (v) => (typeof v === 'string' && v.startsWith(EXT_VIEW_PREFIX) ? v.slice(EXT_VIEW_PREFIX.length).split(':')[0] : null),
+});
+const railButtons = createRailButtons({ doc: document });
 const slots = createSlots({
   document,
-  onExtensionRemoved: (id) => { notifications.clear(id); sessionEmbed.dropExtension(id); },
+  onExtensionRemoved: (id) => { notifications.clear(id); sessionEmbed.dropExtension(id); boardTargets.dropExtension(id); railButtons.dropExtension(id); },
   storage: (() => { try { return localStorage; } catch { return null; } })(),
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
@@ -366,6 +376,8 @@ let extFileViewer;
 const migrateSoundPreference = createSoundMigration();
 
 const extApi = {
+  board: boardTargets,
+  railButtons,
   send,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
   selectedSessionId: () => selectedSessionId,

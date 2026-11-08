@@ -2177,3 +2177,85 @@ test('tray background callback is optional, validated and catches action failure
   assert.equal(host.children.length, 1);
   assert.ok(errors.some((x) => x.includes('backgroundItem')));
 });
+
+// A stand-in for app.js's board-targets.js and rail-buttons.js, recording calls.
+function fakeBoard() {
+  const calls = [];
+  const subs = { targets: new Set(), front: new Set() };
+  const board = {
+    list: () => [{ key: 'session:s1', kind: 'session', label: 'one', where: 'board', primary: false, rect: { x: 0, y: 0, width: 9, height: 9 } }],
+    press: (key) => { calls.push(['press', key]); return key === 'session:s1'; },
+    front: () => ({ view: 'grid', ext: null, dialog: null, menu: false, session: null }),
+    onTargets: (fn) => { subs.targets.add(fn); return () => subs.targets.delete(fn); },
+    onFront: (fn) => { subs.front.add(fn); return () => subs.front.delete(fn); },
+    setBadges: (extId, map) => calls.push(['badges', extId, map]),
+  };
+  const railButtons = { add: (extId, opts) => { calls.push(['rail', extId, opts.id]); return { update() {}, remove() {} }; } };
+  return { board, railButtons, calls, subs };
+}
+
+test('targets: list and onChange pass through; press needs board:press and a key', () => {
+  const h = harness({ requiresFor: (id) => (id === 'p' ? ['board:press'] : []) });
+  const f = fakeBoard();
+  const p = h.slots.forExtension('p', f).api;
+  const q = h.slots.forExtension('q', f).api;
+  assert.equal(p.targets.list()[0].key, 'session:s1');
+  assert.equal(p.board, undefined, 'the raw board is not on the api');
+  assert.equal(p.railButtons, undefined);
+  assert.equal(p.targets.press('session:s1'), true);
+  assert.equal(p.targets.press('nope'), false);
+  assert.equal(p.targets.press(''), false);
+  assert.equal(q.targets.press('session:s1'), false, 'no capability, no press');
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'press').map((c) => c[1]), ['session:s1', 'nope']);
+  assert.ok(h.errors.some((e) => /targets\.press refused: needs the board:press capability/.test(e)));
+  const heard = [];
+  p.targets.onChange((list) => heard.push(list.length));
+  for (const fn of f.subs.targets) fn([1, 2]);
+  assert.deepEqual(heard, [2]);
+  q.targets.onChange(() => { throw new Error('boom'); });
+  for (const fn of f.subs.targets) fn([]);
+  assert.ok(h.errors.some((e) => /\[ext:q\] targets\.onChange listener failed/.test(e)), 'a throwing listener is reported under its extension');
+});
+
+test('targets.badges is bound to the caller and refuses a non-object', () => {
+  const h = harness();
+  const f = fakeBoard();
+  const a = h.slots.forExtension('a', f).api;
+  a.targets.badges({ 'session:s1': 'blue' });
+  a.targets.badges();
+  a.targets.badges(['x']);
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'badges'), [['badges', 'a', { 'session:s1': 'blue' }], ['badges', 'a', {}]]);
+  assert.ok(h.errors.some((e) => /targets\.badges needs an object/.test(e)));
+});
+
+test('front() is a copy, and its and targets\' subscriptions die with the extension', () => {
+  const h = harness();
+  const f = fakeBoard();
+  const a = h.slots.forExtension('a', f).api;
+  const got = a.front();
+  assert.deepEqual(got, { view: 'grid', ext: null, dialog: null, menu: false, session: null });
+  got.view = 'x';
+  assert.equal(a.front().view, 'grid');
+  a.front.onChange(() => {});
+  const off = a.targets.onChange(() => {});
+  a.targets.onChange(() => {});
+  assert.equal(f.subs.front.size, 1);
+  assert.equal(f.subs.targets.size, 2);
+  off();
+  assert.equal(f.subs.targets.size, 1);
+  h.slots.removeExtension('a');
+  assert.equal(f.subs.front.size, 0);
+  assert.equal(f.subs.targets.size, 0);
+  assert.equal(h.slots.forExtension('b', {}).api.front(), null, 'an older base api has no front');
+  assert.deepEqual(h.slots.forExtension('b', {}).api.targets.list(), []);
+});
+
+test('rail.button hands the caller\'s id and options to the board', () => {
+  const h = harness();
+  const f = fakeBoard();
+  const a = h.slots.forExtension('a', f).api;
+  const handle = a.rail.button({ id: 'mic', label: 'Voice', onPress() {} });
+  assert.equal(typeof handle.update, 'function');
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'rail'), [['rail', 'a', 'mic']]);
+  assert.equal(h.slots.forExtension('b', {}).api.rail.button({ id: 'x' }), null);
+});
