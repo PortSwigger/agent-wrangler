@@ -134,10 +134,17 @@ test('mirrorWorktreeTrust: a subdirectory cwd trusts the worktree root', async (
   });
 });
 
-test('mirrorWorktreeTrust: trust on an ancestor of the repo covers its worktree', async () => {
-  await withRepo(async ({ root, worktree, file }) => {
+// Claude 2.1.319 ignores entries above a folder's git top, so a trusted parent
+// of the repo (and of worktrees.noindex) no longer covers the worktree.
+test('mirrorWorktreeTrust: a trusted parent of the repo gets the worktree its own entry', async () => {
+  await withRepo(async ({ root, code, worktree, legacy, file }) => {
+    fs.writeFileSync(file, trusting(code));
+    assert.equal(await mirrorWorktreeTrust(worktree, { file, log: quiet }), true);
+    assert.equal(await mirrorWorktreeTrust(legacy, { file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(file), [code, legacy, worktree].sort());
     fs.writeFileSync(file, trusting(path.dirname(root)));
     assert.equal(await mirrorWorktreeTrust(worktree, { file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(file), [path.dirname(root), worktree].sort());
   });
 });
 
@@ -171,11 +178,14 @@ test('mirrorWorktreeTrust: a plain checkout or a non-repo cwd is left alone', as
   });
 });
 
-test('mirrorWorktreeTrust: an already-covered worktree is not rewritten', async () => {
+test('mirrorWorktreeTrust: an already-trusted worktree is not rewritten, even from a subdirectory', async () => {
   await withRepo(async ({ code, worktree, file }) => {
-    const before = trusting(code);
+    const before = trusting(code, worktree);
     fs.writeFileSync(file, before);
+    const sub = path.join(worktree, 'deep');
+    fs.mkdirSync(sub);
     assert.equal(await mirrorWorktreeTrust(worktree, { file, log: quiet }), true);
+    assert.equal(await mirrorWorktreeTrust(sub, { file, log: quiet }), true);
     assert.equal(fs.readFileSync(file, 'utf8'), before);
   });
 });
@@ -211,6 +221,22 @@ test('ensureLoginClaudeTrust: writes SESSIONS_DIR, a trusted repo\'s worktree an
     assert.deepEqual(trustedKeys(loginFile), [sessionsDir, repo, worktree].sort());
     assert.equal(fs.readFileSync(file, 'utf8'), server);
     assert.equal(fs.statSync(loginFile).mode & 0o777, 0o600);
+  });
+});
+
+test('ensureLoginClaudeTrust: a parent folder the login trusts above the repo does not count as covering it', async () => {
+  await withLogin(async ({ root, code, repo, worktree, file, login, loginFile }) => {
+    fs.writeFileSync(file, trusting(code));
+    fs.writeFileSync(loginFile, trusting(code));
+    await ensureLoginClaudeTrust(login, { cwd: worktree, serverFile: file, log: quiet });
+    await ensureLoginClaudeTrust(login, { cwd: path.join(repo), serverFile: file, log: quiet });
+    assert.deepEqual(trustedKeys(loginFile), [code, repo, worktree].sort());
+    // Outside git any ancestor still covers, so a plain folder is not rewritten.
+    const plain = path.join(code, 'plain');
+    fs.mkdirSync(plain);
+    const before = fs.readFileSync(loginFile, 'utf8');
+    await ensureLoginClaudeTrust(login, { cwd: plain, serverFile: file, log: quiet });
+    assert.equal(fs.readFileSync(loginFile, 'utf8'), before);
   });
 });
 
