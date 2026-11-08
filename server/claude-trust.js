@@ -7,13 +7,16 @@ import { promisify } from 'node:util';
 const exec = promisify(execFile);
 
 // Claude Code's "Do you trust this folder?" dialog is suppressed by
-// `projects[<path>].hasTrustDialogAccepted === true` in `~/.claude.json`, and
-// the entry also covers every descendant of <path> — verified against the
-// installed binary (2.1.301): a child of a trusted dir launches straight to the
-// prompt, an unrelated dir shows the dialog. So trusting SESSIONS_DIR once
-// covers every blank-cwd launch (each lands in a fresh scratch dir beneath it),
-// present and future. Never call this for a user's own cwd; a worktree is only
-// trusted through mirrorWorktreeTrust, when the repo it was cut from already is.
+// `projects[<path>].hasTrustDialogAccepted === true` in `~/.claude.json`. Since
+// 2.1.319 (read from the binary) which entries count depends on git: inside a
+// repo, the canonical repo root's entry (for a linked worktree, the main
+// checkout) or one on the walk from the folder up to its own git top; entries
+// above the git top are ignored. Outside git, any ancestor still counts. So
+// trusting SESSIONS_DIR once covers every blank-cwd launch (each lands in a
+// fresh scratch dir beneath it), but a trusted ~/code no longer covers a
+// worktree of a repo under it. Never call this for a user's own cwd; a worktree
+// is only trusted through mirrorWorktreeTrust, when the repo it was cut from
+// (or an ancestor of it) already is.
 //
 // `~/.claude.json` is big and rewritten live by running Claude sessions, so this
 // writer is conservative: idempotent (no write when already trusted), atomic
@@ -38,12 +41,15 @@ function readConfig(file) {
   return { text, data };
 }
 
-// True when `dirPath` or one of its ancestors has an accepted trust entry, which
-// is how Claude itself decides.
-function coveredByTrust(projects, dirPath) {
+// True when `dirPath` or an ancestor has an accepted entry. With `top` (the
+// folder's git top) the walk stops there, as Claude's does inside a repo. The
+// repo root's own entry is deliberately not counted: Claude before 2.1.319
+// ignores it for a worktree outside the repo, and an extra entry is harmless.
+// What authorises a write is always the unbounded walk.
+function coveredByTrust(projects, dirPath, top) {
   for (let dir = dirPath; ; dir = path.dirname(dir)) {
     if (projects?.[dir]?.hasTrustDialogAccepted === true) return true;
-    if (path.dirname(dir) === dir) return false;
+    if (path.dirname(dir) === dir || (top && !dir.startsWith(top + path.sep))) return false;
   }
 }
 
@@ -51,8 +57,9 @@ function coveredByTrust(projects, dirPath) {
 // so tests never touch the real config. With `onlyIfTrusted`, nothing is written
 // unless one of those paths (or an ancestor) is already trusted in `authority`
 // (default: `file` itself); that check sits in the same synchronous
-// read-modify-write as the write itself.
-export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = console.warn, onlyIfTrusted, authority = file } = {}) {
+// read-modify-write as the write itself. `gitTop` bounds what already counts as
+// trusted in `file` to Claude's in-repo rule.
+export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = console.warn, onlyIfTrusted, authority = file, gitTop } = {}) {
   if (!dirPath) return false;
   try {
     const { text, data } = readConfig(file);
@@ -61,7 +68,7 @@ export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = co
       throw new Error('"projects" is not an object');
     }
     if (onlyIfTrusted) {
-      if (coveredByTrust(data.projects, dirPath)) return true;
+      if (coveredByTrust(data.projects, dirPath, gitTop)) return true;
       const granted = authority === file ? data.projects : readConfig(authority).data.projects;
       if (!onlyIfTrusted.some((p) => coveredByTrust(granted, p))) return false;
     }
@@ -90,29 +97,38 @@ export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = co
   }
 }
 
-// A linked worktree lives outside its repo (worktrees.noindex/<repo>-<branch>, or
-// a legacy <repo>-worktree-<branch> sibling), so the repo's trust entry doesn't
-// cover it and Claude asks again. When the main checkout (or an ancestor) is
-// trusted, trust that worktree's own root too: never a parent folder, and never a
-// worktree of a repo the user hasn't trusted. A plain checkout, a non-repo cwd or
-// any git failure is a no-op. Never throws, so it never blocks a launch.
-export async function mirrorWorktreeTrust(cwd, opts = {}) {
-  if (!cwd) return false;
+const realPath = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+
+// `cwd`'s git top, whether it is a linked worktree, and the repo it belongs to
+// (a worktree's main checkout; a bare repo's own dir), plain and realpathed.
+// Null outside a repo or on any git failure.
+async function gitScope(cwd) {
   let top, gitDir, commonDir;
   try {
     const { stdout } = await exec('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir']);
     [top, gitDir, commonDir] = stdout.trim().split('\n');
   } catch {
-    return false;
+    return null;
   }
-  if (!top || !gitDir || !commonDir || gitDir === commonDir) return false;
+  if (!top || !gitDir || !commonDir) return null;
   // A non-bare repo's common dir is <root>/.git; a bare repo's is the repo itself.
-  const source = path.basename(commonDir) === '.git' ? path.dirname(commonDir) : commonDir;
-  const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
-  return ensureClaudeTrust(top, { ...opts, onlyIfTrusted: [...new Set([source, real(source)])] });
+  const root = path.basename(commonDir) === '.git' ? path.dirname(commonDir) : commonDir;
+  return { top, linked: gitDir !== commonDir, roots: [...new Set([root, realPath(root)])] };
 }
 
-const realPath = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+// A linked worktree lives outside its repo (worktrees.noindex/<repo>-<branch>, or
+// a legacy <repo>-worktree-<branch> sibling), and a trusted folder above it
+// (~/code) no longer covers it, so Claude asks again. When the main
+// checkout (or an ancestor) is trusted, trust that worktree's own root too:
+// never a parent folder, and never a worktree of a repo the user hasn't
+// trusted. A plain checkout, a non-repo cwd or any git failure is a no-op.
+// Never throws, so it never blocks a launch.
+export async function mirrorWorktreeTrust(cwd, opts = {}) {
+  if (!cwd) return false;
+  const scope = await gitScope(cwd);
+  if (!scope?.linked) return false;
+  return ensureClaudeTrust(scope.top, { ...opts, gitTop: scope.top, onlyIfTrusted: scope.roots });
+}
 
 // A login's own Claude config dir (the CLAUDE_CONFIG_DIR a launch context sets)
 // gets the same trust a default launch writes, authorised only by the server's
@@ -139,6 +155,7 @@ export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, serv
   if (sessionsDir) ensureClaudeTrust(sessionsDir, { file, log });
   if (!cwd) return true;
   await mirrorWorktreeTrust(cwd, { file, authority: serverFile, log });
-  ensureClaudeTrust(cwd, { file, authority: serverFile, onlyIfTrusted: [...new Set([cwd, realPath(cwd)])], log });
+  const gitTop = (await gitScope(cwd))?.top;
+  ensureClaudeTrust(cwd, { file, authority: serverFile, gitTop, onlyIfTrusted: [...new Set([cwd, realPath(cwd)])], log });
   return true;
 }
