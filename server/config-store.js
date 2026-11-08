@@ -79,16 +79,8 @@ export function subagentsExpandedByDefault(cfg = readConfig()) {
   return cfg.subagentsExpandedByDefault === true;
 }
 
-// Whether archiving a Claude session spawns a headless `claude -p --model
-// haiku` review of its transcript, appending a short learnings note to its
-// task's memory.md (server/archive-review-runner.js). Default OFF — this
-// spends real (if small) money per archive and grows the task's memory file
-// unbounded, so it's opt-in rather than a silent new cost; toggled from the
-// board's settings modal (config.json `archiveReviewEnabled: true`). Takes cfg
-// (like subagentsExpandedByDefault) so tests never write the shared
-// config.json.
 export function archiveReviewEnabled(cfg = readConfig()) {
-  return cfg.archiveReviewEnabled === true;
+  return extensionSetting('task-memory', 'archiveReviewEnabled', false, cfg) === true;
 }
 
 // Whether mail or status notices wake a dormant recipient. Default OFF — mail
@@ -192,13 +184,15 @@ export const RETIRED_FLAGS = [
 
 // Config keys that became an extension's own setting, carried to
 // `extensionSettings.<extId>.<key>` at boot. A row is `{ oldKey, extId, key,
-// envKey? }`. A string old value moves across unless the setting is already set
+// envKey?, type? }`. A string (or boolean with `type: 'boolean'`) old value
+// moves across unless the setting is already set
 // (the human's answer to the new question wins); `envKey` names an environment
 // variable that seeds the setting when neither exists, so an install that only
 // ever used the env var ends up with the value in Settings and can drop the
 // variable. A blank old value just drops the key. Rows stay forever, like
 // RETIRED_FLAGS.
 export const RETIRED_SETTINGS = [
+  { oldKey: 'archiveReviewEnabled', extId: 'task-memory', key: 'archiveReviewEnabled', type: 'boolean' },
   { oldKey: 'jiraBaseUrl', extId: 'jira', key: 'baseUrl', envKey: 'AW_JIRA_BASE_URL' },
 ];
 
@@ -210,14 +204,16 @@ export const RETIRED_SETTINGS = [
 export function migrateRetiredFlags(cfg, table = RETIRED_FLAGS, settingsTable = RETIRED_SETTINGS, env = {}) {
   const next = { ...cfg };
   let changed = false;
-  for (const { oldKey, extId, key, envKey } of settingsTable) {
+  for (const { oldKey, extId, key, envKey, type } of settingsTable) {
     const had = Object.hasOwn(next, oldKey);
     const block = next.extensionSettings?.[extId];
     const current = block && typeof block === 'object' && !Array.isArray(block) ? block : {};
     const old = had && typeof next[oldKey] === 'string' ? next[oldKey].trim() : '';
-    const seed = old || (envKey && typeof env[envKey] === 'string' ? env[envKey].trim() : '');
+    const seed = type === 'boolean'
+      ? (typeof next[oldKey] === 'boolean' ? next[oldKey] : undefined)
+      : old || (envKey && typeof env[envKey] === 'string' ? env[envKey].trim() : '');
     if (had) delete next[oldKey];
-    if (seed && current[key] === undefined) {
+    if ((type === 'boolean' ? seed !== undefined : Boolean(seed)) && current[key] === undefined) {
       next.extensionSettings = { ...next.extensionSettings, [extId]: { ...current, [key]: seed } };
       changed = true;
     } else if (had) {

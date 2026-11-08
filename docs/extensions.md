@@ -1408,6 +1408,63 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   kept. An extension that still loads on older boards checks
   `typeof api.updateStatus === 'function'` and shows nothing without it;
   otherwise it declares `^1.64.0`.
+- **`api.targets`** (1.65.0, `public/board-targets.js`) is what the board can
+  press right now, so an extension can drive it by something other than a
+  pointer (voice, a switch). **`list()`** returns
+  `[{ key, kind, label, where, primary, href?, rect }]` for every button, tab,
+  link, field, summary, session card and menu row that is in front, painted,
+  takes the pointer and is not covered. What is in front decides the list: an
+  open dialog (the focused one, else the last opened) takes it all, then an open
+  context menu, otherwise the rail, the board, Search or the extension view in
+  front, the open session's panel and chat, and the diff. A terminal's own DOM
+  is never listed. `where` is `'rail'`, `'board'`, `'search'`, `'view'`,
+  `'panel'`, `'diff'`, `'dialog'` or `'menu'`; `kind` is `'session'`,
+  `'task-new-session'`, `'task-menu'`, `'rail'`, `'tab'`, `'field'`, `'link'` or
+  `'button'`; `label` is its aria-label, title or text (80 characters at most);
+  `href` is a link's own; `rect` is `{ x, y, width, height }` in viewport pixels,
+  clipped to what shows.
+  **A key names the same thing across redraws**: a session card is
+  `session:<sid>` (a team row `team:<leadSid>`, a sub-agent row
+  `subagent:<ownerSid>/<id>`); a task tile's New session is
+  `task:<taskId>:new-session` (its body's New session row
+  `task:<taskId>:new-session-row`) and its ⋯ is `task:<taskId>:menu`, the
+  Unassigned tile's task id being `adhoc`; a rail view is `rail:view:<view>`, a
+  rail button with an id `rail:<id>`, and an extension's rail button
+  `rail:ext:<extId>:<id>`. Anything else is `<scope>:#<id>` when it has an id,
+  else `<scope>:<tag>.<class>|<data-…>` with its label and then `~<n>` added
+  only when that is needed to tell it from a sibling; `<scope>` is the session
+  card or task tile it sits in, `dialog:<id>`, `menu`, or its `where`.
+  **`onChange(fn)`** calls `fn(list)` after a redraw, scroll or resize changes
+  the keys, kinds, labels or places listed (rects alone do not), and returns the
+  unsubscribe function. **`press(key)`** clicks that target as a pointer would
+  (a field takes focus instead) and returns whether a target had that key; it
+  needs the client-only capability **`board:press`**, and without it reports
+  and returns `false`. **`badges({ [key]: text })`** replaces this extension's
+  badges: the board draws each over its target's corner (text only, 24
+  characters at most, in `#ext-target-badges` as
+  `.ext-target-badge[data-ext="<extId>"][data-key="<key>"]`, for the extension's
+  own CSS to restyle), follows it through scrolls and redraws, draws nothing
+  while it is not listed and draws it again when it is; `badges({})` clears
+  them. The board watches the DOM only while some extension listens or has
+  badges, and subscriptions and badges die with the extension.
+- **`api.front()`** (1.65.0) is what is in front:
+  `{ view, ext, dialog, menu, session }`: `view` the board's view key (`'grid'`,
+  `'search'` or `ext:<extId>:<id>`), `ext` the extension owning that view or
+  null, `dialog` the open dialog's id (`'dialog'` for one with none) or null,
+  `menu` whether a context menu is open, `session` the open session's id or
+  null. **`api.front.onChange(fn)`** calls `fn` with a fresh copy whenever one of
+  those changes, and returns the unsubscribe function.
+- **`api.rail.button({ id, label, icon?, active?, progress?, onPress })`**
+  (1.65.0, `public/rail-buttons.js`) puts a button in the rail's bottom zone,
+  above Usage, after any other extension's. `icon` is SVG markup (the label's
+  initial without one), `active` draws it pressed (`.on`), and `progress` draws
+  core's ring round it: a fraction `0`–`1`, `'busy'` (or `true`) for a spinning
+  arc, `null` for none. `onPress(event)` runs on a click. It returns
+  `{ update(partial), remove() }`, or `null` (reported) without an id, a label
+  or an `onPress`; adding the same id again replaces the button. Buttons go
+  with the extension. It is listed by `api.targets` as `rail:ext:<extId>:<id>`.
+  An extension using `api.targets`, `api.front` or `api.rail` declares
+  `^1.65.0`, or checks for them and does without on an older board.
 - **`api.onThemeChange(fn)`** (1.39.0) calls `fn({ id, base })` whenever the
   board applies a different theme palette (`id` the style, `base` `'dark'` or
   `'light'`). Returns an unsubscribe function; listeners go with the extension. A
@@ -2068,6 +2125,15 @@ and the modal and task-menu items. Disabling it in Settings > Extensions removes
 all of that; notes stay on disk under `~/.agent-wrangler/memory`. The old
 `taskMemoryEnabled: false` config value is migrated to
 `extensions.task-memory = false` at boot.
+
+The **Auto-review archived sessions into task memory** toggle lives under
+Settings > Extensions > Task memory and defaults to off. When enabled, archiving
+a Claude session runs a Haiku review and appends learnings to the task's memory;
+this costs a small amount per archive and grows the file. Disabling the extension
+also stops these reviews. The value is stored at
+`extensionSettings.task-memory.archiveReviewEnabled`; at boot, `RETIRED_SETTINGS`
+in `config-store.js` migrates the old top-level `archiveReviewEnabled` boolean
+without overriding an existing extension value.
 
 ## Builtin: jira
 

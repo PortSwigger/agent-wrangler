@@ -463,7 +463,14 @@ import semver from 'semver';
 // Automatic updates Off, no check yet), with `api.updateStatus.onChange(fn)`. An
 // older board has no `updateStatus`, so an extension that shows it either checks
 // for the function or declares `^1.64.0`.
-export const HOST_API_VERSION = '1.64.0';
+//
+// 1.65.0 is CLIENT-only too: `api.targets` (what the board can press, under keys
+// that survive redraws, a change event, `press(key)` behind the client-only
+// `board:press` capability, and badges the board draws with the extension's
+// text), `api.front()` with `front.onChange`, and `api.rail.button()` with its
+// progress ring. An older board has none of them, so an extension that uses them
+// declares `^1.65.0`.
+export const HOST_API_VERSION = '1.65.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
