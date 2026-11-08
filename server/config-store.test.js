@@ -282,7 +282,6 @@ test('codexPolicyDefaults: unset is core\'s default flags (on-request approvals)
   assert.deepEqual(codexPolicyDefaults({ codexPolicyDefaults: 'nope' }), { ...CODEX_POLICY_DEFAULTS });
 });
 
-
 test('archive review migration preserves boolean choices and existing extension settings', () => {
   for (const enabled of [true, false]) {
     const { cfg, changed } = migrateRetiredFlags({

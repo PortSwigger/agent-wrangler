@@ -2126,6 +2126,15 @@ all of that; notes stay on disk under `~/.agent-wrangler/memory`. The old
 `taskMemoryEnabled: false` config value is migrated to
 `extensions.task-memory = false` at boot.
 
+The **Auto-review archived sessions into task memory** toggle lives under
+Settings > Extensions > Task memory and defaults to off. When enabled, archiving
+a Claude session runs a Haiku review and appends learnings to the task's memory;
+this costs a small amount per archive and grows the file. Disabling the extension
+also stops these reviews. The value is stored at
+`extensionSettings.task-memory.archiveReviewEnabled`; at boot, `RETIRED_SETTINGS`
+in `config-store.js` migrates the old top-level `archiveReviewEnabled` boolean
+without overriding an existing extension value.
+
 ## Builtin: jira
 
 `server/extensions/builtin/jira/` (default on) owns the `jira` link type
