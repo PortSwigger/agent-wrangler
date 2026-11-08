@@ -598,6 +598,8 @@ const TRANSIENT_API_ERROR_TEXTS = [
   'API Error: Request timed out.',
   'API Error: Repeated 529 Overloaded errors',
   'API Error: Connection error.',
+  'API Error: Connection lost while your computer was asleep',
+  'Your computer went to sleep or its clock changed while connecting.',
 ];
 
 const BLOCKING_API_ERROR_TEXTS = [
