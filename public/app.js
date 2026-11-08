@@ -178,7 +178,6 @@ let childFullViewByDefault = false; // server config flag, carried on every grap
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let mailWakesDormant = false;
 let prModelFooter = true;
-let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
@@ -868,7 +867,6 @@ function applyGraph(graph) {
   trustClaudeLaunchCwd = graph.trustClaudeLaunchCwd !== false;
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
-  archiveReviewEnabled = graph.archiveReviewEnabled === true;
   mailWakesDormant = graph.mailWakesDormant === true;
   prModelFooter = graph.prModelFooter !== false;
   chatViewDefault = graph.chatViewDefault === true;
@@ -7181,7 +7179,6 @@ initSettings({
       if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
-      if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'mailWakesDormant') return mailWakesDormant;
       if (id === 'prModelFooter') return prModelFooter;
       if (id === 'chatViewDefault') return chatViewDefault;
@@ -7215,9 +7212,6 @@ initSettings({
       } else if (id === 'autoFixPrChecksDefault') {
         autoFixPrChecksDefault = Boolean(value);
         send({ type: 'set-auto-fix-pr-checks-default', enabled: autoFixPrChecksDefault });
-      } else if (id === 'archiveReviewEnabled') {
-        archiveReviewEnabled = Boolean(value);
-        send({ type: 'set-archive-review-enabled', enabled: archiveReviewEnabled });
       } else if (id === 'mailWakesDormant') {
         mailWakesDormant = Boolean(value);
         send({ type: 'set-mail-wakes-dormant', enabled: mailWakesDormant });

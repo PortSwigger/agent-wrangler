@@ -17,7 +17,6 @@ import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
 import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-default.js';
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { trustClaudeLaunchCwdHandler } from './trust-claude-launch-cwd.js';
-import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { mailWakesDormantHandler } from './mail-wakes-dormant.js';
 import { prModelFooterHandler } from './pr-model-footer.js';
 import { childFullViewHandler } from './child-full-view.js';
@@ -92,7 +91,6 @@ export const CONTROL_HANDLERS = [
   subagentsExpandedByDefaultHandler,
   trustCodexLaunchCwdHandler,
   trustClaudeLaunchCwdHandler,
-  archiveReviewEnabledHandler,
   mailWakesDormantHandler,
   prModelFooterHandler,
   childFullViewHandler,
