@@ -74,6 +74,7 @@ export const CAPABILITY_DESCRIPTIONS = {
   'files:view': 'Open local files the extension names (markdown and images) in a viewer panel when you click them. Only files it registers can be opened, and nothing is changed.',
   'files:open': 'Open the file links you click in a session\'s chat or terminal itself, instead of the board\'s preview.',
   'cards:hideChips': 'Hide chips in the session cards\' meta row (presentation only; nothing is removed).',
+  'board:press': 'Press the board\'s buttons, session cards, tabs and menu rows for you, as a click would (to drive the board by voice, say).',
 };
 
 function chipsEl(items, className) {

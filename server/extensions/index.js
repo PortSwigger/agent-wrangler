@@ -101,7 +101,8 @@ export const CAPABILITIES = new Set([
 // they are a separate set, disjoint from CAPABILITIES (host-api/index.test.js).
 //   cards:hideChips — hide chips in the board cards' meta row (api.cards).
 //   files:open — open the file links clicked in chat and the terminal (file.open).
-export const CLIENT_CAPABILITIES = new Set(['cards:hideChips', 'files:open']);
+//   board:press — press the board's buttons, cards and menu rows (api.targets.press).
+export const CLIENT_CAPABILITIES = new Set(['cards:hideChips', 'files:open', 'board:press']);
 
 // The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
 // core dispatch-modal fields an extension may take over by drawing its own

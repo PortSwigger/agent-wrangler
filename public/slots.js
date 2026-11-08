@@ -99,6 +99,11 @@ const FILES_API = Object.freeze({
 // CLIENT_CAPABILITIES), since taking over a core action needs the human's consent.
 export const FILES_OPEN_CAPABILITY = 'files:open';
 
+// Gates `api.targets.press` (1.65.0): pressing the board's own buttons for the
+// human is disclosed at consent, like taking over a file link. Listing targets,
+// badges, the rail button and `api.front` need nothing.
+export const BOARD_PRESS_CAPABILITY = 'board:press';
+
 // The value slots and the one function each contribution must carry in place
 // of mount().
 const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue', 'file.open': 'open', 'session.inputGate': 'gate' };
@@ -175,6 +180,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // extId -> { set: Set<fn>, read, last }: api.updateStatus.onChange subscribers,
   // fed by updateStatusChanged(); `last` is the JSON they last heard.
   const updateStatusListeners = new Map();
+  // extId -> Set<unsubscribe>: api.targets.onChange and api.front.onChange
+  // subscriptions, dropped with the extension.
+  const boardUnsubs = new Map();
   // Sample-card failures already reported, `extId:id`, so a pill that throws on
   // the fake session prints once rather than once per render.
   const sampleReported = new Set();
@@ -482,7 +490,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         return null;
       };
       // openExtFile takes an extension id; only the bound openFile below may reach it.
-      const { openExtFile: _bound, ...exposed } = baseApi;
+      const { openExtFile: _bound, board: _board, railButtons: _rail, ...exposed } = baseApi;
       apis.set(extId, {
         ...exposed,
         // Resolved HERE rather than at createSlots time: the server announces it,
@@ -638,6 +646,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         settings: settingsApi(extId, baseApi),
         agents: agentsApi(extId, baseApi),
         updateStatus: updateStatusApi(extId, baseApi),
+        targets: targetsApi(extId, baseApi),
+        front: frontApi(extId, baseApi),
+        rail: railApi(extId, baseApi),
         dispatchFields: Object.freeze({
           mount: (el, ctx, opts) => mountDispatchFields(extId, baseApi, el, ctx, opts),
         }),
@@ -906,6 +917,62 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         set.add(fn);
         return () => { set.delete(fn); };
       },
+    });
+  }
+
+  // A board subscription this extension holds, kept so removeExtension drops it.
+  function holdBoardSub(extId, off) {
+    if (typeof off !== 'function') return () => {};
+    if (!boardUnsubs.has(extId)) boardUnsubs.set(extId, new Set());
+    const set = boardUnsubs.get(extId);
+    const unsub = () => { if (set.delete(unsub)) off(); };
+    set.add(unsub);
+    return unsub;
+  }
+  const guarded = (extId, what, fn) => (v) => {
+    try { fn(v); } catch (err) { onError(`[ext:${extId}] ${what} listener failed`, err); }
+  };
+
+  // What the board can press (1.65.0, public/board-targets.js): `list()` the
+  // targets in front, `onChange(fn)` after a redraw changes them, `press(key)`
+  // (board:press), `badges({ key: text })` the board's badges for this extension.
+  function targetsApi(extId, baseApi) {
+    return Object.freeze({
+      list: () => baseApi.board?.list() ?? [],
+      onChange: (fn) => {
+        if (typeof fn !== 'function') { onError(`[ext:${extId}] targets.onChange needs a function`); return () => {}; }
+        return holdBoardSub(extId, baseApi.board?.onTargets(guarded(extId, 'targets.onChange', fn)));
+      },
+      press: (key) => {
+        if (!(requiresFor(extId) || []).includes(BOARD_PRESS_CAPABILITY)) {
+          onError(`[ext:${extId}] targets.press refused: needs the ${BOARD_PRESS_CAPABILITY} capability`);
+          return false;
+        }
+        if (typeof key !== 'string' || !key) { onError(`[ext:${extId}] targets.press refused: expected a target key, got ${JSON.stringify(key)}`); return false; }
+        return Boolean(baseApi.board?.press(key));
+      },
+      badges: (map) => {
+        if (map != null && !isPlainObject(map)) { onError(`[ext:${extId}] targets.badges needs an object of key -> text`); return; }
+        baseApi.board?.setBadges(extId, map || {});
+      },
+    });
+  }
+
+  // What is in front (1.65.0): `{ view, ext, dialog, menu, session }`, and onChange.
+  function frontApi(extId, baseApi) {
+    const read = () => { const f = baseApi.board?.front(); return isPlainObject(f) ? { ...f } : null; };
+    return Object.assign(read, {
+      onChange: (fn) => {
+        if (typeof fn !== 'function') { onError(`[ext:${extId}] front.onChange needs a function`); return () => {}; }
+        return holdBoardSub(extId, baseApi.board?.onFront(guarded(extId, 'front.onChange', fn)));
+      },
+    });
+  }
+
+  // A rail button with a progress ring (1.65.0, public/rail-buttons.js).
+  function railApi(extId, baseApi) {
+    return Object.freeze({
+      button: (opts) => baseApi.railButtons?.add(extId, isPlainObject(opts) ? opts : {}) ?? null,
     });
   }
 
@@ -1184,6 +1251,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       themeListeners.delete(extId);
       earlyAdopterApis.delete(extId);
       updateStatusListeners.delete(extId);
+      for (const unsub of [...(boardUnsubs.get(extId) || [])]) unsub();
+      boardUnsubs.delete(extId);
       for (const unbind of [...(keyUnbinds.get(extId) || [])]) unbind();
       keyUnbinds.delete(extId);
       if (hiddenByExt.delete(extId)) chipsChanged();
