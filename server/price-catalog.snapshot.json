@@ -903,6 +903,20 @@
     "cacheRead": 2
    }
   },
+  "gpt-6-astra-law": {
+   "input": 10,
+   "output": 50,
+   "cacheWrite5m": 12.5,
+   "cacheWrite1h": 20,
+   "cacheRead": 1
+  },
+  "gpt-6-cyber": {
+   "input": 20,
+   "output": 100,
+   "cacheWrite5m": 25,
+   "cacheWrite1h": 40,
+   "cacheRead": 2
+  },
   "gpt-6-luna": {
    "input": 0.1,
    "output": 0.5,
@@ -914,6 +928,19 @@
     "input": 0.2,
     "output": 0.75,
     "cacheRead": 0.02
+   }
+  },
+  "gpt-6-rosalind": {
+   "input": 15,
+   "output": 75,
+   "cacheWrite5m": 18.75,
+   "cacheWrite1h": 30,
+   "cacheRead": 1.5,
+   "long": {
+    "threshold": 272000,
+    "input": 30,
+    "output": 112.5,
+    "cacheRead": 3
    }
   },
   "gpt-6-sol": {
