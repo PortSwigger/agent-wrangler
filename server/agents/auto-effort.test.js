@@ -38,6 +38,7 @@ const claude = (value, opts) => resolveClaudeAutoEffort(value, readClaudeSources
 
 test('an alias resolves to its family’s newest model id', () => {
   assert.equal(claudeModelId('opus'), 'claude-opus-5-5');
+  assert.equal(claudeModelId('fable'), 'claude-fable-5-2');
   assert.equal(claudeModelId('claude-opus-4-7'), 'claude-opus-4-7');
   assert.equal(claudeModelId('opusplan'), null);
 });
@@ -46,6 +47,7 @@ test('with nothing set, a model runs at its documented default', () => {
   assert.equal(claude('opus'), 'medium');
   assert.equal(claude('claude-opus-4-7'), 'xhigh');
   assert.equal(claude('claude-fable-5-1'), 'high');
+  assert.equal(claude('fable'), 'medium');
 });
 
 test('a managed effortLevel overrides the user’s', () => {
@@ -59,6 +61,7 @@ test('a managed effortLevel overrides the user’s', () => {
 test('a user top-level effortLevel only reaches models older than Opus 5.5', () => {
   assert.equal(claude('opus', { user: { effortLevel: 'high' } }), 'medium');
   assert.equal(claude('claude-fable-5-1', { user: { effortLevel: 'xhigh' } }), 'xhigh');
+  assert.equal(claude('fable', { user: { effortLevel: 'xhigh' } }), 'medium');
   // An id with no documented default is unknown, never a guess from that key.
   assert.equal(claude('claude-opus-9', { user: { effortLevel: 'high' } }), null);
   assert.equal(claude('claude-opus-9', { user: { modelSettings: { 'claude-opus-9': { effortLevel: 'low' } } } }), 'low');

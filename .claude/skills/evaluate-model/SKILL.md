@@ -16,13 +16,16 @@ alone. UI, presets and defaults belong to their callers.
 | --- | --- | --- | --- |
 | `board` | [Terminal-Bench leaderboard](https://github.com/harbor-framework/terminal-bench/tree/main/leaderboard/submissions) | Apache-2.0 | Max-effort accuracy, tokens and trial time in each vendor's harness |
 | `anthropic` | [Opus](https://www.anthropic.com/claude-opus-5-5), [Sonnet](https://www.anthropic.com/claude-sonnet-5-5), [Haiku](https://www.anthropic.com/claude-haiku-5-5) | Published results, cited | Terminal-Bench accuracy/cost CSVs by effort |
+| `anthropic-card` | [Fable 5.2 system card](https://assets.claude.com/27d60918d218125e7504bc7354c4b4626ec56b11.pdf), section 8.5 | Published results, read by hand and cited | Fable 5.2 accuracy at max only; cost, other efforts and minutes come from `like` |
 | `openai` | [Terra launch](https://openai.com/index/introducing-gpt-6-1-terra/), [Sol launch](https://openai.com/index/introducing-gpt-6-1-sol/) | Published results, read by hand and cited | Accuracy by effort; costs are null |
 | `prices` | [LiteLLM catalog](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json), bundled in `server/price-catalog.snapshot.json` | MIT, list-price facts | `cacheWrite5m`, `cacheRead`, `output` per million tokens |
 
 Never fetch OpenAI posts programmatically. Carry sweeps from the newest committed
 inputs forward, preserving their source and any `unconfirmed` note. Read a post
 by hand when the reader flags a catalog model without a sweep or a new OpenAI
-board run. Confirm the numbers and remove only resolved manual flags. No
+board run. A Claude model with no Terminal-Bench chart of its own (Fable 5.2)
+keeps its hand-read system-card max until Anthropic charts it or the board runs
+it. Confirm the numbers and remove only resolved manual flags. No
 Artificial Analysis data is used. Review terms before adding any source.
 
 ## Read and compare
