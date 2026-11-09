@@ -17,7 +17,6 @@ import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
 import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-default.js';
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { trustClaudeLaunchCwdHandler } from './trust-claude-launch-cwd.js';
-import { archiveReviewEnabledHandler } from './archive-review-enabled.js';
 import { mailWakesDormantHandler } from './mail-wakes-dormant.js';
 import { prModelFooterHandler } from './pr-model-footer.js';
 import { childFullViewHandler } from './child-full-view.js';
@@ -25,6 +24,7 @@ import { childFullViewDefaultHandler } from './child-full-view-default.js';
 import { chatViewDefaultHandler } from './chat-view-default.js';
 import { defaultSessionCwdHandler } from './default-session-cwd.js';
 import { defaultRuntimeHandler } from './default-runtime.js';
+import { backgroundModelHandler } from './background-model.js';
 import { codexPolicyDefaultsHandler } from './codex-policy-defaults.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
 import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler, extSetAutoUpdateHandler, extSetEarlyAdopterHandler } from './extensions-install.js';
@@ -92,7 +92,6 @@ export const CONTROL_HANDLERS = [
   subagentsExpandedByDefaultHandler,
   trustCodexLaunchCwdHandler,
   trustClaudeLaunchCwdHandler,
-  archiveReviewEnabledHandler,
   mailWakesDormantHandler,
   prModelFooterHandler,
   childFullViewHandler,
@@ -100,6 +99,7 @@ export const CONTROL_HANDLERS = [
   chatViewDefaultHandler,
   defaultSessionCwdHandler,
   defaultRuntimeHandler,
+  backgroundModelHandler,
   codexPolicyDefaultsHandler,
   extensionEnabledHandler,
   extSettingSetHandler,

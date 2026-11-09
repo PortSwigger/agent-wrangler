@@ -112,8 +112,8 @@ test('mailWakesDormant defaults to off; only an explicit true enables', () => {
 
 test('archiveReviewEnabled defaults to off; only an explicit true enables', () => {
   assert.equal(archiveReviewEnabled({}), false);
-  assert.equal(archiveReviewEnabled({ archiveReviewEnabled: false }), false);
-  assert.equal(archiveReviewEnabled({ archiveReviewEnabled: true }), true);
+  assert.equal(archiveReviewEnabled({ extensionSettings: { 'task-memory': { archiveReviewEnabled: false } } }), false);
+  assert.equal(archiveReviewEnabled({ extensionSettings: { 'task-memory': { archiveReviewEnabled: true } } }), true);
 });
 
 test('autoFixPrChecksDefault defaults to on; only an explicit false disables', () => {
@@ -272,12 +272,31 @@ test('migrateRetiredFlags: a blank or non-string old value just drops the key; n
   assert.deepEqual(migrateJira({ tmuxSocket: 's' }), { cfg: { tmuxSocket: 's' }, changed: false });
 });
 
-test('codexPolicyDefaults: unset is core\'s historical flags; a bad field falls back on its own', () => {
-  assert.deepEqual(codexPolicyDefaults({}), { sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false });
+test('codexPolicyDefaults: unset is core\'s default flags (on-request approvals); a bad field falls back on its own', () => {
+  assert.deepEqual(codexPolicyDefaults({}), { sandbox: 'workspace-write', approval: 'on-request', approveForMe: false, bypass: false });
   assert.deepEqual(codexPolicyDefaults({}), { ...CODEX_POLICY_DEFAULTS });
   assert.deepEqual(
     codexPolicyDefaults({ codexPolicyDefaults: { sandbox: 'read-only', approval: 'sometimes', approveForMe: 'yes', bypass: true } }),
-    { sandbox: 'read-only', approval: 'never', approveForMe: false, bypass: true },
+    { sandbox: 'read-only', approval: 'on-request', approveForMe: false, bypass: true },
   );
   assert.deepEqual(codexPolicyDefaults({ codexPolicyDefaults: 'nope' }), { ...CODEX_POLICY_DEFAULTS });
+});
+
+test('archive review migration preserves boolean choices and existing extension settings', () => {
+  for (const enabled of [true, false]) {
+    const { cfg, changed } = migrateRetiredFlags({
+      archiveReviewEnabled: enabled,
+      extensionSettings: { 'task-memory': { other: 'kept' }, another: { value: 1 } },
+    });
+    assert.equal(changed, true);
+    assert.deepEqual(cfg, { extensionSettings: {
+      'task-memory': { other: 'kept', archiveReviewEnabled: enabled }, another: { value: 1 },
+    } });
+    assert.deepEqual(migrateRetiredFlags(cfg), { cfg, changed: false });
+    assert.equal(archiveReviewEnabled(cfg), enabled);
+  }
+  assert.deepEqual(migrateRetiredFlags({ archiveReviewEnabled: true,
+    extensionSettings: { 'task-memory': { archiveReviewEnabled: false } },
+  }).cfg, { extensionSettings: { 'task-memory': { archiveReviewEnabled: false } } });
+  assert.deepEqual(migrateRetiredFlags({ archiveReviewEnabled: 'true' }), { cfg: {}, changed: true });
 });

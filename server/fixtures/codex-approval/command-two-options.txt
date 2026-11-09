@@ -1,0 +1,23 @@
+• Running apply_patch <<'PATCH' …
+    + Show details
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: May I use apply_patch to create /home/user/notes/probe.txt containing hello? This path
+  is outside the writable roots.
+
+  $ apply_patch <<'PATCH'
+  *** Begin Patch
+  *** Add File: /home/user/notes/probe.txt
+  +hello
+  *** End Patch
+  PATCH
+
+
+› 1. Yes, proceed (y)
+  2. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

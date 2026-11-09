@@ -450,7 +450,42 @@ import semver from 'semver';
 // gets it in-process. `claudeHooks` adds PreToolUse and PostToolUse groups to a
 // Claude launch's --settings after core's own. An older server ignores both, so
 // a manifest that relies on either declares `^1.62.0`.
-export const HOST_API_VERSION = '1.62.0';
+//
+// 1.63.0 extends `waitingReason: 'permission'` to Codex: a Codex session row at
+// its command or patch approval prompt (`--ask-for-approval on-request`) is
+// needs-you with waitingFor 'Codex is asking for approval' and waitingReason
+// 'permission' (null before). A manifest that relies on Codex approvals
+// carrying the reason declares `^1.63.0`.
+//
+// 1.64.0 is the CLIENT half: `api.updateStatus()` (public/slots.js), the calling
+// extension's own `{ behind, commits, capped, branch, checkedAt }` from the
+// update checks its Extensions row reads, or null (built-in, hand-placed,
+// Automatic updates Off, no check yet), with `api.updateStatus.onChange(fn)`. An
+// older board has no `updateStatus`, so an extension that shows it either checks
+// for the function or declares `^1.64.0`.
+//
+// 1.65.0 is CLIENT-only too: `api.targets` (what the board can press, under keys
+// that survive redraws, a change event, `press(key)` behind the client-only
+// `board:press` capability, and badges the board draws with the extension's
+// text), `api.front()` with `front.onChange`, and `api.rail.button()` with its
+// progress ring. An older board has none of them, so an extension that uses them
+// declares `^1.65.0`.
+//
+// 1.66.0 adds the `agents:read` capability (`host.agents.list()`, every
+// registered agent with its availability, models and capability flags) and
+// `resolved`, the full model id, on each model of the client `api.agents()`. An
+// older server quarantines the unknown capability and an older board's models
+// have no `resolved`, so a manifest reading either declares `^1.66.0`.
+//
+// 1.67.0 adds the `agents:headless` capability (`host.agents.headless({ prompt,
+// stdin, agent?, model?, effort?, timeoutMs? })`, a tool-less one-shot on any
+// agent whose adapter has a `headless` capability, on Settings › Background
+// model when no model is named), the `headless` capability flag and each
+// model's `background` mark on `host.agents.list()` rows, and an optional third
+// `agent` argument to `host.sessions.bill`, which bills a run by another agent
+// than the card's own. An older server quarantines the unknown capability and
+// lists neither field, so a manifest using any of them declares `^1.67.0`.
+export const HOST_API_VERSION = '1.67.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

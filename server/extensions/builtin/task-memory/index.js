@@ -78,6 +78,12 @@ export default {
   engines: { wranglerApi: '^1.57.0' },
   dir,
   requires: ['board:rebuild', 'board:broadcast', 'events'],
+  settings: [{
+    key: 'archiveReviewEnabled',
+    type: 'toggle',
+    label: 'Auto-review archived sessions into task memory',
+    help: 'When archiving a Claude session, spend a small amount to have a cheap model (Haiku) read its transcript and append a short learnings note (pitfalls, explicit requests, decisions) to the task\'s memory file. Off by default — this costs a little per archive and grows the task\'s memory file over time.',
+  }],
   stores: { taskMemory: () => new MemoryStore() },
   handlers: [getMemoryHandler, setMemoryHandler],
   skills: ['task-memory'],

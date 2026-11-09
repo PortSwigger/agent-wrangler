@@ -598,6 +598,8 @@ const TRANSIENT_API_ERROR_TEXTS = [
   'API Error: Request timed out.',
   'API Error: Repeated 529 Overloaded errors',
   'API Error: Connection error.',
+  'API Error: Connection lost while your computer was asleep',
+  'Your computer went to sleep or its clock changed while connecting.',
 ];
 
 const BLOCKING_API_ERROR_TEXTS = [
@@ -702,6 +704,24 @@ test('buildGraph: live Codex self-update status reaches the board with its resta
     assert.equal(node.managed, true);
     if (expected === 'needs-you') assert.match(node.waitingFor, /restart Codex/i);
   }
+});
+
+test('buildGraph: a Codex approval prompt is needs-you with waitingReason permission', async () => {
+  const entry = { sessionId: 'codex-approval', agent: 'codex', liveSessionId: 'L1' };
+  const mgr = makeDiscoveredManager(entry, 'cx_approval');
+  const discover = async () => [{ tmuxName: 'cx_approval', claudePid: 4243, agent: 'codex', command: 'codex' }];
+  const runtimeResolver = () => ({ analyze: async () => ({}) });
+  const approval = fs.readFileSync(new URL('./fixtures/codex-approval/command.txt', import.meta.url), 'utf8');
+  let graph = await buildGraph(mgr, async () => ({}), { discover, runtimeResolver, capture: async () => approval });
+  let node = graph.sessions.find((s) => s.sessionId === entry.sessionId);
+  assert.equal(node.status, 'needs-you');
+  assert.equal(node.waitingFor, 'Codex is asking for approval');
+  assert.equal(node.waitingReason, 'permission');
+
+  graph = await buildGraph(mgr, async () => ({}), { discover, runtimeResolver, capture: async () => '• Working (3s • esc to interrupt)' });
+  node = graph.sessions.find((s) => s.sessionId === entry.sessionId);
+  assert.equal(node.status, 'working');
+  assert.equal(node.waitingReason, null);
 });
 
 test('buildGraph: confirmed Codex update exit wins over discovery and preserves Resume, output and mail', async () => {

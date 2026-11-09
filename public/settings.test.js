@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SETTINGS_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, extensionFlipNote, getSetting, EXT_SETTING_PREFIX } from './settings.js';
+import { SETTINGS_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, extensionFlipNote, getSetting, EXT_SETTING_PREFIX } from './settings.js';
 
 test('settings are grouped into six ordered tabs', () => {
   assert.deepEqual(SETTINGS_TABS.map(({ id, label }) => ({ id, label })), [
@@ -32,8 +32,8 @@ test('each registered setting appears in exactly one tab', () => {
     'autoFixPrChecksDefault',
     'trustCodexLaunchCwd',
     'trustClaudeLaunchCwd',
-    'archiveReviewEnabled',
     'mailWakesDormant',
+    'backgroundModel',
     'prModelFooter',
     'flipNavHotkeys',
     'autoUpdate',
@@ -146,4 +146,40 @@ test('setRuntimeOptions replaces the Default runtime row\'s options', () => {
   setRuntimeOptions([]);
   setRuntimeOptions(null);
   assert.deepEqual(def.options, list);
+});
+
+// The Background model row offers each agent that can run headless, one group
+// per agent with its live models, valued `<agent>:<model>`; Claude Haiku is the
+// default the row falls back to.
+test('setBackgroundModelOptions groups the headless agents\' models', () => {
+  const def = SETTINGS.find((d) => d.id === 'backgroundModel');
+  assert.equal(def.type, 'select');
+  assert.equal(def.scope, 'server');
+  assert.equal(def.default, 'claude:haiku');
+  assert.ok(SETTINGS_TABS.find((t) => t.id === 'automation').settingIds.includes('backgroundModel'));
+  setBackgroundModelOptions([
+    { id: 'claude', label: 'Claude', headless: true, models: [{ value: 'haiku', label: 'Haiku 4.5' }, { value: 'sonnet[1m]', label: 'Sonnet 1M' }] },
+    { id: 'plain', label: 'Plain', headless: false, models: [{ value: 'x', label: 'X' }] },
+    { id: 'codex', label: 'Codex', headless: true, models: [{ value: 'gpt-small' }] },
+  ]);
+  assert.deepEqual(def.groups, [
+    { label: 'Claude', options: [{ value: 'claude:haiku', label: 'Claude · Haiku 4.5' }, { value: 'claude:sonnet[1m]', label: 'Claude · Sonnet 1M' }] },
+    { label: 'Codex', options: [{ value: 'codex:gpt-small', label: 'Codex · gpt-small' }] },
+  ]);
+  setBackgroundModelOptions(null);
+  assert.equal(def.groups.length, 2, 'a bad frame keeps the last groups');
+});
+
+// A Codex approval prompt shows the card as needs-you, so on-request is the
+// default everywhere a new session's policy comes from: the Settings row, the
+// dialog's fallback before the graph carries Settings, and the server's default.
+test('Codex approvals default to on-request in Settings, the dialog fallback and the server', async () => {
+  const { CODEX_POLICY_FALLBACK } = await import('./codex-policy-field.js');
+  const { CODEX_POLICY_DEFAULTS } = await import('../server/config-store.js');
+  const def = SETTINGS.find((d) => d.id === 'codexDefaultApproval');
+  assert.equal(def.default, 'on-request');
+  assert.match(def.help, /needs-you/);
+  assert.match(def.help, /never/);
+  assert.equal(CODEX_POLICY_FALLBACK.approval, 'on-request');
+  assert.deepEqual({ ...CODEX_POLICY_FALLBACK }, { ...CODEX_POLICY_DEFAULTS });
 });

@@ -31,6 +31,11 @@ import { findConversationFile, findConversationFiles } from '../conversation-fil
 import { discoverSources } from '../search/corpus.js';
 import { parseChunk } from '../search/index-worker.js';
 import { scanAllDaily, rollup } from '../usage-report.js';
+import { waitingReasonFor } from '../state-reader.js';
+import { lastAssistantText } from '../last-assistant.js';
+import { mayExitForUpdate } from '../session-manager.js';
+import { modelFamilies } from '../price-catalog.js';
+import { setProviderMetadata, providerMetadataFor } from '../../public/provider-metadata.js';
 
 function fixtureProvider(file) {
   return {
@@ -94,4 +99,72 @@ test('fixture provider routes chat, search and usage without a Claude fallback',
   assert.equal(report.buckets[0].providers['fixture-api'].total.usd, 0.2);
   assert.equal(registry.effortError('fixture', 'deep', 'reasoning', resolveAdapter), null);
   assert.match(registry.effortError('fixture', 'deep', 'plain', resolveAdapter), /Unknown effort/);
+});
+
+// The paths that used to compare agent ids directly, driven by a provider core
+// has never heard of: every behaviour comes from what its adapter declares.
+test('fixture provider drives the former id checks through adapter capabilities', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-provider-moved-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'fixture.jsonl');
+  fs.writeFileSync(file, ['rewound', 'kept'].map((text, i) => JSON.stringify({ uuid: `u${i}`, text })).join('\n') + '\n');
+  const scanner = () => ({
+    push: (line) => [{ kind: 'assistant', text: JSON.parse(line).text }],
+    pushTagged: (line) => { const r = JSON.parse(line); return { uuid: r.uuid, events: [{ kind: 'assistant', text: r.text }] }; },
+    // Prunes the first branch, standing in for a rewound conversation.
+    selectLive: (tagged) => tagged.slice(1).flatMap((b) => b.events),
+  });
+  const fixture = {
+    id: 'fixture', label: 'Fixture Agent', tmuxPrefix: 'fx_',
+    terminal: { autoBlock: true, updatesOnExit: true },
+    launch: { codexPolicy: true },
+    history: { branches: true, findFiles: async () => [file], createScanner: scanner },
+  };
+  const linear = { ...fixture, id: 'linear', tmuxPrefix: 'ln_', terminal: {}, launch: {}, history: { ...fixture.history, branches: false } };
+  const fixtures = registry.createAgentRegistry([fixture, linear]);
+
+  // state-reader: the timed auto-block reason follows terminal.autoBlock.
+  const clock = 'Auto mode is checking this action · denies in 1:47';
+  assert.equal(waitingReasonFor(fixture, 'waiting', '').waitingReason, 'permission');
+  assert.equal(waitingReasonFor(linear, 'waiting', clock), null);
+
+  // last-assistant: branch pruning follows history.branches.
+  assert.equal(await lastAssistantText({ agent: 'fixture', sessionId: 's' }, { adapterFor: fixtures.adapterFor }), 'kept');
+  assert.equal(await lastAssistantText({ agent: 'linear', sessionId: 's' }, { adapterFor: fixtures.adapterFor }), 'kept');
+  const branched = { ...fixture, history: { ...fixture.history, createScanner: () => ({ ...scanner(), selectLive: (tagged) => tagged[0].events }) } };
+  assert.equal(await lastAssistantText({ agent: 'fixture', sessionId: 's' }, { adapterFor: () => branched }), 'rewound', 'a branching provider reads the live branch, not the last line');
+
+  // session-manager: a clean exit's update check follows terminal.updatesOnExit,
+  // by the entry's agent or, for an entry with none, the tmux prefix.
+  assert.equal(mayExitForUpdate({ agent: 'fixture' }, 'fx_1', fixtures), true);
+  assert.equal(mayExitForUpdate({}, 'fx_1', fixtures), true);
+  assert.equal(mayExitForUpdate({ agent: 'linear' }, 'ln_1', fixtures), false);
+  assert.equal(mayExitForUpdate({ agent: 'nonesuch' }, 'ln_1', fixtures), false);
+  assert.equal(fixtures.adapterForTmux('fx_ab12').id, 'fixture');
+  assert.equal(fixtures.adapterForTmux('zz_ab12'), null);
+
+  // Browser: the dispatch dialog's policy row follows launch.codexPolicy.
+  setProviderMetadata([fixture, linear].map((a) => registry.providerMetadata({ ...a, presentation: {}, controls: {} })));
+  assert.equal(providerMetadataFor('fixture').controls.codexPolicy, true);
+  assert.equal(providerMetadataFor('linear').controls.codexPolicy, false);
+  setProviderMetadata([]);
+
+  // price-catalog: families are parsed with the pattern the adapter supplies.
+  assert.deepEqual(modelFamilies({ provider: 'nonesuch', pattern: /^fixture-([a-z]+)-(\d)$/ }), []);
+  assert.deepEqual(registry.adapterFor('claude').usage.catalogFamilies.provider, 'anthropic');
+});
+
+test('built-in providers declare the capabilities the former id checks read', () => {
+  const claude = registry.adapterFor('claude');
+  const codex = registry.adapterFor('codex');
+  assert.equal(claude.terminal.autoBlock, true);
+  assert.ok(!codex.terminal.autoBlock);
+  assert.equal(claude.history.branches, true);
+  assert.ok(!codex.history.branches);
+  assert.equal(codex.terminal.updatesOnExit, true);
+  assert.ok(!claude.terminal.updatesOnExit);
+  assert.equal(mayExitForUpdate({}, 'cx_ab12'), true, 'a legacy entry with no agent is still read by its Codex prefix');
+  assert.equal(mayExitForUpdate({ agent: 'claude' }, 'cc_ab12'), false);
+  assert.equal(registry.providerMetadata(codex).controls.codexPolicy, true);
+  assert.equal(registry.providerMetadata(claude).controls.codexPolicy, false);
 });

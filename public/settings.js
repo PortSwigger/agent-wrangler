@@ -18,6 +18,9 @@
 //     by a renamed option) falls back to `default` rather than reaching a consumer.
 //   type 'text' → a free-text string (optional `placeholder`), saved on change
 //     (Enter or blur); getSetting returns the string.
+//   type 'select' → one of `groups` ([{ label, options: [{ value, label }] }]),
+//     rendered as a dropdown with one optgroup per group, for a choice too long
+//     for a row of pills; getSetting returns the chosen `value` string.
 // New types extend renderRow()/readStored()/writeStored() + getSetting().
 //
 // scope: 'server' marks a setting persisted in the server's config.json (shared
@@ -75,14 +78,6 @@ export const SETTINGS = [
     default: true,
   },
   {
-    id: 'archiveReviewEnabled',
-    type: 'toggle',
-    scope: 'server',
-    label: 'Auto-review archived sessions into task memory',
-    help: 'When archiving a Claude session, spend a small amount to have a cheap model (Haiku) read its transcript and append a short learnings note (pitfalls, explicit requests, decisions) to the task\'s memory file. Off by default — this costs a little per archive and grows the task\'s memory file over time.',
-    default: false,
-  },
-  {
     id: 'mailWakesDormant',
     type: 'toggle',
     scope: 'server',
@@ -95,7 +90,7 @@ export const SETTINGS = [
     type: 'toggle',
     scope: 'server',
     label: 'Tag new PRs with the session\'s model',
-    help: 'When a session opens a PR with gh pr create, add a last line to its description naming the model the session is running, e.g. "Model: claude-opus-5-5", so you can search PRs by model with gh search prs \'"Model: claude-opus-5-5" in:body\'. A description that already has a Model: line is left alone. This never attaches the PR to a card.',
+    help: 'When a session opens a PR with gh pr create, add a last line to its description naming the model the session is running, e.g. "Model: claude-opus-5-5", so you can search PRs by model with gh search prs \'"Model: claude-opus-5-5" in:body\'. It is followed by a "Made with Agent Wrangler" line. Lines the description already has are not added again. This never attaches the PR to a card.',
     default: true,
   },
   {
@@ -153,8 +148,8 @@ export const SETTINGS = [
     scope: 'server',
     options: [{ value: 'on-request', label: 'on-request' }, { value: 'never', label: 'never' }],
     label: 'Codex approvals for new sessions',
-    help: 'Whether Codex stops to ask before a command its sandbox would block. on-request waits for you in the session; never lets Codex carry on without asking.',
-    default: 'never',
+    help: 'Whether Codex stops to ask before a command its sandbox would block. on-request (the default) waits for you: the card shows as needs-you until you answer in the session. Choose never instead to let Codex carry on without asking.',
+    default: 'on-request',
   },
   {
     id: 'codexDefaultApproveForMe',
@@ -171,6 +166,18 @@ export const SETTINGS = [
     label: 'Codex bypasses sandbox and approvals by default',
     help: 'Dangerous: runs model-generated commands with no sandbox and no approvals. Replaces every Codex setting above.',
     default: false,
+  },
+  // Replaced on every agents frame by setBackgroundModelOptions: one group per
+  // agent that can run headless, its models from the live catalog. The value is
+  // `<agent>:<model>`; app.js's bridge splits it for the server.
+  {
+    id: 'backgroundModel',
+    type: 'select',
+    scope: 'server',
+    groups: [],
+    label: 'Background model',
+    help: 'The agent and model the wrangler and its extensions use for small one-shot jobs that name no model of their own, such as the archive memory review. Each run has every tool off and is billed to the card it ran for.',
+    default: 'claude:haiku',
   },
   {
     id: 'terminalSide',
@@ -216,7 +223,7 @@ export const SETTINGS_TABS = [
   {
     id: 'automation',
     label: 'Automation',
-    settingIds: ['autoFixPrChecksDefault', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'archiveReviewEnabled', 'mailWakesDormant'],
+    settingIds: ['autoFixPrChecksDefault', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'mailWakesDormant', 'backgroundModel'],
   },
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
@@ -286,6 +293,22 @@ export function refreshThemeRows() {
 export function setRuntimeOptions(list) {
   const def = byId.get('defaultRuntime');
   if (def && Array.isArray(list) && list.length) def.options = list;
+}
+
+// The Background model row's groups, from the agents frame: each available agent
+// whose adapter can run headless, with its live models. Called on every agents
+// frame; the modal renders on open, so the row is always current. Each option
+// names its agent too: a closed dropdown shows the option, not its group.
+export function setBackgroundModelOptions(agents) {
+  const def = byId.get('backgroundModel');
+  if (!def || !Array.isArray(agents)) return;
+  def.groups = agents.filter((a) => a?.headless && Array.isArray(a.models) && a.models.length).map((a) => {
+    const agentLabel = String(a.label || a.id);
+    return {
+      label: agentLabel,
+      options: a.models.map((m) => ({ value: `${a.id}:${m.value}`, label: `${agentLabel} · ${m.label || m.value}` })),
+    };
+  });
 }
 
 // One note element per row, created on first flip and rewritten after. Never
@@ -404,6 +427,22 @@ function rowHtml(def) {
           ${def.help ? `<div class="setting-help">${esc(def.help)}</div>` : ''}
         </div>
         <div class="setting-seg" role="radiogroup" aria-label="${esc(def.label)}">${opts}</div>
+      </div>`;
+  }
+  if (def.type === 'select') {
+    const all = def.groups.flatMap((g) => g.options);
+    // A stored value no option offers yet (the agents frame lands after the
+    // graph, or its agent is not installed here) keeps an option of its own, so
+    // the row never shows another model as the one in force.
+    const cur = on || def.default;
+    const extra = all.some((o) => o.value === cur) ? '' : `<option value="${esc(cur)}" selected>${esc(cur)}</option>`;
+    const groups = def.groups.map((g) => `<optgroup label="${esc(g.label)}">${g.options.map((o) => `<option value="${esc(o.value)}"${o.value === cur ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</optgroup>`).join('');
+    return `<div class="setting-row" data-id="${esc(def.id)}">
+        <div class="setting-copy">
+          <div class="setting-label">${esc(def.label)}</div>
+          ${def.help ? `<div class="setting-help">${esc(def.help)}</div>` : ''}
+        </div>
+        <select class="setting-select" aria-label="${esc(def.label)}">${extra}${groups}</select>
       </div>`;
   }
   if (def.type === 'text') {
@@ -706,6 +745,14 @@ export function initSettings({ server, appearance, onChange, extensions, updates
   });
 
   body.addEventListener('change', (e) => {
+    const select = e.target.closest('.setting-select');
+    if (select) {
+      const selectDef = byId.get(select.closest('.setting-row')?.dataset.id);
+      if (!selectDef || selectDef.type !== 'select') return;
+      setSetting(selectDef.id, select.value);
+      flashSettingsSaved();
+      return;
+    }
     const input = e.target.closest('.setting-text-input');
     if (!input) return;
     const def = byId.get(input.closest('.setting-row')?.dataset.id);

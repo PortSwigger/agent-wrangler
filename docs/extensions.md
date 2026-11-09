@@ -887,8 +887,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   options pick, or Settings › Sessions' Codex defaults for a dispatch without
   the dialog; copied by forkEntry and resumeEntry, gone with the entry on
   purge), else Settings as they are now. The shipped Settings defaults are core's
-  historical flags (`--sandbox workspace-write --ask-for-approval never` plus the
-  network grant). So an extension answer always wins over the built-in picker.
+  default flags (`--sandbox workspace-write --ask-for-approval on-request` plus
+  the network grant), so a session waiting at Codex's approval prompt shows as
+  needs-you; Settings can switch approvals to `never`. So an extension answer always wins over the built-in picker.
   It is synchronous (a Promise is dropped) and consulted only for Codex, through
   the `_extCodexPolicy` seam inside `SessionManager._codexPolicyFor`; a new
   launch path must thread `codexPolicy` too. Under a `read-only` sandbox the
@@ -1274,9 +1275,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `wranglerExtension` when using these hooks. Server host access still requires
   the capabilities listed in `requires`.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
-  `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
+  `[{ id, label, models: [{ value, label, default, autoEffort, resolved }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
-  price catalogs — as a fresh deep copy per call. A model's `autoEffort`
+  price catalogs — as a fresh deep copy per call. A model's `resolved` (1.66.0)
+  is the full model id its value runs today (`opus` → `claude-opus-5-5`, a
+  Codex value is already its own id), or null for a value that runs more than
+  one model (`opusplan`); an older board's models have no `resolved`. A model's `autoEffort`
   (1.49.0) is the level the agent runs it at when a launch passes no effort
   ("Auto"), read from the user's and organization's settings (Claude: managed
   settings, a settings `env` block's `CLAUDE_CODE_EFFORT_LEVEL`, user settings,
@@ -1390,6 +1394,80 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   origin to follow). The board draws nothing for it, so the extension owns its
   own, typically hidden, switch. Turning it off changes nothing until the next
   update, which comes from the default branch.
+- **`api.updateStatus()`** (1.64.0) returns the calling extension's own update
+  status, `{ behind, commits, capped, branch, checkedAt }`, from the same data its
+  Extensions row shows: the background check (Automatic updates in Notify or
+  Auto) with this tab's latest Check all on top. `commits` is how many commits the
+  install is behind `branch`, the branch it tracks (the early-adopter branch when
+  the install opted in); it is `0` when up to date, and `capped` means "at least
+  this many" (counts stop at 50, and a behind answer from Check all alone, which
+  does not count, reads as `1` capped). `checkedAt` is when that answer was
+  taken, in epoch milliseconds. It is `null` for a built-in or hand-placed
+  extension, before the first check, after a failed one, and with Automatic
+  updates Off. There is no argument: an extension can read only its own entry.
+  **`api.updateStatus.onChange(fn)`** calls `fn` with a fresh copy (or `null`)
+  whenever that value changes, and returns the unsubscribe function;
+  subscriptions die with the extension, and a throwing listener is reported and
+  kept. An extension that still loads on older boards checks
+  `typeof api.updateStatus === 'function'` and shows nothing without it;
+  otherwise it declares `^1.64.0`.
+- **`api.targets`** (1.65.0, `public/board-targets.js`) is what the board can
+  press right now, so an extension can drive it by something other than a
+  pointer (voice, a switch). **`list()`** returns
+  `[{ key, kind, label, where, primary, href?, rect }]` for every button, tab,
+  link, field, summary, session card and menu row that is in front, painted,
+  takes the pointer and is not covered. What is in front decides the list: an
+  open dialog (the focused one, else the last opened) takes it all, then an open
+  context menu, otherwise the rail, the board, Search or the extension view in
+  front, the open session's panel and chat, and the diff. A terminal's own DOM
+  is never listed. `where` is `'rail'`, `'board'`, `'search'`, `'view'`,
+  `'panel'`, `'diff'`, `'dialog'` or `'menu'`; `kind` is `'session'`,
+  `'task-new-session'`, `'task-menu'`, `'rail'`, `'tab'`, `'field'`, `'link'` or
+  `'button'`; `label` is its aria-label, title or text (80 characters at most);
+  `href` is a link's own; `rect` is `{ x, y, width, height }` in viewport pixels,
+  clipped to what shows.
+  **A key names the same thing across redraws**: a session card is
+  `session:<sid>` (a team row `team:<leadSid>`, a sub-agent row
+  `subagent:<ownerSid>/<id>`); a task tile's New session is
+  `task:<taskId>:new-session` (its body's New session row
+  `task:<taskId>:new-session-row`) and its ⋯ is `task:<taskId>:menu`, the
+  Unassigned tile's task id being `adhoc`; a rail view is `rail:view:<view>`, a
+  rail button with an id `rail:<id>`, and an extension's rail button
+  `rail:ext:<extId>:<id>`. Anything else is `<scope>:#<id>` when it has an id,
+  else `<scope>:<tag>.<class>|<data-…>` with its label and then `~<n>` added
+  only when that is needed to tell it from a sibling; `<scope>` is the session
+  card or task tile it sits in, `dialog:<id>`, `menu`, or its `where`.
+  **`onChange(fn)`** calls `fn(list)` after a redraw, scroll or resize changes
+  the keys, kinds, labels or places listed (rects alone do not), and returns the
+  unsubscribe function. **`press(key)`** clicks that target as a pointer would
+  (a field takes focus instead) and returns whether a target had that key; it
+  needs the client-only capability **`board:press`**, and without it reports
+  and returns `false`. **`badges({ [key]: text })`** replaces this extension's
+  badges: the board draws each over its target's corner (text only, 24
+  characters at most, in `#ext-target-badges` as
+  `.ext-target-badge[data-ext="<extId>"][data-key="<key>"]`, for the extension's
+  own CSS to restyle), follows it through scrolls and redraws, draws nothing
+  while it is not listed and draws it again when it is; `badges({})` clears
+  them. The board watches the DOM only while some extension listens or has
+  badges, and subscriptions and badges die with the extension.
+- **`api.front()`** (1.65.0) is what is in front:
+  `{ view, ext, dialog, menu, session }`: `view` the board's view key (`'grid'`,
+  `'search'` or `ext:<extId>:<id>`), `ext` the extension owning that view or
+  null, `dialog` the open dialog's id (`'dialog'` for one with none) or null,
+  `menu` whether a context menu is open, `session` the open session's id or
+  null. **`api.front.onChange(fn)`** calls `fn` with a fresh copy whenever one of
+  those changes, and returns the unsubscribe function.
+- **`api.rail.button({ id, label, icon?, active?, progress?, onPress })`**
+  (1.65.0, `public/rail-buttons.js`) puts a button in the rail's bottom zone,
+  above Usage, after any other extension's. `icon` is SVG markup (the label's
+  initial without one), `active` draws it pressed (`.on`), and `progress` draws
+  core's ring round it: a fraction `0`–`1`, `'busy'` (or `true`) for a spinning
+  arc, `null` for none. `onPress(event)` runs on a click. It returns
+  `{ update(partial), remove() }`, or `null` (reported) without an id, a label
+  or an `onPress`; adding the same id again replaces the button. Buttons go
+  with the extension. It is listed by `api.targets` as `rail:ext:<extId>:<id>`.
+  An extension using `api.targets`, `api.front` or `api.rail` declares
+  `^1.65.0`, or checks for them and does without on an older board.
 - **`api.onThemeChange(fn)`** (1.39.0) calls `fn({ id, base })` whenever the
   board applies a different theme palette (`id` the style, `base` `'dark'` or
   `'light'`). Returns an unsubscribe function; listeners go with the extension. A
@@ -1700,9 +1778,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Headless requests must leave the card's live session bindings unchanged; hooks
   should only resolve the requested environment, and core does not cache their
   directory grants. Task memory contributes nothing to a headless run.
-  Core's `runHeadlessClaude` merges an `env` option over the process environment,
-  then strips nested-Claude markers, preserving an explicitly supplied
-  `CLAUDE_CODE_OAUTH_TOKEN` for the selected login;
+  Core's `runHeadless` (`server/headless.js`) merges an `env` option over the
+  process environment; Claude's headless command then strips nested-Claude
+  markers, preserving an explicitly supplied `CLAUDE_CODE_OAUTH_TOKEN` for the
+  selected login;
   archive memory review collects the card's headless context before running and logs
   a refusal as a skipped review, without stamping or publishing a result.
 - **`hooks['session.prepare']`** (1.32.0), called with `{ sessionId, taskId,
@@ -1730,7 +1809,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   'permission' (a prompt) or 'auto-block'. 'auto-block' is Claude Code's timed
   auto-mode safety check, which denies itself when its countdown runs out, and
   `autoBlockSeconds` (1.61.0) is the time it had left when the board last read the
-  pane (`null` otherwise). The board still shows it as needs-you.
+  pane (`null` otherwise). The board still shows it as needs-you. From 1.63.0 a
+  Codex session at its command or patch approval prompt is needs-you with
+  waitingReason 'permission' and waitingFor 'Codex is asking for approval'.
 - **`host.events`** (capability `events`, 1.17.0): `on(name, fn)` and `emit(name, payload)`.
   Subscriber errors are caught and logged per handler, `emit` does not wait, and
   an extension's subscriptions are dropped when it deactivates, so a disabled
@@ -1918,6 +1999,45 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   estimate sits on the UTC day it started. A manifest reading `days` declares
   `^1.60.0`.
 
+- **`host.agents.list()`** (capability `agents:read`, 1.66.0) resolves every
+  agent the server registers, installed or not, as frozen rows read afresh per
+  call: `{ id, label, available, models, efforts, capabilities }`. `available`
+  is whether its CLI is installed here. `efforts` is the agent's
+  `[{ value, label }]`. Each model is `{ value, resolved, label, default,
+  efforts, autoEffort, background }`: `resolved` as on `api.agents()`, `efforts` the effort
+  values a launch of that model accepts, `autoEffort` the level it runs at with no effort
+  passed (null when unknown), `background` (1.67.0) true on the one model
+  Settings › Automation › Background model names. `capabilities` is what a host can lean on, so it
+  branches on what an agent does rather than on its id:
+
+  | Flag | Meaning |
+  | --- | --- |
+  | `disallowedTools` | `spawn({ disallowedTools })` is honoured (refused otherwise). |
+  | `remoteControl` | `spawn({ remoteControl })` gives the session phone control (refused otherwise). |
+  | `askUserTool` | The tool that asks the human in the pane, to block with `disallowedTools` when nobody watches it (`AskUserQuestion` for Claude), or null. |
+  | `sandbox` | It runs under an OS sandbox that `codexPolicy` hooks shape; `spawn({ addDirs })` become its extra writable folders. |
+  | `mailWhileWorking` | Mail reaches it mid-turn; without it a pasted message waits for the turn to end. |
+  | `headless` (1.67.0) | `host.agents.headless({ agent })` can run on it. |
+
+  A manifest using it declares `^1.66.0` (`^1.67.0` to read `headless` or `background`).
+
+- **`host.agents.headless({ prompt, stdin?, agent?, model?, effort?, timeoutMs? })`**
+  (capability `agents:headless`, 1.67.0) runs one tool-less one-shot and resolves a
+  frozen `{ text, liveSessionId, agent, model, error }`. `prompt` goes in argv and
+  `stdin` (a string, default empty) is piped in; every tool is off, and the user's own
+  settings and MCP servers are not loaded. Claude runs `claude -p` with its tools
+  disallowed; Codex runs `codex exec` in a read-only sandbox with its tool features
+  disabled and the user's `config.toml` ignored. With no `model` the run uses the
+  **Background model** (Settings › Automation, Claude Haiku by default); an `agent`
+  alone runs the Background model when it is that agent, otherwise that agent's own
+  headless default. `timeoutMs` defaults to two minutes and is capped at ten. A failed
+  run resolves with `error` as a message and `text` null; `liveSessionId` is still set
+  when the run started a conversation, because that conversation spent tokens. It
+  rejects only for a bad call: no prompt, an unknown agent, a model or effort that
+  agent does not list, or an agent without `capabilities.headless`. The spend is not
+  billed to any card until the extension calls `host.sessions.bill(sessionId,
+  liveSessionId, agent)` (`sessions:bill`) with the returned id and agent.
+
 ## Runtimes
 
 A runtime is where a session's agent runs. The built-ins are `local` (the host) and
@@ -2048,6 +2168,16 @@ and the modal and task-menu items. Disabling it in Settings > Extensions removes
 all of that; notes stay on disk under `~/.agent-wrangler/memory`. The old
 `taskMemoryEnabled: false` config value is migrated to
 `extensions.task-memory = false` at boot.
+
+The **Auto-review archived sessions into task memory** toggle lives under
+Settings > Extensions > Task memory and defaults to off. When enabled, archiving
+a Claude session runs a review on the Background model (Settings > Automation,
+Claude Haiku by default), billed to that session, and appends learnings to the task's memory;
+this costs a small amount per archive and grows the file. Disabling the extension
+also stops these reviews. The value is stored at
+`extensionSettings.task-memory.archiveReviewEnabled`; at boot, `RETIRED_SETTINGS`
+in `config-store.js` migrates the old top-level `archiveReviewEnabled` boolean
+without overriding an existing extension value.
 
 ## Builtin: jira
 

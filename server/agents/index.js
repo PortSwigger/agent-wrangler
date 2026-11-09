@@ -13,18 +13,25 @@ export function createAgentRegistry(adapters) {
       if (!adapter) throw new TypeError(`Unknown agent "${id}". Valid agents: ${values().map((a) => a.id).join(', ')}.`);
       return adapter;
     },
+    // The adapter whose tmux prefix names this pane (cc_…, cx_…), or null.
+    adapterForTmux(name) {
+      return values().find((a) => a.tmuxPrefix && (name || '').startsWith(a.tmuxPrefix)) || null;
+    },
   };
 }
 
-export const { adapterFor, registeredAgents } = createAgentRegistry(allAgents);
+export const { adapterFor, registeredAgents, adapterForTmux } = createAgentRegistry(allAgents);
 
 export function providerMetadata(adapter) {
   return {
     id: adapter.id, label: adapter.label, reviewPriority: adapter.reviewPriority,
     billingProviders: adapter.usage?.billingProviders || [],
     terminal: { editingKeys: adapter.terminal?.editingKeys || {} },
-    presentation: adapter.presentation || {}, controls: adapter.controls || {},
+    presentation: adapter.presentation || {},
+    // codexPolicy: the dispatch dialog offers the sandbox/approval controls.
+    controls: { ...(adapter.controls || {}), codexPolicy: adapter.launch?.codexPolicy === true },
     supportsRemoteControl: adapter.supportsRemoteControl === true,
+    headless: Boolean(adapter.headless),
     forkHelp: adapter.forkHelp || 'Branch this conversation into a new session. The original keeps running independently.',
   };
 }
@@ -43,9 +50,15 @@ export function supportsDisallowedTools(id) {
 // neither is known.
 export function sessionModelId(agentId, currentModel, launchModel) {
   if (currentModel) return currentModel;
-  if (!launchModel) return null;
-  const adapter = allAgents().find((a) => a.id === (agentId ?? 'claude'));
-  return (adapter?.modelId ? adapter.modelId(launchModel) : launchModel) || null;
+  return resolvedModelId(allAgents().find((a) => a.id === (agentId ?? 'claude')), launchModel);
+}
+
+// The full model id a launch value runs today, through the adapter's `modelId`
+// when it has one (opus → claude-opus-5-5, opusplan → null: it runs two); an
+// adapter without one launches by full id already. Null for an empty value.
+export function resolvedModelId(adapter, value) {
+  if (!value) return null;
+  return (adapter?.modelId ? adapter.modelId(value) : value) || null;
 }
 
 // Shared by modelPillFor and maxContextWindowFor: resolve the model ENTRY a

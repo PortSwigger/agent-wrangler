@@ -75,7 +75,8 @@ Optional launch controls include:
   host. **Settings → Sessions → Default runtime for new sessions** picks which one is pre-selected; a runtime that is
   no longer offered or can't run the chosen agent falls back to Local.
 - **Codex sandbox and approvals:** for a Codex model only, pick the sandbox (read-only, workspace-write or
-  danger-full-access), the approval policy (on-request or never), **Approve for me** (Codex's automatic review,
+  danger-full-access), the approval policy (on-request, the default, which shows the card as needs-you while Codex
+  waits for your answer; or never, which lets Codex carry on without asking), **Approve for me** (Codex's automatic review,
   which implies workspace-write and on-request) or **Bypass sandbox and approvals** (no sandbox, no approvals; the
   dialog warns when it is ticked). The controls start from **Settings → Sessions**' Codex defaults, which is also
   what a launch without the dialog (`spawn_session`, an extension) gets. A session keeps its choice across resume
@@ -122,6 +123,7 @@ Each task also has:
 - **Task memory:** shared Markdown that humans and agents can update across sessions or repositories. It is the built-in `task-memory` extension (Settings > Extensions); turning it off removes the memory button, the `AW_TASK_MEMORY` variable, the extra directory grant and the skill, and keeps the notes on disk.
 - **Links:** Jira issues and pull requests shared by the task.
 - **Focus, minimise, and activity sort:** controls for a busy board. Minimise is in both the header menu and the tile's right-click menu.
+- **Clear statuses:** in both task menus, including Unassigned, when something in the task is flashing. It quiets every session in the task, nested ones included: done and unread alarms clear, woken snoozes are dismissed, and needs-you cards stop flashing but keep their red stripe. Sessions still snoozed are left asleep.
 - **Archive task:** removes the task and live sessions while preserving resumable history.
 
 Use task memory for durable decisions, the checklist for session progress, and `AGENTS.md` or
@@ -254,14 +256,18 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 - Theme, terminal side, terminal font size, and chat font size.
 - Child-card and Chat defaults, the default folder for new sessions, and the Codex sandbox and approval
   defaults a new Codex session starts from (workspace-write and never unless you change them).
-- PR auto-fix, Codex and Claude folder trust, and optional extraction of archive learnings into task memory.
+- PR auto-fix, Codex and Claude folder trust, and the **Background model**: the agent and model
+  (Claude Haiku by default) for small tool-less one-shot jobs that name no model of their own, such
+  as the archive memory review. Any installed agent that can run headless is offered.
   Codex folder trust uses the resolved directory path, so a symlink and its target share one trust
   entry. If the directory cannot be resolved or trust cannot be saved, the launch reports an error.
   Claude folder trust covers scratch sessions and worktrees of a repo you already trust in Claude: the
   worktree inherits the repo's trust (just that worktree, never its parent folder), so a job or
   auto-session in a worktree doesn't stall on "Do you trust this folder?". A worktree of an untrusted
   repo still asks.
-- Extension installation, enablement, updates, and extension-specific settings. Sounds offers
+- Extension installation, enablement, updates, and extension-specific settings. Task memory offers
+  optional extraction of archive learnings under Settings > Extensions > Task memory (off by default).
+  Sounds offers
   shared audio cues, uploaded audio files, and previews. The per-session checklist is a builtin
   extension, so its on/off switch lives here (an older `checklistEnabled: false` is carried over
   automatically).

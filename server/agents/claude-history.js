@@ -5,6 +5,8 @@ import { claudeSources } from './history-sources.js';
 
 export const claudeHistory = {
   requiresResumeFile: true,
+  // A transcript is a uuid tree: rewound branches are pruned with the scanner's selectLive.
+  branches: true,
   resolveResumeDir,
   launchCwd,
   directory: ({ projectsDir } = {}) => projectsDir,

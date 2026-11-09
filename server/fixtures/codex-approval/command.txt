@@ -1,0 +1,29 @@
+• Running curl -sI https://example.com/probe
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: Allow this curl command to access the network?
+
+  $ curl -sI https://example.com/probe
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `curl -sI https://example.com/probe` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

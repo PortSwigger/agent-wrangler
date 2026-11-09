@@ -275,8 +275,8 @@ const TRANSIENT_API_ERRORS = [
   /Server error mid-response\./,
   /Part of the response never arrived/,
   /The response stream was malformed/,
-  /Your computer went to sleep (mid-response|before a response was produced)/,
-  /Connection (lost|closed) (mid-response|before a response was produced)/,
+  /Your computer went to sleep/,
+  /Connection (lost|closed) (mid-response|before a response was produced|while your computer was asleep)/,
   /The response stalled before a response was produced/,
   /Can.t reach the API server|ENOTFOUND/,
   /Request timed out/,
@@ -288,13 +288,14 @@ export function apiErrorReason(text) {
   return text && TRANSIENT_API_ERRORS.some((re) => re.test(text)) ? 'api-error' : 'api-error-blocking';
 }
 
-// Why a Claude card whose session file says 'waiting' waits: 'auto-block' for the
-// timed auto-mode safety check, which Claude Code denies by itself when its
-// countdown runs out (autoBlockCountdown), else 'permission'. Null for any other
-// status or agent. The board still shows both as needs-you; extensions read the
-// reason to tell a prompt that resolves itself from one that needs the human.
-export function claudeWaitingReason(agentId, rawStatus, paneText) {
-  if (agentId !== 'claude' || rawStatus !== 'waiting') return null;
+// Why a card whose live status file says 'waiting' waits, for an agent whose
+// terminal declares `autoBlock`: 'auto-block' for the timed auto-mode safety
+// check, which the CLI denies by itself when its countdown runs out
+// (autoBlockCountdown), else 'permission'. Null for any other status or agent.
+// The board still shows both as needs-you; extensions read the reason to tell a
+// prompt that resolves itself from one that needs the human.
+export function waitingReasonFor(adapter, rawStatus, paneText) {
+  if (!adapter?.terminal?.autoBlock || rawStatus !== 'waiting') return null;
   const autoBlock = autoBlockCountdown(paneText);
   return autoBlock
     ? { waitingReason: 'auto-block', autoBlockSeconds: autoBlock.secondsLeft }
@@ -526,12 +527,14 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     const paneTarget = sessionManager?.paneTargetFor?.(s.sessionId) ?? tmux;
     const paneText = paneTarget ? await capture(paneTarget, 60, sessionManager?.socketOf?.(tmux) ?? '') : '';
     let scrapeWaitingFor = null;
+    let scrapeWaitingReason = null;
     if (status === 'scrape') {
       if (!tmux) status = 'unknown';
       else if (adapterFor(agentId).statusSource === 'codex-rollout') {
         const c = await codexStatus({ liveSid: mapEntry?.liveSessionId, paneText });
         status = c.status;
         scrapeWaitingFor = c.waitingFor;
+        scrapeWaitingReason = c.waitingReason || null;
       } else status = paneText === '' ? 'unknown' : classifyPane(paneText, agentId).status;
     }
     // Claude's own 'shell' status (→ working) means "a Bash tool is tracked as
@@ -549,7 +552,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // apiError tracking). Skipped when the file already says working/needs-you.
     const apiError = apiErrorPromotion(status, enrichment?.apiError, enrichment?.apiErrorText);
     if (apiError) status = apiError.status;
-    const waiting = status === 'needs-you' ? claudeWaitingReason(agentId, s.status, paneText) : null;
+    const waiting = status === 'needs-you' ? waitingReasonFor(adapterFor(agentId), s.status, paneText) : null;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
     const hasBackgroundShell = tmux ? detectBackgroundShell(paneText, agentId) : false;
@@ -567,7 +570,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       hasBackgroundShell,
       rawStatus: s.status || null,
       waitingFor: apiError ? apiError.waitingFor : (s.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? null),
+      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? (status === 'needs-you' ? scrapeWaitingReason : null)),
       autoBlockSeconds: waiting?.autoBlockSeconds ?? null,
       kind: s.kind || worker?.dispatch?.source || 'unknown',
       cwd,
@@ -697,12 +700,14 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // the status — only meaningful on the scrape branch, since a recognized live
     // status above already has its own waitingFor (needs-you) or none (working/idle).
     let scrapeWaitingFor = null;
+    let scrapeWaitingReason = null;
     if (status === 'scrape') {
       const c = adapterFor(agentId).statusSource === 'codex-rollout'
         ? await codexStatus({ liveSid: live?.liveSid || appEntry.liveSessionId, paneText })
         : paneText === '' ? { status: 'unknown' } : classifyPane(paneText, agentId);
       status = c.status;
       scrapeWaitingFor = c.waitingFor || null;
+      scrapeWaitingReason = c.waitingReason || null;
     }
     // Same override as the managed-session pass above: Claude's 'shell' status
     // can go stale for as long as a detached background job runs, well past the
@@ -713,7 +718,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // without a permission request, so surface it as needs-you rather than idle.
     const apiError = apiErrorPromotion(status, enr?.apiError, enr?.apiErrorText);
     if (apiError) status = apiError.status;
-    const waiting = status === 'needs-you' ? claudeWaitingReason(agentId, live?.rawStatus, paneText) : null;
+    const waiting = status === 'needs-you' ? waitingReasonFor(adapter, live?.rawStatus, paneText) : null;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
     const hasBackgroundShell = detectBackgroundShell(paneText, agentId);
@@ -746,7 +751,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       hasBackgroundShell,
       rawStatus: null,
       waitingFor: apiError ? apiError.waitingFor : (live?.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? null),
+      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? (status === 'needs-you' ? scrapeWaitingReason : null)),
       autoBlockSeconds: waiting?.autoBlockSeconds ?? null,
       kind: 'tmux',
       cwd: fcwd,

@@ -297,6 +297,28 @@ test('recordPriorLiveSessionId dedupes, and refuses a missing card, an empty id 
   assert.equal(saves(), 1);
 });
 
+// Each card's transcripts are priced by its own agent's scanner, so a run by
+// another agent is kept apart with its agent, for the usage scan to price it.
+test('recordPriorLiveSessionId keeps a run by another agent in billedRuns, once, with when it was billed', () => {
+  const { sm, saves } = swapManager();
+  assert.equal(sm.recordPriorLiveSessionId('card', 'T-1', 'codex'), true);
+  assert.equal(sm.recordPriorLiveSessionId('card', 'T-1', 'codex'), true);
+  const entry = sm.map.get('card');
+  assert.equal(entry.priorLiveSessionIds, undefined);
+  assert.equal(entry.billedRuns.length, 1);
+  assert.deepEqual({ ...entry.billedRuns[0], at: typeof entry.billedRuns[0].at }, { agent: 'codex', liveSessionId: 'T-1', at: 'number' });
+  assert.equal(sm.recordPriorLiveSessionId('card', 'H2', 'claude'), true, 'the card\'s own agent stays a prior id');
+  assert.deepEqual(entry.priorLiveSessionIds, ['H2']);
+  assert.equal(sm.recordPriorLiveSessionId('card', 'X', 'nope'), false);
+  assert.equal(sm.cardForLive('T-1'), null);
+  assert.equal(saves(), 3);
+});
+
+test('resumeEntry carries billedRuns', () => {
+  const runs = [{ agent: 'codex', liveSessionId: 'T-1', at: 5 }];
+  assert.deepEqual(resumeEntry({ billedRuns: runs }, { short: 's', tmux: 't', cwd: '/x', agent: 'claude', resumeId: 'L', socket: '', now: 1 }).billedRuns, runs);
+});
+
 test('forkEntry: falls back to (forked) intent and null model when parent lacks them', () => {
   const entry = forkEntry({
     short: 's', tmux: 'cc_s', cwd: '/repo', parentEntry: undefined,
@@ -694,6 +716,22 @@ test('_archiveReview\'s onStamp records priorLiveSessionIds and archiveReviewedA
   const entry = sm.entryFor('s1');
   assert.deepEqual(entry.priorLiveSessionIds, ['REVIEW1']);
   assert.ok(typeof entry.archiveReviewedAt === 'number');
+});
+
+test('_archiveReview\'s onStamp bills a review by another agent as a billed run', async () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('s1', { short: 's', tmux: 'cc_s', cwd: '/repo', intent: 'x', createdAt: 1 });
+  sm._archiveReview = async (sessionId, entry, task, { onStamp }) => {
+    onStamp({ reviewLiveSessionId: 'T-1', reviewAgent: 'codex', advanceReviewedAt: false });
+    return 'error';
+  };
+  sm.archive('s1', { cwd: '/repo', task: { id: 'T1', name: 'Login' } });
+  await new Promise((r) => setTimeout(r, 0));
+  const entry = sm.entryFor('s1');
+  assert.equal(entry.priorLiveSessionIds, undefined);
+  assert.deepEqual(entry.billedRuns.map((r) => [r.agent, r.liveSessionId]), [['codex', 'T-1']]);
+  assert.equal(entry.archiveReviewedAt, undefined);
 });
 
 test('a default (unstubbed) _archiveReview is an inert no-op — every existing archive test stays unaffected', async () => {

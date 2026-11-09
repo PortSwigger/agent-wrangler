@@ -1308,6 +1308,60 @@ test('agents() is a deep copy of the base list; onChange hears agentsChanged unt
   assert.equal(h.slots.agentsChanged(list), 0, 'subscriptions die with the extension');
 });
 
+test('updateStatus() reads only the calling extension\'s own entry, as a copy', () => {
+  const h = harness();
+  const table = { a: { behind: true, commits: 3, capped: false, branch: 'main', checkedAt: 1 }, b: { behind: false, commits: 0, capped: false, branch: 'next', checkedAt: 1 } };
+  const asked = [];
+  const base = { updateStatusFor: (id, ...rest) => { asked.push([id, ...rest]); return table[id] ?? null; } };
+  const a = h.slots.forExtension('a', base).api;
+  const b = h.slots.forExtension('b', base).api;
+  const c = h.slots.forExtension('c', base).api;
+  assert.deepEqual(a.updateStatus(), table.a);
+  assert.deepEqual(b.updateStatus(), table.b);
+  assert.equal(c.updateStatus(), null, 'no entry reads as null');
+  assert.deepEqual(a.updateStatus('b'), table.a, 'an argument cannot name another extension');
+  assert.ok(asked.every(([id, ...rest]) => ['a', 'b', 'c'].includes(id) && rest.length === 0));
+  assert.deepEqual(asked.filter(([id]) => id === 'b').length, 1, 'only b asked about b');
+  const got = a.updateStatus();
+  got.commits = 99;
+  assert.equal(table.a.commits, 3, 'no write-through into board state');
+  assert.equal(h.slots.forExtension('d', {}).api.updateStatus(), null, 'an older base api has none');
+});
+
+test('updateStatus.onChange hears only its own changes, deduped, until unsubscribed or removed', () => {
+  const h = harness();
+  const table = { a: null, b: null };
+  const base = { updateStatusFor: (id) => table[id] };
+  const a = h.slots.forExtension('a', base).api;
+  const b = h.slots.forExtension('b', base).api;
+  const seenA = [];
+  const seenB = [];
+  const offA = a.updateStatus.onChange((v) => { seenA.push(v); throw new Error('listener bug'); });
+  b.updateStatus.onChange((v) => seenB.push(v));
+  assert.equal(h.slots.updateStatusChanged(), 0, 'nothing moved');
+  table.a = { behind: true, commits: 2, capped: false, branch: 'main', checkedAt: 5 };
+  assert.equal(h.slots.updateStatusChanged(), 1);
+  assert.deepEqual(seenA, [table.a]);
+  assert.notEqual(seenA[0], table.a);
+  assert.deepEqual(seenB, [], 'b never hears a\'s status');
+  assert.match(h.errors.at(-1), /updateStatus\.onChange listener failed/);
+  assert.equal(h.slots.updateStatusChanged(), 0, 'unchanged is not re-sent');
+  table.a = null;
+  assert.equal(h.slots.updateStatusChanged(), 1, 'kept after throwing; null is a change too');
+  assert.deepEqual(seenA.at(-1), null);
+  offA();
+  table.a = { behind: false, commits: 0, capped: false, branch: 'main', checkedAt: 6 };
+  assert.equal(h.slots.updateStatusChanged(), 0);
+  table.b = { behind: false, commits: 0, capped: false, branch: 'next', checkedAt: 6 };
+  assert.equal(h.slots.updateStatusChanged(), 1);
+  assert.deepEqual(seenB, [table.b]);
+  h.slots.removeExtension('b');
+  table.b = null;
+  assert.equal(h.slots.updateStatusChanged(), 0, 'subscriptions die with the extension');
+  assert.doesNotThrow(() => a.updateStatus.onChange('nope'));
+  assert.match(h.errors.at(-1), /updateStatus\.onChange needs a function/);
+});
+
 // ── registrar.api (1.14.0) ──────────────────────────────────────────────────
 test('registrar.api is the contribution api, gated, and cleaned up by removeExtension', () => {
   let chipsChanged = 0;
@@ -2122,4 +2176,86 @@ test('tray background callback is optional, validated and catches action failure
   assert.doesNotThrow(() => slots.trayBackgroundItem({}, {}).run());
   assert.equal(host.children.length, 1);
   assert.ok(errors.some((x) => x.includes('backgroundItem')));
+});
+
+// A stand-in for app.js's board-targets.js and rail-buttons.js, recording calls.
+function fakeBoard() {
+  const calls = [];
+  const subs = { targets: new Set(), front: new Set() };
+  const board = {
+    list: () => [{ key: 'session:s1', kind: 'session', label: 'one', where: 'board', primary: false, rect: { x: 0, y: 0, width: 9, height: 9 } }],
+    press: (key) => { calls.push(['press', key]); return key === 'session:s1'; },
+    front: () => ({ view: 'grid', ext: null, dialog: null, menu: false, session: null }),
+    onTargets: (fn) => { subs.targets.add(fn); return () => subs.targets.delete(fn); },
+    onFront: (fn) => { subs.front.add(fn); return () => subs.front.delete(fn); },
+    setBadges: (extId, map) => calls.push(['badges', extId, map]),
+  };
+  const railButtons = { add: (extId, opts) => { calls.push(['rail', extId, opts.id]); return { update() {}, remove() {} }; } };
+  return { board, railButtons, calls, subs };
+}
+
+test('targets: list and onChange pass through; press needs board:press and a key', () => {
+  const h = harness({ requiresFor: (id) => (id === 'p' ? ['board:press'] : []) });
+  const f = fakeBoard();
+  const p = h.slots.forExtension('p', f).api;
+  const q = h.slots.forExtension('q', f).api;
+  assert.equal(p.targets.list()[0].key, 'session:s1');
+  assert.equal(p.board, undefined, 'the raw board is not on the api');
+  assert.equal(p.railButtons, undefined);
+  assert.equal(p.targets.press('session:s1'), true);
+  assert.equal(p.targets.press('nope'), false);
+  assert.equal(p.targets.press(''), false);
+  assert.equal(q.targets.press('session:s1'), false, 'no capability, no press');
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'press').map((c) => c[1]), ['session:s1', 'nope']);
+  assert.ok(h.errors.some((e) => /targets\.press refused: needs the board:press capability/.test(e)));
+  const heard = [];
+  p.targets.onChange((list) => heard.push(list.length));
+  for (const fn of f.subs.targets) fn([1, 2]);
+  assert.deepEqual(heard, [2]);
+  q.targets.onChange(() => { throw new Error('boom'); });
+  for (const fn of f.subs.targets) fn([]);
+  assert.ok(h.errors.some((e) => /\[ext:q\] targets\.onChange listener failed/.test(e)), 'a throwing listener is reported under its extension');
+});
+
+test('targets.badges is bound to the caller and refuses a non-object', () => {
+  const h = harness();
+  const f = fakeBoard();
+  const a = h.slots.forExtension('a', f).api;
+  a.targets.badges({ 'session:s1': 'blue' });
+  a.targets.badges();
+  a.targets.badges(['x']);
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'badges'), [['badges', 'a', { 'session:s1': 'blue' }], ['badges', 'a', {}]]);
+  assert.ok(h.errors.some((e) => /targets\.badges needs an object/.test(e)));
+});
+
+test('front() is a copy, and its and targets\' subscriptions die with the extension', () => {
+  const h = harness();
+  const f = fakeBoard();
+  const a = h.slots.forExtension('a', f).api;
+  const got = a.front();
+  assert.deepEqual(got, { view: 'grid', ext: null, dialog: null, menu: false, session: null });
+  got.view = 'x';
+  assert.equal(a.front().view, 'grid');
+  a.front.onChange(() => {});
+  const off = a.targets.onChange(() => {});
+  a.targets.onChange(() => {});
+  assert.equal(f.subs.front.size, 1);
+  assert.equal(f.subs.targets.size, 2);
+  off();
+  assert.equal(f.subs.targets.size, 1);
+  h.slots.removeExtension('a');
+  assert.equal(f.subs.front.size, 0);
+  assert.equal(f.subs.targets.size, 0);
+  assert.equal(h.slots.forExtension('b', {}).api.front(), null, 'an older base api has no front');
+  assert.deepEqual(h.slots.forExtension('b', {}).api.targets.list(), []);
+});
+
+test('rail.button hands the caller\'s id and options to the board', () => {
+  const h = harness();
+  const f = fakeBoard();
+  const a = h.slots.forExtension('a', f).api;
+  const handle = a.rail.button({ id: 'mic', label: 'Voice', onPress() {} });
+  assert.equal(typeof handle.update, 'function');
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'rail'), [['rail', 'a', 'mic']]);
+  assert.equal(h.slots.forExtension('b', {}).api.rail.button({ id: 'x' }), null);
 });

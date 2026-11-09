@@ -38,9 +38,11 @@ import {
 } from './chat-font.js';
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
+import { createBoardTargets } from './board-targets.js';
+import { createRailButtons } from './rail-buttons.js';
 import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { updatePanelEl, restartPanelEl, shouldReloadForVersion, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl } from './update-panel.js';
+import { updatePanelEl, restartPanelEl, shouldReloadForVersion, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl, extUpdateStatusFor } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
 import { currentModelValue } from './model-menu.js';
@@ -65,11 +67,12 @@ import { createMarkdownLinkProvider } from './term-links.js';
 import { createPrLinkProvider } from './pr-links.js';
 import { createBoardOpen } from './board-open.js';
 import { onBoard } from './off-board.js';
+import { clearableSessions } from './clear-statuses.js';
 import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { CODEX_POLICY_FALLBACK, syncCodexPolicyControls, fillCodexPolicyControls, readCodexPolicyControls } from './codex-policy-field.js';
-import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -175,10 +178,11 @@ let childFullViewByDefault = false; // server config flag, carried on every grap
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let mailWakesDormant = false;
 let prModelFooter = true;
-let archiveReviewEnabled = false; // server config flag, carried on every graph push
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
+// Settings › Background model (server config, resolved, every graph push).
+let backgroundModel = null;
 // Settings › Sessions' Codex sandbox/approval defaults (server config, every
 // graph push): what the dialog's Codex controls prefill from.
 let codexPolicyDefaults = { ...CODEX_POLICY_FALLBACK };
@@ -250,9 +254,17 @@ function noteExtClientFacts(list) {
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
 // slots.apiFor, which is the only place the extension id is known.
 const notifications = createNotifications({ document });
+// Back api.targets / api.front and api.rail (slots binds the extension id).
+const boardTargets = createBoardTargets({
+  doc: document,
+  view: () => currentView,
+  session: () => selectedSessionId,
+  extOfView: (v) => (typeof v === 'string' && v.startsWith(EXT_VIEW_PREFIX) ? v.slice(EXT_VIEW_PREFIX.length).split(':')[0] : null),
+});
+const railButtons = createRailButtons({ doc: document });
 const slots = createSlots({
   document,
-  onExtensionRemoved: (id) => { notifications.clear(id); sessionEmbed.dropExtension(id); },
+  onExtensionRemoved: (id) => { notifications.clear(id); sessionEmbed.dropExtension(id); boardTargets.dropExtension(id); railButtons.dropExtension(id); },
   storage: (() => { try { return localStorage; } catch { return null; } })(),
   handlerTypesFor: (id) => extHandlerTypes.get(id) || [],
   hideDispatchFieldsFor: (id) => extHideDispatchFields.get(id) || [],
@@ -366,6 +378,8 @@ let extFileViewer;
 const migrateSoundPreference = createSoundMigration();
 
 const extApi = {
+  board: boardTargets,
+  railButtons,
   send,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
   selectedSessionId: () => selectedSessionId,
@@ -396,6 +410,8 @@ const extApi = {
   // Back `api.earlyAdopter`; slots binds the id.
   earlyAdopterFor: (extId) => extEarlyAdopter.get(extId),
   setEarlyAdopter: setEarlyAdopterAcked,
+  // Backs `api.updateStatus()`; slots binds the id.
+  updateStatusFor: (extId) => extUpdateStatusFor(extId, { mode: autoUpdate, background: extBgUpdates, checkAll: extUpdateStatuses, checkAllAt: extUpdatesCheckedAt }),
   // Backs `api.agents()`; slots hands each caller a deep copy.
   agents: () => availableAgents,
   modelFront: MODEL_FRONT,
@@ -853,14 +869,16 @@ function applyGraph(graph) {
   trustClaudeLaunchCwd = graph.trustClaudeLaunchCwd !== false;
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
-  archiveReviewEnabled = graph.archiveReviewEnabled === true;
   mailWakesDormant = graph.mailWakesDormant === true;
   prModelFooter = graph.prModelFooter !== false;
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
+  backgroundModel = graph.backgroundModel && typeof graph.backgroundModel === 'object' ? graph.backgroundModel : null;
   codexPolicyDefaults = graph.codexPolicyDefaults && typeof graph.codexPolicyDefaults === 'object' ? { ...CODEX_POLICY_FALLBACK, ...graph.codexPolicyDefaults } : { ...CODEX_POLICY_FALLBACK };
+  const prevAutoUpdate = autoUpdate;
   autoUpdate = graph.autoUpdate || 'notify';
+  if (autoUpdate !== prevAutoUpdate) slots.updateStatusChanged();
   refreshSessionsAfterUpdate = graph.refreshSessionsAfterUpdate === true;
   const prevSettingValues = new Map(latestExtensions.map((e) => [e.id, JSON.stringify(e.settingValues || {})]));
   latestExtensions = Array.isArray(graph.extensions) ? graph.extensions : [];
@@ -2265,12 +2283,24 @@ function wireTray(el) {
   // Shift+click a pill to focus on just that task (everything else minimises),
   // same as the kebab menu's Focus action — a plain click only restores this one
   // alongside whatever's already visible.
-  el.querySelectorAll('.switcher-pill').forEach((b) =>
+  el.querySelectorAll('.switcher-pill').forEach((b) => {
     b.addEventListener('click', (e) => {
       if (e.shiftKey) return focusOnly(b.dataset.taskid);
       unminimise(b.dataset.taskid);
       scrollTaskIntoView(b.dataset.taskid);
-    }));
+    });
+    b.addEventListener('contextmenu', (e) => {
+      const taskId = b.dataset.taskid;
+      if (taskId === ADHOC_ID) return;
+      const task = latestTasks.tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      e.preventDefault();
+      e.stopPropagation();
+      mountMenu([
+        { label: 'Archive task', icon: ARCHIVE_ICON, danger: true, run: () => archiveTask(taskId, task.name) },
+      ], e.clientX, e.clientY);
+    });
+  });
   const restore = el.querySelector('.tray-restore-all');
   if (restore) restore.addEventListener('click', restoreAll);
 }
@@ -2963,6 +2993,36 @@ function openModelMenu(sessionId, x, y) {
   ], x, y);
 }
 
+function clearableInTask(taskId) {
+  const isAdhoc = taskId === ADHOC_ID;
+  const sessions = onBoard(latestSessions).filter((s) => {
+    const tid = assignedTaskId(s.sessionId);
+    return isAdhoc ? !tid : tid === taskId;
+  });
+  return clearableSessions(sessions, { justFinished, unread, isAcknowledged, phaseOf });
+}
+
+function clearTaskStatuses(taskId) {
+  let hadUnread = false;
+  let hadJustFinished = false;
+  for (const s of clearableInTask(taskId)) {
+    acknowledgedAt.set(s.sessionId, s.updatedAt ?? null);
+    if (justFinished.delete(s.sessionId)) hadJustFinished = true;
+    if (unread.delete(s.sessionId)) hadUnread = true;
+    if (phaseOf(s) === 'awake') send({ type: 'snooze-clear', sessionId: s.sessionId });
+  }
+  persistAcknowledged();
+  if (hadJustFinished) persistJustFinished();
+  if (hadUnread) persistUnread();
+  if (currentView === 'grid') renderGrid();
+}
+
+function clearStatusesMenuItems(taskId) {
+  return clearableInTask(taskId).length
+    ? [{ label: 'Clear statuses', icon: BELL_ICON, run: () => clearTaskStatuses(taskId) }]
+    : [];
+}
+
 // The task tile's kebab menu combines view actions and extension task actions.
 // Archive is available only for real tasks. Sort stays open as a ticked toggle.
 function openTaskActionsMenu(taskId, x, y) {
@@ -2974,6 +3034,7 @@ function openTaskActionsMenu(taskId, x, y) {
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
     taskMinimiseMenuItem(taskId),
+    ...clearStatusesMenuItems(taskId),
     { label: 'Sort by activity', icon: SORT_ICON, keepOpen: true, trailing: sortOn ? CHECK_ICON : '',
       run: (e) => {
         toggleActivitySort(taskId);
@@ -3079,6 +3140,7 @@ function openTaskMenu(cell, x, y) {
       { label: 'Rename', icon: PENCIL_ICON, run: () => beginTaskRename(cell) },
     ] : []),
     taskMinimiseMenuItem(isNoTask ? ADHOC_ID : taskId),
+    ...clearStatusesMenuItems(isNoTask ? ADHOC_ID : taskId),
     ...(extItems.length ? [{ sep: true }, ...extItems] : []),
     ...(!isNoTask ? [
       { sep: true },
@@ -5976,13 +6038,19 @@ function syncRuntimeToggle() {
   syncCodexPolicyRow(agent);
 }
 
-// The Codex sandbox/approval controls show for a Codex draft only. Switching TO
-// Codex prefills them from Settings as they are now; re-syncs while the draft
-// stays on Codex keep what was picked.
+// Whether this provider takes the Codex sandbox/approval policy (its adapter's
+// launch.codexPolicy, carried as controls.codexPolicy).
+function takesCodexPolicy(agent) {
+  return providerMetadataFor(agent).controls?.codexPolicy === true;
+}
+
+// The Codex sandbox/approval controls show only for a draft whose provider takes
+// them. Switching TO one prefills them from Settings as they are now; re-syncs
+// while the draft stays on one keep what was picked.
 function syncCodexPolicyRow(agent) {
   const row = document.getElementById('m-codex-policy-row');
   if (!row) return;
-  const codex = agent === 'codex';
+  const codex = takesCodexPolicy(agent);
   row.classList.toggle('hidden', !codex);
   if (codex && !codexPolicyDraftWasCodex) fillCodexPolicyControls(row, codexPolicyDefaults);
   codexPolicyDraftWasCodex = codex;
@@ -6192,7 +6260,7 @@ function readCoreDispatchFields() {
     worktreeAuto: wfOn,
     parentSession: parentSessionId || undefined,
     runtime: runtime !== 'local' ? runtime : undefined,
-    codexPolicy: agent === 'codex' ? readCodexPolicyControls(document.getElementById('m-codex-policy-row')) : undefined,
+    codexPolicy: takesCodexPolicy(agent) ? readCodexPolicyControls(document.getElementById('m-codex-policy-row')) : undefined,
   };
 }
 
@@ -6354,7 +6422,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   // A saved schedule restores its Codex pick; a new draft starts from Settings.
   // Marked as already-Codex so the syncs below do not refill over a schedule's.
   fillCodexPolicyControls(document.getElementById('m-codex-policy-row'), schedule && d.codexPolicy ? d.codexPolicy : codexPolicyDefaults);
-  codexPolicyDraftWasCodex = autoCompactAgent === 'codex';
+  codexPolicyDraftWasCodex = takesCodexPolicy(autoCompactAgent);
   document.getElementById('m-advanced-options').open = false;
   dispatchModelPicker?.reset();
   populateEffortSelect();
@@ -6691,6 +6759,8 @@ function syncStandingBanner() {
 // results, the progress line describes a run that cannot outlive this tab's
 // socket, and the mount point is rebuilt on every settings open.
 let extUpdateStatuses = {};
+// When this tab's last Check all answered, for api.updateStatus()'s checkedAt.
+let extUpdatesCheckedAt = null;
 // The server's last background extension check (Notify and Auto only), from the
 // connect config and `ext-update-status`. It fills the rows Check all would, so
 // an outdated extension shows its Update button without a manual check.
@@ -6880,7 +6950,12 @@ function noteConfigUpdate(msg) {
   remountUpdatePanel();
 }
 
-const remountExtensions = () => { if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost); };
+// Everything that moves the rows' update data remounts them, so this is also
+// where an extension's api.updateStatus.onChange hears it (deduped in slots).
+const remountExtensions = () => {
+  slots.updateStatusChanged();
+  if (extPanelHost?.isConnected) mountExtensionsPanel(extPanelHost);
+};
 
 // A settled report — "Up to date.", "Cancelled. Nothing was installed." — is
 // about a moment, not a state, and left on screen it reads as a standing
@@ -7116,12 +7191,12 @@ initSettings({
       if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
-      if (id === 'archiveReviewEnabled') return archiveReviewEnabled;
       if (id === 'mailWakesDormant') return mailWakesDormant;
       if (id === 'prModelFooter') return prModelFooter;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'defaultRuntime') return defaultRuntime;
+      if (id === 'backgroundModel') return backgroundModel ? `${backgroundModel.agent}:${backgroundModel.model}` : undefined;
       if (CODEX_DEFAULT_SETTINGS[id]) return codexPolicyDefaults[CODEX_DEFAULT_SETTINGS[id]];
       if (id === 'autoUpdate') return autoUpdate;
       if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
@@ -7150,9 +7225,6 @@ initSettings({
       } else if (id === 'autoFixPrChecksDefault') {
         autoFixPrChecksDefault = Boolean(value);
         send({ type: 'set-auto-fix-pr-checks-default', enabled: autoFixPrChecksDefault });
-      } else if (id === 'archiveReviewEnabled') {
-        archiveReviewEnabled = Boolean(value);
-        send({ type: 'set-archive-review-enabled', enabled: archiveReviewEnabled });
       } else if (id === 'mailWakesDormant') {
         mailWakesDormant = Boolean(value);
         send({ type: 'set-mail-wakes-dormant', enabled: mailWakesDormant });
@@ -7168,6 +7240,14 @@ initSettings({
       } else if (id === 'defaultRuntime') {
         defaultRuntime = String(value || 'local');
         send({ type: 'set-default-runtime', runtime: defaultRuntime });
+      } else if (id === 'backgroundModel') {
+        // `<agent>:<model>`: an agent id never holds a colon, a model value may.
+        const raw = String(value || '');
+        const at = raw.indexOf(':');
+        if (at > 0) {
+          backgroundModel = { agent: raw.slice(0, at), model: raw.slice(at + 1) };
+          send({ type: 'set-background-model', ...backgroundModel });
+        }
       } else if (CODEX_DEFAULT_SETTINGS[id]) {
         const key = CODEX_DEFAULT_SETTINGS[id];
         codexPolicyDefaults = { ...codexPolicyDefaults, [key]: value };
@@ -7563,6 +7643,7 @@ function connect() {
     }
     else if (msg.type === 'ext-updates') {
       extUpdateStatuses = Object.fromEntries((msg.extensions || []).map((e) => [e.id, e]));
+      extUpdatesCheckedAt = Date.now();
       extChecking = false;
       clearExtTransientLater();
       remountExtensions();
@@ -7577,7 +7658,7 @@ function connect() {
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
     else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
-    else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
+    else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); setBackgroundModelOptions(availableAgents); } populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
     else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);

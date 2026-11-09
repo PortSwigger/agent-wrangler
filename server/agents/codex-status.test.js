@@ -86,8 +86,8 @@ test('codexStatus: the record for the live thread ends the turn', async () => {
 test('codexStatus: an empty capture is unknown, not idle', async () => {
   const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-codex-sessions-'));
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-codex-data-'));
-  assert.deepEqual(await codexStatus({ liveSid: 'nope', paneText: '', dataDir, sessionsDir }), { status: 'unknown', waitingFor: null });
-  assert.deepEqual(await codexStatus({ liveSid: null, paneText: '', dataDir, sessionsDir }), { status: 'unknown', waitingFor: null });
+  assert.deepEqual(await codexStatus({ liveSid: 'nope', paneText: '', dataDir, sessionsDir }), { status: 'unknown', waitingFor: null, waitingReason: null });
+  assert.deepEqual(await codexStatus({ liveSid: null, paneText: '', dataDir, sessionsDir }), { status: 'unknown', waitingFor: null, waitingReason: null });
   fs.rmSync(sessionsDir, { recursive: true, force: true });
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
@@ -96,5 +96,16 @@ test('codexStatus passes the pane hint through', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-codex-data-'));
   const r = await codexStatus({ liveSid: null, paneText: 'Do you trust the contents of this directory?\n  1. Yes, continue\n  2. No, quit\nPress enter to continue', dataDir });
   assert.equal(r.status, 'needs-you');
+  fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
+test('codexStatus carries waitingReason permission for a Codex approval prompt', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-codex-data-'));
+  const paneText = fs.readFileSync(new URL('../fixtures/codex-approval/patch.txt', import.meta.url), 'utf8');
+  assert.deepEqual(await codexStatus({ liveSid: null, paneText, dataDir }), {
+    status: 'needs-you', waitingFor: 'Codex is asking for approval', waitingReason: 'permission',
+  });
+  const idle = await codexStatus({ liveSid: null, paneText: '› Ask Codex to do anything\n  ? for shortcuts', dataDir });
+  assert.equal(idle.waitingReason, null);
   fs.rmSync(dataDir, { recursive: true, force: true });
 });

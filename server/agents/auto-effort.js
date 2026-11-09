@@ -213,9 +213,10 @@ export function readCodexConfigEffort(file) {
   return readMemo(file, (f) => parseCodexConfigEffort(fs.readFileSync(f, 'utf8')));
 }
 
-// The agents frame's models with `autoEffort` added where it is known.
-export function withAutoEffort(agentId, models, paths = defaultSourcePaths()) {
-  const resolve = adapterFor(agentId).autoEffortResolver?.(paths);
+// The agents frame's models with `autoEffort` added where it is known. `agent`
+// is an adapter or a registered agent's id.
+export function withAutoEffort(agent, models, paths = defaultSourcePaths()) {
+  const resolve = (typeof agent === 'string' ? adapterFor(agent) : agent).autoEffortResolver?.(paths);
   if (!resolve) return models;
   return models.map((m) => {
     const autoEffort = resolve(m.value);

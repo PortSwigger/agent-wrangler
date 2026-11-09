@@ -66,8 +66,8 @@ export const BUILTIN = [
 export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
   'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'childFullViewByDefault',
-  'autoFixPrChecksDefault', 'archiveReviewEnabled', 'mailWakesDormant', 'prModelFooter', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
-  'codexPolicyDefaults', 'quarantinedBuiltins',
+  'autoFixPrChecksDefault', 'mailWakesDormant', 'prModelFooter', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
+  'codexPolicyDefaults', 'backgroundModel', 'quarantinedBuiltins',
 ]);
 
 // The CLOSED capability vocabulary a manifest's `requires` is drawn from. It
@@ -92,6 +92,8 @@ export const CAPABILITIES = new Set([
   'links:write',
   'images:keep',
   'files:view',
+  'agents:read',
+  'agents:headless',
 ]);
 
 // Capabilities with NO server façade: grants the BROWSER half checks (slots.js
@@ -101,7 +103,8 @@ export const CAPABILITIES = new Set([
 // they are a separate set, disjoint from CAPABILITIES (host-api/index.test.js).
 //   cards:hideChips — hide chips in the board cards' meta row (api.cards).
 //   files:open — open the file links clicked in chat and the terminal (file.open).
-export const CLIENT_CAPABILITIES = new Set(['cards:hideChips', 'files:open']);
+//   board:press — press the board's buttons, cards and menu rows (api.targets.press).
+export const CLIENT_CAPABILITIES = new Set(['cards:hideChips', 'files:open', 'board:press']);
 
 // The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
 // core dispatch-modal fields an extension may take over by drawing its own

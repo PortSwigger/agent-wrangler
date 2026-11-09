@@ -103,6 +103,7 @@ for (const adhoc of [false, true]) test(`both task menus preserve extension acti
     mountMenu: (value) => { items = value; },
     FOCUS_ICON: '', MINIMISE_ICON: '', SORT_ICON: '', CHECK_ICON: '', ARCHIVE_ICON: '', TERMINAL_ICON: '', PENCIL_ICON: '',
     focusOnly() {}, minimise() {},
+    clearStatusesMenuItems: (taskId) => [{ label: 'Clear statuses', run: () => taskId }],
   };
   const menus = new Function(...Object.keys(scope), `
     ${['extTaskMenuItems', 'taskMinimiseMenuItem', 'openTaskActionsMenu', 'openTaskMenu'].map(declaration).join('\n')}
@@ -121,6 +122,7 @@ for (const adhoc of [false, true]) test(`both task menus preserve extension acti
     assert.ok(!items[0].sep && !items.at(-1).sep);
     assert.ok(items.every((item, i) => !item.sep || !items[i - 1]?.sep));
     assert.equal(items.find((x) => x.label === 'Manage profiles…').run(), id);
+    assert.equal(items.find((x) => x.label === 'Clear statuses').run(), id);
   }
   open[0]();
   assert.ok(items.some((x) => x.label === 'Focus'));
@@ -168,4 +170,64 @@ test('blank task-view menu keeps New task and adds only the tray owner action', 
   owner = false;
   open(10, 20);
   assert.deepEqual(items.map((it) => it.label), ['New task']);
+});
+
+for (const result of ['cancel', 'ok']) test(`drawer archive ${result} preserves minimisation and uses the live-session confirmation`, async () => {
+  const listeners = {}, sent = [], restored = [], focused = [], scrolled = [];
+  let items, position, confirmation;
+  const pill = { dataset: { taskid: 'a' }, addEventListener: (type, handler) => { listeners[type] = handler; } };
+  const scope = {
+    ADHOC_ID: 'adhoc', latestTasks: { tasks: [{ id: 'a', name: 'Alpha' }] },
+    latestSessions: [{ sessionId: 's' }], assignedTaskId: () => 'a', ARCHIVE_ICON: 'archive-icon',
+    mountMenu: (value, x, y) => { items = value; position = [x, y]; },
+    confirmDialog: async (value) => { confirmation = value; return result; },
+    toast() {}, send: (value) => sent.push(value),
+    unminimise: (id) => restored.push(id), focusOnly: (id) => focused.push(id),
+    scrollTaskIntoView: (id) => scrolled.push(id), restoreAll() {},
+  };
+  const wire = new Function(...Object.keys(scope), `
+    async ${declaration('archiveTask')}
+    ${declaration('wireTray')}
+    return wireTray;
+  `)(...Object.values(scope));
+  wire({ querySelector: () => null, querySelectorAll: () => [pill] });
+  assert.equal(typeof listeners.contextmenu, 'function');
+  let prevented = false, stopped = false;
+  listeners.contextmenu({ clientX: 12, clientY: 34, preventDefault: () => { prevented = true; }, stopPropagation: () => { stopped = true; } });
+  assert.ok(prevented && stopped);
+  assert.deepEqual(position, [12, 34]);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].label, 'Archive task');
+  assert.equal(items[0].icon, 'archive-icon');
+  assert.equal(items[0].danger, true);
+  assert.deepEqual(restored, []);
+  assert.deepEqual(focused, []);
+  await items[0].run();
+  assert.equal(confirmation.okLabel, 'Archive task');
+  assert.equal(confirmation.danger, true);
+  assert.match(confirmation.body, /Alpha.*1 running session/);
+  assert.deepEqual(sent, result === 'ok' ? [{ type: 'task-archive', taskId: 'a' }] : []);
+  assert.deepEqual(restored, []);
+  assert.deepEqual(focused, []);
+  listeners.click({ shiftKey: false });
+  listeners.click({ shiftKey: true });
+  assert.deepEqual(restored, ['a']);
+  assert.deepEqual(scrolled, ['a']);
+  assert.deepEqual(focused, ['a']);
+  pill.dataset.taskid = 'adhoc';
+  items = null;
+  listeners.contextmenu({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(items, null);
+  pill.dataset.taskid = 'gone';
+  listeners.contextmenu({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(items, null);
+});
+
+test('core drawer bindings leave extension tray hosts alone', () => {
+  let replaced;
+  const host = {};
+  const wire = new Function('trayHost', `${declaration('wireTray')}; return wireTray;`)(host);
+  wire({ querySelector: () => ({ replaceWith: (value) => { replaced = value; } }),
+    querySelectorAll: () => assert.fail('extension tray must own its bindings') });
+  assert.equal(replaced, host);
 });

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { createBoardOpen } from './board-open.js';
+import { adapterFor, providerMetadata } from '../server/agents/index.js';
 
 const html = readFileSync(join(import.meta.dirname, 'index.html'), 'utf8');
 const dispatch = html.match(/<div id="m-dispatch-fields">([\s\S]*?)<\/div>\s*<div id="m-subagent"/)?.[1];
@@ -437,6 +438,9 @@ test('extension runtimes disable additional folder grants until Local is selecte
   assert.equal(note.hidden, true);
 });
 
+// The provider metadata the browser gets, built from the real adapters.
+const codexPolicyMetadata = (id) => providerMetadata(adapterFor(id));
+
 test('Codex quick launch restores retained grants when switching from a non-local Claude runtime', () => {
   for (const runtime of ['devcontainer', 'sandbox']) {
     const rt = stubSelect(['local', runtime]);
@@ -455,7 +459,7 @@ test('Codex quick launch restores retained grants when switching from a non-loca
     const additionalFolders = createAdditionalFolders({ list: element(), add: element(), document, send() {} });
     additionalFolders.reset(['/extra']);
     const app = loadApp(
-      ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function readCoreDispatchFields() {'],
+      ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
       ['quickLaunch', 'syncRuntimeToggle', 'dispatched'],
       `let modelEdited = false; const dispatchMode = 'standard'; const reviewMode = false;
        const autoCompactTokens = undefined; const parentSessionId = null;
@@ -463,6 +467,7 @@ test('Codex quick launch restores retained grants when switching from a non-loca
        const dispatched = []; const submitDispatch = () => dispatched.push(readCoreDispatchFields());`,
       { document, additionalFolders, modal: { classList: { contains: () => false } },
         scheduleMode: () => false, cwdField: () => '/repo', populateEffortSelect() {}, rememberDispatchPick() {},
+        providerMetadataFor: codexPolicyMetadata,
         fillCodexPolicyControls() {}, readCodexPolicyControls: () => ({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false }) },
     );
     rt.value = runtime;
@@ -500,12 +505,12 @@ async function codexPolicyHarness() {
     getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': { classList: { toggle() {} } }, 'm-codex-policy-row': row })[id] || { value: '', checked: false },
   };
   const app = loadApp(
-    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function readCoreDispatchFields() {'],
+    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
     ['syncRuntimeToggle', 'readCoreDispatchFields', 'setDefaults'],
     `const dispatchMode = 'standard'; const reviewMode = false; const autoCompactTokens = undefined; const parentSessionId = null;
      let codexPolicyDraftWasCodex = false; let codexPolicyDefaults = {};
      const setDefaults = (v) => { codexPolicyDefaults = v; };`,
-    { document, additionalFolders: { setEnabled() {}, values: () => [] }, cwdField: () => '/repo', ...field },
+    { document, additionalFolders: { setEnabled() {}, values: () => [] }, cwdField: () => '/repo', providerMetadataFor: codexPolicyMetadata, ...field },
   );
   return { ...app, model, ctl, rowHidden: () => hidden.has('row') };
 }

@@ -7,8 +7,8 @@
 // wins over it at launch.
 
 // The fallback when the graph has not carried Settings' defaults yet: core's
-// historical flags, the same as server/config-store.js CODEX_POLICY_DEFAULTS.
-export const CODEX_POLICY_FALLBACK = Object.freeze({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false });
+// default flags, the same as server/config-store.js CODEX_POLICY_DEFAULTS.
+export const CODEX_POLICY_FALLBACK = Object.freeze({ sandbox: 'workspace-write', approval: 'on-request', approveForMe: false, bypass: false });
 
 // Approve-for-me stands alone (it implies workspace-write + on-request), and
 // bypass overrides everything, so the controls they replace are greyed out.
