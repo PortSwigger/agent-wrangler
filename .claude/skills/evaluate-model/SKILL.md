@@ -74,10 +74,10 @@ The evaluator preserves the established derivation:
 - Anchor max quality on board accuracy; cost on board tokens per trial at list
   prices (input less cached at cache-write, cached at cache-read, plus output);
   time on mean trial minutes.
-- Without a board run, use the model's own vendor max plus its agent's median
-  board-minus-vendor quality gap; vendor cost times the median board/vendor cost
-  factor. Without vendor cost, price a donor's board tokens at its own prices.
-  Time comes from the first board row in the `like` chain.
+- Without a board run, use the model's own vendor max quality as published;
+  vendor cost times the median board/vendor cost factor. Without vendor cost,
+  price a donor's board tokens at its own prices. Time comes from the first
+  board row in the `like` chain.
 - Ladder down by vendor accuracy/max and cost/max. Interpolate missing efforts;
   below the lowest measurement borrow a donor ladder scaled to meet it.
 - Each row is `Q*p(e), C*r(e), T*(0.25 + 0.75*r(e))`. Average benchmarks by weight,
