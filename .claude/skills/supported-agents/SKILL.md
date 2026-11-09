@@ -47,6 +47,23 @@ remain Claude and Codex.
 | Directory grants | Stable task-memory symlink | Real paths plus private/common Git metadata |
 | Review selection priority | First | Second |
 
+## Capability flags, not id checks
+
+Extensions read what an agent can do from `host.agents.list()` (`server/agents/listing.js`
+`agentCapabilities`), never from its id. Each flag is read off an adapter field, so a new
+adapter sets the field rather than anyone adding its id to a list:
+
+| Flag | Adapter field | Claude | Codex |
+|---|---|---|---|
+| `disallowedTools` | `supportsDisallowedTools` | yes | no |
+| `remoteControl` | `supportsRemoteControl` | yes | no |
+| `askUserTool` | `askUserTool` | `AskUserQuestion` | none |
+| `sandbox` | `launch.codexPolicy` | no | yes |
+| `mailWhileWorking` | `terminal.socketMail` | yes | no |
+
+A model's `resolved` full id comes from the adapter's `modelId(value)`; an adapter without one
+launches by full id already.
+
 ## Three launch sites
 
 Both adapters implement `buildLaunch`, `buildResume`, and `buildFork`. A feature wired in

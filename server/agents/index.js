@@ -43,9 +43,15 @@ export function supportsDisallowedTools(id) {
 // neither is known.
 export function sessionModelId(agentId, currentModel, launchModel) {
   if (currentModel) return currentModel;
-  if (!launchModel) return null;
-  const adapter = allAgents().find((a) => a.id === (agentId ?? 'claude'));
-  return (adapter?.modelId ? adapter.modelId(launchModel) : launchModel) || null;
+  return resolvedModelId(allAgents().find((a) => a.id === (agentId ?? 'claude')), launchModel);
+}
+
+// The full model id a launch value runs today, through the adapter's `modelId`
+// when it has one (opus → claude-opus-5-5, opusplan → null: it runs two); an
+// adapter without one launches by full id already. Null for an empty value.
+export function resolvedModelId(adapter, value) {
+  if (!value) return null;
+  return (adapter?.modelId ? adapter.modelId(value) : value) || null;
 }
 
 // Shared by modelPillFor and maxContextWindowFor: resolve the model ENTRY a

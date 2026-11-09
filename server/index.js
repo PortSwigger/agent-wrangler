@@ -38,7 +38,8 @@ import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
-import { availableAgents, modelsWithDefault, validateDefaultModel, providerMetadata, registeredAgents } from './agents/index.js';
+import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents } from './agents/index.js';
+import { dispatchModels } from './agents/listing.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
@@ -77,7 +78,7 @@ import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
-import { withAutoEffort, watchAutoEffortSources } from './agents/auto-effort.js';
+import { watchAutoEffortSources } from './agents/auto-effort.js';
 import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
 import { createUpdateService, updateSupport, installDriftStatus } from './update-service.js';
 import { createExtensionUpdateCheck, currentExtensionUpdates } from './extensions/update-check.js';
@@ -1042,7 +1043,7 @@ function broadcastStylesIfChanged() {
 // decides a model's Auto effort (`autoEffort`), changes them.
 async function dispatchAgents() {
   const list = await availableAgents();
-  return list.map((a) => ({ ...providerMetadata(a), models: withAutoEffort(a.id, modelsWithDefault(a)), efforts: a.efforts || [] }));
+  return list.map((a) => ({ ...providerMetadata(a), models: dispatchModels(a), efforts: a.efforts || [] }));
 }
 
 async function agentsMessage() {
