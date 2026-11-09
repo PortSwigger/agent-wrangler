@@ -9,7 +9,7 @@ export async function lastAssistantText(entry, { adapterFor = defaultAdapterFor,
     const { history } = adapterFor(entry.agent ?? 'claude');
     const files = await history.findFiles(entry.liveSessionId || entry.sessionId, historyOptions);
     const scanner = history.createScanner();
-    const branch = (entry.agent ?? 'claude') === 'claude' ? [] : null;
+    const branch = history.branches ? [] : null;
     let last = null;
     const take = (events) => {
       for (const event of events) {

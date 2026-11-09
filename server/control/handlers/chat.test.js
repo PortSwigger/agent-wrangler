@@ -18,7 +18,7 @@ function ctx(file, node = { liveSessionId: 'live-1', agent: 'claude' }) {
   const sent = [];
   // Defaults to a no-op rather than the real Codex adapter, so a Codex-agent test
   // that doesn't care about contextPercent never touches the real ~/.codex tree.
-  return { sent, reply: (o) => sent.push(o), sessionFromGraph: () => node, findConversationFile: async () => file, analyzeCodex: async () => null };
+  return { sent, reply: (o) => sent.push(o), sessionFromGraph: () => node, findConversationFile: async () => file, analyzeProvider: async () => null };
 }
 
 // --- Codex rollout shapes ------------------------------------------------
@@ -459,7 +459,7 @@ test('chat: a Codex reply carries every all-paths field, with no Claude-only pan
   }
   assert.equal(reply.suggestion, null);
   assert.equal(reply.modelNow, null);
-  assert.equal(reply.contextPercent, null, 'the default ctx() analyzeCodex stub reports nothing');
+  assert.equal(reply.contextPercent, null, 'the default ctx() analyzeProvider stub reports nothing');
   assert.equal(reply.epoch, 0, 'a rollout has no rewind representation, so its epoch never moves');
 });
 
@@ -708,7 +708,7 @@ test('chat: a Codex session reports contextPercent from the adapter, live or dor
   const file = await tmpRollout([codexUser('hello', '2026-09-06T10:00:00.000Z')]);
   const c = ctx(file, { liveSessionId: 'live-codex-ctx', agent: 'codex', tmux: null });
   let seenId = null;
-  c.analyzeCodex = async (id) => { seenId = id; return { contextPercent: 42 }; };
+  c.analyzeProvider = async (id) => { seenId = id; return { contextPercent: 42 }; };
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   assert.equal(c.sent[0].contextPercent, 42);
   assert.equal(seenId, 'live-codex-ctx', 'analyzed by the CONVERSATION id, not the card id');
@@ -720,7 +720,7 @@ test('chat: a Codex session reports contextPercent from the adapter, live or dor
 test('chat: a Codex adapter failure reports contextPercent as null rather than throwing', async () => {
   const file = await tmpRollout([codexUser('hello', '2026-09-06T10:00:00.000Z')]);
   const c = ctx(file, { liveSessionId: 'live-codex-ctx', agent: 'codex' });
-  c.analyzeCodex = async () => { throw new Error('boom'); };
+  c.analyzeProvider = async () => { throw new Error('boom'); };
   await chatHandler.handler({ type: 'chat', sessionId: 'card-1' }, c);
   assert.equal(c.sent[0].contextPercent, null);
 });

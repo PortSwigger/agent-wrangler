@@ -241,9 +241,9 @@ export const chatHandler = {
     // own per-call usage against Codex's own cached model metadata — no pane
     // involved, so it works even for a dormant Codex card (see codex-rollout.js).
     // ctx seam for tests only, like findConversationFile/capturePaneStyled above —
-    // production always calls the real Codex adapter, which reads the real rollout
-    // and the real ~/.codex/models_cache.json.
-    const analyze = ctx.analyzeProvider || (agent === 'codex' ? ctx.analyzeCodex : null) || ((id) => adapter.analyze(id));
+    // production always calls the adapter's own analyze (Codex: the real rollout
+    // and the real ~/.codex/models_cache.json).
+    const analyze = ctx.analyzeProvider || ((id) => adapter.analyze(id));
     const contextPercent = adapter.terminal.contextSource === 'pane'
       ? (pane ? adapter.terminal.contextPercent?.(pane, paneContextPercent) ?? null : null)
       : adapter.terminal.contextSource === 'analysis'

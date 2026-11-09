@@ -13,17 +13,23 @@ export function createAgentRegistry(adapters) {
       if (!adapter) throw new TypeError(`Unknown agent "${id}". Valid agents: ${values().map((a) => a.id).join(', ')}.`);
       return adapter;
     },
+    // The adapter whose tmux prefix names this pane (cc_…, cx_…), or null.
+    adapterForTmux(name) {
+      return values().find((a) => a.tmuxPrefix && (name || '').startsWith(a.tmuxPrefix)) || null;
+    },
   };
 }
 
-export const { adapterFor, registeredAgents } = createAgentRegistry(allAgents);
+export const { adapterFor, registeredAgents, adapterForTmux } = createAgentRegistry(allAgents);
 
 export function providerMetadata(adapter) {
   return {
     id: adapter.id, label: adapter.label, reviewPriority: adapter.reviewPriority,
     billingProviders: adapter.usage?.billingProviders || [],
     terminal: { editingKeys: adapter.terminal?.editingKeys || {} },
-    presentation: adapter.presentation || {}, controls: adapter.controls || {},
+    presentation: adapter.presentation || {},
+    // codexPolicy: the dispatch dialog offers the sandbox/approval controls.
+    controls: { ...(adapter.controls || {}), codexPolicy: adapter.launch?.codexPolicy === true },
     supportsRemoteControl: adapter.supportsRemoteControl === true,
     forkHelp: adapter.forkHelp || 'Branch this conversation into a new session. The original keeps running independently.',
   };

@@ -15,7 +15,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { autoBlockCountdown } from './tmux-scraper.js';
-import { buildGraph, claudeWaitingReason } from './state-reader.js';
+import { buildGraph, waitingReasonFor } from './state-reader.js';
+import { adapterFor } from './agents/index.js';
 import { buildHostApi } from './host-api/index.js';
 import { waitingStatusWord } from '../public/cards.js';
 
@@ -54,13 +55,13 @@ test('autoBlockCountdown ignores the banner once the conversation has moved past
   assert.equal(autoBlockCountdown('  It said Claude Code will automatically block this request in 1:47, to avoid holding up an unattended session.\n' + PERMISSION), null);
 });
 
-test("claudeWaitingReason: Claude 'waiting' is 'auto-block' with the timed banner, else 'permission'", () => {
-  assert.deepEqual(claudeWaitingReason('claude', 'waiting', CLOCK), { waitingReason: 'auto-block', autoBlockSeconds: 107 });
-  assert.deepEqual(claudeWaitingReason('claude', 'waiting', ABOUT), { waitingReason: 'auto-block', autoBlockSeconds: 120 });
-  assert.deepEqual(claudeWaitingReason('claude', 'waiting', PERMISSION), { waitingReason: 'permission', autoBlockSeconds: null });
-  assert.deepEqual(claudeWaitingReason('claude', 'waiting', ''), { waitingReason: 'permission', autoBlockSeconds: null });
-  assert.equal(claudeWaitingReason('claude', 'busy', CLOCK), null);
-  assert.equal(claudeWaitingReason('codex', 'waiting', CLOCK), null);
+test("waitingReasonFor: Claude 'waiting' is 'auto-block' with the timed banner, else 'permission'", () => {
+  assert.deepEqual(waitingReasonFor(adapterFor('claude'), 'waiting', CLOCK), { waitingReason: 'auto-block', autoBlockSeconds: 107 });
+  assert.deepEqual(waitingReasonFor(adapterFor('claude'), 'waiting', ABOUT), { waitingReason: 'auto-block', autoBlockSeconds: 120 });
+  assert.deepEqual(waitingReasonFor(adapterFor('claude'), 'waiting', PERMISSION), { waitingReason: 'permission', autoBlockSeconds: null });
+  assert.deepEqual(waitingReasonFor(adapterFor('claude'), 'waiting', ''), { waitingReason: 'permission', autoBlockSeconds: null });
+  assert.equal(waitingReasonFor(adapterFor('claude'), 'busy', CLOCK), null);
+  assert.equal(waitingReasonFor(adapterFor('codex'), 'waiting', CLOCK), null);
 });
 
 // The discovered-tmux pass of buildGraph, with the live session file Claude
