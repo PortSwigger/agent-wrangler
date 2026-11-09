@@ -12,7 +12,7 @@ import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl, prModelUrl } from '../mcp/client-config.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
-import { newestClaudeId, newestClaudeName, priceCatalogVersion, snapshotClaudeFamilies } from '../price-catalog.js';
+import { modelFamilies, priceCatalogVersion } from '../price-catalog.js';
 
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
 // as a plugin only on workflow launches (below), so it's available no matter which
@@ -197,6 +197,30 @@ const MODELS = [
 // Families LiteLLM prices but Claude Code does not offer as a selectable model.
 const EXCLUDED_FAMILIES = new Set(['mythos']);
 
+// How the price catalog's first-party Claude ids read as (family, major, minor?).
+export const CATALOG_FAMILIES = { provider: 'anthropic', pattern: /^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?$/ };
+
+const familyName = (family, [major, minor]) => `${family[0].toUpperCase()}${family.slice(1)} ${major}${minor >= 0 ? `.${minor}` : ''}`;
+
+// The catalog's newest model of a family, or null.
+function newestOfFamily(family) {
+  return modelFamilies(CATALOG_FAMILIES).find((f) => f.family === family) || null;
+}
+
+// The newest model of a family as a display name: newestClaudeName('opus') →
+// "Opus 5.5". Null when the catalog has none.
+export function newestClaudeName(family) {
+  const newest = newestOfFamily(family);
+  return newest ? familyName(family, newest.version) : null;
+}
+
+// The families in the bundled snapshot, each with its newest model:
+// [{ family: 'opus', id: 'claude-opus-5-5', name: 'Opus 5.5' }].
+function snapshotClaudeFamilies() {
+  return modelFamilies(CATALOG_FAMILIES, { snapshotOnly: true })
+    .map(({ family, id, version }) => ({ family, id, name: familyName(family, version) }));
+}
+
 // A family in the price snapshot that MODELS has no alias for is offered by its
 // newest full model id, which `--model` accepts; the next snapshot refresh moves it.
 export function derivedModels(families = snapshotClaudeFamilies()) {
@@ -216,7 +240,7 @@ export function derivedModels(families = snapshotClaudeFamilies()) {
 // label names; a derived entry already is one. Null for opusplan, which runs two.
 export function claudeModelId(value) {
   const family = MODELS.find((m) => m.value === value)?.family;
-  if (family) return newestClaudeId(family);
+  if (family) return newestOfFamily(family)?.id ?? null;
   return /^claude-/.test(value || '') ? value : null;
 }
 
@@ -246,7 +270,7 @@ export const claude = {
   },
   subagentDetail,
   subagentDetailOverride: 'subagentDetail',
-  usage: { billingProviders: [{ id: 'anthropic', label: 'Anthropic' }], scanDaily, scanMonth, costUsd: costUsd, unknownModelLabel: 'unknown' },
+  usage: { billingProviders: [{ id: 'anthropic', label: 'Anthropic' }], scanDaily, scanMonth, costUsd: costUsd, unknownModelLabel: 'unknown', catalogFamilies: CATALOG_FAMILIES },
   labels: { liveTitle: true, summaryFirst: false },
   statusSource: 'live-file',
   presentation: { icon: 'claude', color: '#d97757', estimatedCost: false },
@@ -257,7 +281,7 @@ export const claude = {
     permissionModes: ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'],
     autoCompact: { min: 100000, presets: [100000, 250000, 500000, 1000000] },
   },
-  launch: { grantPaths: 'symlink', trust: 'claude', gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false },
+  launch: { grantPaths: 'symlink', trust: 'claude-config', gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false },
   terminal: {
     readySignal: 'title',
     contextSource: 'pane',
@@ -278,6 +302,8 @@ export const claude = {
     socketMail: true,
     allowWhileWorking: false,
     imageAcknowledgement: true,
+    // A 'waiting' live status may be the timed auto-mode safety check (state-reader waitingReasonFor).
+    autoBlock: true,
     interruptKeys: ['Escape'],
   },
   reviewPriority: 10,
