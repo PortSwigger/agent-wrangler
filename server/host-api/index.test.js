@@ -577,6 +577,49 @@ test('usage is ABSENT without usage:read, and sessions.bill is ABSENT without se
   assert.equal('bill' in host.sessions, false);
 });
 
+// ---- agents:read ---------------------------------------------------------
+test('agents is ABSENT without agents:read', () => {
+  const host = buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring() });
+  assert.equal('agents' in host, false);
+});
+
+test('agents.list() lists claude and codex from the real registry with their capability flags', async () => {
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
+  const agents = await host.agents.list();
+  assert.deepEqual(agents.map((a) => a.id), ['claude', 'codex']);
+  const [claude, codex] = agents;
+  assert.equal(claude.label, 'Claude');
+  assert.equal(claude.available, true);
+  assert.equal(typeof codex.available, 'boolean');
+  assert.deepEqual(claude.capabilities, { disallowedTools: true, remoteControl: true, askUserTool: 'AskUserQuestion', sandbox: false, mailWhileWorking: true });
+  assert.deepEqual(codex.capabilities, { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: true, mailWhileWorking: false });
+  const opus = claude.models.find((m) => m.value === 'opus');
+  assert.equal(opus.resolved, adapterFor('claude').modelId('opus'));
+  assert.match(opus.resolved, /^claude-opus-/);
+  assert.equal(opus.default, true);
+  assert.deepEqual(opus.efforts, claude.efforts.map((e) => e.value));
+  assert.equal(claude.models.find((m) => m.value === 'opusplan').resolved, null, 'opusplan runs two models');
+  for (const m of codex.models) assert.equal(m.resolved, m.value, 'a Codex value already is its id');
+  for (const a of agents) {
+    assert.equal(a.models.filter((m) => m.default).length, 1, `${a.id} has one default`);
+    for (const m of a.models) {
+      assert.deepEqual(Object.keys(m).sort(), ['autoEffort', 'default', 'efforts', 'label', 'resolved', 'value']);
+      assert.ok(m.autoEffort === null || a.efforts.some((e) => e.value === m.autoEffort), `${a.id}/${m.value} autoEffort`);
+    }
+  }
+});
+
+test('agents.list() reads afresh each call and its rows are frozen', async () => {
+  let calls = 0;
+  const listAgents = async () => { calls += 1; return [{ id: 'fixture', models: [{ value: 'm' }], capabilities: { sandbox: false } }]; };
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents }) });
+  const first = await host.agents.list();
+  await host.agents.list();
+  assert.equal(calls, 2);
+  assert.ok(Object.isFrozen(first[0].models[0]));
+  assert.throws(() => { first[0].capabilities.sandbox = true; }, TypeError);
+});
+
 // ---- sessions:bill -------------------------------------------------------
 test('sessions.bill forwards both ids to recordPriorLiveSessionId and returns its boolean', () => {
   const calls = [];

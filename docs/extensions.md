@@ -1275,9 +1275,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `wranglerExtension` when using these hooks. Server host access still requires
   the capabilities listed in `requires`.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
-  `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
+  `[{ id, label, models: [{ value, label, default, autoEffort, resolved }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
-  price catalogs — as a fresh deep copy per call. A model's `autoEffort`
+  price catalogs — as a fresh deep copy per call. A model's `resolved` (1.66.0)
+  is the full model id its value runs today (`opus` → `claude-opus-5-5`, a
+  Codex value is already its own id), or null for a value that runs more than
+  one model (`opusplan`); an older board's models have no `resolved`. A model's `autoEffort`
   (1.49.0) is the level the agent runs it at when a launch passes no effort
   ("Auto"), read from the user's and organization's settings (Claude: managed
   settings, a settings `env` block's `CLAUDE_CODE_EFFORT_LEVEL`, user settings,
@@ -1994,6 +1997,26 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   that day (`{}` when the scan recorded none). A Codex conversation's whole
   estimate sits on the UTC day it started. A manifest reading `days` declares
   `^1.60.0`.
+
+- **`host.agents.list()`** (capability `agents:read`, 1.66.0) resolves every
+  agent the server registers, installed or not, as frozen rows read afresh per
+  call: `{ id, label, available, models, efforts, capabilities }`. `available`
+  is whether its CLI is installed here. `efforts` is the agent's
+  `[{ value, label }]`. Each model is `{ value, resolved, label, default,
+  efforts, autoEffort }`: `resolved` as on `api.agents()`, `efforts` the effort
+  values a launch of that model accepts, `autoEffort` the level it runs at with no effort
+  passed (null when unknown). `capabilities` is what a host can lean on, so it
+  branches on what an agent does rather than on its id:
+
+  | Flag | Meaning |
+  | --- | --- |
+  | `disallowedTools` | `spawn({ disallowedTools })` is honoured (refused otherwise). |
+  | `remoteControl` | `spawn({ remoteControl })` gives the session phone control (refused otherwise). |
+  | `askUserTool` | The tool that asks the human in the pane, to block with `disallowedTools` when nobody watches it (`AskUserQuestion` for Claude), or null. |
+  | `sandbox` | It runs under an OS sandbox that `codexPolicy` hooks shape; `spawn({ addDirs })` become its extra writable folders. |
+  | `mailWhileWorking` | Mail reaches it mid-turn; without it a pasted message waits for the turn to end. |
+
+  A manifest using it declares `^1.66.0`.
 
 ## Runtimes
 

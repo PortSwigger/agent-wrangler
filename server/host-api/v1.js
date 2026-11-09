@@ -10,6 +10,7 @@ import { collectLaunchContext, launchProcessEnv } from '../launch-context.js';
 import { deliverFirstPrompt } from '../dispatch-runner.js';
 import { requestOrigin } from '../request-origin.js';
 import { supportsRemoteControl, supportsDisallowedTools } from '../agents/index.js';
+import { agentList } from '../agents/listing.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -581,6 +582,16 @@ const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
   };
 };
 
+// Every registered agent, installed or not, with its models (each with the full
+// id it resolves to) and the capability flags the registry knows, so a host
+// branches on what an agent can do rather than on its id. Read fresh per call:
+// the model catalogs refresh and an agent can be installed while the board runs.
+const agentsRead = ({ listAgents = agentList }) => ({
+  agents: {
+    list: async () => deepFreeze(await listAgents()),
+  },
+});
+
 export const V1_BUILDERS = {
   'sessions:read': sessionsRead,
   'sessions:wake': sessionsWake,
@@ -608,4 +619,5 @@ export const V1_BUILDERS = {
   'links:write': linksWrite,
   'images:keep': imagesKeep,
   'files:view': filesView,
+  'agents:read': agentsRead,
 };

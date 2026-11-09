@@ -450,9 +450,10 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             prefill from what Settings holds right now. Unset keys are
   //             absent, exactly as `host.settings` reads them server-side.
   //   agents  — the dispatch dialog's agent list (1.25.0): `[{ id, label,
-  //             models: [{ value, label, default, autoEffort }], efforts }]`
+  //             models: [{ value, label, default, autoEffort, resolved }], efforts }]`
   //             (`autoEffort`, 1.49.0: the level the agent runs that model at
-  //             when no effort is passed, absent when unknown), the same
+  //             when no effort is passed, absent when unknown; `resolved`,
+  //             1.66.0: the full model id it runs, null for opusplan), the same
   //             live-catalog list the board's own model select reads, as a
   //             fresh deep copy per call. `agents.onChange(fn)` fires when the
   //             server re-sends it (on connect, and on a catalog refresh), so

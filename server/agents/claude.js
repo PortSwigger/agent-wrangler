@@ -309,6 +309,9 @@ export const claude = {
   reviewPriority: 10,
   supportsRemoteControl: true,
   supportsDisallowedTools: true,
+  // The tool that asks the human a question in the pane, which a host launching
+  // into a pane nobody watches blocks through disallowedTools.
+  askUserTool: 'AskUserQuestion',
   headlessArchiveReview: true,
   label: 'Claude',
   tmuxPrefix: 'cc_',
