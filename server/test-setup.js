@@ -40,6 +40,15 @@ process.on('exit', () => {
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
+// Gemini CLI keeps its conversations under GEMINI_CLI_HOME (default the home
+// dir); point it at a throwaway dir so history, search and usage scans in tests
+// never read this machine's real Gemini conversations.
+const geminiHome = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-gemini-home-'));
+process.env.GEMINI_CLI_HOME = geminiHome;
+process.on('exit', () => {
+  fs.rmSync(geminiHome, { recursive: true, force: true });
+});
+
 // And a third: ensureClaudeTrust (claude-trust.js) writes `projects[...]` into
 // `~/.claude.json` (a large, live-rewritten file) on every claude dispatch/
 // resume/fork. It honours CLAUDE_CONFIG_DIR, so point that at a throwaway dir.
