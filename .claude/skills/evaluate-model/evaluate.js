@@ -70,7 +70,7 @@ export function inputErrors(inputs) {
 // One benchmark's rows before rounding, and how each model got them. Each model is anchored at max
 // (Q points, C dollars, T minutes) and laddered down by its vendor's sweep as a share of that
 // vendor's max: the board's level, the vendor's shape. A model the board has not run takes its
-// vendor's max plus the vendor's median gap to the board; what a model lacks it borrows from `like`.
+// vendor's max as published; what a model lacks it borrows from `like`.
 function benchRows(inputs, bench) {
   const rows = {}, anchors = [], calibration = [];
   for (const [agent, models] of Object.entries(inputs.models)) {
@@ -78,9 +78,8 @@ function benchRows(inputs, bench) {
     const chain = (id, has) => { for (const seen = new Set(); id && models[id] && !seen.has(id); seen.add(id), id = models[id].like) if (has(at(id))) return id; return null; };
     const both = Object.keys(models).filter((id) => at(id)?.board && at(id)?.sweep?.efforts?.max);
     const priced = both.filter((id) => at(id).sweep.efforts.max[1] != null);
-    const dq = median(both.map((id) => at(id).board.accuracy - at(id).sweep.efforts.max[0])) ?? 0;
     const k = median(priced.map((id) => boardUsd(at(id).board, models[id].price) / at(id).sweep.efforts.max[1])) ?? 1;
-    calibration.push({ agent, dq, k, from: both, priced });
+    calibration.push({ agent, k, priced });
     // Column i (0 accuracy, 1 cost) as a share of max: its own sweep, interpolated between swept
     // efforts; below its lowest, the `like` model's ladder scaled to meet it; none, the `like` model's.
     const ladder = (id, i, seen = new Set()) => {
@@ -103,7 +102,7 @@ function benchRows(inputs, bench) {
       const own = at(id), vmax = own?.sweep?.efforts?.max, timed = chain(id, (x) => x?.board);
       if (!own) throw new Error(`${agent} ${id}: no ${bench} entry`);
       if (!timed) throw new Error(`${agent} ${id}: no ${bench} board row in its like chain for minutes`);
-      const Q = own.board ? own.board.accuracy : vmax[0] + dq;
+      const Q = own.board ? own.board.accuracy : vmax[0];
       const [C, cost] = own.board ? [boardUsd(own.board, m.price), 'board tokens']
         : vmax[1] != null ? [vmax[1] * k, `vendor max $${vmax[1]} ×${k.toFixed(3)}`]
           : [boardUsd(at(timed).board, m.price), `${timed}'s board tokens at its own price`];
@@ -113,7 +112,7 @@ function benchRows(inputs, bench) {
       rows[agent][id] = Object.fromEntries(EFFORTS.map((e, j) => [e, [Q * P[j], C * R[j], T * (0.25 + 0.75 * R[j])]]));
       const swept = EFFORTS.filter((e) => own.sweep?.efforts?.[e]);
       anchors.push({ bench, agent, model: id, Q, C, T,
-        quality: own.board ? 'board' : `vendor max ${vmax[0]} ${dq < 0 ? '-' : '+'}${Math.abs(dq).toFixed(2)}`, cost, minutes: timed === id ? 'board' : `like ${timed}`,
+        quality: own.board ? 'board' : `vendor max ${vmax[0]}`, cost, minutes: timed === id ? 'board' : `like ${timed}`,
         ladder: swept.length ? `${own.sweep.source}: ${swept.join(', ')}${swept.length < EFFORTS.length || swept.some((e) => own.sweep.efforts[e][1] == null) ? ` (rest from ${m.like})` : ''}` : `from ${m.like}` });
     }
   }
@@ -160,7 +159,7 @@ export function report(inputs, data = committedData()) {
   for (const [id, s] of Object.entries(inputs.sources)) out.push(`  ${id.padEnd(10)} ${s.name}, ${s.by}: ${s.licence}`, `  ${''.padEnd(10)} ${urls(s.url)}`, ...(s.unconfirmed ? [`  ${''.padEnd(10)} UNCONFIRMED: ${s.unconfirmed}`] : []));
   out.push(...(inputs.manual || []).map((s) => `MANUAL: ${s}`));
   out.push('', 'Anchors at max (Q points, C dollars, T minutes) and ladders:');
-  for (const c of calibration) out.push(`  ${c.bench} ${c.agent}: vendor to board ${c.dq < 0 ? '-' : '+'}${Math.abs(c.dq).toFixed(2)} pts (from ${c.from.join(', ') || 'none'}), ×${c.k.toFixed(3)} cost (from ${c.priced.join(', ') || 'none'})`);
+  for (const c of calibration) out.push(`  ${c.bench} ${c.agent}: ×${c.k.toFixed(3)} cost (from ${c.priced.join(', ') || 'none'})`);
   for (const a of anchors) out.push(`  ${`${a.agent} ${a.model}`.padEnd(20)} Q ${a.Q.toFixed(2).padStart(5)} ${a.quality}; C $${a.C.toFixed(2)} ${a.cost}; T ${a.T.toFixed(1)} ${a.minutes}; ladder ${a.ladder}`);
   out.push('', `Rows from inputs read ${inputs.read}, for public/model-front-data.json:`);
   for (const [agent, ms] of Object.entries(rows)) out.push(`    ${agent}: {`, ...Object.entries(ms).map(([m, es]) => line(m, es)), '    },');

@@ -38,17 +38,17 @@ test('a board model is anchored at max on the board and laddered by its vendor�
   assert.deepEqual([rows.claude.opus.xhigh[0], rows.claude.opus.max[0]], [66, 65], 'Opus scores below xhigh at max, as Anthropic’s own sweep has it');
 });
 
-test('a model off the board stands on its vendor max plus that vendor’s median gap to the board', () => {
+test('a model off the board stands on its vendor max as published', () => {
   const { anchors, calibration } = derive(inputs), at = (m) => anchors.find((a) => a.model === m);
   const cal = Object.fromEntries(calibration.map((c) => [c.agent, c]));
-  assert.deepEqual([cal.claude.from, cal.claude.priced], [['opus', 'sonnet', 'fable'], ['opus', 'sonnet', 'fable']]);
-  assert.equal(cal.claude.dq.toFixed(2), '0.05', 'the median of Opus +0.05, Sonnet -8.78, Fable +2.08');
+  assert.deepEqual(cal.claude.priced, ['opus', 'sonnet', 'fable']);
   assert.equal(cal.claude.k.toFixed(3), '1.225');
-  assert.deepEqual([cal.codex.from, cal.codex.priced, cal.codex.k], [['gpt-6.1-sol'], [], 1], 'Sol has no vendor cost, so Codex costs are taken as given');
-  assert.equal(at('haiku').Q.toFixed(2), '39.25');
+  assert.deepEqual([cal.codex.priced, cal.codex.k], [[], 1], 'Sol has no vendor cost, so Codex costs are taken as given');
+  assert.equal(at('haiku').Q, tb('claude', 'haiku').sweep.efforts.max[0]);
+  assert.equal(at('haiku').quality, 'vendor max 39.2');
   assert.equal(at('haiku').C, tb('claude', 'haiku').sweep.efforts.max[1] * cal.claude.k);
   assert.equal(at('haiku').minutes, 'like opus');
-  assert.equal(at('gpt-6-astra').Q.toFixed(2), '58.98');
+  assert.equal(at('gpt-6-astra').Q, tb('codex', 'gpt-6-astra').sweep.efforts.max[0]);
 });
 
 test('what a model lacks it borrows from its like chain, interpolating between swept efforts', () => {
@@ -102,8 +102,8 @@ test('the report lists the sources and their licences, flags what is unconfirmed
   assert.doesNotMatch(text, /CHANGED|NEW|<- curated/);
   assert.match(text, /board +Terminal-Bench 4\.0 official leaderboard, Stanford, Laude Institute and Harbor: Apache-2\.0/);
   assert.match(text, /UNCONFIRMED: Taken from coverage crediting OpenAI/);
-  assert.match(text, /claude haiku +Q 39\.25 vendor max 39\.2 \+0\.05/);
-  assert.match(text, /Front, both \(21 points/);
+  assert.match(text, /claude haiku +Q 39\.20 vendor max 39\.2; /);
+  assert.match(text, /Front, both \(19 points/);
 });
 
 test('front reporting is standalone and removes absent models', () => {
