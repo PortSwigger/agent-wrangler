@@ -67,6 +67,13 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `gpt-5.5` — GPT-5.5 · Legacy coding model
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
 
+**Gemini** (`agent: "gemini"`):
+- `auto` — Auto · Gemini picks Pro or Flash (default)
+- `gemini-3.1-pro-preview` — Gemini 3.1 Pro (preview)
+- `gemini-2.5-pro` — Gemini 2.5 Pro
+- `gemini-3.1-flash-lite` — Gemini 3.1 Flash-Lite
+- `gemini-3.5-flash` — Gemini 3.5 Flash
+
 The running wrangler's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
 
 <!-- END GENERATED MODELS -->

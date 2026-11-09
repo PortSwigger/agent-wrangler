@@ -168,3 +168,23 @@ test('built-in providers declare the capabilities the former id checks read', ()
   assert.equal(registry.providerMetadata(codex).controls.codexPolicy, true);
   assert.equal(registry.providerMetadata(claude).controls.codexPolicy, false);
 });
+
+// Gemini is the provider added with nothing outside server/agents/ comparing ids:
+// each shared path reads what its adapter declares, and an undeclared field means no.
+test('Gemini declares every capability the shared paths read, and inherits none from Claude', () => {
+  const gemini = registry.adapterFor('gemini');
+  assert.equal(registry.adapterForTmux('gm_ab12'), gemini);
+  assert.ok(!gemini.terminal.autoBlock && !gemini.terminal.updatesOnExit && !gemini.terminal.socketMail);
+  assert.ok(!gemini.history.branches && !gemini.history.requiresResumeFile);
+  assert.equal(mayExitForUpdate({}, 'gm_ab12'), false);
+  const meta = registry.providerMetadata(gemini);
+  assert.equal(meta.controls.codexPolicy, false);
+  assert.equal(meta.supportsRemoteControl, false);
+  assert.equal(meta.headless, true);
+  assert.deepEqual(meta.billingProviders, [{ id: 'google', label: 'Google' }]);
+  assert.equal(registry.supportsDisallowedTools('gemini'), false);
+  assert.equal(gemini.presetsSessionId, true);
+  assert.match(registry.launchTargetError('gemini', 'opus'), /"opus" is a claude model/);
+  assert.equal(registry.launchTargetError('gemini', 'auto'), null);
+  assert.match(registry.effortError('gemini', 'high', 'auto'), /Unknown effort/);
+});

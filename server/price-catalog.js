@@ -18,7 +18,10 @@ export const LITELLM_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/ma
 export const CACHE_PATH = path.join(DATA_DIR, 'price-catalog.json');
 const SNAPSHOT_PATH = new URL('./price-catalog.snapshot.json', import.meta.url);
 const REFRESH_MS = 12 * 60 * 60 * 1000;
-const PROVIDERS = ['anthropic', 'openai'];
+const PROVIDERS = ['anthropic', 'openai', 'gemini'];
+// LiteLLM names some providers' first-party ids with a route prefix
+// ("gemini/gemini-2.5-pro"); the catalog keys them by the bare model id.
+const ID_PREFIX = { gemini: 'gemini/' };
 const MODES = new Set(['chat', 'responses']);
 // A fetch that reduces to fewer rows than this is a broken or truncated upstream
 // file, not a real catalog — keep what we have rather than adopt it.
@@ -74,13 +77,17 @@ export function reduceEntry(e) {
   return rate;
 }
 
-// LiteLLM's whole file → { anthropic: {id: rate}, openai: {id: rate} }. Only the
-// providers' own first-party ids (no "bedrock/…"-style routes) for chat models.
+// LiteLLM's whole file → { anthropic: {id: rate}, openai: {id: rate}, gemini: {id: rate} }.
+// Only the providers' own first-party ids (no "bedrock/…"-style routes) for chat
+// models; Gemini's API ids carry LiteLLM's "gemini/" route, which is stripped.
 export function reduceLitellm(raw) {
   const out = Object.fromEntries(PROVIDERS.map((p) => [p, {}]));
   if (!isRecord(raw)) return out;
-  for (const [id, e] of Object.entries(raw)) {
+  for (const [rawId, e] of Object.entries(raw)) {
     if (!isRecord(e) || !PROVIDERS.includes(e.litellm_provider) || !MODES.has(e.mode)) continue;
+    const prefix = ID_PREFIX[e.litellm_provider];
+    if (prefix && !rawId.toLowerCase().startsWith(prefix)) continue;
+    const id = prefix ? rawId.slice(prefix.length) : rawId;
     const rate = reduceEntry(e);
     if (rate) out[e.litellm_provider][id.toLowerCase()] = rate;
   }

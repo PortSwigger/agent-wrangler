@@ -20,7 +20,7 @@ const raw = i > 0
   ? JSON.parse(fs.readFileSync(process.argv[i + 1], 'utf8'))
   : await fetchLitellm();
 const reduced = reduceLitellm(raw);
-const rows = (c) => Object.keys(c.anthropic).length + Object.keys(c.openai).length;
+const rows = (c) => Object.keys(c.anthropic).length + Object.keys(c.openai).length + Object.keys(c.gemini).length;
 if (rows(reduced) < 10) {
   console.error(`price snapshot NOT refreshed: upstream reduced to only ${rows(reduced)} rows`);
   process.exit(1);
@@ -29,6 +29,7 @@ const previous = (() => { try { return JSON.parse(fs.readFileSync(PRICE_SNAPSHOT
 const prices = {
   anthropic: { ...previous.anthropic, ...reduced.anthropic },
   openai: { ...previous.openai, ...reduced.openai },
+  gemini: { ...previous.gemini, ...reduced.gemini },
 };
 // Sorted keys so a refresh diffs as the rows that actually changed.
 const sorted = (o) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
@@ -36,8 +37,9 @@ fs.writeFileSync(PRICE_SNAPSHOT, `${JSON.stringify({
   source: LITELLM_URL,
   anthropic: sorted(prices.anthropic),
   openai: sorted(prices.openai),
+  gemini: sorted(prices.gemini),
 }, null, 1)}\n`);
-console.log(`price snapshot: ${Object.keys(prices.anthropic).length} anthropic, ${Object.keys(prices.openai).length} openai rows`);
+console.log(`price snapshot: ${Object.keys(prices.anthropic).length} anthropic, ${Object.keys(prices.openai).length} openai, ${Object.keys(prices.gemini).length} gemini rows`);
 
 try {
   const out = execFileSync('codex', ['debug', 'models'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });

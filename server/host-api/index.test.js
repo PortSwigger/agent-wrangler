@@ -583,11 +583,14 @@ test('agents is ABSENT without agents:read', () => {
   assert.equal('agents' in host, false);
 });
 
-test('agents.list() lists claude and codex from the real registry with their capability flags', async () => {
+test('agents.list() lists every registered agent from the real registry with their capability flags', async () => {
   const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
   const agents = await host.agents.list();
-  assert.deepEqual(agents.map((a) => a.id), ['claude', 'codex']);
-  const [claude, codex] = agents;
+  assert.deepEqual(agents.map((a) => a.id), ['claude', 'codex', 'gemini']);
+  const [claude, codex, gemini] = agents;
+  assert.deepEqual(gemini.capabilities, { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: false, mailWhileWorking: false, headless: true });
+  assert.equal(gemini.models.find((m) => m.value === 'auto').resolved, null);
+  assert.equal(gemini.models.find((m) => m.value === 'gemini-2.5-pro').resolved, 'gemini-2.5-pro');
   assert.equal(claude.label, 'Claude');
   assert.equal(claude.available, true);
   assert.equal(typeof codex.available, 'boolean');

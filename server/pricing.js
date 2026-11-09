@@ -88,3 +88,47 @@ export function codexCostUsdByType(totals) {
   }
   return out;
 }
+
+// Google / Gemini API pricing, from the same catalog. A Gemini CLI session signed
+// in with a Google account may not be billed per token at all, so this is an
+// *estimated* API-equivalent cost like Codex's (the UI marks it with `~`). An
+// unknown model prices as the newest Gemini Pro, the dearest family.
+// totals: { [model]: { input, output, cacheRead, long?: { input, output, cacheRead } } },
+// input excluding cached tokens; `long` is the share of those tokens that came
+// from responses whose prompt crossed the model's long-context threshold.
+function geminiRateFor(model) {
+  return priceFor('gemini', model) || priceFor('gemini', 'gemini-pro') || UNPRICED;
+}
+
+export function geminiModelCost(model, t) {
+  const r = geminiRateFor(model);
+  const l = t.long || {};
+  const lr = r.long || r;
+  const part = (k) => (((t[k] || 0) - (l[k] || 0)) * r[k] + (l[k] || 0) * lr[k]) / 1_000_000;
+  return { input: part('input'), output: part('output'), cacheRead: part('cacheRead') };
+}
+
+// The long-context threshold (prompt tokens) of a model, or Infinity without one.
+export function geminiLongThreshold(model) {
+  return geminiRateFor(model).long?.threshold ?? Infinity;
+}
+
+export function geminiCostUsd(totals) {
+  let usd = 0;
+  for (const [model, t] of Object.entries(totals)) {
+    const c = geminiModelCost(model, t);
+    usd += c.input + c.output + c.cacheRead;
+  }
+  return usd;
+}
+
+export function geminiCostUsdByType(totals) {
+  const out = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+  for (const [model, t] of Object.entries(totals)) {
+    const c = geminiModelCost(model, t);
+    out.input += c.input;
+    out.output += c.output;
+    out.cacheRead += c.cacheRead;
+  }
+  return out;
+}

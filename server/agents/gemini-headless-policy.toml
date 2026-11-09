@@ -1,0 +1,7 @@
+# Agent Wrangler's headless Gemini one-shots (server/headless.js) classify or
+# summarise what they are handed on stdin and must never act: every tool,
+# built-in or MCP, is denied, which also hides it from the model.
+[[rule]]
+toolName = "*"
+decision = "deny"
+priority = 999

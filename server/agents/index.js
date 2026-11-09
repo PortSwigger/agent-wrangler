@@ -1,8 +1,9 @@
 import { claude } from './claude.js';
 import { codex } from './codex.js';
+import { gemini } from './gemini.js';
 import { logWarn } from '../log.js';
 
-const allAgents = () => [claude, codex];
+const allAgents = () => [claude, codex, gemini];
 
 export function createAgentRegistry(adapters) {
   const values = typeof adapters === 'function' ? adapters : () => adapters;

@@ -119,7 +119,7 @@ test('priceFor prefers the longest matching id', () => {
 
 test('reduceLitellm survives non-object input and rows', () => {
   for (const raw of [null, 'x', 42, [], [litellmRow('openai', 1, 1)]]) {
-    assert.deepEqual(reduceLitellm(raw), { anthropic: {}, openai: {} });
+    assert.deepEqual(reduceLitellm(raw), { anthropic: {}, openai: {}, gemini: {} });
   }
   const out = reduceLitellm({ a: null, b: 'str', c: [1, 2], d: 7, 'gpt-ok-1': litellmRow('openai', 1, 2) });
   assert.deepEqual(Object.keys(out.openai), ['gpt-ok-1']);
