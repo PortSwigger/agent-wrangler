@@ -5841,7 +5841,10 @@ function refreshFolderList() {
   const items = [
     ...latestSessions.flatMap((s) => [s.cwd, ...(s.addDirs || [])].map((c) => ({ cwd: c, at: s.lastActivity || 0 }))),
     ...latestHistory.map((h) => ({ cwd: h.cwd, at: h.archivedAt || 0 })),
-  ].filter((x) => x.cwd && !isScratchDir(x.cwd)).map((x) => ({ cwd: repoRoot(x.cwd), at: x.at }));
+  ].filter((x) => x.cwd && !isScratchDir(x.cwd)).map((x) => ({ cwd: repoRoot(x.cwd), at: x.at }))
+    // repoRoot can't fold a worktrees.noindex dir without its branch, and those
+    // pile up (extensions mint one per run), crowding the real repo off the top.
+    .filter((x) => !x.cwd.includes('/worktrees.noindex/'));
   items.sort((a, b) => b.at - a.at);
   const seen = new Set();
   recentFolders = [];
