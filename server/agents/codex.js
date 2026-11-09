@@ -78,6 +78,52 @@ function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchCont
   return args;
 }
 
+// The features a headless one-shot switches off, on top of a read-only sandbox:
+// every tool that could run a command, reach the web or act on the desktop. It
+// classifies or summarises what it is handed on stdin and must never act.
+export const CODEX_HEADLESS_DISABLED_FEATURES = [
+  'shell_tool', 'unified_exec', 'apps', 'plugins', 'multi_agent', 'image_generation',
+  'browser_use', 'computer_use',
+];
+
+// The adapter's `headless` capability (server/headless.js runs it): `codex exec`
+// with the prompt in argv and the payload piped on stdin, which Codex appends as
+// a `<stdin>` block. `--ignore-user-config` keeps the user's MCP servers and
+// profile out, the counterpart of Claude's `--setting-sources ''`; auth still
+// comes from CODEX_HOME. The rollout is kept (no `--ephemeral`) so the usage
+// scan can bill it: its id is the `thread.started` event's `thread_id`.
+const codexHeadless = {
+  defaultModel: () => defaultCodexModel(),
+  command({ prompt, model, effort, env = {}, cwd }) {
+    const args = [
+      'exec', '--json', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules',
+      '--sandbox', 'read-only', '-C', cwd, '-m', model,
+    ];
+    if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
+    for (const feature of CODEX_HEADLESS_DISABLED_FEATURES) args.push('--disable', feature);
+    args.push('-c', 'web_search="disabled"', prompt);
+    return { file: 'codex', args, env: { ...process.env, ...env } };
+  },
+  // JSONL events. The answer is the last `agent_message` item; an `error` ITEM
+  // is a warning Codex prints and carries on from (unknown config keys), while a
+  // `turn.failed` or top-level `error` event is the run failing.
+  parse(stdout) {
+    let liveSessionId = null;
+    let text = null;
+    let error = null;
+    for (const line of String(stdout).split('\n')) {
+      if (!line.trim()) continue;
+      let event;
+      try { event = JSON.parse(line); } catch { continue; }
+      if (event.type === 'thread.started' && typeof event.thread_id === 'string') liveSessionId = event.thread_id;
+      else if (event.type === 'item.completed' && event.item?.type === 'agent_message' && typeof event.item.text === 'string') text = event.item.text.trim();
+      else if (event.type === 'turn.failed') error = event.error?.message || 'Codex turn failed';
+      else if (event.type === 'error') error = event.message || 'Codex failed';
+    }
+    return { text, liveSessionId, error };
+  },
+};
+
 export const codex = {
   id: 'codex',
   history: codexHistory,
@@ -119,6 +165,7 @@ export const codex = {
     interruptKeys: ['Escape'],
   },
   contextWindow: codexContextWindow,
+  headless: codexHeadless,
   reviewPriority: 20,
   label: 'Codex',
   unavailableMessage: "This is a Codex conversation, but the `codex` binary isn't on PATH — install it (or put it on the launchd PATH) to resume Codex sessions.",

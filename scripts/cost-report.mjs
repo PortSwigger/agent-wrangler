@@ -20,6 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { costUsd, costUsdByType } from '../server/pricing.js';
 import { adapterFor } from '../server/agents/index.js';
+import { billedRunEntries } from '../server/billed-runs.js';
 
 const HOME = os.homedir();
 const DATA_DIR = process.env.AW_DATA_DIR || path.join(HOME, '.agent-wrangler');
@@ -270,6 +271,14 @@ for (const [cardId, entry] of Object.entries(entries)) {
   const label = (intent && intent !== '(resumed)' ? intent.slice(0, 50) : '')
     || entry.name || (entry.cwd ? path.basename(entry.cwd) : '') || cardId.slice(0, 8);
   unresolved += await adapterFor(agent).usage.scanMonth({ cardId, entry, agent, label, sessions, resolveClaudeTranscripts, monthTotalsFor, usageSince, tokensOf, taskNameFor, monthStart, monthEnd, codexIndex, trackedSessionIds: sessionIdsByAgent.get(agent), analyzeCodex });
+  // Headless runs another agent made for this card, priced by that agent's
+  // scanner (server/billed-runs.js); a Claude one resolves by its exact id.
+  for (const run of billedRunEntries(entry)) {
+    let runAdapter;
+    try { runAdapter = adapterFor(run.agent); } catch { unresolved += 1; continue; }
+    const exact = (_cardId, e) => [byUuid.get(e.liveSessionId)].filter(Boolean);
+    unresolved += await runAdapter.usage.scanMonth({ cardId, entry: run.entry, agent: run.agent, label, sessions, resolveClaudeTranscripts: exact, monthTotalsFor, usageSince, tokensOf, taskNameFor, monthStart, monthEnd, codexIndex, trackedSessionIds: sessionIdsByAgent.get(run.agent) || new Set(), analyzeCodex });
+  }
 }
 
 // ---- dedup by transcript ------------------------------------------------

@@ -5,6 +5,7 @@ import { costUsd } from '../pricing.js';
 import { claudeHistory } from './claude-history.js';
 import { claudePermissionArgs } from './permission-mode.js';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { INSTALL_ROOT } from '../install-root.js';
 import { launchAddDirArgs, launchClaudeHooksOf, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { analyze, listResumable, activityInRange, findTranscript, subagentDetail } from '../transcript-reader.js';
@@ -111,7 +112,7 @@ export function withCleanClaudeEnv(cmd) {
 }
 
 // Same strip, as an env OBJECT rather than a shell-wrapped command — for a
-// direct execFile() call (archive-review-runner.js's headless Haiku review),
+// direct execFile() call (the headless one-shot below),
 // which has no shell to prefix with `env -u`. Single source of truth for the
 // var list, shared with withCleanClaudeEnv above.
 export function cleanClaudeEnv(env = process.env) {
@@ -119,6 +120,44 @@ export function cleanClaudeEnv(env = process.env) {
   const strip = new Set([...NESTED_CLAUDE_ENV, ...dynamic]);
   return Object.fromEntries(Object.entries(env).filter(([k]) => !strip.has(k)));
 }
+
+// Every tool a headless one-shot is denied: it classifies or summarises what it
+// is handed on stdin and must never act on the machine.
+export const HEADLESS_DISALLOWED_TOOLS = [
+  'Bash', 'Read', 'Write', 'Edit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch',
+  'WebSearch', 'Task', 'Agent', 'TodoWrite', 'BashOutput', 'KillShell', 'Skill',
+  'SlashCommand',
+];
+
+// The adapter's `headless` capability (server/headless.js runs it): a tool-less
+// `claude -p` with the payload on stdin. The conversation id is a fresh uuid
+// passed as `--session-id`, not `--no-session-persistence`, so the transcript
+// survives and the usage scan bills it to whichever card it is recorded on.
+// `--bare` is NOT an option: verified against the real binary, it reads only
+// ANTHROPIC_API_KEY and fails with api_error under OAuth/keychain auth.
+const claudeHeadless = {
+  defaultModel: () => 'haiku',
+  command({ prompt, model, effort, env = {} }) {
+    const liveSessionId = crypto.randomUUID();
+    const childEnv = cleanClaudeEnv({ ...process.env, ...env });
+    if (Object.hasOwn(env, 'CLAUDE_CODE_OAUTH_TOKEN')) childEnv.CLAUDE_CODE_OAUTH_TOKEN = env.CLAUDE_CODE_OAUTH_TOKEN;
+    const args = ['-p', '--model', model];
+    if (effort) args.push('--effort', effort);
+    args.push(
+      '--strict-mcp-config',
+      '--setting-sources', '',
+      '--disallowed-tools', HEADLESS_DISALLOWED_TOOLS.join(' '),
+      '--session-id', liveSessionId,
+      '--output-format', 'json',
+      prompt,
+    );
+    return { file: 'claude', args, env: childEnv, liveSessionId };
+  },
+  parse(stdout) {
+    const parsed = JSON.parse(stdout);
+    return { text: typeof parsed.result === 'string' ? parsed.result.trim() : null };
+  },
+};
 
 export function buildInnerCommand({ args, intent = '', sessionId, worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
   // memory/links are wrangler-meta skills now (loaded via --plugin-dir below), but
@@ -286,7 +325,10 @@ export const claude = {
   // The tool that asks the human a question in the pane, which a host launching
   // into a pane nobody watches blocks through disallowedTools.
   askUserTool: 'AskUserQuestion',
+  // Its transcripts are what archive review reads (archive-review-runner.js);
+  // the review itself runs on the Background model, whichever agent that is.
   headlessArchiveReview: true,
+  headless: claudeHeadless,
   label: 'Claude',
   tmuxPrefix: 'cc_',
   presetsSessionId: true,

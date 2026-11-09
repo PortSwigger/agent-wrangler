@@ -295,6 +295,18 @@ export function defaultSessionCwd(cfg = readConfig()) {
   return typeof cfg.defaultSessionCwd === 'string' ? cfg.defaultSessionCwd.trim() : '';
 }
 
+// Settings › Automation › Background model, as stored: `{ agent, model }`, or
+// null when unset or hand-edited into another shape. Validated against the agent
+// registry by server/headless.js backgroundModel, which owns the default (this
+// module stays a leaf). Takes cfg so tests never write the shared config.json.
+export function backgroundModelConfig(cfg = readConfig()) {
+  const raw = cfg.backgroundModel;
+  if (!raw || typeof raw !== 'object') return null;
+  const agent = typeof raw.agent === 'string' ? raw.agent.trim() : '';
+  const model = typeof raw.model === 'string' ? raw.model.trim() : '';
+  return agent && model ? { agent, model } : null;
+}
+
 // The runtime id the dispatch dialog pre-selects for a new session. Not checked
 // against the registry: an extension runtime can be off now and on again later,
 // and the dialog falls back to local for any id it doesn't offer.

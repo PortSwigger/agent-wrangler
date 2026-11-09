@@ -85,7 +85,7 @@ import { createExtensionUpdateCheck, currentExtensionUpdates } from './extension
 import { autoUpdateExtension } from './control/handlers/extensions-install.js';
 import { createInstallDriftWatch } from './install-root.js';
 import { nextSessionToRefresh } from './session-refresh.js';
-import { headlessRunsInFlight } from './headless-claude.js';
+import { headlessRunsInFlight, backgroundModel } from './headless.js';
 import { startupStyle, bannerLines, listenErrorMessage } from './startup-output.js';
 import { VERSION } from './version.js';
 
@@ -1098,6 +1098,9 @@ async function rebuildOnce() {
   graph.chatViewDefault = chatViewDefault();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();
+  // Settings › Background model, resolved: never null, a stored pair that can
+  // no longer run reads back as the default it falls back to.
+  graph.backgroundModel = backgroundModel();
   graph.codexPolicyDefaults = codexPolicyDefaults();
   graph.autoUpdate = autoUpdateMode();
   graph.refreshSessionsAfterUpdate = refreshSessionsAfterUpdate();

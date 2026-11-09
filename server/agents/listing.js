@@ -1,5 +1,6 @@
 import { registeredAgents, modelsWithDefault, resolvedModelId } from './index.js';
 import { withAutoEffort } from './auto-effort.js';
+import { backgroundModel } from '../headless.js';
 
 // The model list the dispatch dialog and the client `api.agents()` read: the
 // adapter's live models with the AW_DEFAULT_MODEL re-pointing, each model's Auto
@@ -19,6 +20,8 @@ export function dispatchModels(adapter, env = process.env) {
 //   sandbox          — it runs under an OS sandbox an extension's codexPolicy
 //                      shapes, whose `addDirs` are its extra writable folders.
 //   mailWhileWorking — mail reaches it mid-turn; without it, a paste waits for idle.
+//   headless         — it runs a tool-less one-shot (`host.agents.headless`,
+//                      server/headless.js), from its adapter's `headless` field.
 export function agentCapabilities(adapter) {
   return {
     disallowedTools: adapter.supportsDisallowedTools === true,
@@ -26,13 +29,16 @@ export function agentCapabilities(adapter) {
     askUserTool: adapter.askUserTool || null,
     sandbox: adapter.launch?.codexPolicy === true,
     mailWhileWorking: adapter.terminal?.socketMail === true,
+    headless: Boolean(adapter.headless),
   };
 }
 
 // `host.agents.list()`: every registered agent, installed or not, with what it
-// offers. Models carry `efforts` (the effort values a launch of that model accepts) and
-// `autoEffort` (what it runs at with none passed, null when unknown).
-export async function agentList({ adapters = registeredAgents(), env = process.env } = {}) {
+// offers. Models carry `efforts` (the effort values a launch of that model accepts),
+// `autoEffort` (what it runs at with none passed, null when unknown) and
+// `background`, true on the one model Settings › Background model names — what a
+// headless run with no model of its own uses.
+export async function agentList({ adapters = registeredAgents(), env = process.env, background = backgroundModel({ adapters }) } = {}) {
   const available = await Promise.all(adapters.map((a) => Promise.resolve().then(() => a.isAvailable()).catch(() => false)));
   return adapters.map((a, i) => {
     const efforts = (a.efforts || []).map(({ value, label }) => ({ value, label }));
@@ -47,6 +53,7 @@ export async function agentList({ adapters = registeredAgents(), env = process.e
         default: m.default === true,
         efforts: (a.effortsForModel?.(m.value) ?? efforts).map((e) => e.value),
         autoEffort: m.autoEffort ?? null,
+        background: background?.agent === a.id && background.model === m.value,
       })),
       efforts,
       capabilities: agentCapabilities(a),

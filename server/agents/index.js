@@ -25,6 +25,7 @@ export function providerMetadata(adapter) {
     terminal: { editingKeys: adapter.terminal?.editingKeys || {} },
     presentation: adapter.presentation || {}, controls: adapter.controls || {},
     supportsRemoteControl: adapter.supportsRemoteControl === true,
+    headless: Boolean(adapter.headless),
     forkHelp: adapter.forkHelp || 'Branch this conversation into a new session. The original keeps running independently.',
   };
 }

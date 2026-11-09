@@ -60,9 +60,22 @@ adapter sets the field rather than anyone adding its id to a list:
 | `askUserTool` | `askUserTool` | `AskUserQuestion` | none |
 | `sandbox` | `launch.codexPolicy` | no | yes |
 | `mailWhileWorking` | `terminal.socketMail` | yes | no |
+| `headless` | `headless` | yes | yes |
 
 A model's `resolved` full id comes from the adapter's `modelId(value)`; an adapter without one
 launches by full id already.
+
+## Headless one-shots
+
+`server/headless.js` `runHeadless` runs a tool-less one-shot on any adapter with a `headless`
+field: `defaultModel()`, `command({ prompt, model, effort, env, cwd })` → `{ file, args, env,
+liveSessionId? }`, and `parse(stdout)` → `{ text, liveSessionId?, error? }`. The payload goes on
+stdin. Claude runs `claude -p` with its tools disallowed and a fresh `--session-id`; Codex runs
+`codex exec --json` read-only with its tool features disabled, reporting its id in `thread.started`.
+With no model named a run uses Settings › Background model (`backgroundModel()`, default: the first
+headless adapter's `defaultModel()`, Claude Haiku). Archive review and `host.agents.headless` both
+go through it. A run by another agent than the card's own is billed through `billedRuns` and priced
+by that agent's usage scanner (`server/billed-runs.js`).
 
 ## Three launch sites
 

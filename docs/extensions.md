@@ -1778,9 +1778,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Headless requests must leave the card's live session bindings unchanged; hooks
   should only resolve the requested environment, and core does not cache their
   directory grants. Task memory contributes nothing to a headless run.
-  Core's `runHeadlessClaude` merges an `env` option over the process environment,
-  then strips nested-Claude markers, preserving an explicitly supplied
-  `CLAUDE_CODE_OAUTH_TOKEN` for the selected login;
+  Core's `runHeadless` (`server/headless.js`) merges an `env` option over the
+  process environment; Claude's headless command then strips nested-Claude
+  markers, preserving an explicitly supplied `CLAUDE_CODE_OAUTH_TOKEN` for the
+  selected login;
   archive memory review collects the card's headless context before running and logs
   a refusal as a skipped review, without stamping or publishing a result.
 - **`hooks['session.prepare']`** (1.32.0), called with `{ sessionId, taskId,
@@ -2003,9 +2004,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   call: `{ id, label, available, models, efforts, capabilities }`. `available`
   is whether its CLI is installed here. `efforts` is the agent's
   `[{ value, label }]`. Each model is `{ value, resolved, label, default,
-  efforts, autoEffort }`: `resolved` as on `api.agents()`, `efforts` the effort
+  efforts, autoEffort, background }`: `resolved` as on `api.agents()`, `efforts` the effort
   values a launch of that model accepts, `autoEffort` the level it runs at with no effort
-  passed (null when unknown). `capabilities` is what a host can lean on, so it
+  passed (null when unknown), `background` (1.67.0) true on the one model
+  Settings › Automation › Background model names. `capabilities` is what a host can lean on, so it
   branches on what an agent does rather than on its id:
 
   | Flag | Meaning |
@@ -2015,8 +2017,26 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   | `askUserTool` | The tool that asks the human in the pane, to block with `disallowedTools` when nobody watches it (`AskUserQuestion` for Claude), or null. |
   | `sandbox` | It runs under an OS sandbox that `codexPolicy` hooks shape; `spawn({ addDirs })` become its extra writable folders. |
   | `mailWhileWorking` | Mail reaches it mid-turn; without it a pasted message waits for the turn to end. |
+  | `headless` (1.67.0) | `host.agents.headless({ agent })` can run on it. |
 
-  A manifest using it declares `^1.66.0`.
+  A manifest using it declares `^1.66.0` (`^1.67.0` to read `headless` or `background`).
+
+- **`host.agents.headless({ prompt, stdin?, agent?, model?, effort?, timeoutMs? })`**
+  (capability `agents:headless`, 1.67.0) runs one tool-less one-shot and resolves a
+  frozen `{ text, liveSessionId, agent, model, error }`. `prompt` goes in argv and
+  `stdin` (a string, default empty) is piped in; every tool is off, and the user's own
+  settings and MCP servers are not loaded. Claude runs `claude -p` with its tools
+  disallowed; Codex runs `codex exec` in a read-only sandbox with its tool features
+  disabled and the user's `config.toml` ignored. With no `model` the run uses the
+  **Background model** (Settings › Automation, Claude Haiku by default); an `agent`
+  alone runs the Background model when it is that agent, otherwise that agent's own
+  headless default. `timeoutMs` defaults to two minutes and is capped at ten. A failed
+  run resolves with `error` as a message and `text` null; `liveSessionId` is still set
+  when the run started a conversation, because that conversation spent tokens. It
+  rejects only for a bad call: no prompt, an unknown agent, a model or effort that
+  agent does not list, or an agent without `capabilities.headless`. The spend is not
+  billed to any card until the extension calls `host.sessions.bill(sessionId,
+  liveSessionId, agent)` (`sessions:bill`) with the returned id and agent.
 
 ## Runtimes
 
@@ -2151,7 +2171,8 @@ all of that; notes stay on disk under `~/.agent-wrangler/memory`. The old
 
 The **Auto-review archived sessions into task memory** toggle lives under
 Settings > Extensions > Task memory and defaults to off. When enabled, archiving
-a Claude session runs a Haiku review and appends learnings to the task's memory;
+a Claude session runs a review on the Background model (Settings > Automation,
+Claude Haiku by default), billed to that session, and appends learnings to the task's memory;
 this costs a small amount per archive and grows the file. Disabling the extension
 also stops these reviews. The value is stored at
 `extensionSettings.task-memory.archiveReviewEnabled`; at boot, `RETIRED_SETTINGS`

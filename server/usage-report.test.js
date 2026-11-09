@@ -353,6 +353,36 @@ test('attributes Codex spend to its createdAt day and flags it estimated', async
   assert.equal(day.total.estimatedUsd, day.total.usd, 'all codex spend is estimated');
 });
 
+// A headless run by another agent (a Codex archive review of a Claude card) is
+// priced by that agent's scanner and billed to the card that asked for it.
+test('a billed run by another agent is priced by its own scanner and billed to the card', async () => {
+  _resetUsageFileCache();
+  const d = makeDirs();
+  const sid = 'abababab-abab-abab-abab-abababababab';
+  const run = '45454545-4545-4545-4545-454545454545';
+  const headlessClaude = 'cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd';
+  claudeTranscript(d.projectsDir, { sessionId: sid, lines: [turn('m1', 'claude-opus', { input_tokens: 100, output_tokens: 100 }, '2026-07-10T12:00:00.000Z')] });
+  claudeTranscript(d.projectsDir, { sessionId: headlessClaude, cwd: '/tmp', lines: [turn('h1', 'claude-haiku', { input_tokens: 70, output_tokens: 7 }, '2026-07-12T12:00:00.000Z')] });
+  fs.writeFileSync(path.join(d.codexSessionsDir, `rollout-2026-07-11T10-00-00-${run}.jsonl`), [
+    { timestamp: '2026-07-11T10:00:00.000Z', payload: { type: 'turn_context', model: 'gpt-5.5-codex' } },
+    { timestamp: '2026-07-11T10:05:00.000Z', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 2000, cached_input_tokens: 0, output_tokens: 50 } } } },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  writeStores(d.dataDir, { entries: {
+    card1: { agent: 'claude', liveSessionId: sid, cwd: '/work/proj', billedRuns: [{ agent: 'codex', liveSessionId: run, at: Date.parse('2026-07-11T10:06:00.000Z') }] },
+    cx: { agent: 'codex', liveSessionId: 'ffffffff-0000-0000-0000-000000000000', cwd: '/w', createdAt: Date.parse('2026-07-01T00:00:00.000Z'), billedRuns: [{ agent: 'claude', liveSessionId: headlessClaude, at: 1 }, { agent: 'gone', liveSessionId: 'x', at: 1 }] },
+  } });
+  const scan = await scanAllDaily(d);
+  const rows = scan.sessions.filter((s) => s.cardId === 'card1');
+  assert.equal(rows.length, 2, 'the card\'s own transcript and the billed Codex run');
+  const codexRow = rows.find((s) => s.days['2026-07-11']);
+  assert.equal(codexRow.days['2026-07-11'].provider, 'openai');
+  assert.equal(codexRow.days['2026-07-11'].tokens.input, 2000);
+  const cxRows = scan.sessions.filter((s) => s.cardId === 'cx');
+  assert.equal(cxRows.length, 1, 'a Claude run billed to a Codex card resolves by its exact id');
+  assert.equal(cxRows[0].days['2026-07-12'].tokens.input, 70);
+  assert.equal(scan.failedFiles, 1, 'an agent this server no longer registers is reported, not crashed on');
+});
+
 test('includes native Codex sub-agent spend in the parent bucket and breakout', async () => {
   const d = makeDirs();
   const parent = '10101010-1010-1010-1010-101010101010';
