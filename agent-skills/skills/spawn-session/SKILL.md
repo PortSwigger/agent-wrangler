@@ -48,7 +48,7 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 <!-- BEGIN GENERATED MODELS — edit server/agents/*.js then run `npm run gen:models` -->
 
 **Claude** (`agent: "claude"`):
-- `fable` — Fable 5.1 · 1M context
+- `fable` — Fable 5.2 · 1M context
 - `opus` — Opus 5.5 · 1M context (default)
 - `opusplan` — Opus plan · Sonnet execution
 - `sonnet` — Sonnet 5.5 · 200K context

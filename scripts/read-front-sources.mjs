@@ -7,9 +7,9 @@ import { inputErrors, versionOf } from '../.claude/skills/evaluate-model/evaluat
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const BOARD_PATH = 'repos/harbor-framework/terminal-bench/contents/leaderboard';
-const CLAUDE = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', fable: 'claude-fable-5-1', haiku: 'claude-haiku-5-5' };
+const CLAUDE = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', fable: 'claude-fable-5-2', haiku: 'claude-haiku-5-5' };
 const CHARTS = [
-  ['https://www.anthropic.com/claude-opus-5-5', { fable51: ['claude', 'fable'], gpt6astra: ['codex', 'gpt-6-astra'] }],
+  ['https://www.anthropic.com/claude-opus-5-5', { gpt6astra: ['codex', 'gpt-6-astra'] }],
   ['https://www.anthropic.com/claude-sonnet-5-5', { opus55: ['claude', 'opus'] }],
   ['https://www.anthropic.com/claude-haiku-5-5', { haiku55: ['claude', 'haiku'], sonnet55: ['claude', 'sonnet'] }],
 ];

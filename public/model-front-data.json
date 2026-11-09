@@ -1,6 +1,6 @@
 {
-  "read": "2026-10-29",
-  "credit": "Scores: Terminal-Bench 4.0 (tbench.ai, Apache-2.0), with effort results published by Anthropic and OpenAI. Prices: Anthropic and OpenAI list prices from the LiteLLM catalog (MIT), read 2026-10-29.",
+  "read": "2026-11-09",
+  "credit": "Scores: Terminal-Bench 4.0 (tbench.ai, Apache-2.0), with effort results published by Anthropic and OpenAI. Prices: Anthropic and OpenAI list prices from the LiteLLM catalog (MIT), read 2026-11-09.",
   "benchmarks": {
     "terminal-bench": {
       "name": "Terminal-Bench",
@@ -66,55 +66,55 @@
       },
       "fable": {
         "low": [
-          42,
-          5.73,
-          30.4
+          38,
+          2.63,
+          26.8
         ],
         "medium": [
-          45,
-          7.85,
-          35.7
+          56,
+          5.97,
+          35.6
         ],
         "high": [
-          51,
-          10.56,
-          42.4
+          63,
+          7.9,
+          40.6
         ],
         "xhigh": [
-          53,
-          15.89,
-          55.7
+          65,
+          14.96,
+          59.1
         ],
         "max": [
-          58,
-          19.62,
-          64.9
+          63,
+          22.87,
+          79.8
         ]
       },
       "haiku": {
         "low": [
-          13,
-          0.52,
+          11,
+          0.59,
           29.6
         ],
         "medium": [
-          20,
-          0.83,
+          18,
+          0.94,
           35.4
         ],
         "high": [
-          25,
-          1.27,
+          22,
+          1.44,
           43.5
         ],
         "xhigh": [
-          32,
-          2.15,
+          28,
+          2.43,
           59.7
         ],
         "max": [
-          39,
-          3.24,
+          35,
+          3.67,
           79.8
         ]
       }

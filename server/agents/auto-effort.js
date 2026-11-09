@@ -25,6 +25,7 @@ const CLAUDE_BUILTIN = {
   'claude-opus-5-5': { level: 'medium' },
   'claude-sonnet-5-5': { level: 'medium' },
   'claude-haiku-5-5': { level: 'medium' },
+  'claude-fable-5-2': { level: 'medium' },
   'claude-fable-5-1': { level: 'high', userTopLevel: true },
   'claude-fable-5': { level: 'high', userTopLevel: true },
   'claude-opus-5': { level: 'high', userTopLevel: true },
