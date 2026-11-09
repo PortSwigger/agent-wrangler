@@ -92,6 +92,7 @@ export const CAPABILITIES = new Set([
   'links:write',
   'images:keep',
   'files:view',
+  'agents:read',
 ]);
 
 // Capabilities with NO server façade: grants the BROWSER half checks (slots.js
