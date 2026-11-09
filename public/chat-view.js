@@ -718,9 +718,10 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     sendBtn.disabled = !input.value.trim() && !attachments.length;
   }
 
+  // True when the prompt went out (api.sessionPanel.type reports it).
   function submit() {
     const text = input.value.trim();
-    if (!sessionId || lastGate || pendingMessages.has(sessionId) || (!text && !attachments.length)) return;
+    if (!sessionId || lastGate || pendingMessages.has(sessionId) || (!text && !attachments.length)) return false;
     // The EXISTING human message path: live → paste into the pane, dormant →
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
@@ -752,6 +753,18 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       renderAttachments();
     }
     renderSendability();
+    return Boolean(accepted);
+  }
+
+  // api.sessionPanel.type (1.68.0): `text` at the end of the composer, as if
+  // typed there. False while the composer takes nothing (a gate, a needs-you).
+  function appendText(text) {
+    if (!sessionId || lastGate || input.disabled) return false;
+    if (!text) return true;
+    input.value += text;
+    input.dispatchEvent(new Event('input'));
+    scheduleDraftSave();
+    return true;
   }
 
   function echoSent(pending, text, sentAttachments) {
@@ -1449,6 +1462,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       if (!blocked) renderSendability();
       stopBtn.hidden = status !== 'working';
     },
+
+    // The stream and the composer, for api.sessionPanel (app.js).
+    stream,
+    appendText,
+    submit,
 
     // Lock or unlock the composer for a `session.inputGate` (null unlocks).
     setInputGate(gate) {

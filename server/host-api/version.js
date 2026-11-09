@@ -485,7 +485,16 @@ import semver from 'semver';
 // `agent` argument to `host.sessions.bill`, which bills a run by another agent
 // than the card's own. An older server quarantines the unknown capability and
 // lists neither field, so a manifest using any of them declares `^1.67.0`.
-export const HOST_API_VERSION = '1.67.0';
+//
+// 1.68.0 is CLIENT-only: `api.sessionPanel` for the open session's panel, on the
+// board or lent to an extension view: `view()` ('chat', 'terminal' or null),
+// `scroll(how)` (the Chat stream, or the Terminal by wheel reports as the wheel
+// does) and `type(text, { submit })` behind the new client capability
+// `session:type`, refused while the session's `session.inputGate` holds. The
+// open Terminal is listed by `api.targets` as `panel:terminal` (pressing it
+// focuses it) and `api.front()` gains `panel`. An older board has none of them,
+// so an extension that uses them declares `^1.68.0`.
+export const HOST_API_VERSION = '1.68.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

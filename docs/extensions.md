@@ -1420,10 +1420,13 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   open dialog (the focused one, else the last opened) takes it all, then an open
   context menu, otherwise the rail, the board, Search or the extension view in
   front, the open session's panel and chat, and the diff. A terminal's own DOM
-  is never listed. `where` is `'rail'`, `'board'`, `'search'`, `'view'`,
+  is never listed; the open session's Terminal is one target instead (1.68.0),
+  `panel:terminal` of kind `'terminal'` and label `Terminal`, listed while it
+  shows and nothing is over it, and pressing it focuses it, so typed keys go to
+  the session. `where` is `'rail'`, `'board'`, `'search'`, `'view'`,
   `'panel'`, `'diff'`, `'dialog'` or `'menu'`; `kind` is `'session'`,
-  `'task-new-session'`, `'task-menu'`, `'rail'`, `'tab'`, `'field'`, `'link'` or
-  `'button'`; `label` is its aria-label, title or text (80 characters at most);
+  `'task-new-session'`, `'task-menu'`, `'rail'`, `'tab'`, `'field'`, `'link'`,
+  `'terminal'` or `'button'`; `label` is its aria-label, title or text (80 characters at most);
   `href` is a link's own; `rect` is `{ x, y, width, height }` in viewport pixels,
   clipped to what shows.
   **A key names the same thing across redraws**: a session card is
@@ -1451,11 +1454,13 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   them. The board watches the DOM only while some extension listens or has
   badges, and subscriptions and badges die with the extension.
 - **`api.front()`** (1.65.0) is what is in front:
-  `{ view, ext, dialog, menu, session }`: `view` the board's view key (`'grid'`,
+  `{ view, ext, dialog, menu, session, panel }`: `view` the board's view key (`'grid'`,
   `'search'` or `ext:<extId>:<id>`), `ext` the extension owning that view or
   null, `dialog` the open dialog's id (`'dialog'` for one with none) or null,
   `menu` whether a context menu is open, `session` the open session's id or
-  null. **`api.front.onChange(fn)`** calls `fn` with a fresh copy whenever one of
+  null, and `panel` (1.68.0) what that session's panel shows, `'chat'` or
+  `'terminal'` (a live pane attached), or null (none open, a dormant session's
+  Resume page). **`api.front.onChange(fn)`** calls `fn` with a fresh copy whenever one of
   those changes, and returns the unsubscribe function.
 - **`api.rail.button({ id, label, icon?, active?, progress?, onPress })`**
   (1.65.0, `public/rail-buttons.js`) puts a button in the rail's bottom zone,
@@ -1468,6 +1473,39 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   with the extension. It is listed by `api.targets` as `rail:ext:<extId>:<id>`.
   An extension using `api.targets`, `api.front` or `api.rail` declares
   `^1.65.0`, or checks for them and does without on an older board.
+- **`api.sessionPanel`** (1.68.0, `public/session-panel.js`) works the open
+  session's panel, on the board or lent to an extension view by
+  `api.mountSession` alike, so an extension can drive it by something other
+  than a pointer and keyboard (voice, a switch). Each call answers
+  `{ ok: true, view, … }` or `{ ok: false, reason }`; a misuse (a bad argument,
+  no capability) is reported to the console too.
+  **`view()`** is `'chat'`, `'terminal'` or null, as `api.front().panel`.
+  **`scroll(how)`**, `how` one of `'page-up'`, `'page-down'`, `'line-up'`,
+  `'line-down'`, `'top'` or `'bottom'`, scrolls whichever shows. The Chat stream
+  moves by most of its height a page, 40 pixels a line, and to either end;
+  `moved` is false when it was already there. The Terminal scrolls as the wheel
+  does: the board sends wheel notches over the pane, which tmux (`mouse on`)
+  hands to an app that takes the mouse (Claude's fullscreen TUI scrolls its
+  history) or uses itself (copy-mode scrollback, 5 lines a notch); a line is
+  one notch, a page 0.3 notches per row of the pane (17 on 56 rows, which
+  Claude's TUI, speeding up through a burst, turns into most of a screen), and
+  top or bottom 400 notches, since a pane cannot say where its history ends;
+  they go out 25 every 16 ms, as a fast flick would, and a newer scroll drops
+  what is left of the last. Scrolling needs no
+  capability: a notch is a pointer report, which even a locked session takes.
+  **`type(text, { submit })`** needs the client-only capability
+  **`session:type`** (`reason: 'capability'` without it) and types `text` into
+  the session as the human would. In Chat it goes on the end of the composer,
+  and `submit: true` then sends the composer as its Send does (`submitted:
+  true`), waking a dormant session. In the Terminal it is pasted at the pane's
+  cursor as xterm pastes (bracketed); `submit: true` sends `text` as the
+  composer's own send does (pasted after whatever the pane holds, then
+  submitted), or with empty text presses Enter. Nothing is typed while the
+  session's `session.inputGate` holds (`reason: 'gated'`), while the Chat
+  composer is waiting on a terminal prompt (`'blocked'`), or with no panel open
+  (`'no-panel'`); `'not-sent'` means the send did not go out (no connection, a
+  send already in flight). The caller owns spacing between stretches of text.
+  An extension using it declares `^1.68.0`, or checks for `api.sessionPanel`.
 - **`api.onThemeChange(fn)`** (1.39.0) calls `fn({ id, base })` whenever the
   board applies a different theme palette (`id` the style, `base` `'dark'` or
   `'light'`). Returns an unsubscribe function; listeners go with the extension. A
