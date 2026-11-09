@@ -72,7 +72,7 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { CODEX_POLICY_FALLBACK, syncCodexPolicyControls, fillCodexPolicyControls, readCodexPolicyControls } from './codex-policy-field.js';
-import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -181,6 +181,8 @@ let prModelFooter = true;
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
+// Settings › Background model (server config, resolved, every graph push).
+let backgroundModel = null;
 // Settings › Sessions' Codex sandbox/approval defaults (server config, every
 // graph push): what the dialog's Codex controls prefill from.
 let codexPolicyDefaults = { ...CODEX_POLICY_FALLBACK };
@@ -872,6 +874,7 @@ function applyGraph(graph) {
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
+  backgroundModel = graph.backgroundModel && typeof graph.backgroundModel === 'object' ? graph.backgroundModel : null;
   codexPolicyDefaults = graph.codexPolicyDefaults && typeof graph.codexPolicyDefaults === 'object' ? { ...CODEX_POLICY_FALLBACK, ...graph.codexPolicyDefaults } : { ...CODEX_POLICY_FALLBACK };
   const prevAutoUpdate = autoUpdate;
   autoUpdate = graph.autoUpdate || 'notify';
@@ -7190,6 +7193,7 @@ initSettings({
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'defaultRuntime') return defaultRuntime;
+      if (id === 'backgroundModel') return backgroundModel ? `${backgroundModel.agent}:${backgroundModel.model}` : undefined;
       if (CODEX_DEFAULT_SETTINGS[id]) return codexPolicyDefaults[CODEX_DEFAULT_SETTINGS[id]];
       if (id === 'autoUpdate') return autoUpdate;
       if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
@@ -7233,6 +7237,14 @@ initSettings({
       } else if (id === 'defaultRuntime') {
         defaultRuntime = String(value || 'local');
         send({ type: 'set-default-runtime', runtime: defaultRuntime });
+      } else if (id === 'backgroundModel') {
+        // `<agent>:<model>`: an agent id never holds a colon, a model value may.
+        const raw = String(value || '');
+        const at = raw.indexOf(':');
+        if (at > 0) {
+          backgroundModel = { agent: raw.slice(0, at), model: raw.slice(at + 1) };
+          send({ type: 'set-background-model', ...backgroundModel });
+        }
       } else if (CODEX_DEFAULT_SETTINGS[id]) {
         const key = CODEX_DEFAULT_SETTINGS[id];
         codexPolicyDefaults = { ...codexPolicyDefaults, [key]: value };
@@ -7643,7 +7655,7 @@ function connect() {
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
     else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
-    else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
+    else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); setBackgroundModelOptions(availableAgents); } populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
     else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);

@@ -476,7 +476,16 @@ import semver from 'semver';
 // `resolved`, the full model id, on each model of the client `api.agents()`. An
 // older server quarantines the unknown capability and an older board's models
 // have no `resolved`, so a manifest reading either declares `^1.66.0`.
-export const HOST_API_VERSION = '1.66.0';
+//
+// 1.67.0 adds the `agents:headless` capability (`host.agents.headless({ prompt,
+// stdin, agent?, model?, effort?, timeoutMs? })`, a tool-less one-shot on any
+// agent whose adapter has a `headless` capability, on Settings › Background
+// model when no model is named), the `headless` capability flag and each
+// model's `background` mark on `host.agents.list()` rows, and an optional third
+// `agent` argument to `host.sessions.bill`, which bills a run by another agent
+// than the card's own. An older server quarantines the unknown capability and
+// lists neither field, so a manifest using any of them declares `^1.67.0`.
+export const HOST_API_VERSION = '1.67.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

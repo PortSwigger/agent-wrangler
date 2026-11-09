@@ -28,12 +28,21 @@ test('a new adapter is listed from its own fields', async () => {
     label: 'Fixture',
     available: false,
     models: [
-      { value: 'big', resolved: 'fixture-big-2', label: 'Big', default: true, efforts: ['light', 'deep'], autoEffort: 'deep' },
-      { value: 'small', resolved: null, label: 'small', default: false, efforts: ['light'], autoEffort: null },
+      { value: 'big', resolved: 'fixture-big-2', label: 'Big', default: true, efforts: ['light', 'deep'], autoEffort: 'deep', background: false },
+      { value: 'small', resolved: null, label: 'small', default: false, efforts: ['light'], autoEffort: null, background: false },
     ],
     efforts: [{ value: 'light', label: 'Light' }, { value: 'deep', label: 'Deep' }],
-    capabilities: { disallowedTools: true, remoteControl: false, askUserTool: 'ask_human', sandbox: false, mailWhileWorking: false },
+    capabilities: { disallowedTools: true, remoteControl: false, askUserTool: 'ask_human', sandbox: false, mailWhileWorking: false, headless: false },
   });
+});
+
+test('an adapter with a headless field can run one-shots, and the Background model is marked on its model', async () => {
+  const oneshot = { ...fixture, headless: { defaultModel: () => 'small' } };
+  const [row] = await agentList({ adapters: [oneshot], env: {} });
+  assert.equal(row.capabilities.headless, true);
+  assert.deepEqual(row.models.map((m) => m.background), [false, true], 'the default Background model is the first headless adapter\'s own default');
+  const [chosen] = await agentList({ adapters: [oneshot], env: {}, background: { agent: 'fixture', model: 'big' } });
+  assert.deepEqual(chosen.models.map((m) => m.background), [true, false]);
 });
 
 test('AW_DEFAULT_MODEL re-points the listed default', async () => {
@@ -50,6 +59,6 @@ test('the client agents frame models carry the resolved id (opus → claude-opus
 });
 
 test('Claude and Codex keep the behaviour the id checks encoded', () => {
-  assert.deepEqual(agentCapabilities(claude), { disallowedTools: true, remoteControl: true, askUserTool: 'AskUserQuestion', sandbox: false, mailWhileWorking: true });
-  assert.deepEqual(agentCapabilities(codex), { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: true, mailWhileWorking: false });
+  assert.deepEqual(agentCapabilities(claude), { disallowedTools: true, remoteControl: true, askUserTool: 'AskUserQuestion', sandbox: false, mailWhileWorking: true, headless: true });
+  assert.deepEqual(agentCapabilities(codex), { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: true, mailWhileWorking: false, headless: true });
 });

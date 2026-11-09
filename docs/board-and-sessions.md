@@ -256,7 +256,9 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 - Theme, terminal side, terminal font size, and chat font size.
 - Child-card and Chat defaults, the default folder for new sessions, and the Codex sandbox and approval
   defaults a new Codex session starts from (workspace-write and never unless you change them).
-- PR auto-fix and Codex and Claude folder trust.
+- PR auto-fix, Codex and Claude folder trust, and the **Background model**: the agent and model
+  (Claude Haiku by default) for small tool-less one-shot jobs that name no model of their own, such
+  as the archive memory review. Any installed agent that can run headless is offered.
   Codex folder trust uses the resolved directory path, so a symlink and its target share one trust
   entry. If the directory cannot be resolved or trust cannot be saved, the launch reports an error.
   Claude folder trust covers scratch sessions and worktrees of a repo you already trust in Claude: the

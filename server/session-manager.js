@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
-import { adapterFor, adapterForTmux, isOwnedTmux, discoveryFloor, supportsRemoteControl, supportsDisallowedTools } from './agents/index.js';
+import { adapterFor, adapterForTmux, agentError, isOwnedTmux, discoveryFloor, supportsRemoteControl, supportsDisallowedTools } from './agents/index.js';
 import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError } from './runtimes/index.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName } from './worktree.js';
@@ -360,6 +360,9 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     // dropping them here would take that spend off the card's cost AND out of the
     // usage scan cache that outlives the transcript itself.
     priorLiveSessionIds: prev?.priorLiveSessionIds,
+    // Headless runs billed here by ANOTHER agent (recordPriorLiveSessionId),
+    // durable for the same reason.
+    billedRuns: prev?.billedRuns,
     socket,
     forkedFrom: prev?.forkedFrom,
     spawnedBy: prev?.spawnedBy,
@@ -730,10 +733,8 @@ export class SessionManager {
     // resume→archive would review the same growing transcript every time.
     if (!wasArchived) {
       this._archiveReview(sessionId, entry, snapshot.task, {
-        onStamp: ({ reviewLiveSessionId, advanceReviewedAt }) => {
-          const prior = new Set(entry.priorLiveSessionIds || []);
-          prior.add(reviewLiveSessionId);
-          entry.priorLiveSessionIds = [...prior];
+        onStamp: ({ reviewLiveSessionId, reviewAgent, advanceReviewedAt }) => {
+          this._addBill(entry, reviewLiveSessionId, reviewAgent);
           if (advanceReviewedAt) entry.archiveReviewedAt = Date.now();
           this._save();
         },
@@ -746,19 +747,39 @@ export class SessionManager {
     return Boolean(this.map.get(sessionId)?.archivedAt);
   }
 
-  // Bill a headless conversation (a `claude -p` the wrangler or an extension ran
-  // on this card's behalf) to the card: `priorLiveSessionIds` is what the cost
-  // scanners walk, and is deliberately excluded from `cardForLive`, so nothing
-  // will ever try to resume it. Same bookkeeping the archive review's onStamp
-  // does inline. Never touches `liveSessionId` — that is noteLiveSessionId's
-  // job, with its transcript and ownership guards; this only adds a bill.
-  recordPriorLiveSessionId(sessionId, liveSessionId) {
-    const entry = this.map.get(sessionId);
-    if (!entry || !liveSessionId || entry.liveSessionId === liveSessionId) return false;
-    const prior = new Set(entry.priorLiveSessionIds || []);
-    prior.add(liveSessionId);
-    entry.priorLiveSessionIds = [...prior];
+  // Bill a headless conversation (a one-shot the wrangler or an extension ran on
+  // this card's behalf, server/headless.js) to the card: `priorLiveSessionIds`
+  // is what the cost scanners walk, and is deliberately excluded from
+  // `cardForLive`, so nothing will ever try to resume it. `agent` names the
+  // agent that ran it when that is not the card's own (a Codex review of a
+  // Claude card): a card's own ids are priced by its own agent's scanner, so
+  // such a run goes in `billedRuns` with its agent and the time it was billed,
+  // and the usage scan prices it with that agent's (usage-report.js). Never
+  // touches `liveSessionId` — that is noteLiveSessionId's job, with its
+  // transcript and ownership guards; this only adds a bill.
+  recordPriorLiveSessionId(sessionId, liveSessionId, agent) {
+    if (!this._addBill(this.map.get(sessionId), liveSessionId, agent)) return false;
     this._save();
+    return true;
+  }
+
+  // The bookkeeping half of recordPriorLiveSessionId, unsaved, shared with the
+  // archive review's onStamp. False for nothing to bill or an unknown agent.
+  _addBill(entry, liveSessionId, agent) {
+    if (!entry || typeof liveSessionId !== 'string' || !liveSessionId || entry.liveSessionId === liveSessionId) return false;
+    let own;
+    try { own = adapterFor(entry.agent).id; } catch { return false; }
+    if (agent == null || agent === own) {
+      const prior = new Set(entry.priorLiveSessionIds || []);
+      prior.add(liveSessionId);
+      entry.priorLiveSessionIds = [...prior];
+      return true;
+    }
+    if (agentError(agent)) return false;
+    const runs = entry.billedRuns || [];
+    if (!runs.some((r) => r.agent === agent && r.liveSessionId === liveSessionId)) {
+      entry.billedRuns = [...runs, { agent, liveSessionId, at: Date.now() }];
+    }
     return true;
   }
 

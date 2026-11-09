@@ -31,6 +31,7 @@ export function providerMetadata(adapter) {
     // codexPolicy: the dispatch dialog offers the sandbox/approval controls.
     controls: { ...(adapter.controls || {}), codexPolicy: adapter.launch?.codexPolicy === true },
     supportsRemoteControl: adapter.supportsRemoteControl === true,
+    headless: Boolean(adapter.headless),
     forkHelp: adapter.forkHelp || 'Branch this conversation into a new session. The original keeps running independently.',
   };
 }

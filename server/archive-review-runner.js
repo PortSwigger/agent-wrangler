@@ -1,6 +1,6 @@
 import { adapterFor } from './agents/index.js';
 import { findTranscript, readLines, textOf, usageSince } from './transcript-reader.js';
-import { runHeadlessClaude } from './headless-claude.js';
+import { runHeadless, backgroundModel } from './headless.js';
 import { collectLaunchContext, launchProcessEnv } from './launch-context.js';
 import { logError } from './log.js';
 import { archiveReviewEnabled } from './config-store.js';
@@ -12,7 +12,8 @@ export const ARCHIVE_REVIEW_COMPLETED = 'archive-review:completed';
 
 // Best-effort, background enrichment of a task's memory.md, triggered from
 // SessionManager.archive() via the `_archiveReview` seam. When a Claude session
-// is archived, a headless `claude -p --model haiku` process reads that
+// is archived, a headless one-shot on the Background model (Settings ›
+// Automation, Claude Haiku by default; server/headless.js) reads that
 // session's own HUMAN turns only (see buildExcerpt) and appends a short
 // "durable learnings" note to its task's memory file — pitfalls, explicit user
 // preferences/corrections, decisions and why, cross-cutting constraints. Off
@@ -32,7 +33,7 @@ export const ARCHIVE_REVIEW_COMPLETED = 'archive-review:completed';
 // the assistant's preceding (wrong) claim.
 //
 // Deliberately excludes consolidating against EXISTING memory.md content —
-// Haiku only ever sees the excerpt, never the file it's appending to. Keeping
+// the reviewer only ever sees the excerpt, never the file it's appending to. Keeping
 // the prompt to just the session's own input is what keeps a review both
 // cheap and reliably on-topic; deduping/consolidating accumulated notes is a
 // separate job, not this one's.
@@ -74,7 +75,7 @@ function truncate(text, cap) {
 // Build a plain-text excerpt of the session's HUMAN turns only (no assistant
 // text, no tool calls) bounded by `sinceMs` (epoch ms — see
 // usageSince/archiveReviewedAt at the call site), capped in total size so a
-// very active session can't blow Haiku's context or run up cost. Returns ''
+// very active session can't blow the reviewer's context or run up cost. Returns ''
 // if nothing qualifies (an empty/aborted session, one entirely predating the
 // bound, or one that's all tool/assistant activity with no real user turns).
 export function buildExcerpt(entries, sinceMs = 0) {
@@ -118,12 +119,12 @@ HARD RULES:
 - Most sessions teach nothing durable. If there is nothing durable worth recording, output exactly: NONE — this is the expected, common outcome, not a failure.
 - Output the bullets only. No preamble, no heading, no closing summary.`;
 
-// Spawn the headless Haiku reviewer (see headless-claude.js for why it uses
-// `--session-id <fresh uuid>`, whose id lands in `entry.priorLiveSessionIds`
-// so the review's spend is costed with the session it reviewed). Returns
-// { text, liveSessionId, error }.
+// Run the headless reviewer on `opts.agent`/`opts.model` (server/headless.js).
+// Its conversation id is billed to the session it reviewed (onStamp below), so
+// the review's spend is costed with that card. Returns
+// { text, liveSessionId, agent, model, error }.
 export function reviewExcerpt(excerpt, opts = {}) {
-  return runHeadlessClaude(EXTRACTION_PROMPT, excerpt, opts);
+  return runHeadless({ prompt: EXTRACTION_PROMPT, stdin: excerpt, ...opts });
 }
 
 function sectionFor(text, label) {
@@ -137,7 +138,7 @@ function sectionFor(text, label) {
 // testable without spawning anything real. Returns a mode string:
 //   'skipped' — a guard declined (feature off, non-Claude, no task, no
 //               transcript, or the bounded excerpt had nothing in it)
-//   'none'    — Haiku ran and found nothing durable (its own NONE guard)
+//   'none'    — the reviewer ran and found nothing durable (its own NONE guard)
 //   'written' — a section was published as `archive-review:completed` (the
 //               task-memory extension appends it to the task's memory.md)
 //   'error'   — the subprocess failed or returned unparseable output
@@ -149,8 +150,8 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
     review = reviewExcerpt,
     launchContext = collectLaunchContext,
     onError = logError,
-    // Called once the subprocess has actually run, with the fresh liveSessionId
-    // it used — regardless of outcome, since a spawned-but-unparseable review
+    // Called once the subprocess has actually run, with the conversation id it
+    // used and the agent that ran it — regardless of outcome, since a spawned-but-unparseable review
     // still spent real tokens and should be attributed. `advanceReviewedAt`
     // (only true on a successful written/none outcome) is what the caller uses
     // to decide whether to move the excerpt bound forward: an error leaves it
@@ -158,9 +159,14 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
     // than silently losing it.
     onStamp = () => {},
     isEnabled = archiveReviewEnabled,
+    // Settings › Background model, read when the review runs rather than at
+    // archive time, so a change applies to the next queued review.
+    background = backgroundModel,
   } = deps;
 
   if (!isEnabled()) return 'skipped';
+  // The excerpt is read from the archived session's own transcript, so its
+  // agent must keep one archive review can read; the reviewer can be any.
   if (!adapterFor(entry?.agent).headlessArchiveReview) return 'skipped';
   if (!task?.id) return 'skipped';
   // The result is delivered as an `archive-review:completed` event, and the
@@ -179,17 +185,25 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
   if (!excerpt) return 'skipped';
 
   return runQueued(async () => {
+    const { agent, model } = background();
     let env;
     try {
       // env and secretEnv together, in-process: the review's child env, not argv.
-      env = launchProcessEnv(await launchContext({ sid: sessionId, task, agent: 'claude', runtime: entry?.runtime || 'local', reason: 'headless' }));
+      env = launchProcessEnv(await launchContext({ sid: sessionId, task, agent, runtime: entry?.runtime || 'local', reason: 'headless' }));
     } catch (err) {
       onError(`archive review skipped for ${sessionId}: ${err.message}`);
       return 'skipped';
     }
-    const { text, liveSessionId, error } = await review(excerpt, { env });
+    let result;
+    try {
+      result = await review(excerpt, { env, agent, model });
+    } catch (err) {
+      onError(`archive review failed for ${sessionId}: ${err.message}`);
+      return 'error';
+    }
+    const { text, liveSessionId, error } = result;
     const success = !error && text != null;
-    onStamp({ reviewLiveSessionId: liveSessionId, advanceReviewedAt: success });
+    onStamp({ reviewLiveSessionId: liveSessionId, reviewAgent: result.agent ?? agent, advanceReviewedAt: success });
     if (!success) return 'error';
     if (!looksLikeBullets(text)) return 'none';
     events.emit(ARCHIVE_REVIEW_COMPLETED, { sid: sessionId, taskId: task.id, markdown: sectionFor(text, entry?.lastLabel || entry?.intent) });
@@ -198,7 +212,7 @@ export async function runArchiveReview(sessionId, entry, task, deps = {}) {
 }
 
 // Guards against writing free-text prose into memory.md. Verified empirically:
-// a genuinely thin excerpt sometimes makes Haiku respond with something like
+// a genuinely thin excerpt sometimes makes the reviewer (Haiku, then) respond with something like
 // "I don't see a transcript in your message" instead of the instructed `NONE`
 // — a confused non-answer, not durable knowledge, and it must never be
 // appended. A real answer always LEADS with a bullet (EXTRACTION_PROMPT: "no

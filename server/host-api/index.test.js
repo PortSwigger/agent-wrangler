@@ -591,8 +591,8 @@ test('agents.list() lists claude and codex from the real registry with their cap
   assert.equal(claude.label, 'Claude');
   assert.equal(claude.available, true);
   assert.equal(typeof codex.available, 'boolean');
-  assert.deepEqual(claude.capabilities, { disallowedTools: true, remoteControl: true, askUserTool: 'AskUserQuestion', sandbox: false, mailWhileWorking: true });
-  assert.deepEqual(codex.capabilities, { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: true, mailWhileWorking: false });
+  assert.deepEqual(claude.capabilities, { disallowedTools: true, remoteControl: true, askUserTool: 'AskUserQuestion', sandbox: false, mailWhileWorking: true, headless: true });
+  assert.deepEqual(codex.capabilities, { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: true, mailWhileWorking: false, headless: true });
   const opus = claude.models.find((m) => m.value === 'opus');
   assert.equal(opus.resolved, adapterFor('claude').modelId('opus'));
   assert.match(opus.resolved, /^claude-opus-/);
@@ -603,10 +603,43 @@ test('agents.list() lists claude and codex from the real registry with their cap
   for (const a of agents) {
     assert.equal(a.models.filter((m) => m.default).length, 1, `${a.id} has one default`);
     for (const m of a.models) {
-      assert.deepEqual(Object.keys(m).sort(), ['autoEffort', 'default', 'efforts', 'label', 'resolved', 'value']);
+      assert.deepEqual(Object.keys(m).sort(), ['autoEffort', 'background', 'default', 'efforts', 'label', 'resolved', 'value']);
       assert.ok(m.autoEffort === null || a.efforts.some((e) => e.value === m.autoEffort), `${a.id}/${m.value} autoEffort`);
     }
   }
+});
+
+test('agents.list() marks the Background model, Claude Haiku by default', async () => {
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
+  const marked = (await host.agents.list()).flatMap((a) => a.models.filter((m) => m.background).map((m) => [a.id, m.value]));
+  assert.deepEqual(marked, [['claude', 'haiku']]);
+});
+
+// ---- agents:headless -----------------------------------------------------
+test('agents.headless is ABSENT without agents:headless, and agents:read alone does not bring it', () => {
+  assert.equal('agents' in buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring() }), false);
+  const reader = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
+  assert.deepEqual(Object.keys(reader.agents), ['list']);
+  const both = buildHostApi({ id: 'x', requires: ['agents:read', 'agents:headless'], ...wiring() });
+  assert.deepEqual(Object.keys(both.agents).sort(), ['headless', 'list']);
+});
+
+test('agents.headless passes only the documented options through and returns a frozen result with an error message', async () => {
+  const calls = [];
+  const runHeadless = async (o) => { calls.push(o); return { text: null, liveSessionId: 'T-1', agent: 'codex', model: 'm', error: new Error('exit 1') }; };
+  const host = buildHostApi({ id: 'x', requires: ['agents:headless'], ...wiring({ runHeadless }) });
+  const out = await host.agents.headless({ prompt: 'P', stdin: 'S', agent: 'codex', model: 'm', effort: 'low', timeoutMs: 5, env: { LEAK: '1' }, execFile: () => {} });
+  assert.deepEqual(calls, [{ prompt: 'P', stdin: 'S', agent: 'codex', model: 'm', effort: 'low', timeoutMs: 5 }]);
+  assert.deepEqual(out, { text: null, liveSessionId: 'T-1', agent: 'codex', model: 'm', error: 'exit 1' });
+  assert.ok(Object.isFrozen(out));
+  await assert.rejects(host.agents.headless('P'), /agents\.headless: pass \{ prompt/);
+});
+
+test('agents.headless rejects a bad call through the real runner without running anything', async () => {
+  const host = buildHostApi({ id: 'x', requires: ['agents:headless'], ...wiring() });
+  await assert.rejects(host.agents.headless({ prompt: 'P', agent: 'nope' }), /Unknown agent "nope"/);
+  await assert.rejects(host.agents.headless({ prompt: 'P', agent: 'claude', model: 'gpt-x' }), /Unknown model "gpt-x"/);
+  await assert.rejects(host.agents.headless({ stdin: 'x' }), /prompt must be a non-empty string/);
 });
 
 test('agents.list() reads afresh each call and its rows are frozen', async () => {
@@ -626,11 +659,12 @@ test('sessions.bill forwards both ids to recordPriorLiveSessionId and returns it
   const host = buildHostApi({
     id: 'x',
     requires: ['sessions:bill'],
-    ...wiring({ core: { ...wiring().core, sessionManager: { recordPriorLiveSessionId: (sid, live) => { calls.push([sid, live]); return sid === 'c1'; } } } }),
+    ...wiring({ core: { ...wiring().core, sessionManager: { recordPriorLiveSessionId: (sid, live, agent) => { calls.push([sid, live, agent]); return sid === 'c1'; } } } }),
   });
   assert.equal(host.sessions.bill('c1', 'head-1'), true);
   assert.equal(host.sessions.bill('missing', 'head-1'), false);
-  assert.deepEqual(calls, [['c1', 'head-1'], ['missing', 'head-1']]);
+  assert.equal(host.sessions.bill('c1', 'thread-1', 'codex'), true);
+  assert.deepEqual(calls, [['c1', 'head-1', undefined], ['missing', 'head-1', undefined], ['c1', 'thread-1', 'codex']]);
   // Only `bill` on the namespace: no read, wake or spawn rode in with it.
   assert.deepEqual(Object.keys(host.sessions), ['bill']);
 });

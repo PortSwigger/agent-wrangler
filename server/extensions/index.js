@@ -67,7 +67,7 @@ export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
   'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'childFullViewByDefault',
   'autoFixPrChecksDefault', 'mailWakesDormant', 'prModelFooter', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
-  'codexPolicyDefaults', 'quarantinedBuiltins',
+  'codexPolicyDefaults', 'backgroundModel', 'quarantinedBuiltins',
 ]);
 
 // The CLOSED capability vocabulary a manifest's `requires` is drawn from. It
@@ -93,6 +93,7 @@ export const CAPABILITIES = new Set([
   'images:keep',
   'files:view',
   'agents:read',
+  'agents:headless',
 ]);
 
 // Capabilities with NO server façade: grants the BROWSER half checks (slots.js

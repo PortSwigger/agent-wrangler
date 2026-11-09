@@ -11,6 +11,7 @@ import { deliverFirstPrompt } from '../dispatch-runner.js';
 import { requestOrigin } from '../request-origin.js';
 import { supportsRemoteControl, supportsDisallowedTools } from '../agents/index.js';
 import { agentList } from '../agents/listing.js';
+import { runHeadless } from '../headless.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -308,13 +309,15 @@ const sessionsInterrupt = ({ interruptSession }) => ({
 });
 
 // Bill a headless conversation to a card. Thin bind over the primitive, which
-// does the validating (a missing card, an empty id or the card's CURRENT
-// conversation are all `false`, never a throw) and never touches
-// `liveSessionId` — so an extension can make a card PAY for a `claude -p` it
-// ran on the card's behalf, but can never make the card RESUME into it.
+// does the validating (a missing card, an empty id, the card's CURRENT
+// conversation or an unknown agent are all `false`, never a throw) and never
+// touches `liveSessionId` — so an extension can make a card PAY for a one-shot
+// it ran on the card's behalf, but can never make the card RESUME into it.
+// `agent` (1.67.0) is the agent that ran it, as `host.agents.headless` returns
+// it; omitted, the run is taken to be the card's own agent's.
 const sessionsBill = ({ core }) => ({
   sessions: {
-    bill: (sid, liveSessionId) => core.sessionManager.recordPriorLiveSessionId(sid, liveSessionId),
+    bill: (sid, liveSessionId, agent) => core.sessionManager.recordPriorLiveSessionId(sid, liveSessionId, agent),
   },
 });
 
@@ -592,6 +595,31 @@ const agentsRead = ({ listAgents = agentList }) => ({
   },
 });
 
+// A tool-less one-shot (server/headless.js): `prompt` in argv, `stdin` piped,
+// every tool off, on `agent`/`model` or Settings › Background model when no
+// model is named. Resolves a frozen `{ text, liveSessionId, agent, model,
+// error }`, `error` a message string when the run failed (text then null);
+// rejects only for a bad call (no prompt, an unknown agent, model or effort,
+// an agent with no headless mode). Billing stays the caller's choice, through
+// `sessions:bill` with the returned id and agent. No `env` key: a launch
+// environment is the core's to collect, never an extension's to inject.
+const agentsHeadless = ({ runHeadless: run = runHeadless }) => ({
+  agents: {
+    headless: async (opts) => {
+      if (!opts || typeof opts !== 'object') throw new TypeError('agents.headless: pass { prompt, stdin?, agent?, model?, effort?, timeoutMs? }');
+      const { prompt, stdin = '', agent, model, effort, timeoutMs } = opts;
+      const r = await run({ prompt, stdin, agent, model, effort, timeoutMs });
+      return Object.freeze({
+        text: r.text,
+        liveSessionId: r.liveSessionId,
+        agent: r.agent,
+        model: r.model,
+        error: r.error ? String(r.error.message || r.error) : null,
+      });
+    },
+  },
+});
+
 export const V1_BUILDERS = {
   'sessions:read': sessionsRead,
   'sessions:wake': sessionsWake,
@@ -620,4 +648,5 @@ export const V1_BUILDERS = {
   'images:keep': imagesKeep,
   'files:view': filesView,
   'agents:read': agentsRead,
+  'agents:headless': agentsHeadless,
 };

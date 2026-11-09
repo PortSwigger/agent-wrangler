@@ -35,6 +35,7 @@ function deps(overrides = {}) {
       { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'ok, did X' }] } },
     ],
     isEnabled: () => true,
+    background: () => ({ agent: 'claude', model: 'haiku' }),
     ...overrides,
   };
 }
@@ -120,7 +121,7 @@ test('a normal result appends exactly one dated section and stamps liveSessionId
   assert.equal(d.appended.length, 1);
   assert.equal(d.appended[0].taskId, 'T1');
   assert.match(d.appended[0].md, /^\n## Session review — \d{4}-\d{2}-\d{2} \(fix the thing\)\n\n- a durable fact\n$/);
-  assert.deepEqual(d.stamps, [{ reviewLiveSessionId: 'REVIEW1', advanceReviewedAt: true }]);
+  assert.deepEqual(d.stamps, [{ reviewLiveSessionId: 'REVIEW1', reviewAgent: 'claude', advanceReviewedAt: true }]);
 });
 
 test('a reviewer error is reported and does NOT advance the reviewed-at stamp', async () => {
@@ -128,7 +129,29 @@ test('a reviewer error is reported and does NOT advance the reviewed-at stamp', 
   const mode = await runArchiveReview('c1', ENTRY, TASK, d);
   assert.equal(mode, 'error');
   assert.equal(d.appended.length, 0);
-  assert.deepEqual(d.stamps, [{ reviewLiveSessionId: 'R1', advanceReviewedAt: false }]);
+  assert.deepEqual(d.stamps, [{ reviewLiveSessionId: 'R1', reviewAgent: 'claude', advanceReviewedAt: false }]);
+});
+
+test('the review runs on the Background model, and is billed as that agent', async () => {
+  const calls = [];
+  const launches = [];
+  const d = deps({
+    background: () => ({ agent: 'codex', model: 'gpt-small' }),
+    launchContext: async (payload) => { launches.push(payload.agent); return {}; },
+    review: async (excerpt, opts) => { calls.push(opts); return { text: '- a fact', liveSessionId: 'T-1', agent: 'codex', model: 'gpt-small', error: null }; },
+  });
+  assert.equal(await runArchiveReview('c1', ENTRY, TASK, d), 'written');
+  assert.deepEqual(calls.map(({ agent, model }) => ({ agent, model })), [{ agent: 'codex', model: 'gpt-small' }]);
+  assert.deepEqual(launches, ['codex'], 'launch hooks are asked for the agent that runs the review');
+  assert.deepEqual(d.stamps, [{ reviewLiveSessionId: 'T-1', reviewAgent: 'codex', advanceReviewedAt: true }]);
+});
+
+test('a review that rejects (a Background model that cannot run) is an error, not an unhandled rejection', async () => {
+  const errors = [];
+  const d = deps({ review: async () => { throw new TypeError('Unknown model'); }, onError: (m) => errors.push(m) });
+  assert.equal(await runArchiveReview('c1', ENTRY, TASK, d), 'error');
+  assert.equal(d.stamps.length, 0);
+  assert.match(errors[0], /archive review failed for c1: Unknown model/);
 });
 
 test('excerpt is bounded by max(usageSince(entry), entry.archiveReviewedAt) — a fork only reviews its own turns', async () => {
@@ -253,7 +276,7 @@ test('archive review runs with the environment returned by launch hooks for its 
     review: async (excerpt, opts) => { calls.push(opts); return { text: '- durable fact', liveSessionId: 'R1', error: null }; },
   });
   assert.equal(await runArchiveReview('c1', ENTRY, TASK, d), 'written');
-  assert.deepEqual(calls, [{ env: { AW_CONTEXT: 'secondary' } }]);
+  assert.deepEqual(calls, [{ env: { AW_CONTEXT: 'secondary' }, agent: 'claude', model: 'haiku' }]);
   assert.equal(d.stamps.length, 1);
 });
 
@@ -289,7 +312,7 @@ test('archive review resolves its headless environment for the archived card run
       onError: () => {},
     });
     assert.equal(await runArchiveReview('runtime-card', { ...ENTRY, runtime }, TASK, d), 'none');
-    assert.deepEqual(calls, [{ env: { AW_RUNTIME: runtime || 'local' } }]);
+    assert.deepEqual(calls, [{ env: { AW_RUNTIME: runtime || 'local' }, agent: 'claude', model: 'haiku' }]);
     assert.equal(d.stamps.length, 1);
   }
 });
