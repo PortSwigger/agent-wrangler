@@ -2259,3 +2259,33 @@ test('rail.button hands the caller\'s id and options to the board', () => {
   assert.deepEqual(f.calls.filter((c) => c[0] === 'rail'), [['rail', 'a', 'mic']]);
   assert.equal(h.slots.forExtension('b', {}).api.rail.button({ id: 'x' }), null);
 });
+
+test('sessionPanel: view and scroll pass through; type needs session:type and is bound to no raw panel', () => {
+  const h = harness({ requiresFor: (id) => (id === 'p' ? ['session:type'] : []) });
+  const calls = [];
+  const sessionPanel = {
+    view: () => 'terminal',
+    scroll: (how) => { calls.push(['scroll', how]); return how === 'top' ? { ok: true, view: 'terminal', moved: true } : { ok: false, reason: how ? 'no-panel' : 'bad-scroll' }; },
+    type: (text, opts) => { calls.push(['type', text, opts]); return text === 'locked' ? { ok: false, reason: 'gated' } : { ok: true, view: 'terminal', submitted: opts.submit }; },
+  };
+  const p = h.slots.forExtension('p', { sessionPanel }).api;
+  const q = h.slots.forExtension('q', { sessionPanel }).api;
+  assert.equal(p.sessionPanel.view(), 'terminal');
+  assert.deepEqual(p.sessionPanel.scroll('top'), { ok: true, view: 'terminal', moved: true });
+  assert.deepEqual(q.sessionPanel.scroll('page-up'), { ok: false, reason: 'no-panel' }, 'scrolling needs no capability');
+  assert.deepEqual(p.sessionPanel.type('hi', { submit: true }), { ok: true, view: 'terminal', submitted: true });
+  assert.deepEqual(p.sessionPanel.type('hi', { submit: 'yes' }).submitted, false, 'only a true submit submits');
+  assert.deepEqual(p.sessionPanel.type('locked'), { ok: false, reason: 'gated' });
+  assert.deepEqual(q.sessionPanel.type('hi'), { ok: false, reason: 'capability' });
+  assert.deepEqual(p.sessionPanel.type('hi', 'submit'), { ok: false, reason: 'bad-options' });
+  assert.equal(calls.filter((c) => c[0] === 'type').length, 3, 'refusals never reach the panel');
+  assert.ok(h.errors.some((e) => /\[ext:q\] sessionPanel\.type refused: needs the session:type capability/.test(e)));
+  assert.ok(!h.errors.some((e) => /gated|no-panel/.test(e)), 'an ordinary state is answered, not reported');
+  p.sessionPanel.scroll();
+  assert.ok(h.errors.some((e) => /sessionPanel\.scroll refused: bad-scroll/.test(e)));
+  assert.equal(p.sessionPanel, p.sessionPanel, 'one frozen object');
+  assert.equal(p.sessionPanel.raw, undefined);
+  const old = h.slots.forExtension('old', {}).api;
+  assert.equal(old.sessionPanel.view(), null, 'an older base api has no panel');
+  assert.deepEqual(old.sessionPanel.scroll('top'), { ok: false, reason: 'no-panel' });
+});

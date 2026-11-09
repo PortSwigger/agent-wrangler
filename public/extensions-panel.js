@@ -75,6 +75,7 @@ export const CAPABILITY_DESCRIPTIONS = {
   'files:open': 'Open the file links you click in a session\'s chat or terminal itself, instead of the board\'s preview.',
   'cards:hideChips': 'Hide chips in the session cards\' meta row (presentation only; nothing is removed).',
   'board:press': 'Press the board\'s buttons, session cards, tabs and menu rows for you, as a click would (to drive the board by voice, say).',
+  'session:type': 'Type into the open session\'s chat or terminal for you, and send it as a prompt, as you would (to talk to a session by voice, say).',
 };
 
 function chipsEl(items, className) {

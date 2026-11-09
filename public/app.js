@@ -39,6 +39,7 @@ import {
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createBoardTargets } from './board-targets.js';
+import { createSessionPanel } from './session-panel.js';
 import { createRailButtons } from './rail-buttons.js';
 import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
@@ -260,6 +261,65 @@ const boardTargets = createBoardTargets({
   view: () => currentView,
   session: () => selectedSessionId,
   extOfView: (v) => (typeof v === 'string' && v.startsWith(EXT_VIEW_PREFIX) ? v.slice(EXT_VIEW_PREFIX.length).split(':')[0] : null),
+  panel: () => openPanelView(),
+  terminal: () => (openPanelView() === 'terminal' && current?.term.element
+    ? { el: current.term.element, focus: () => { current?.term.focus(); if (current) acknowledge(current.sessionId); } }
+    : null),
+});
+
+// What the open session's panel shows, on the board or lent to an extension
+// view (api.mountSession): 'chat', 'terminal' (a live pane attached) or null.
+function openPanelView() {
+  const sid = selectedSessionId;
+  if (!sid || document.getElementById('sidebar')?.classList.contains('collapsed')) return null;
+  const shows = (el) => Boolean(el) && !el.hidden && el.checkVisibility?.() !== false;
+  if (shows(document.getElementById('chat-wrap'))) return 'chat';
+  if (current?.sessionId === sid && shows(document.getElementById('term-wrap'))) return 'terminal';
+  return null;
+}
+
+// Backs `api.sessionPanel` (1.68.0); slots checks session:type before type().
+const WHEEL_NOTCHES_PER_TICK = 25;
+let wheelBurst = 0;
+const sessionPanel = createSessionPanel({
+  view: openPanelView,
+  session: () => latestSessions.find((x) => x.sessionId === selectedSessionId) || null,
+  gateFor: (sid) => inputGates.get(sid),
+  chat: () => ({ stream: chatView.stream, append: (t) => chatView.appendText(t), submit: () => chatView.submit() }),
+  terminal: () => {
+    const t = current;
+    if (!t) return null;
+    return {
+      rows: t.term.rows,
+      // As the wheel does: one synthetic notch per report, aimed at the
+      // screen's middle, so xterm encodes it for whatever mouse mode the pane is
+      // in. Paced like a fast flick: Claude's TUI drops part of a burst of
+      // hundreds at once. A newer scroll cancels what is left of the last.
+      wheel: (dir, notches) => {
+        const screen = t.term.element?.querySelector('.xterm-screen');
+        const r = screen?.getBoundingClientRect();
+        if (!r?.width || !r.height) return false;
+        const init = { deltaY: dir, deltaMode: WheelEvent.DOM_DELTA_LINE, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true };
+        const burst = ++wheelBurst;
+        let left = notches;
+        const step = () => {
+          if (burst !== wheelBurst || current !== t) return;
+          for (let n = Math.min(WHEEL_NOTCHES_PER_TICK, left); n > 0; n--, left--) screen.dispatchEvent(new WheelEvent('wheel', init));
+          if (left > 0) setTimeout(step, 16);
+        };
+        step();
+        return true;
+      },
+      // xterm's own paste, bracketed as a human's paste is.
+      paste: (text) => t.term.paste(text),
+      enter: () => {
+        if (t.ws.readyState !== 1 || !inputGates.allow(t.sessionId, '\r')) return false;
+        t.ws.send('\r');
+        return true;
+      },
+    };
+  },
+  sendMessage: (sessionId, text) => send({ type: 'message', sessionId, text }),
 });
 const railButtons = createRailButtons({ doc: document });
 const slots = createSlots({
@@ -380,6 +440,7 @@ const migrateSoundPreference = createSoundMigration();
 const extApi = {
   board: boardTargets,
   railButtons,
+  sessionPanel,
   send,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
   selectedSessionId: () => selectedSessionId,
@@ -5780,7 +5841,10 @@ function refreshFolderList() {
   const items = [
     ...latestSessions.flatMap((s) => [s.cwd, ...(s.addDirs || [])].map((c) => ({ cwd: c, at: s.lastActivity || 0 }))),
     ...latestHistory.map((h) => ({ cwd: h.cwd, at: h.archivedAt || 0 })),
-  ].filter((x) => x.cwd && !isScratchDir(x.cwd)).map((x) => ({ cwd: repoRoot(x.cwd), at: x.at }));
+  ].filter((x) => x.cwd && !isScratchDir(x.cwd)).map((x) => ({ cwd: repoRoot(x.cwd), at: x.at }))
+    // repoRoot can't fold a worktrees.noindex dir without its branch, and those
+    // pile up (extensions mint one per run), crowding the real repo off the top.
+    .filter((x) => !x.cwd.includes('/worktrees.noindex/'));
   items.sort((a, b) => b.at - a.at);
   const seen = new Set();
   recentFolders = [];

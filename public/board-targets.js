@@ -5,7 +5,9 @@
 //
 // "In front" decides the list: an open dialog takes it all, then a context menu,
 // then the board's surfaces (the rail, the board or Search or an extension view,
-// a session's panel and chat, the diff). A terminal's own DOM is never a target.
+// a session's panel and chat, the diff). A terminal's own DOM is never a target:
+// the open session's Terminal is listed once, as `panel:terminal` (1.68.0), and
+// pressing it focuses it.
 //
 // Keys come from what a redraw keeps: a session card's id, a task tile's id and
 // the button's role in it, an element id, a rail view. Anything else is keyed
@@ -144,7 +146,9 @@ export function uniqueKeys(items) {
 }
 
 export const targetsKey = (list) => JSON.stringify(list.map((t) => [t.key, t.kind, t.label, t.where, t.primary, t.href || '']));
-export const frontKey = (f) => JSON.stringify([f.view, f.ext, f.dialog, f.menu, f.session]);
+export const frontKey = (f) => JSON.stringify([f.view, f.ext, f.dialog, f.menu, f.session, f.panel]);
+// The open session's Terminal, as one target.
+export const TERMINAL_KEY = 'panel:terminal';
 
 // The rect a target shows inside every clipping ancestor and the window, or null.
 export function clippedRect(el, win) {
@@ -176,8 +180,10 @@ const clickables = (root) => [...root.querySelectorAll(CLICKABLE)].filter((el) =
   !el.matches(':disabled, [aria-disabled="true"], label:has(:disabled)') && !(el.matches(CHOICE) && el.closest('label')) && !el.closest(NEVER));
 
 // `view()` the board's current view key, `session()` the selected session id,
-// `extOfView(view)` the extension that owns a view key (or null).
-export function createBoardTargets({ doc, view = () => 'grid', session = () => null, extOfView = () => null, onError = (...a) => console.error(...a) }) {
+// `extOfView(view)` the extension that owns a view key (or null), `panel()` what
+// the open session's panel shows ('chat', 'terminal' or null) and `terminal()`
+// its Terminal as `{ el, focus }` (or null).
+export function createBoardTargets({ doc, view = () => 'grid', session = () => null, extOfView = () => null, panel = () => null, terminal = () => null, onError = (...a) => console.error(...a) }) {
   const win = doc.defaultView;
   const targetListeners = new Set();
   const frontListeners = new Set();
@@ -205,6 +211,7 @@ export function createBoardTargets({ doc, view = () => 'grid', session = () => n
       dialog: modal ? (modal.id || 'dialog') : null,
       menu: !!openMenu(),
       session: session() || null,
+      panel: panel() || null,
     };
   }
 
@@ -216,10 +223,20 @@ export function createBoardTargets({ doc, view = () => 'grid', session = () => n
     return SURFACES.flatMap(([sel, where]) => [...doc.querySelectorAll(sel)].map((el) => [el, where]));
   }
 
+  // The open Terminal, when nothing is over it and it shows.
+  function terminalItem(rootList) {
+    if (rootList.some(([, where]) => where.startsWith('dialog:') || where === 'menu')) return null;
+    const t = terminal();
+    const rect = t?.el ? shownRect(t.el, win) : null;
+    if (!rect) return null;
+    return { key: TERMINAL_KEY, kind: 'terminal', el: t.el, focus: t.focus, rect, label: 'Terminal', primary: false, href: '', where: 'panel' };
+  }
+
   function scan() {
     const seen = new Set();
     const items = [];
-    for (const [root, where] of roots()) {
+    const rootList = roots();
+    for (const [root, where] of rootList) {
       for (const el of clickables(root)) {
         if (seen.has(el)) continue;
         seen.add(el);
@@ -232,6 +249,8 @@ export function createBoardTargets({ doc, view = () => 'grid', session = () => n
       }
     }
     uniqueKeys(items);
+    const term = terminalItem(rootList);
+    if (term) items.push(term);
     current = new Map(items.map((it) => [it.key, it]));
     lastList = items;
     return items;
@@ -353,7 +372,8 @@ export function createBoardTargets({ doc, view = () => 'grid', session = () => n
       scan();
       const it = current.get(key);
       if (!it) return false;
-      if (it.el.matches(FIELD)) it.el.focus();
+      if (it.focus) it.focus();
+      else if (it.el.matches(FIELD)) it.el.focus();
       else it.el.click();
       schedule();
       return true;

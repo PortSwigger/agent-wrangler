@@ -104,6 +104,11 @@ export const FILES_OPEN_CAPABILITY = 'files:open';
 // badges, the rail button and `api.front` need nothing.
 export const BOARD_PRESS_CAPABILITY = 'board:press';
 
+// Gates `api.sessionPanel.type` (1.68.0): typing and sending prompts into the
+// open session for the human is disclosed at consent. Its view and scroll need
+// nothing: a scroll is a wheel report, which even a locked session takes.
+export const SESSION_TYPE_CAPABILITY = 'session:type';
+
 // The value slots and the one function each contribution must carry in place
 // of mount().
 const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue', 'file.open': 'open', 'session.inputGate': 'gate' };
@@ -491,7 +496,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         return null;
       };
       // openExtFile takes an extension id; only the bound openFile below may reach it.
-      const { openExtFile: _bound, board: _board, railButtons: _rail, ...exposed } = baseApi;
+      const { openExtFile: _bound, board: _board, railButtons: _rail, sessionPanel: _panel, ...exposed } = baseApi;
       apis.set(extId, {
         ...exposed,
         // Resolved HERE rather than at createSlots time: the server announces it,
@@ -650,6 +655,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         targets: targetsApi(extId, baseApi),
         front: frontApi(extId, baseApi),
         rail: railApi(extId, baseApi),
+        sessionPanel: sessionPanelApi(extId, baseApi),
         dispatchFields: Object.freeze({
           mount: (el, ctx, opts) => mountDispatchFields(extId, baseApi, el, ctx, opts),
         }),
@@ -966,6 +972,32 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       onChange: (fn) => {
         if (typeof fn !== 'function') { onError(`[ext:${extId}] front.onChange needs a function`); return () => {}; }
         return holdBoardSub(extId, baseApi.board?.onFront(guarded(extId, 'front.onChange', fn)));
+      },
+    });
+  }
+
+  // The open session's panel (1.68.0, public/session-panel.js): `view()` 'chat',
+  // 'terminal' or null, `scroll(how)`, and `type(text, { submit })` (session:type).
+  // Each answers `{ ok, reason?, … }`; a misuse is reported as well.
+  function sessionPanelApi(extId, baseApi) {
+    const panel = () => baseApi.sessionPanel;
+    const refused = (what, reason, why) => {
+      onError(`[ext:${extId}] sessionPanel.${what} refused: ${why}`);
+      return { ok: false, reason };
+    };
+    const quiet = new Set(['no-panel', 'gated', 'blocked', 'not-sent']);
+    const answer = (what, r) => {
+      const out = isPlainObject(r) ? { ...r } : { ok: false, reason: 'no-panel' };
+      if (!out.ok && !quiet.has(out.reason)) onError(`[ext:${extId}] sessionPanel.${what} refused: ${out.reason}`);
+      return out;
+    };
+    return Object.freeze({
+      view: () => panel()?.view() ?? null,
+      scroll: (how) => answer('scroll', panel()?.scroll(how)),
+      type: (text, opts) => {
+        if (!(requiresFor(extId) || []).includes(SESSION_TYPE_CAPABILITY)) return refused('type', 'capability', `needs the ${SESSION_TYPE_CAPABILITY} capability`);
+        if (opts != null && !isPlainObject(opts)) return refused('type', 'bad-options', 'options must be an object');
+        return answer('type', panel()?.type(text, { submit: opts?.submit === true }));
       },
     });
   }
