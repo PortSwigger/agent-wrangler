@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  reduceEntry, reduceLitellm, refreshPriceCatalog, fetchLitellm, priceFor, newestClaudeName,
+  reduceEntry, reduceLitellm, refreshPriceCatalog, fetchLitellm, priceFor, modelFamilies,
   priceCatalogVersion, onPriceCatalogChange, _setFetchedForTest,
 } from './price-catalog.js';
 
@@ -95,11 +95,14 @@ test('refreshPriceCatalog keeps the current catalog on a failed or truncated fet
   assert.equal(priceFor('anthropic', 'claude-keep-1').input, 3);
 });
 
-test('newestClaudeName names the highest version of a family', () => {
+test('modelFamilies reads families with the pattern a provider supplies', () => {
   const rate = { input: 1, output: 1, cacheWrite5m: 1, cacheWrite1h: 1, cacheRead: 1 };
-  _setFetchedForTest({ anthropic: { 'claude-zeta-3': rate, 'claude-zeta-3-2': rate, 'claude-zeta-2-9-20260101': rate }, openai: {} });
-  assert.equal(newestClaudeName('zeta'), 'Zeta 3.2');
-  assert.equal(newestClaudeName('nonesuch'), null);
+  _setFetchedForTest({ anthropic: { 'claude-zeta-3': rate, 'claude-zeta-3-2': rate, 'claude-zeta-2-9-20260101': rate }, openai: { 'fixture-zeta-4': rate, 'fixture-eta-1-1': rate, 'gpt-q-1': rate } });
+  const zeta = modelFamilies({ provider: 'anthropic', pattern: /^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?$/ }).find((f) => f.family === 'zeta');
+  assert.deepEqual(zeta, { family: 'zeta', id: 'claude-zeta-3-2', version: [3, 2] });
+  const fixture = modelFamilies({ provider: 'openai', pattern: /^fixture-([a-z]+)-(\d)(?:-(\d))?$/ });
+  assert.deepEqual(fixture, [{ family: 'zeta', id: 'fixture-zeta-4', version: [4, -1] }, { family: 'eta', id: 'fixture-eta-1-1', version: [1, 1] }]);
+  assert.deepEqual(modelFamilies({ provider: 'nonesuch', pattern: /^x-([a-z]+)-(\d)$/ }), []);
 });
 
 test('priceFor prefers the longest matching id', () => {

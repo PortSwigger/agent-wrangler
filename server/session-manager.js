@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
-import { adapterFor, agentError, isOwnedTmux, discoveryFloor, supportsRemoteControl, supportsDisallowedTools } from './agents/index.js';
+import { adapterFor, adapterForTmux, agentError, isOwnedTmux, discoveryFloor, supportsRemoteControl, supportsDisallowedTools } from './agents/index.js';
 import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError } from './runtimes/index.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName } from './worktree.js';
@@ -435,6 +435,24 @@ async function withGitDirAddDirs(agent, cwd, addDirs) {
   return gitDirsToGrant.reduce((dirs, gitDir) => dirs.includes(gitDir) ? dirs : [...dirs, gitDir], addDirs);
 }
 
+// Whether a clean exit may be the agent's own self-update rather than a /exit,
+// so its pane is read before auto-archiving: the entry's agent, or for an entry
+// with no agent recorded, the one its tmux prefix names.
+export function mayExitForUpdate(entry, tmux, { adapterFor: resolve = adapterFor, adapterForTmux: byTmux = adapterForTmux } = {}) {
+  let adapter = null;
+  try { adapter = entry?.agent ? resolve(entry.agent) : null; } catch { /* unknown id: fall back to the prefix */ }
+  return Boolean(adapter?.terminal?.updatesOnExit || byTmux(tmux)?.terminal?.updatesOnExit);
+}
+
+// Writers for the trust stores an adapter's `launch.trust` names, each run at the
+// stage it needs: 'codex-config' before the launch context is collected,
+// 'claude-config' after it (a login's CLAUDE_CONFIG_DIR comes from the context).
+// A provider with no trust prompt sets no `trust`.
+const LAUNCH_TRUST = {
+  'codex-config': { stage: 'before-context', enabled: trustCodexLaunchCwd, run: (sm, { dir, repoRoot }) => sm._ensureCodexTrust(repoRoot || dir) },
+  'claude-config': { stage: 'after-context', enabled: trustClaudeLaunchCwd, run: (sm, { dir, launchContext }) => sm._trustClaudeLaunch(dir, launchContext) },
+};
+
 export class SessionManager {
   constructor() {
     this.map = new Map(); // sessionId -> { short, tmux, cwd, intent, model, createdAt, worktree?, archivedAt? }
@@ -518,6 +536,12 @@ export class SessionManager {
   // Undefined only when that leaves nothing, i.e. core's default flags.
   _codexPolicyFor(context, stored) {
     return this._extCodexPolicy(context) ?? cleanCodexPolicy(stored ?? this._codexPolicyDefaults());
+  }
+
+  // The launch cwd's trust, in the store the agent's adapter names (LAUNCH_TRUST).
+  async _trustLaunchCwd(agent, stage, target) {
+    const trust = LAUNCH_TRUST[adapterFor(agent).launch?.trust];
+    if (trust?.stage === stage && trust.enabled()) await trust.run(this, target);
   }
 
   // Called after the launch context is collected, so a launch whose context
@@ -1276,7 +1300,7 @@ export class SessionManager {
     // It comes after every refusal above, so a resume that can't relaunch leaves
     // a live session running.
     await this.killForSession(sessionId);
-    if (adapterFor(agent).launch.trust === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(prev?.worktree?.repoRoot || dir);
+    await this._trustLaunchCwd(agent, 'before-context', { dir, repoRoot: prev?.worktree?.repoRoot });
     // Awaited before the command is built: the hook may bind state (task-memory
     // repoints the session's symlink) that the launch reads. A resume's reason is
     // passed through when it is one a hook distinguishes, else plain 'resume'.
@@ -1286,7 +1310,7 @@ export class SessionManager {
     });
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
+    await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
     const addDirs = await withGitDirAddDirs(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'resume', sessionId, entry: prev }, prev?.codexPolicy) : undefined;
@@ -1371,7 +1395,7 @@ export class SessionManager {
     // under a known id (no phantom → the fork is resumable); a discover agent (Codex)
     // mints its own, resolved post-launch. Identity + scoped memory inject on the CARD id.
     const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
-    if (adapterFor(agent).launch.trust === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(parentEntry?.worktree?.repoRoot || dir);
+    await this._trustLaunchCwd(agent, 'before-context', { dir, repoRoot: parentEntry?.worktree?.repoRoot });
     // The fork lands in its parent's task, so the launch context is asked with
     // that task before the command is built (an extension that binds per-task
     // state, like task-memory, must see it first).
@@ -1380,7 +1404,7 @@ export class SessionManager {
     });
     const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(dir, launchContext);
+    await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
     const addDirs = await withGitDirAddDirs(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
     // gate is shown the PARENT's — which is what it would inherit anyway, and
@@ -1822,7 +1846,7 @@ export class SessionManager {
     const archived = [];
     for (const { sessionId, tmux } of toArchive) {
       const entry = this.map.get(sessionId);
-      if (entry?.agent === 'codex' || tmux.startsWith('cx_')) {
+      if (mayExitForUpdate(entry, tmux)) {
         const capture = await this._tmux(this.socketOf(tmux), ['capture-pane', '-t', tmux, '-p', '-S', '-60'], {
           maxBuffer: 4 * 1024 * 1024,
         }).catch(() => null);
@@ -2028,7 +2052,7 @@ export class SessionManager {
     // via `parentSession`, never `workflow`) is briefed via its intent and never
     // runs the procedure.
     const loadWorkflowSkill = Boolean(workflowOpt);
-    if (adapterFor(agent).launch.trust === 'codex' && trustCodexLaunchCwd()) this._ensureCodexTrust(worktreeEntry?.repoRoot || cwd);
+    await this._trustLaunchCwd(agent, 'before-context', { dir: cwd, repoRoot: worktreeEntry?.repoRoot });
     // Keep the grants the dispatch ASKED for, before the codex git-dir is folded
     // in: that one is derived from the cwd on every launch, so storing it would
     // only let resume grant the same path twice.
@@ -2055,7 +2079,7 @@ export class SessionManager {
     });
     const ownLaunch = ownLaunchRefusal(rt, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (adapterFor(agent).launch.trust === 'claude' && trustClaudeLaunchCwd()) await this._trustClaudeLaunch(cwd, launchContext);
+    await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext });
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
     // the hooks fire either way) — their output just goes unused, since the

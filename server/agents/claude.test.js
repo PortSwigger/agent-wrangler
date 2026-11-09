@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getExtensions, _resetExtensionsForTests } from '../extensions/index.js';
-import { claude, derivedModels, PR_HOOK_PATH, PR_HOOK_DEP_PATH, PR_FOOTER_PATH, PR_FOOTER_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
+import { _setFetchedForTest } from '../price-catalog.js';
+import { claude, derivedModels, newestClaudeName, claudeModelId, PR_HOOK_PATH, PR_HOOK_DEP_PATH, PR_FOOTER_PATH, PR_FOOTER_DEP_PATH, ISSUE_TO_PR_SKILL_DIR } from './claude.js';
 import { adapterFor, adapterForProcess, adapterForContainerProcess, availableAgents, modelPillFor, maxContextWindowFor, modelsWithDefault } from './index.js';
 
 test('claude adapter identity', () => {
@@ -385,6 +386,16 @@ test('derivedModels offers an unaliased family by its newest id and skips aliase
   assert.deepEqual(derived, [
     { value: 'claude-zeta-3-2', label: 'Zeta 3.2', pillLabel: 'zeta 3.2', transcriptPrefixes: ['claude-zeta-'] },
   ]);
+});
+
+test('newestClaudeName and claudeModelId read the newest version of a family from the catalog', (t) => {
+  const rate = { input: 1, output: 1, cacheWrite5m: 1, cacheWrite1h: 1, cacheRead: 1 };
+  t.after(() => _setFetchedForTest(null));
+  _setFetchedForTest({ anthropic: { 'claude-zeta-3': rate, 'claude-zeta-3-2': rate, 'claude-zeta-2-9-20260101': rate }, openai: {} });
+  assert.equal(newestClaudeName('zeta'), 'Zeta 3.2');
+  assert.equal(newestClaudeName('nonesuch'), null);
+  assert.equal(claudeModelId('claude-zeta-3'), 'claude-zeta-3', 'a full id is already an id');
+  assert.match(claudeModelId('opus'), /^claude-opus-\d/);
 });
 
 for (const method of ['buildLaunch', 'buildResume', 'buildFork']) {

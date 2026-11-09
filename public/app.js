@@ -6035,13 +6035,19 @@ function syncRuntimeToggle() {
   syncCodexPolicyRow(agent);
 }
 
-// The Codex sandbox/approval controls show for a Codex draft only. Switching TO
-// Codex prefills them from Settings as they are now; re-syncs while the draft
-// stays on Codex keep what was picked.
+// Whether this provider takes the Codex sandbox/approval policy (its adapter's
+// launch.codexPolicy, carried as controls.codexPolicy).
+function takesCodexPolicy(agent) {
+  return providerMetadataFor(agent).controls?.codexPolicy === true;
+}
+
+// The Codex sandbox/approval controls show only for a draft whose provider takes
+// them. Switching TO one prefills them from Settings as they are now; re-syncs
+// while the draft stays on one keep what was picked.
 function syncCodexPolicyRow(agent) {
   const row = document.getElementById('m-codex-policy-row');
   if (!row) return;
-  const codex = agent === 'codex';
+  const codex = takesCodexPolicy(agent);
   row.classList.toggle('hidden', !codex);
   if (codex && !codexPolicyDraftWasCodex) fillCodexPolicyControls(row, codexPolicyDefaults);
   codexPolicyDraftWasCodex = codex;
@@ -6251,7 +6257,7 @@ function readCoreDispatchFields() {
     worktreeAuto: wfOn,
     parentSession: parentSessionId || undefined,
     runtime: runtime !== 'local' ? runtime : undefined,
-    codexPolicy: agent === 'codex' ? readCodexPolicyControls(document.getElementById('m-codex-policy-row')) : undefined,
+    codexPolicy: takesCodexPolicy(agent) ? readCodexPolicyControls(document.getElementById('m-codex-policy-row')) : undefined,
   };
 }
 
@@ -6413,7 +6419,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   // A saved schedule restores its Codex pick; a new draft starts from Settings.
   // Marked as already-Codex so the syncs below do not refill over a schedule's.
   fillCodexPolicyControls(document.getElementById('m-codex-policy-row'), schedule && d.codexPolicy ? d.codexPolicy : codexPolicyDefaults);
-  codexPolicyDraftWasCodex = autoCompactAgent === 'codex';
+  codexPolicyDraftWasCodex = takesCodexPolicy(autoCompactAgent);
   document.getElementById('m-advanced-options').open = false;
   dispatchModelPicker?.reset();
   populateEffortSelect();

@@ -288,13 +288,14 @@ export function apiErrorReason(text) {
   return text && TRANSIENT_API_ERRORS.some((re) => re.test(text)) ? 'api-error' : 'api-error-blocking';
 }
 
-// Why a Claude card whose session file says 'waiting' waits: 'auto-block' for the
-// timed auto-mode safety check, which Claude Code denies by itself when its
-// countdown runs out (autoBlockCountdown), else 'permission'. Null for any other
-// status or agent. The board still shows both as needs-you; extensions read the
-// reason to tell a prompt that resolves itself from one that needs the human.
-export function claudeWaitingReason(agentId, rawStatus, paneText) {
-  if (agentId !== 'claude' || rawStatus !== 'waiting') return null;
+// Why a card whose live status file says 'waiting' waits, for an agent whose
+// terminal declares `autoBlock`: 'auto-block' for the timed auto-mode safety
+// check, which the CLI denies by itself when its countdown runs out
+// (autoBlockCountdown), else 'permission'. Null for any other status or agent.
+// The board still shows both as needs-you; extensions read the reason to tell a
+// prompt that resolves itself from one that needs the human.
+export function waitingReasonFor(adapter, rawStatus, paneText) {
+  if (!adapter?.terminal?.autoBlock || rawStatus !== 'waiting') return null;
   const autoBlock = autoBlockCountdown(paneText);
   return autoBlock
     ? { waitingReason: 'auto-block', autoBlockSeconds: autoBlock.secondsLeft }
@@ -551,7 +552,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // apiError tracking). Skipped when the file already says working/needs-you.
     const apiError = apiErrorPromotion(status, enrichment?.apiError, enrichment?.apiErrorText);
     if (apiError) status = apiError.status;
-    const waiting = status === 'needs-you' ? claudeWaitingReason(agentId, s.status, paneText) : null;
+    const waiting = status === 'needs-you' ? waitingReasonFor(adapterFor(agentId), s.status, paneText) : null;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
     const hasBackgroundShell = tmux ? detectBackgroundShell(paneText, agentId) : false;
@@ -717,7 +718,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // without a permission request, so surface it as needs-you rather than idle.
     const apiError = apiErrorPromotion(status, enr?.apiError, enr?.apiErrorText);
     if (apiError) status = apiError.status;
-    const waiting = status === 'needs-you' ? claudeWaitingReason(agentId, live?.rawStatus, paneText) : null;
+    const waiting = status === 'needs-you' ? waitingReasonFor(adapter, live?.rawStatus, paneText) : null;
     // Each agent's CLI renders its own "a background job is running" marker —
     // detectBackgroundShell is keyed on agentId (see tmux-scraper.js).
     const hasBackgroundShell = detectBackgroundShell(paneText, agentId);

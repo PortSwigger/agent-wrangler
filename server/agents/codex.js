@@ -142,7 +142,7 @@ export const codex = {
     permissionModes: ['auto'],
     autoCompact: { min: 50000, presets: [50000, 100000, 250000] },
   },
-  launch: { grantPaths: 'realpath', availabilityOverride: 'codexAvailable', trust: 'codex', gitMetadataGrants: true, codexPolicy: true, recoverMissingConversation: true },
+  launch: { grantPaths: 'realpath', availabilityOverride: 'codexAvailable', trust: 'codex-config', gitMetadataGrants: true, codexPolicy: true, recoverMissingConversation: true },
   terminal: {
     readySignal: 'composer',
     contextSource: 'analysis',
@@ -162,6 +162,8 @@ export const codex = {
     restoreDraft: false,
     allowWhileWorking: true,
     imageAcknowledgement: false,
+    // A clean exit may be a self-update, not a /exit: read the pane before auto-archiving.
+    updatesOnExit: true,
     interruptKeys: ['Escape'],
   },
   contextWindow: codexContextWindow,
