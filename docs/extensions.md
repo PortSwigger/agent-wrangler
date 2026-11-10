@@ -1687,11 +1687,17 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   a relaunch after an update, and a fork (which inherits it, since a fork of an
   unwatched session is no more watched). Use it for a session whose pane nobody
   watches, where a tool that waits on the terminal would block it. Entries are
-  plain tool names (`AskUserQuestion`, `mcp__server__tool`), at most 64;
-  duplicates collapse and an empty array is no option. Permission rules such as
-  `Bash(rm:*)`, a non-array, or any agent other than Claude are refused by name
-  before anything launches. An older server ignores the option and launches
-  with every tool, so a manifest relying on it declares `^1.58.0`.
+  plain tool names (`AskUserQuestion`, `mcp__server__tool`) or, since 1.69.0,
+  Claude permission rules such as `Bash(gh pr merge:*)`, at most 64; duplicates
+  collapse and an empty array is no option. Each entry is its own argument, so
+  a rule keeps its spaces on launch, resume and fork. A rule is Claude's own
+  deny check, not a sandbox: it stops the matching tool call, not a shell that
+  reaches the same command another way. A malformed entry (an empty, unclosed
+  or nested specifier, a control character, a leading `-`), a non-array, or any
+  agent other than Claude is refused by name before anything launches. An older
+  server ignores the option and launches with every tool, so a manifest
+  relying on it declares `^1.58.0`, and one passing a rule declares `^1.69.0`
+  (a 1.58–1.68 server refuses the rule).
 - **`adversarial-review`'s shape is a SKILL plus a
   TOOL on purpose.** A SKILL.md is static, so it cannot carry the human's
   configured process; Claude's `` !`cmd` `` injection would, but Codex reads

@@ -72,7 +72,7 @@ test('claude passes --disallowed-tools on launch, resume and fork only when aske
     claude.buildLaunch({ sessionId: 'SID', intent: 'go', disallowedTools }),
     claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE', disallowedTools }),
     claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC', disallowedTools }),
-  ]) assert.match(cmd, /'--disallowed-tools' 'AskUserQuestion mcp__x__y'/);
+  ]) assert.match(cmd, /'--disallowed-tools' 'AskUserQuestion' 'mcp__x__y' '--/);
   for (const cmd of [
     claude.buildLaunch({ sessionId: 'SID' }),
     claude.buildLaunch({ sessionId: 'SID', disallowedTools: [] }),
@@ -81,6 +81,19 @@ test('claude passes --disallowed-tools on launch, resume and fork only when aske
   ]) assert.doesNotMatch(cmd, /--disallowed-tools/);
   // The prompt still lands after `--`, not swallowed by the variadic flag.
   assert.match(claude.buildLaunch({ sessionId: 'SID', intent: 'go', disallowedTools }), / -- 'go'$/);
+});
+
+test('claude passes each permission rule as its own argument, spaces intact, on launch, resume and fork', () => {
+  const disallowedTools = ['AskUserQuestion', 'Bash(gh pr merge:*)', 'Bash(terraform apply:*)'];
+  const want = "'--disallowed-tools' 'AskUserQuestion' 'Bash(gh pr merge:*)' 'Bash(terraform apply:*)' '--";
+  for (const cmd of [
+    claude.buildLaunch({ sessionId: 'SID', intent: 'go', disallowedTools }),
+    claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE', intent: 'go', disallowedTools }),
+    claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC', intent: 'go', disallowedTools }),
+  ]) {
+    assert.ok(cmd.includes(want), cmd);
+    assert.match(cmd, / -- 'go'$/, 'the prompt is never swallowed by the variadic flag');
+  }
 });
 
 test('claude leaves auto-compaction unset when a session has no threshold', () => {
