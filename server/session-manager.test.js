@@ -1795,6 +1795,29 @@ test('resolveWorktree sanitizes a branch to [A-Za-z0-9-]', async () => {
   assert.match(res.branch, /^[A-Za-z0-9-]+$/);
 });
 
+test('resolveWorktree adopts an existing worktree on branch claude/foo', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-adopt-slash-'));
+  const repo = path.join(root, 'proj');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'i');
+  // The worktree a step already made, on a convention-shaped branch with a slash.
+  const folder = path.join(root, 'proj-claude-foo');
+  git('worktree', 'add', '-q', '-b', 'claude/foo', folder);
+  fs.writeFileSync(path.join(folder, 'wip.txt'), 'uncommitted work');
+
+  // How a step is relaunched into it: the recorded branch and path, auto off.
+  const res = await resolveWorktree({ cwd: repo, branch: 'claude/foo', folderName: folder, auto: false });
+  assert.equal(res.branch, 'claude/foo');
+  assert.equal(res.cwd, folder);
+  assert.deepEqual(res.worktree, { path: folder, branch: 'claude/foo', repoRoot: fs.realpathSync(repo) });
+  assert.equal(fs.readFileSync(path.join(folder, 'wip.txt'), 'utf8'), 'uncommitted work');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('resolveWorktree branches from an explicit base, and refuses one git would not take', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-base-'));
   const repo = path.join(root, 'proj');

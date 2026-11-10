@@ -401,9 +401,15 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
   if (!cwd || isInsideSessions(cwd)) {
     throw new WorktreeError('Worktree mode needs a real git repository — choose a project folder, not a blank or scratch directory.');
   }
-  // Branch must be git-ref-safe: restrict to [A-Za-z0-9-] (defensive — the client
-  // sanitizes too). Fall back to the intent slug if a typed branch sanitizes away.
-  const b = ((branch.trim() || slugFromIntent(intent, { short })).replace(/[^A-Za-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || slugFromIntent('', { short });
+  // A branch that is already a valid git ref (`claude/foo`, `fix/ABC-12-x`) goes
+  // to createWorktree unchanged: it may name an existing worktree to adopt (a
+  // step relaunched into its own worktree), and reshaping it there would never
+  // match and refuse the folder. Anything else (an intent slug, or a typed name
+  // git would refuse) is slugged to [A-Za-z0-9-], falling back to the intent
+  // slug if a typed branch sanitizes away.
+  const typed = branch.trim();
+  const b = isValidBranchName(typed) ? typed
+    : ((typed || slugFromIntent(intent, { short })).replace(/[^A-Za-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || slugFromIntent('', { short });
   const folder = folderName.trim();
   // The base is a REF NAME, never a revision expression: `git worktree add -b`
   // takes the commit-ish as its last argv element, so a mistyped one is not a
