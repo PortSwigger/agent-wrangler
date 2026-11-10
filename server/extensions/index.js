@@ -90,6 +90,7 @@ export const CAPABILITIES = new Set([
   'usage:read',
   'sessions:bill',
   'sessions:interrupt',
+  'links:read',
   'links:write',
   'images:keep',
   'files:view',
@@ -244,12 +245,12 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       if (!CAPABILITIES.has(c) && !CLIENT_CAPABILITIES.has(c)) fail(ext, `unknown capability "${c}" (known: ${[...CAPABILITIES, ...CLIENT_CAPABILITIES].sort().join(', ')})`);
     }
   }
-  // `version` (1.70.0, optional): the extension's own version, stamped on its
+  // `version` (1.71.0, optional): the extension's own version, stamped on its
   // telemetry events as `emitterVersion`.
   if (ext.version != null && (typeof ext.version !== 'string' || !VERSION_RE.test(ext.version))) {
     fail(ext, 'version must be a version like 1.2.3');
   }
-  // `telemetry` (1.70.0): an event catalogue to emit (`telemetry:emit`) and
+  // `telemetry` (1.71.0): an event catalogue to emit (`telemetry:emit`) and
   // sinks to send to (`telemetry:sink`). Shape and capability are checked here;
   // the loader carries the normalised form for index.js to register.
   const tele = normaliseTelemetryDecl(ext.telemetry, Array.isArray(ext.requires) ? ext.requires : []);

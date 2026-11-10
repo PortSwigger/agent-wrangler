@@ -1890,6 +1890,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   stored on that task or session: those pass through unchanged, so an agent
   resending the full list from `get_links` is not broken by an extension being off.
   `remove_links` matches non-`pr` links generically (key, case-insensitive, or url).
+- **`host.links.get(sessionId)`** (capability `links:read`, 1.70.0) returns a
+  copy of the card's session links, including PR links, or `[]` for an unknown
+  card. This capability exposes only `get`; it does not expose `attach`.
 - **`host.links`** (capability `links:write`, 1.19.0) lets server code put a link
   on a card when no agent will call `set_links` for it, e.g. a sweep that learns a
   URL after launch. `get(sid)` returns a copy of the card's session links (`[]` for
@@ -2085,7 +2088,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 ## Telemetry
 
-Telemetry (1.70.0) is a capability, not a destination: this repository holds no endpoint. An extension
+Telemetry (1.71.0) is a capability, not a destination: this repository holds no endpoint. An extension
 **emits** events it declares (`telemetry:emit`), and an extension **supplies a sink** (`telemetry:sink`)
 naming where events go. Core owns everything between: the consent switch, an install id, refs, the
 on-disk queue, batching, retries and the Settings tab. With no sink installed nothing is queued and
@@ -2100,7 +2103,7 @@ export default {
   id: 'jobs',
   version: '1.4.0',               // optional, stamped on its events as emitterVersion
   requires: ['telemetry:emit'],
-  engines: { wranglerApi: '^1.70.0' },
+  engines: { wranglerApi: '^1.71.0' },
   telemetry: {
     events: {
       // sent as type `jobs.step.ended`; bump v whenever a field changes
@@ -2171,7 +2174,7 @@ export default {
   id: 'acme-telemetry',
   label: 'Acme telemetry',
   requires: ['telemetry:sink'],
-  engines: { wranglerApi: '^1.70.0' },
+  engines: { wranglerApi: '^1.71.0' },
   telemetry: {
     sinks: [{
       id: 'collector',

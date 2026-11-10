@@ -500,8 +500,10 @@ import semver from 'semver';
 // as its own argument so its spaces survive launch, resume and fork. An older
 // server refuses a rule by name before anything launches, so a manifest that
 // spawns with one declares `^1.69.0`.
+// 1.70.0 adds `links:read`: `host.links.get(sessionId)` without attach.
+// Extensions needing read-only session links declare `^1.70.0`.
 //
-// 1.70.0 adds telemetry. `telemetry:emit` gives `host.telemetry.{on, emit, ref,
+// 1.71.0 adds telemetry. `telemetry:emit` gives `host.telemetry.{on, emit, ref,
 // repo, model}` for the events a manifest declares under `telemetry.events`
 // (typed fields from a closed vocabulary with no string type, sent as
 // `<id>.<name>`); `telemetry:sink` lets a manifest declare `telemetry.sinks`, the
@@ -510,8 +512,8 @@ import semver from 'semver';
 // retries, and sends nothing while the switch is off or no sink is installed.
 // The manifest also gains an optional `version`, stamped on its events. An older
 // server quarantines the unknown capabilities, so a manifest using them declares
-// `^1.70.0`.
-export const HOST_API_VERSION = '1.70.0';
+// `^1.71.0`.
+export const HOST_API_VERSION = '1.71.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
