@@ -554,6 +554,11 @@ test('requires must be an array of known capability names', () => {
   assert.ok(validateManifest(manifest({ requires: [...CAPABILITIES] })));
 });
 
+test('links:read is accepted and carried onto the extension entry', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ requires: ['links:read'] })] });
+  assert.deepEqual(out.list[0].requires, ['links:read']);
+});
+
 test('the capability vocabulary is closed and carried onto the list entry', () => {
   assert.ok(CAPABILITIES.has('board:rebuild'));
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ requires: ['board:rebuild'], engines: { wranglerApi: '^1.0.0' } })] });

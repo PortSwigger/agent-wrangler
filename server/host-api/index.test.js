@@ -204,7 +204,7 @@ test('sessions:interrupt passes the card id straight to the composed interruptSe
 // -- links:write -----------------------------------------------------------
 // A links wiring over one real card's link list, with the normalise hooks of
 // two extensions: `x` claims `cloud`, `other` claims `jira`.
-function linksWiring({ links = [], rebuilds = [] } = {}) {
+function linksWiring({ links = [], rebuilds = [], requires = ['links:write'] } = {}) {
   const stored = { c1: links };
   const hooks = [
     { extId: 'x', fn: ({ link, host }) => {
@@ -222,7 +222,7 @@ function linksWiring({ links = [], rebuilds = [] } = {}) {
   });
   w.core.sessionManager.getLinks = (sid) => [...(stored[sid] || [])];
   w.core.sessionManager.setLinks = (sid, next) => { stored[sid] = [...next]; return true; };
-  host = buildHostApi({ id: 'x', requires: ['links:write'], ...w });
+  host = buildHostApi({ id: 'x', requires, ...w });
   return { host, stored, rebuilds };
 }
 
@@ -234,6 +234,31 @@ test('links:write get returns a copy of the card\'s links, [] for an unknown car
   assert.equal(stored.c1[0].url, 'https://github.com/o/r/pull/1');
   assert.deepEqual(host.links.get('gone'), []);
 });
+
+test('links:read exposes only get and returns independent link copies', () => {
+  const { host, stored } = linksWiring({
+    requires: ['links:read'],
+    links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }],
+  });
+  assert.deepEqual(Object.keys(host.links), ['get']);
+  const got = host.links.get('c1');
+  assert.deepEqual(got, stored.c1);
+  got[0].url = 'mutated';
+  got.push({ type: 'pr', url: 'extra' });
+  assert.deepEqual(host.links.get('c1'), [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }]);
+  assert.deepEqual(host.links.get('gone'), []);
+});
+
+for (const requires of [['links:read', 'links:write'], ['links:write', 'links:read']]) {
+  test(`${requires.join(' + ')} preserves get and attach`, () => {
+    const { host, stored, rebuilds } = linksWiring({ requires });
+    const link = host.links.attach('c1', { type: 'cloud', key: 'session_1' });
+    assert.deepEqual(host.links.get('c1'), [link]);
+    assert.deepEqual(stored.c1, [link]);
+    assert.deepEqual(host.links.get('gone'), []);
+    assert.equal(rebuilds.length, 1);
+  });
+}
 
 test('links:write attach runs the CALLER\'s own normalise, appends, then upserts in place, and rebuilds', () => {
   const { host, stored, rebuilds } = linksWiring({ links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }] });

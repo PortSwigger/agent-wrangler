@@ -1889,6 +1889,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   stored on that task or session: those pass through unchanged, so an agent
   resending the full list from `get_links` is not broken by an extension being off.
   `remove_links` matches non-`pr` links generically (key, case-insensitive, or url).
+- **`host.links.get(sessionId)`** (capability `links:read`, 1.70.0) returns a
+  copy of the card's session links, including PR links, or `[]` for an unknown
+  card. This capability exposes only `get`; it does not expose `attach`.
 - **`host.links`** (capability `links:write`, 1.19.0) lets server code put a link
   on a card when no agent will call `set_links` for it, e.g. a sweep that learns a
   URL after launch. `get(sid)` returns a copy of the card's session links (`[]` for
