@@ -680,6 +680,18 @@ test('the consent modal leads with the trust statement, then capabilities, then 
   });
 });
 
+test('install review explains links:read without offering writes', () => {
+  withDom(() => {
+    const body = consentBodyEl({
+      id: 'links-reader', label: 'Links reader', sha: 'abcdef0123456789',
+      capabilities: ['links:read'], dependencies: [], update: false,
+    });
+    const description = 'Read the links attached to session cards, including pull requests.';
+    assert.ok(texts(body).includes(`links:read: ${description}`));
+    assert.ok([...walk(body)].some((node) => node.title === description));
+  });
+});
+
 test('an UPDATE renders capability and dependency DIFFS, not full lists', () => {
   withDom(() => {
     const body = consentBodyEl({

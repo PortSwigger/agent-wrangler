@@ -89,6 +89,7 @@ export const CAPABILITIES = new Set([
   'usage:read',
   'sessions:bill',
   'sessions:interrupt',
+  'links:read',
   'links:write',
   'images:keep',
   'files:view',

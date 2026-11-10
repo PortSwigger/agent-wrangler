@@ -552,6 +552,12 @@ const usageRead = ({ scanUsage }) => ({
   },
 });
 
+const linksRead = ({ core }) => ({
+  links: {
+    get: (sid) => core.sessionManager.getLinks(sid).map((l) => ({ ...l })),
+  },
+});
+
 // Write a link onto a card from server code — a sweep that learns a URL after
 // launch has no agent to call set_links for it. The link goes through the
 // CALLING extension's own `links.normalise` hook(s) and nobody else's, so an
@@ -574,7 +580,7 @@ const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
   };
   return {
     links: {
-      get: (sid) => core.sessionManager.getLinks(sid).map((l) => ({ ...l })),
+      ...linksRead({ core }).links,
       attach: (sid, link) => {
         if (!core.sessionManager.entryFor(sid)) throw new Error(`links.attach: unknown session ${sid}`);
         const stored = normalise(link);
@@ -648,6 +654,7 @@ export const V1_BUILDERS = {
   'usage:read': usageRead,
   'sessions:bill': sessionsBill,
   'sessions:interrupt': sessionsInterrupt,
+  'links:read': linksRead,
   'links:write': linksWrite,
   'images:keep': imagesKeep,
   'files:view': filesView,
