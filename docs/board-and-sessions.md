@@ -277,7 +277,7 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 
 ## Settings worth knowing about
 
-**Settings** has Appearance, Sessions, Automation, Extensions, and Shortcuts tabs, covering:
+**Settings** has Appearance, Sessions, Automation, Extensions, Shortcuts, Updates and Telemetry tabs, covering:
 
 - Theme, terminal side, terminal font size, and chat font size.
 - Child-card and Chat defaults, the default folder for new sessions, and the Codex sandbox and approval
@@ -299,6 +299,10 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
   extension, so its on/off switch lives here (an older `checklistEnabled: false` is carried over
   automatically).
 - Board-navigation axis preference and the complete keyboard-shortcut reference.
+- **Telemetry**: one switch, off by default. Nothing is sent while it is off, or while no installed
+  extension supplies a sink; the tab lists each sink by host, the events each emitter may send, an
+  optional team picker, and the queue with a preview of every event exactly as it would leave.
+  Turning it off drops anything queued. See [Telemetry](extensions.md#telemetry).
 
 ## Keyboard shortcuts
 

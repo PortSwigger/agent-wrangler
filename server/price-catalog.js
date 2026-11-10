@@ -212,6 +212,12 @@ function lookup(table, model) {
   return null;
 }
 
+// Is `id` a model id one of the tables lists exactly? No prefix matching, so a
+// telemetry `model` field can carry nothing but a published id.
+export function knownModelId(id) {
+  return typeof id === 'string' && PROVIDERS.some((p) => Object.hasOwn(tables[p] || {}, id));
+}
+
 export function priceFor(provider, model) {
   const key = `${provider}\0${model}`;
   if (!memo.has(key)) memo.set(key, lookup(tables[provider] || {}, model));

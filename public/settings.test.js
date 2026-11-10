@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { SETTINGS_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, extensionFlipNote, getSetting, EXT_SETTING_PREFIX } from './settings.js';
 
-test('settings are grouped into six ordered tabs', () => {
+test('settings are grouped into seven ordered tabs', () => {
   assert.deepEqual(SETTINGS_TABS.map(({ id, label }) => ({ id, label })), [
     { id: 'appearance', label: 'Appearance' },
     { id: 'sessions', label: 'Sessions' },
@@ -11,6 +11,7 @@ test('settings are grouped into six ordered tabs', () => {
     { id: 'extensions', label: 'Extensions' },
     { id: 'shortcuts', label: 'Shortcuts' },
     { id: 'updates', label: 'Updates' },
+    { id: 'telemetry', label: 'Telemetry' },
   ]);
 });
 
@@ -38,6 +39,7 @@ test('each registered setting appears in exactly one tab', () => {
     'flipNavHotkeys',
     'autoUpdate',
     'refreshSessionsAfterUpdate',
+    'telemetryEnabled',
   ]));
 });
 
