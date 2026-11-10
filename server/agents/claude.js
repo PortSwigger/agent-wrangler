@@ -215,13 +215,15 @@ function remoteControlArgs(remoteControl) {
   return remoteControl?.name ? ['--remote-control', remoteControl.name] : [];
 }
 
-// `--disallowed-tools <names>` for a session spawned with `disallowedTools`.
+// `--disallowed-tools <entry>...` for a session spawned with `disallowedTools`.
 // Stored on the entry, so launch, fork and every resume pass it: a host that
 // removes a tool (e.g. AskUserQuestion in an unwatched pane) must not get it
-// back after an idle-suspend or a mail wake. One space-joined value, like the
-// headless launch, so the variadic flag cannot swallow the next argument.
+// back after an idle-suspend or a mail wake. Each entry is its own argument, so
+// a rule like `Bash(gh pr merge:*)` reaches Claude with its spaces intact; the
+// variadic flag cannot swallow anything, since buildInnerCommand always follows
+// it with more flags and puts the prompt after `--`.
 function disallowedToolsArgs(disallowedTools) {
-  return disallowedTools?.length ? ['--disallowed-tools', disallowedTools.join(' ')] : [];
+  return disallowedTools?.length ? ['--disallowed-tools', ...disallowedTools] : [];
 }
 
 const MODELS = [

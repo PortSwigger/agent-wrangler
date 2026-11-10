@@ -132,21 +132,25 @@ function checkRemoteControl(remoteControl, agent = 'claude') {
   return { remoteControl: { name: name.trim() } };
 }
 
-// `['AskUserQuestion', ...]` -> the tool names the session launches without,
-// passed as `--disallowed-tools` on its launch, fork and every resume. Plain
-// tool names only (built-ins and `mcp__server__tool`), never permission rules:
-// a rule like `Bash(rm:*)` would make this a sandbox, which it is not. Claude
-// only, refused for any other agent like remoteControl, since an option that
-// is silently dropped reads as a tool that is gone when it is not. Duplicates
-// collapse; an empty array is no option.
-const TOOL_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/;
+// `['AskUserQuestion', 'Bash(gh pr merge:*)', ...]` -> the tools and Claude
+// permission rules the session launches without, passed as `--disallowed-tools`
+// on its launch, fork and every resume. An entry is a plain tool name
+// (built-ins and `mcp__server__tool`) or a deny rule `Tool(specifier)`, whose
+// specifier may hold spaces but no parentheses or control characters. A rule
+// is Claude's own permission check, not a sandbox: it stops the matching call,
+// not a shell that reaches the same command another way. Claude only, refused
+// for any other agent like remoteControl, since an option that is silently
+// dropped reads as a tool that is gone when it is not. Duplicates collapse; an
+// empty array is no option.
+// eslint-disable-next-line no-control-regex
+const TOOL_ENTRY = /^[A-Za-z][A-Za-z0-9_-]{0,127}(?:\((?=[^()]*[^()\s])[^()\x00-\x1f\x7f]{1,256}\))?$/;
 const MAX_DISALLOWED_TOOLS = 64;
 function checkDisallowedTools(disallowedTools, agent = 'claude') {
   if (disallowedTools === undefined || disallowedTools === null) return {};
-  if (!Array.isArray(disallowedTools)) spawnError('disallowedTools must be an array of tool names');
+  if (!Array.isArray(disallowedTools)) spawnError('disallowedTools must be an array of tool names or permission rules');
   if (disallowedTools.length > MAX_DISALLOWED_TOOLS) spawnError(`disallowedTools holds at most ${MAX_DISALLOWED_TOOLS} entries (got ${disallowedTools.length})`);
   for (const t of disallowedTools) {
-    if (typeof t !== 'string' || !TOOL_NAME.test(t)) spawnError(`disallowedTools entries must be tool names like AskUserQuestion or mcp__server__tool (got ${JSON.stringify(t)})`);
+    if (typeof t !== 'string' || !TOOL_ENTRY.test(t)) spawnError(`disallowedTools entries must be tool names like AskUserQuestion or mcp__server__tool, or rules like Bash(gh pr merge:*) (got ${JSON.stringify(t)})`);
   }
   if (!disallowedTools.length) return {};
   if (!supportsDisallowedTools(agent)) spawnError(`Agent "${agent}" does not support disallowedTools.`);

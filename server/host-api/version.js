@@ -494,7 +494,13 @@ import semver from 'semver';
 // open Terminal is listed by `api.targets` as `panel:terminal` (pressing it
 // focuses it) and `api.front()` gains `panel`. An older board has none of them,
 // so an extension that uses them declares `^1.68.0`.
-export const HOST_API_VERSION = '1.68.0';
+//
+// 1.69.0 lets `sessions.spawn`'s `disallowedTools` hold Claude permission rules
+// such as `Bash(gh pr merge:*)` beside plain tool names, each passed to Claude
+// as its own argument so its spaces survive launch, resume and fork. An older
+// server refuses a rule by name before anything launches, so a manifest that
+// spawns with one declares `^1.69.0`.
+export const HOST_API_VERSION = '1.69.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

@@ -373,6 +373,13 @@ test('spawn disallowedTools rides dispatch deduplicated for Claude, and is absen
   assert.equal('disallowedTools' in seen.dispatch[2], false);
 });
 
+test('spawn disallowedTools takes Claude permission rules beside tool names, spaces intact', async () => {
+  const { seen, host } = spawnWiring();
+  const rules = ['AskUserQuestion', 'Bash(gh pr merge:*)', 'Bash(terraform apply:*)', 'WebFetch(domain:example.com)', 'mcp__srv__tool(x)'];
+  await host.sessions.spawn({ cwd: '/repo', disallowedTools: [...rules, 'Bash(gh pr merge:*)'] });
+  assert.deepEqual(seen.dispatch[0].disallowedTools, rules);
+});
+
 test('a mistyped spawn option is REFUSED by name, never launched around', async () => {
   const { seen, host } = spawnWiring();
   const bad = [
@@ -400,7 +407,15 @@ test('a mistyped spawn option is REFUSED by name, never launched around', async 
     [{ disallowedTools: 'AskUserQuestion' }, /disallowedTools must be an array/],
     [{ disallowedTools: [''] }, /disallowedTools entries must be tool names/],
     [{ disallowedTools: [7] }, /disallowedTools entries must be tool names/],
-    [{ disallowedTools: ['Bash(rm:*)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(rm:*'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash()'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(   )'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash (rm:*)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['(rm:*)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(a)(b)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(echo (x))'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(rm\n-rf)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: [`Bash(${'x'.repeat(257)})`] }, /disallowedTools entries must be tool names/],
     [{ disallowedTools: ['-p'] }, /disallowedTools entries must be tool names/],
     [{ disallowedTools: ['Ask User'] }, /disallowedTools entries must be tool names/],
     [{ disallowedTools: Array(65).fill('Read') }, /disallowedTools holds at most 64/],
