@@ -25,8 +25,8 @@ import { checkEventData, checkEndpoint, REPO_RE } from './extensions/telemetry-s
 
 export const BUILTIN_ENDPOINT = 'https://wrangler-telemetry.platform-prod.portswigger.io/v1/events';
 export const ENDPOINT_ENV = 'AW_TELEMETRY_URL';
-// Only these GitHub owners' repo names are sent; any other repo goes as `other`.
-export const REPO_OWNERS = Object.freeze(['portswigger', 'portswigger-apps']);
+// Only repo names whose GitHub owner starts with this are sent; any other repo goes as `other`.
+export const REPO_OWNER_PREFIX = 'portswigger';
 
 export const QUEUE_MAX = 5000;
 export const QUEUE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -90,7 +90,7 @@ export function createTelemetry({
   now = Date.now,
   env = process.env,
   builtinEndpoint = BUILTIN_ENDPOINT,
-  repoOwners = REPO_OWNERS,
+  repoOwnerPrefix = REPO_OWNER_PREFIX,
   awVersion = '0.0.0',
   isModel = () => false,
   log = () => {},
@@ -183,7 +183,7 @@ export function createTelemetry({
   }
 
   // The wire form: the envelope plus the fields the catalogue declares NOW
-  // (anything else is stripped), with repo narrowed to core's allowlist. Null when it no longer fits.
+  // (anything else is stripped), with repo narrowed to core's owner prefix. Null when it no longer fits.
   function render(entry) {
     const { e } = entry;
     const em = emitters.get(e.emitter);
@@ -193,7 +193,7 @@ export function createTelemetry({
     if (!data) return null;
     for (const [key, type] of Object.entries(spec.fields)) {
       if (type.t !== 'repo' || typeof data[key] !== 'string' || !data[key].includes('/')) continue;
-      if (!repoOwners.includes(data[key].split('/')[0])) data[key] = 'other';
+      if (!data[key].split('/')[0].startsWith(repoOwnerPrefix)) data[key] = 'other';
     }
     return {
       eventId: e.eventId,
@@ -348,7 +348,7 @@ export function createTelemetry({
       return crypto.createHmac('sha256', Buffer.from(state.secret, 'hex')).update(`${kind}:${id}`).digest('hex').slice(0, 16);
     },
 
-    // `owner/name`, or 'none' for nothing. An owner outside REPO_OWNERS is
+    // `owner/name`, or 'none' for nothing. An owner not starting with REPO_OWNER_PREFIX is
     // narrowed to 'other' at send, so the wire never carries one.
     repo(raw) {
       if (raw == null || raw === '') return 'none';

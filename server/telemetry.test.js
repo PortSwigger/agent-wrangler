@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createTelemetry, repoSlug, QUEUE_MAX, BACKOFF_START_MS, BACKOFF_MAX_MS, QUEUE_MAX_AGE_MS, BUILTIN_ENDPOINT, REPO_OWNERS, BATCH_MAX } from './telemetry.js';
+import { createTelemetry, repoSlug, QUEUE_MAX, BACKOFF_START_MS, BACKOFF_MAX_MS, QUEUE_MAX_AGE_MS, BUILTIN_ENDPOINT, REPO_OWNER_PREFIX, BATCH_MAX } from './telemetry.js';
 import { normaliseTelemetryDecl } from './extensions/telemetry-schema.js';
 
 const noTimers = { setTimeout: () => ({}), clearTimeout: () => {}, setInterval: () => ({}), clearInterval: () => {} };
@@ -34,7 +34,7 @@ function setup({ url, env = {}, responses = [], clock = { t: Date.UTC(2026, 10, 
     now: () => clock.t,
     env,
     builtinEndpoint: BUILTIN,
-    repoOwners: ['acme'],
+    repoOwnerPrefix: 'acme',
     awVersion: '0.1.0',
     timers: noTimers,
   });
@@ -66,11 +66,39 @@ test('an event from an extension reaches the built-in collector as the envelope 
   assert.equal(t.status().sink.sent, 1);
 });
 
-test('the built-in collector is the shipped prod URL, and only the report\'s repo owners are named', () => {
+test('the built-in collector is the shipped prod URL, and only portswigger* owners\' repos are named', () => {
   assert.equal(BUILTIN_ENDPOINT, 'https://wrangler-telemetry.platform-prod.portswigger.io/v1/events');
-  assert.deepEqual([...REPO_OWNERS], ['portswigger', 'portswigger-apps']);
+  assert.equal(REPO_OWNER_PREFIX, 'portswigger');
   const t = createTelemetry({ file: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-telemetry-')), 't.json'), env: {}, timers: noTimers });
   assert.deepEqual(t.destination(), { url: BUILTIN_ENDPOINT, source: 'builtin', error: null });
+});
+
+test('by default, any owner starting with portswigger is named and every other owner goes as other', async () => {
+  const calls = [];
+  const t = createTelemetry({
+    file: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-telemetry-')), 't.json'),
+    env: { AW_TELEMETRY_URL: 'http://127.0.0.1:1/v1/events' },
+    fetchImpl: async (url, init) => { calls.push(JSON.parse(init.body)); return { status: 200, text: async () => '' }; },
+    timers: noTimers,
+  });
+  withDemo(t);
+  const remotes = [
+    'git@github.com:PortSwigger/agent-wrangler.git',
+    'https://github.com/portswigger-apps/widgets',
+    'https://github.com/PortSwigger-Labs/research-tool',
+    'git@github.com:acme/widgets.git',
+    'https://github.com/not-portswigger/fork',
+  ];
+  for (const r of remotes) t.emit('demo', 'step.ended', step(t, { repo: t.repo(r) }));
+  assert.throws(() => t.emit('demo', 'step.ended', step(t, { repo: 'PortSwigger-Labs/raw' })), /made by telemetry.repo/);
+  await t.flush();
+  assert.deepEqual(calls[0].events.map((e) => e.repo), [
+    'portswigger/agent-wrangler',
+    'portswigger-apps/widgets',
+    'portswigger-labs/research-tool',
+    'other',
+    'other',
+  ]);
 });
 
 test('AW_TELEMETRY_URL, then config telemetry.url, override the built-in URL', async () => {

@@ -2153,8 +2153,8 @@ if (host.telemetry.on()) {
 - **`host.telemetry.ref(kind, id)`** is an HMAC of `kind:id` under a per-install secret that never
   leaves the machine, 16 hex characters: stable on this machine, meaningless anywhere else.
 - **`host.telemetry.repo(raw)`** takes a slug or a git remote and gives `owner/name`, `none` for
-  nothing and `other` for anything it cannot read. At send, a repo whose owner core does not allow
-  goes as `other` (see [The collector](#the-collector)).
+  nothing and `other` for anything it cannot read. At send, a repo whose owner does not start with core's
+  allowed prefix goes as `other` (see [The collector](#the-collector)).
 - **`host.telemetry.model(raw)`** gives a model id the price catalogue lists exactly, `default` for
   none, or `other`.
 
@@ -2185,7 +2185,7 @@ Core sends every event to one collector:
 | --- | --- |
 | Built in | `https://wrangler-telemetry.platform-prod.portswigger.io/v1/events` |
 | Override | `AW_TELEMETRY_URL`, then `telemetry.url` in `config.json` (for a dev collector or a local stub) |
-| Repo names sent | owners `portswigger` and `portswigger-apps`; any other repo goes as `other` |
+| Repo names sent | any owner that starts with `portswigger` (lowercased), e.g. `portswigger` or `portswigger-apps`; any other repo goes as `other` |
 
 The request carries no credentials: the collector's ingress admits only its organisation's office
 network. Anywhere else a send fails, and the events wait in the queue (within its limits below) until
