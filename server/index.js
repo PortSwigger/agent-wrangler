@@ -5,6 +5,7 @@
 import { INSTALL_ENV } from './install-env.js';
 import os from 'node:os';
 import fs from 'node:fs';
+import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import openModule from 'open';
 
@@ -76,7 +77,8 @@ import { sweepStaging } from './extensions/external.js';
 import { log, logWarn, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
-import { startPriceCatalogRefresh, onPriceCatalogChange } from './price-catalog.js';
+import { startPriceCatalogRefresh, onPriceCatalogChange, knownModelId } from './price-catalog.js';
+import { createTelemetry, CORE_EMITTER } from './telemetry.js';
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
 import { watchAutoEffortSources } from './agents/auto-effort.js';
 import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
@@ -163,6 +165,19 @@ function quarantineFor(id, err) {
 }
 const sessionManager = new SessionManager();
 const taskStore = new TaskStore();
+// Core telemetry (server/telemetry.js): one queue for core and every extension
+// declaring `telemetry:emit`, sent to the built-in collector (or the URL
+// AW_TELEMETRY_URL / config `telemetry.url` names). Always on, no switch. Its
+// flush timer starts in main(), after the instance lock, like the sweeps.
+const telemetry = createTelemetry({
+  file: path.join(DATA_DIR, 'telemetry.json'),
+  readConfig,
+  awVersion: VERSION,
+  isModel: knownModelId,
+  log: logError,
+});
+// Core's own catalogue. Empty until core emits something.
+telemetry.registerEmitter(CORE_EMITTER, { version: VERSION, events: {} });
 // The core singletons an extension's capability builder binds on its behalf (the
 // leaf rule means nothing under server/extensions/** can import them — see
 // server/extensions/index.js). Handed to host-api/, never reached for, which is
@@ -278,6 +293,7 @@ const extWiring = {
   core: extCore,
   extFiles,
   events: coreEvents,
+  telemetry,
   // `memory.*` is provided by the task-memory extension's store while it is
   // active (host-api/v1.js degrades to "not available" when this is null).
   memoryProvider: () => extStores.taskMemory ?? null,
@@ -392,6 +408,9 @@ function activateExtension(id, { startSweeps = true } = {}) {
       deliver: createExtDeliver({ sessionManager, taskStore, tmuxFor, socketFor }, { reason: `ext:${id}` }),
       ...extWiring,
     }));
+    // What it declared under `telemetry`, checked and normalised by the loader.
+    // A builtin's events carry the wrangler's version; an installed one's its own.
+    if (e.telemetry?.events) telemetry.registerEmitter(id, { version: e.version || (e.external ? '0.0.0' : VERSION), events: e.telemetry.events });
     // Graph contributors run every ~4s tick where nothing may log or throw, so
     // their keys are checked ONCE here, against a real façade — and a
     // contributor that claims a reserved key (or throws) is the caller's to
@@ -495,6 +514,9 @@ function deactivateExtension(id) {
   }
   coreEvents.offOwner(id);
   extFiles.clear(id);
+  // Its events stop being sendable: whatever of them is still queued is
+  // dropped at the next send.
+  telemetry.unregisterEmitter(id);
   // Here rather than beside the loader's unregister, so the runtime registry
   // agrees with the loader whichever of the two runs first and a live disable
   // takes the runtime away with no restart. A card already launched on it
@@ -1528,6 +1550,7 @@ async function main() {
   // extension activated LIVE (an install, a settings flip) is always past this
   // point, so activateExtension starts its sweeps itself.
   for (const id of hostApis.keys()) startSweepsFor(id);
+  telemetry.start();
 
   // Dev-instance self-shutdown: a dev server (AW_DEV set by the run-dev skill)
   // reaps itself when its data dir is wiped out from under it or it's been idle

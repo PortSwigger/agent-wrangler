@@ -992,3 +992,31 @@ test('host spawn Remote Control refuses unknown agents and missing capability be
     adapter.supportsRemoteControl = prev;
   }
 });
+
+// ---- telemetry:emit (1.72.0) ------------------------------------------------
+test('host.telemetry is ABSENT without telemetry:emit, and offers no way to name a destination', () => {
+  assert.equal('telemetry' in buildHostApi({ id: 'x', requires: [], ...wiring() }), false);
+  const emitOnly = buildHostApi({ id: 'x', requires: ['telemetry:emit'], ...wiring() });
+  assert.deepEqual(Object.keys(emitOnly.telemetry).sort(), ['emit', 'model', 'on', 'ref', 'repo']);
+});
+
+test('telemetry.emit forces the caller\'s own id as the emitter, so no extension can emit as another', () => {
+  const calls = [];
+  const telemetry = {
+    on: () => true,
+    emit: (...args) => { calls.push(args); return true; },
+    ref: (k, v) => `${k}:${v}`,
+    repo: (r) => r,
+    model: (m) => m,
+  };
+  const host = buildHostApi({ id: 'jobs', requires: ['telemetry:emit'], ...wiring({ telemetry }) });
+  assert.equal(host.telemetry.emit('step.ended', { n: 1 }), true);
+  assert.deepEqual(calls, [['jobs', 'step.ended', { n: 1 }]]);
+  assert.equal(host.telemetry.emit.length, 2, 'there is no emitter argument to pass');
+});
+
+test('without core telemetry wired, host.telemetry is inert', () => {
+  const host = buildHostApi({ id: 'x', requires: ['telemetry:emit'], ...wiring() });
+  assert.equal(host.telemetry.on(), false);
+  assert.equal(host.telemetry.emit('a', {}), false);
+});

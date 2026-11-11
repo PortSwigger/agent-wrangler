@@ -630,6 +630,26 @@ const agentsHeadless = ({ runHeadless: run = runHeadless }) => ({
   },
 });
 
+// `telemetry:emit` (1.72.0): emit an event this extension declared under
+// `telemetry.events`. The wire type is FORCED to `<own id>.<name>`, closed over
+// like broadcast's type, so no extension can emit (or forge) another's events.
+// `on()` is false only while a URL override is not a valid endpoint (telemetry
+// has no off switch), so an emitter can skip building an event; `emit` still checks the data
+// against the declaration then, and returns whether it was queued. `ref`,
+// `repo` and `model` make the only values the `ref`, `repo` and `model` field
+// types accept. Without core telemetry wired (a test) it is inert.
+const telemetryEmit = ({ id, telemetry }) => ({
+  telemetry: telemetry
+    ? {
+      on: () => telemetry.on(),
+      emit: (name, data) => telemetry.emit(id, name, data),
+      ref: (kind, value) => telemetry.ref(kind, value),
+      repo: (raw) => telemetry.repo(raw),
+      model: (raw) => telemetry.model(raw),
+    }
+    : { on: () => false, emit: () => false, ref: () => '0000000000000000', repo: () => 'none', model: () => 'default' },
+});
+
 export const V1_BUILDERS = {
   'sessions:read': sessionsRead,
   'sessions:wake': sessionsWake,
@@ -660,4 +680,5 @@ export const V1_BUILDERS = {
   'files:view': filesView,
   'agents:read': agentsRead,
   'agents:headless': agentsHeadless,
+  'telemetry:emit': telemetryEmit,
 };

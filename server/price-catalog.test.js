@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   reduceEntry, reduceLitellm, refreshPriceCatalog, fetchLitellm, priceFor, modelFamilies,
-  priceCatalogVersion, onPriceCatalogChange, _setFetchedForTest,
+  priceCatalogVersion, onPriceCatalogChange, _setFetchedForTest, knownModelId,
 } from './price-catalog.js';
 
 afterEach(() => _setFetchedForTest(null));
@@ -209,4 +209,11 @@ test('a malformed body is reported without echoing its text', async () => {
     console.error = origErr;
   }
   assert.ok(msgs.every((m) => !m.includes('SECRET')));
+});
+
+test('knownModelId matches a listed id exactly, never by prefix', () => {
+  assert.equal(knownModelId('claude-haiku-4-5'), true);
+  assert.equal(knownModelId('claude-haiku-4-5-and-some-free-text'), false);
+  assert.equal(knownModelId('claude-haiku'), false);
+  assert.equal(knownModelId(null), false);
 });

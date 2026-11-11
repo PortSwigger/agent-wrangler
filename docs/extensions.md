@@ -169,6 +169,7 @@ Supported manifest contributions are:
 | Browser UI | `client`, optional `styles`, and slots from `public/slots.js` |
 | Themes | `themes`: a directory of `<id>/theme.json` + assets, offered in Settings › Appearance. See [Themes](#themes) |
 | Core access | `requires`, served through the versioned host API in `server/host-api/` |
+| Telemetry | `telemetry.events` to emit typed usage events, which core sends to its built-in collector. See [Telemetry](#telemetry) |
 
 ### Themes
 
@@ -2097,6 +2098,123 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   agent does not list, or an agent without `capabilities.headless`. The spend is not
   billed to any card until the extension calls `host.sessions.bill(sessionId,
   liveSessionId, agent)` (`sessions:bill`) with the returned id and agent.
+
+## Telemetry
+
+Telemetry (1.72.0) lets core and extensions **emit** typed usage events (`telemetry:emit`). Where they
+go is core's alone: one built-in collector, which no extension can change or add to. Core owns
+everything between: an install id, refs, the on-disk queue, batching and retries.
+Telemetry is **always on**, with no switch to turn it off: events queue from the first run and are
+sent whenever the collector is reachable. The URL override below is for development, not an opt-out.
+
+### Emitting
+
+Declare every event and its fields in the manifest, then emit at runtime:
+
+```js
+export default {
+  id: 'jobs',
+  version: '1.4.0',               // optional, stamped on its events as emitterVersion
+  requires: ['telemetry:emit'],
+  engines: { wranglerApi: '^1.72.0' },
+  telemetry: {
+    events: {
+      // sent as type `jobs.step.ended`; bump v whenever a field changes
+      'step.ended': { v: 1, fields: {
+        job: 'ref',
+        kind: { enum: ['pr', 'session', 'human', 'write'] },
+        repo: { repo: true, nullable: true },
+        tries: { int: [0, 200] },
+        acceptedRed: 'bool',
+        ms: 'ms',
+      } },
+    },
+  },
+};
+
+// in a tool, handler, hook or sweep:
+if (host.telemetry.on()) {
+  host.telemetry.emit('step.ended', {
+    job: host.telemetry.ref('job', job.id),
+    kind: 'pr',
+    repo: host.telemetry.repo('git@github.com:acme/widgets.git'),
+    tries: 2, acceptedRed: false, ms: 120000,
+  });
+}
+```
+
+- **`host.telemetry.on()`** is false only while a URL override is not a valid endpoint, so an emitter
+  can skip building an event.
+- **`host.telemetry.emit(name, data)`** checks `data` against the declaration and throws on an
+  undeclared event, an undeclared field, a missing field or a value its type refuses, even when
+  `on()` is false, so a bug shows up in development. It returns whether the event was queued. The wire `type` is
+  forced to `<your id>.<name>`: no extension can emit another's events, and the id `core` is reserved
+  for the wrangler.
+- **`host.telemetry.ref(kind, id)`** is an HMAC of `kind:id` under a per-install secret that never
+  leaves the machine, 16 hex characters: stable on this machine, meaningless anywhere else.
+- **`host.telemetry.repo(raw)`** takes a slug or a git remote and gives `owner/name`, `none` for
+  nothing and `other` for anything it cannot read. At send, a repo whose owner does not start with core's
+  allowed prefix goes as `other` (see [The collector](#the-collector)).
+- **`host.telemetry.model(raw)`** gives a model id the price catalogue lists exactly, `default` for
+  none, or `other`.
+
+Field types form a closed vocabulary with **no string type**, so free text has nothing to travel in:
+
+| Type | Accepts |
+| --- | --- |
+| `'bool'` | `true` or `false` |
+| `'ms'` | an integer from 0 to 24 hours in milliseconds |
+| `'usd'` | a number from 0 to 10 000 with at most 2 decimal places |
+| `{ int: [min, max] }` | an integer in range |
+| `{ enum: [...] }` | one of up to 60 values, each `[a-z0-9][a-z0-9._-]{0,39}` |
+| `{ list: { enum: [...] }, max }` | an array of up to `max` of those values |
+| `'ref'` | a value from `host.telemetry.ref` |
+| `{ repo: true }` | a value from `host.telemetry.repo` |
+| `'model'` | a value from `host.telemetry.model` |
+| `'version'` | a version such as `1.2.3` |
+
+Any type can add `nullable: true` (a simple type is then written `{ type: 'ms', nullable: true }`).
+Every declared field is required; a nullable one is sent as `null`. Field names may not reuse the
+envelope's.
+
+### The collector
+
+Core sends every event to one collector:
+
+| | |
+| --- | --- |
+| Built in | `https://wrangler-telemetry.platform-prod.portswigger.io/v1/events` |
+| Override | `AW_TELEMETRY_URL`, then `telemetry.url` in `config.json` (for a dev collector or a local stub) |
+| Repo names sent | any owner that starts with `portswigger` (lowercased), e.g. `portswigger` or `portswigger-apps`; any other repo goes as `other` |
+
+The request carries no credentials: the collector's ingress admits only its organisation's office
+network. Anywhere else a send fails, and the events wait in the queue (within its limits below) until
+the machine is back on that network; the last error is recorded beside the queue in `telemetry.json`.
+
+An override must be `https://` (`http://` only to `localhost`, `127.0.0.1` or `[::1]`, for a local
+stub), with no credentials, query or fragment. An invalid override is not fallen back from: nothing is
+sent, and the server log says why. A manifest that declares `telemetry.sinks` is refused.
+
+Core POSTs `{ "events": [...] }` as JSON, at most 100 events and 64 KiB per request. Each event is the envelope plus the declared fields, flat:
+
+| Field | Meaning |
+| --- | --- |
+| `eventId` | random UUID per event, the same on every retry so a collector can dedupe |
+| `ts` | when it was emitted, RFC 3339 UTC to the second |
+| `type`, `v` | `<emitter>.<name>` and the declared version |
+| `install` | a random UUID made once per data directory, not derived from the machine or user |
+| `awVersion`, `emitterVersion` | the wrangler's version and the emitter's (`version`, or the wrangler's for core and builtins) |
+
+There is no team or user field: `install` plus each event's `repo` is what ties events to one
+person's work.
+
+A 2xx removes the batch. 403, 404, 408, 429, 5xx and network errors retry the same batch with a
+backoff from 15 seconds doubling to an hour (a new URL is tried at once); any other 4xx drops it. Before each send an event is checked
+again against the catalogue as it stands then: fields no longer declared are stripped, and an event
+that no longer fits (or whose emitter is gone) is dropped. The queue lives in
+`<data dir>/telemetry.json` (mode 0600, with the install id and ref secret), holds at most 5 000
+events and 30 days, drops the oldest first, and survives restarts. Disabling an extension stops its
+events, and any of them still queued are dropped at the next send.
 
 ## Runtimes
 

@@ -287,7 +287,7 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 
 ## Settings worth knowing about
 
-**Settings** has Appearance, Sessions, Automation, Extensions, and Shortcuts tabs, covering:
+**Settings** has Appearance, Sessions, Automation, Extensions, Shortcuts and Updates tabs, covering:
 
 - Theme, terminal side, terminal font size, and chat font size.
 - Child-card and Chat defaults, the default folder for new sessions, and the Codex sandbox and approval
