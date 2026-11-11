@@ -993,7 +993,7 @@ test('host spawn Remote Control refuses unknown agents and missing capability be
   }
 });
 
-// ---- telemetry:emit (1.71.0) ------------------------------------------------
+// ---- telemetry:emit (1.72.0) ------------------------------------------------
 test('host.telemetry is ABSENT without telemetry:emit, and offers no way to name a destination', () => {
   assert.equal('telemetry' in buildHostApi({ id: 'x', requires: [], ...wiring() }), false);
   const emitOnly = buildHostApi({ id: 'x', requires: ['telemetry:emit'], ...wiring() });

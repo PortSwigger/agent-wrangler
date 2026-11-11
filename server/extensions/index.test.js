@@ -1296,7 +1296,7 @@ test('runtime announcement and graph identify own-launch and wrapping runtimes',
   ]);
 });
 
-// ---- telemetry (1.71.0) ----------------------------------------------------
+// ---- telemetry (1.72.0) ----------------------------------------------------
 test('a telemetry declaration needs its capability, a valid shape, and never the id core', () => {
   const events = { 'thing.done': { v: 1, fields: { n: { int: [0, 9] } } } };
   const sinks = [{ id: 'main', endpoint: 'https://collector.example.com/v1/events', accepts: ['*'] }];

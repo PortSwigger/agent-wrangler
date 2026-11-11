@@ -503,7 +503,12 @@ import semver from 'semver';
 // 1.70.0 adds `links:read`: `host.links.get(sessionId)` without attach.
 // Extensions needing read-only session links declare `^1.70.0`.
 //
-// 1.71.0 adds telemetry. `telemetry:emit` gives `host.telemetry.{on, emit, ref,
+// 1.71.0 is CLIENT-only: `api.ui.toast({ severity, text, detail, actions })`
+// shows a transient message in the board's own toast stack, so it is seen on
+// every view and above an open dialog. An older board has no `ui.toast`, so an
+// extension that calls it either checks for the function or declares `^1.71.0`.
+//
+// 1.72.0 adds telemetry. `telemetry:emit` gives `host.telemetry.{on, emit, ref,
 // repo, model}` for the events a manifest declares under `telemetry.events`
 // (typed fields from a closed vocabulary with no string type, sent as
 // `<id>.<name>`). Core owns where they go (its built-in collector, overridable
@@ -511,8 +516,8 @@ import semver from 'semver';
 // retries. Telemetry is always on, with no switch. A manifest
 // cannot name a destination. The manifest also gains an optional `version`,
 // stamped on its events. An older server quarantines the unknown capability, so
-// a manifest using it declares `^1.71.0`.
-export const HOST_API_VERSION = '1.71.0';
+// a manifest using it declares `^1.72.0`.
+export const HOST_API_VERSION = '1.72.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

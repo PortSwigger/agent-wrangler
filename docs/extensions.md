@@ -2029,6 +2029,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   withdrawn. Showing an `id` that is already up updates it in place.
   `api.ui.withdraw(id)` takes one down. Ids are per extension, and an extension's
   cards are removed when it is turned off. All text is set as text.
+- **Client `api.ui.toast({ severity, text, detail, actions })`** (1.71.0) shows a
+  transient message in the board's own toast stack (`public/toast.js`), the one
+  core's toasts use, for feedback on something the human just did. It shows on
+  every view, not only the extension's own, and above an open dialog.
+  `severity` is `'success'`, `'info'` (the default), `'warning'` or `'error'`
+  and sets how long it stays: 3 s, 5 s, 8 s, or until closed. `detail` is
+  longer text behind a Details expander, and `actions` is up to three
+  `{ label, onClick }` buttons; clicking one closes the toast, and a throwing
+  `onClick` is reported, not raised. It returns `true` when shown and `false`
+  when refused (reported as `[ext:<id>] ui.toast refused: …`) or on a board
+  without the stack. All text is set as text. Use `ui.notify` instead for
+  something the human did not ask about and must not miss. An extension using
+  it declares `^1.71.0`, or checks for `api.ui.toast`.
 - **`host.tasks.archive(taskId)`** (capability `tasks:archive`, 1.23.0) archives a
   task as its tile's Archive does: the task and every live session assigned to it.
   Resolves `{ archived, sessionIds, unclean }`; `archived` is false for an unknown or
@@ -2088,7 +2101,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 ## Telemetry
 
-Telemetry (1.71.0) lets core and extensions **emit** typed usage events (`telemetry:emit`). Where they
+Telemetry (1.72.0) lets core and extensions **emit** typed usage events (`telemetry:emit`). Where they
 go is core's alone: one built-in collector, which no extension can change or add to. Core owns
 everything between: an install id, refs, the on-disk queue, batching and retries.
 Telemetry is **always on**, with no switch to turn it off: events queue from the first run and are
@@ -2103,7 +2116,7 @@ export default {
   id: 'jobs',
   version: '1.4.0',               // optional, stamped on its events as emitterVersion
   requires: ['telemetry:emit'],
-  engines: { wranglerApi: '^1.71.0' },
+  engines: { wranglerApi: '^1.72.0' },
   telemetry: {
     events: {
       // sent as type `jobs.step.ended`; bump v whenever a field changes

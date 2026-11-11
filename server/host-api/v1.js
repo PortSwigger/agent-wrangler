@@ -630,7 +630,7 @@ const agentsHeadless = ({ runHeadless: run = runHeadless }) => ({
   },
 });
 
-// `telemetry:emit` (1.71.0): emit an event this extension declared under
+// `telemetry:emit` (1.72.0): emit an event this extension declared under
 // `telemetry.events`. The wire type is FORCED to `<own id>.<name>`, closed over
 // like broadcast's type, so no extension can emit (or forge) another's events.
 // `on()` is false only while a URL override is not a valid endpoint (telemetry
