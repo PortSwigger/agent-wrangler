@@ -19,6 +19,18 @@ export function diffNeedsYou(sessions) {
   return fresh;
 }
 
+// A session's label can be its whole launch prompt (a Wrangler² step's runs to
+// thousands of characters), which would fill the needs-you toast and the OS
+// notification. Those get one line, cut at a word near `max` with an ellipsis.
+export const NOTIFY_LABEL_MAX = 80;
+export function notifyLabel(label, max = NOTIFY_LABEL_MAX) {
+  const line = String(label ?? '').replace(/\s+/g, ' ').trim();
+  if (line.length <= max) return line;
+  const cut = line.slice(0, max - 1);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
 // PR check notifications remember what people were actually told, not every
 // transient state GitHub exposed while recomputing mergeability against a moving
 // base branch. Otherwise a passing→pending→passing flap at the same head would

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
+import { notifyLabel, NOTIFY_LABEL_MAX, diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 
 // link factory: { scope, ownerId, url, number, checkStatus, headSha }.
 const L = (checkStatus, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1, headSha = 'sha-default' } = {}) =>
@@ -429,4 +429,25 @@ test('prUnresolvedPaneNudge omits the (<repo>) segment entirely for an enterpris
   const line = prUnresolvedPaneNudge({ number: 7, url, delta: 2, unresolvedCount: 5 });
   assert.equal(line, '[Agent Wrangler] PR #7: 2 new unresolved review threads (5 unresolved total): ' + url);
   assert.doesNotMatch(line, /\(\)/);
+});
+
+test('notifyLabel keeps a short label as it is', () => {
+  assert.equal(notifyLabel('Fix the login bug'), 'Fix the login bug');
+  assert.equal(notifyLabel(undefined), '');
+});
+
+test('notifyLabel clamps a launch-prompt label to one short line', () => {
+  const prompt = `Clarify and standardise the boxes\nContext: ${'every toast and banner on the board '.repeat(100)}`;
+  assert.ok(prompt.length > 3500);
+  const out = notifyLabel(prompt);
+  assert.ok(out.length <= NOTIFY_LABEL_MAX, `${out.length} chars`);
+  assert.ok(!/\n/.test(out));
+  assert.ok(out.endsWith('…'));
+  assert.ok(out.startsWith('Clarify and standardise the boxes Context: every toast'));
+  assert.ok(!/ …$/.test(out), 'no space before the ellipsis');
+});
+
+test('notifyLabel hard-cuts one long unbroken word', () => {
+  const out = notifyLabel('x'.repeat(500));
+  assert.equal(out, `${'x'.repeat(NOTIFY_LABEL_MAX - 1)}…`);
 });
