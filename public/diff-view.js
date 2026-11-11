@@ -509,7 +509,7 @@ export function onDiffCommentsResult(msg) {
       persistDrafts();
     }
     sendError = null;
-    toast('Review comments sent to the agent');
+    toast('Review comments sent to the agent', 'success');
   } else {
     // Keep the drafts so the user can retry; surface the error inline.
     sendError = msg.error || 'Send failed.';

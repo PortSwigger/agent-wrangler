@@ -1,6 +1,6 @@
 // The bottom-right notification stack: persistent cards an extension raises
 // with api.ui.notify (slots.js) for something the human may want to act on but
-// did not ask about. Unlike toast.js's single transient toast they stack, stay
+// did not ask about. Unlike toast.js's transient toasts they stay
 // until answered or closed, and never take focus. A leaf: `document` is
 // injected so the stacking rules are unit-testable.
 //
