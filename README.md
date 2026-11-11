@@ -430,6 +430,30 @@ daily/weekly/monthly spend, sliced by task, model, or token type.
 For a view outside the app too — spend by month, by task, or by model — see `scripts/cost-report.mjs`,
 which recomputes directly from on-disk transcripts.
 
+## Telemetry
+
+Agent Wrangler sends usage telemetry to a built-in collector, always on with no opt-out. It measures
+how work with agents is changing: sessions, how long they work or wait on you, how many run at once,
+who sends each prompt and what type of prompt it is. Nothing you typed leaves the machine: a prompt's
+type is decided locally (simple rules first, then one tool-less run on the Background model for the
+rest, at most 200 prompts a day, billed to the card), and only the label is sent. There is no name,
+login, email, team, path, branch, title or prompt text in any event. A repo is sent by name only when
+its owner starts with `portswigger`; any other repo is `other`.
+
+| Event | Sent when | Fields |
+| --- | --- | --- |
+| `core.session.started` | a card is dispatched, spawned or forked | `session`, `source`, `spawner`, `parent`, `agent`, `model`, `effort`, `runtime`, `worktree`, `repo` |
+| `core.session.interval` | a working or needs-you stretch ends | `session`, `state`, `waitingReason`, `ms` |
+| `core.prompt` | a prompt reaches an agent | `session`, `source`, `human`, `kind`, `classifier`, `length`, `images`, `pasted`, `afterAsk`, `gapMs` |
+| `core.interrupt` | you stop an agent mid-turn | `session`, `duringTool`, `workedMs` |
+| `core.session.ended` | a card is archived or removed | `session`, `end`, `lifeMs`, `workingMs`, `humanPrompts`, `machinePrompts`, `workKind`, `prMerged`, `usd` |
+| `core.daily` | once a day, for the day before | `sessionsActive`, `peakWorking`, `jobsEnabled`, `os` |
+
+Every event also carries `eventId`, `ts`, `type`, `v`, a random `install` id and the version numbers.
+[Core events](docs/extensions.md#core-events) defines every field and its values;
+[Telemetry](docs/extensions.md#telemetry) covers the queue, the collector and how extensions emit
+their own.
+
 ## Layout
 
 Two views, toggled from the nav rail: **Tasks** (the default board — sessions grouped under the tasks

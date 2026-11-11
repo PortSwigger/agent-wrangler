@@ -1,4 +1,5 @@
 import { adapterFor } from './agents/index.js';
+import { notePrompt } from './prompt-ledger.js';
 import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,6 +13,7 @@ import { findClaudeSocket as defaultFindSocket, sendToClaudeSocket as defaultSen
 // gated live path on the next sweep, so it never pastes into a booting pane or
 // over a draft.
 export async function deliverMailNotification(to, text, deps) {
+  notePrompt(text, 'mail');
   const { tmuxFor, socketFor, sessionManager, paneDeferral } = deps;
   const mcpSeenAt = deps.mcpSeenAt ?? defaultMcpSeenAt;
   const mcpReadyTimeoutMs = deps.mcpReadyTimeoutMs ?? MCP_READY_TIMEOUT_MS;
@@ -41,6 +43,7 @@ export async function deliverMailNotification(to, text, deps) {
 }
 
 export async function deliverNotice(to, text, deps) {
+  notePrompt(text, 'mail');
   const entry = deps.sessionManager.entryFor(to);
   if (!entry || entry.archivedAt || entry.snooze) return { mode: 'skip' };
   const target = deps.tmuxFor(to);

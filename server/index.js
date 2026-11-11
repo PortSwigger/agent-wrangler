@@ -39,7 +39,7 @@ import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
-import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents } from './agents/index.js';
+import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
@@ -79,6 +79,8 @@ import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange, knownModelId } from './price-catalog.js';
 import { createTelemetry, CORE_EMITTER } from './telemetry.js';
+import { createCoreTelemetry, createTranscriptTail } from './core-telemetry.js';
+import { findConversationFiles } from './conversation-file.js';
 import { startCodexCatalogRefresh, onCodexCatalogChange } from './agents/codex-catalog.js';
 import { watchAutoEffortSources } from './agents/auto-effort.js';
 import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.js';
@@ -87,7 +89,7 @@ import { createExtensionUpdateCheck, currentExtensionUpdates } from './extension
 import { autoUpdateExtension } from './control/handlers/extensions-install.js';
 import { createInstallDriftWatch } from './install-root.js';
 import { nextSessionToRefresh } from './session-refresh.js';
-import { headlessRunsInFlight, backgroundModel } from './headless.js';
+import { headlessRunsInFlight, backgroundModel, runHeadless } from './headless.js';
 import { startupStyle, bannerLines, listenErrorMessage } from './startup-output.js';
 import { VERSION } from './version.js';
 
@@ -176,8 +178,47 @@ const telemetry = createTelemetry({
   isModel: knownModelId,
   log: logError,
 });
-// Core's own catalogue. Empty until core emits something.
-telemetry.registerEmitter(CORE_EMITTER, { version: VERSION, events: {} });
+// Core's own events (server/core-telemetry.js): session lifecycle, working and
+// needs-you stretches, prompts and their type, interrupts, a daily roll-up.
+// `spawner` may name only a builtin extension or one that emits telemetry
+// itself (its id is on its own events already); any other goes as `other`.
+const coreTelemetry = createCoreTelemetry({
+  telemetry,
+  emitter: CORE_EMITTER,
+  version: VERSION,
+  file: path.join(DATA_DIR, 'telemetry-core.json'),
+  tail: createTranscriptTail({
+    findFiles: (convId, agent) => findConversationFiles(convId, agent),
+    scannerFor: (agent) => adapterFor(agent).history.createScanner(),
+  }),
+  // Tool-less, on Settings › Background model, billed to the card whose
+  // prompts it typed.
+  classify: async ({ prompt, stdin, sessionId }) => {
+    const r = await runHeadless({ prompt, stdin, timeoutMs: 60000 });
+    if (r.liveSessionId && sessionManager.entryFor(sessionId)) sessionManager.recordPriorLiveSessionId(sessionId, r.liveSessionId, r.agent);
+    return r;
+  },
+  spawnerIds: () => ext.list.filter((e) => !e.external || e.telemetry?.events).map((e) => e.id),
+  entryFor: (sid) => sessionManager.entryFor(sid),
+  resolveModel: (agent, model) => {
+    try { return resolvedModelId(adapterFor(agent), model); } catch { return null; }
+  },
+  jobsEnabled: () => hostApis.has('jobs'),
+  log: logError,
+});
+coreTelemetry.register();
+sessionManager._onLaunched = (launch) => coreTelemetry.sessionStarted(launch);
+// Not extension hooks (no extId, so a deactivate never drops them): the
+// session-manager fires these for every card.
+sessionManager._extHooks.onArchive.push(({ sessionId, entry, wasArchived }) => {
+  if (wasArchived) return;
+  const usd = lastGraph?.sessions?.find((s) => s.sessionId === sessionId)?.usd ?? 0;
+  coreTelemetry.sessionEnded({ sessionId, entry, end: 'archived', usd });
+});
+sessionManager._extHooks.onPurge.push(({ sessionId }) => {
+  const usd = lastGraph?.sessions?.find((s) => s.sessionId === sessionId)?.usd ?? 0;
+  coreTelemetry.sessionEnded({ sessionId, end: 'gone', usd });
+});
 // The core singletons an extension's capability builder binds on its behalf (the
 // leaf rule means nothing under server/extensions/** can import them — see
 // server/extensions/index.js). Handed to host-api/, never reached for, which is
@@ -327,6 +368,7 @@ const extWiring = {
   interruptSession: async (sessionId) => {
     const target = typeof sessionId === 'string' && sessionId ? tmuxFor(sessionId) : null;
     if (!target) return false;
+    coreTelemetry.interrupted(sessionId);
     await sendKeys(target, ['Escape'], socketFor(sessionId) || '');
     return true;
   },
@@ -411,6 +453,8 @@ function activateExtension(id, { startSweeps = true } = {}) {
     // What it declared under `telemetry`, checked and normalised by the loader.
     // A builtin's events carry the wrangler's version; an installed one's its own.
     if (e.telemetry?.events) telemetry.registerEmitter(id, { version: e.version || (e.external ? '0.0.0' : VERSION), events: e.telemetry.events });
+    // Core's `spawner` list follows the extensions present.
+    coreTelemetry.register();
     // Graph contributors run every ~4s tick where nothing may log or throw, so
     // their keys are checked ONCE here, against a real façade — and a
     // contributor that claims a reserved key (or throws) is the caller's to
@@ -639,6 +683,7 @@ async function runPrStatusSweep(only) {
     // session or task-scope link is silent regardless; the link is still removed
     // either way (dropping a dead link is bookkeeping, not a notification).
     if (res.state === 'MERGED' || res.state === 'CLOSED') {
+      if (res.state === 'MERGED' && scope === 'session') coreTelemetry.prMerged(ownerId);
       if (removePrLink(store, ownerId, url)) {
         changed = true;
         if (scope === 'session' && prNudgeEnabled(sessionManager.entryFor(ownerId), fixPrDefault)) {
@@ -772,7 +817,7 @@ function removePrLink(store, ownerId, url) {
 // Throws on a gone target — the caller turns that into a schedule-error.
 function performScheduleAction(action, now) {
   if (!action || action.kind === 'dispatch') {
-    return runDispatch(action?.dispatch || {}, { sessionManager, taskStore }, now);
+    return runDispatch(action?.dispatch || {}, { sessionManager, taskStore, launchSource: 'schedule' }, now);
   }
   return runSessionAction(action, { sessionManager, tmuxFor, socketFor });
 }
@@ -1143,6 +1188,7 @@ async function rebuildOnce() {
   // list, keys were checked against the core's at boot — and no logging here: this is the 4s rebuild.
   for (const { id, contribute } of ext.graphContributors) Object.assign(graph, contribute({ host: hostApiFor(id), graph }));
   lastGraph = graph;
+  coreTelemetry.observe(graph.sessions);
 
   for (const sid of autoArchived) {
     const e = sessionManager.entryFor(sid);
@@ -1260,6 +1306,8 @@ controlWss.on('connection', (ws) => {
     rebuild,
     runSchedule: runScheduleNow,
     graph: () => lastGraph,
+    // Telemetry's `core.interrupt` for the chat view's Stop.
+    onInterrupt: (sid) => coreTelemetry.interrupted(sid),
     sessionFromGraph,
     tmuxFor,
     socketFor,
@@ -1551,6 +1599,8 @@ async function main() {
   // point, so activateExtension starts its sweeps itself.
   for (const id of hostApis.keys()) startSweepsFor(id);
   telemetry.start();
+  coreTelemetry.start();
+  shutdownLog.onShutdown(() => { coreTelemetry.stop(); telemetry.saveNow(); });
 
   // Dev-instance self-shutdown: a dev server (AW_DEV set by the run-dev skill)
   // reaps itself when its data dir is wiped out from under it or it's been idle

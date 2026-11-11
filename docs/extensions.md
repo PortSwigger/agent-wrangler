@@ -2163,7 +2163,7 @@ Field types form a closed vocabulary with **no string type**, so free text has n
 | Type | Accepts |
 | --- | --- |
 | `'bool'` | `true` or `false` |
-| `'ms'` | an integer from 0 to 24 hours in milliseconds |
+| `'ms'` | an integer from 0 to 366 days in milliseconds (24 hours before 1.73.0) |
 | `'usd'` | a number from 0 to 10 000 with at most 2 decimal places |
 | `{ int: [min, max] }` | an integer in range |
 | `{ enum: [...] }` | one of up to 60 values, each `[a-z0-9][a-z0-9._-]{0,39}` |
@@ -2215,6 +2215,98 @@ that no longer fits (or whose emitter is gone) is dropped. The queue lives in
 `<data dir>/telemetry.json` (mode 0600, with the install id and ref secret), holds at most 5 000
 events and 30 days, drops the oldest first, and survives restarts. Disabling an extension stops its
 events, and any of them still queued are dropped at the next send.
+
+### Core events
+
+The wrangler emits these itself, as emitter `core` (server/core-telemetry.js). `session` and
+`parent` are refs of card ids. Nothing a person wrote is sent: a prompt's text is read from the
+transcript on the machine, typed there, and dropped.
+
+**`core.session.started`**, when a card is dispatched, spawned or forked:
+
+| Field | Values |
+| --- | --- |
+| `session` | ref of the card |
+| `source` | `board` (dispatch dialog), `workflow` (the dialog's workflow mode), `schedule`, `extension` (`host.sessions.spawn`), `agent` (`spawn_session`), `fork` |
+| `spawner` | for `extension`: the extension's id when it is a builtin or emits telemetry itself, else `other`; `null` otherwise |
+| `parent` | ref of the card that spawned or nests it, or `null` |
+| `agent` | `claude`, `codex` or `other` |
+| `model` | the model picked at launch, an alias (`opus`) resolved to the full id it runs, if the price catalogue lists it exactly; `default` when none was picked; else `other` |
+| `effort` | `low`, `medium`, `high`, `xhigh`, `max` or `default` |
+| `runtime` | `local`, `devcontainer`, or `extension` for an extension's runtime |
+| `worktree` | launched in a worktree |
+| `repo` | the worktree's or directory's origin as `owner/name` when the owner starts with `portswigger`; `other` for any other repo; `none` outside a git checkout |
+
+**`core.session.interval`**, when a working or needs-you stretch ends (it began at `ts − ms`):
+
+| Field | Values |
+| --- | --- |
+| `session` | ref of the card |
+| `state` | `working` or `needs-you`; idle and dormant are the gaps between |
+| `waitingReason` | for `needs-you`: `permission`, `auto-block`, `api-error`, `api-error-blocking`, or `handback` when the agent stopped and handed the turn back; `null` for `working` |
+| `ms` | its length, at most 24 hours. Two minutes with no board update (a sleeping machine, a stopped server) ends every open stretch at the last update |
+
+**`core.prompt`**, when a prompt reaches a session's agent (read from its transcript):
+
+| Field | Values |
+| --- | --- |
+| `session` | ref of the card |
+| `source` | `composer` (the chat view), `terminal` (typed into the pane), `dispatch` (a dialog's first prompt), `mail` (mailbox and the wrangler's other notices: status notices, PR nudges), `extension` (`host.deliver`), `spawn` (an extension's or agent's spawn brief), `schedule` |
+| `human` | true for `composer`, `terminal` and `dispatch` |
+| `kind` | for a human prompt: `task`, `extend`, `correct`, `answer`, `approve`, `ask`, `unblock`, `ship` or `other`; `null` for the rest, and when no model could type it |
+| `classifier` | `rule`, `model`, or `none` when `kind` is `null` |
+| `length` | characters: `xs` ≤20, `s` ≤200, `m` ≤1000, `l` ≤4000, `xl` beyond |
+| `images` | images attached, 0 to 8 |
+| `pasted` | it carried a pasted block |
+| `afterAsk` | the card was needs-you with `handback` or `permission` when it arrived, so the human was answering the agent |
+| `gapMs` | time since the agent's last working stretch ended, or `null` before its first |
+
+**`core.interrupt`**, when someone stops a working agent mid-turn: the chat view's Stop or an
+extension's `sessions.interrupt` while the card works, or a stop the transcript records (Claude's
+"Request interrupted by user", Codex's aborted turn) that the wrangler did not send:
+
+| Field | Values |
+| --- | --- |
+| `session` | ref of the card |
+| `duringTool` | Claude's transcript says a tool was stopped; false for any other stop |
+| `workedMs` | how long the agent had been working, or `null` |
+
+**`core.session.ended`**, when a card is archived (`archived`) or removed without an archive
+(`gone`). Sent only for cards whose `core.session.started` was sent:
+
+| Field | Values |
+| --- | --- |
+| `session` | ref of the card |
+| `end` | `archived` or `gone` |
+| `lifeMs` | from launch to the end |
+| `workingMs` | its working stretches summed |
+| `humanPrompts`, `machinePrompts` | its `core.prompt` counts, human and not |
+| `workKind` | from its first human prompt: `feature`, `fix`, `refactor`, `test`, `docs`, `config-infra`, `investigate`, `review`, `ops`, `writing` or `other`; `null` for an extension's spawn (the extension's own events carry it) or when no model could type it |
+| `prMerged` | a PR linked to the card merged |
+| `usd` | the card's cost, to the cent |
+
+**`core.daily`**, once after local midnight for the day before, if anything worked that day:
+
+| Field | Values |
+| --- | --- |
+| `sessionsActive` | cards that worked that day |
+| `peakWorking` | most cards working at once |
+| `jobsEnabled` | the `jobs` extension is on |
+| `os` | `darwin`, `linux` or `other` |
+
+**How prompts are typed.** Each prompt the wrangler delivers (a chat send, a dispatch, mail, an
+extension's delivery, a schedule, a pane paste) leaves a hash of its text and its source in memory
+for ten minutes; a transcript turn matching one takes that source, and any other is `terminal`.
+A human prompt goes through rules first: a card's first is `task`, short assent is `approve`,
+`no…`/`don't…`/`revert…` is `correct`, `commit`/`push`/`merge`/`deploy`/`raise a PR` is `ship`,
+`!…` or a login, token or permission is `unblock`, a question is `ask`, and a short reply while the
+agent waited is `answer`. The rest go in batches of up to 20 to one tool-less run on Settings ›
+Background model, which must answer one listed label per line (anything else becomes `other`);
+the work kind is asked the same way, once per card. At most 200 prompts a day go to the model, and
+each run is billed to the card with the most prompts in it; past that, or when a run fails, the
+prompt is sent with `kind: null`. Per-card counters and transcript positions (no text) live in
+`<data dir>/telemetry-core.json`. A card already running when this telemetry started is read from
+where its transcript stood then, and is not reported as ended.
 
 ## Runtimes
 

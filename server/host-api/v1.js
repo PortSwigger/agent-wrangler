@@ -230,6 +230,9 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         if (v !== undefined && typeof v !== 'boolean') spawnError(`${name} must be a boolean`);
       }
       const result = await core.sessionManager.dispatch({
+        // For telemetry's session.started: launched by this extension.
+        launchSource: 'extension',
+        spawner: id,
         cwd,
         intent,
         agent,
