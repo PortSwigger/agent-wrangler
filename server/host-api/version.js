@@ -517,7 +517,12 @@ import semver from 'semver';
 // cannot name a destination. The manifest also gains an optional `version`,
 // stamped on its events. An older server quarantines the unknown capability, so
 // a manifest using it declares `^1.72.0`.
-export const HOST_API_VERSION = '1.72.0';
+//
+// 1.73.0 widens the telemetry `ms` type from 24 hours to 366 days (the
+// collector's bound), so a card's or a job's whole life fits. An older server
+// throws on an `ms` value past 24 hours, so an emitter sending one declares
+// `^1.73.0`.
+export const HOST_API_VERSION = '1.73.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText } from './tmux-scraper.js';
+import { notePrompt } from './prompt-ledger.js';
 
 // Fire a schedule that targets an EXISTING session — the `session` counterpart to
 // runDispatch. ONE action that branches on the target's liveness at fire time:
@@ -26,6 +27,7 @@ export async function runSessionAction(action, deps) {
   }
 
   const message = (action.message || '').trim();
+  if (message) notePrompt(message, 'schedule');
 
   // LIVE: inject the message into the running pane. No message ⇒ nothing to do, but
   // that's success, not an error (resuming a live session would kill its tmux).

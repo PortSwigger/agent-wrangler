@@ -10,6 +10,7 @@ import { tmuxSocketArgs } from './tmux-socket.js';
 import { boundedPs } from './bounded-ps.js';
 import { logWarn } from './log.js';
 import { paneComposerIsEmpty, paneHasWorkingStatus } from './ghost-suggestion.js';
+import { notePrompt } from './prompt-ledger.js';
 
 const exec = promisify(execFile);
 
@@ -656,6 +657,9 @@ export async function killSession(name, socket = '') {
 // submitted (verified against a live pane). A trailing space defuses it without
 // altering the message.
 export async function sendText(name, text, socket = '', run = tmux, { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  // Telemetry: whatever the wrangler pastes is not a human typing in the pane.
+  // A caller that knows the source (a chat send, a schedule) noted it already.
+  notePrompt(text, 'mail', { fallback: true });
   await pasteBlock(name, text.endsWith('\\') ? `${text} ` : text, socket, run);
   await wait(120);
   await run(socket, ['send-keys', '-t', name, 'Enter']);
