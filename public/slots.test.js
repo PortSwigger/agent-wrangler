@@ -1627,6 +1627,50 @@ test('ui.notify refuses a malformed card without raising anything', async () => 
   assert.match(errors[0], /\[ext:fake\] ui\.notify refused: id/);
 });
 
+test('ui.toast forwards a valid toast to the board stack and wraps its actions', () => {
+  const seen = [];
+  const clicked = [];
+  const { api, errors } = uiHarness({ toast: (owner, o) => seen.push([owner, o]) });
+  assert.equal(api.ui.toast({ text: 'Saved' }), true);
+  assert.equal(api.ui.toast({ severity: 'error', text: 'Refused', detail: 'why', actions: [{ label: 'Retry', onClick: () => clicked.push('retry'), extra: 1 }] }), true);
+  assert.deepEqual(seen.map(([owner, o]) => [owner, o.severity, o.text, o.detail, o.actions.map((a) => a.label)]), [
+    ['fake', 'info', 'Saved', '', []],
+    ['fake', 'error', 'Refused', 'why', ['Retry']],
+  ]);
+  seen[1][1].actions[0].onClick();
+  assert.deepEqual(clicked, ['retry']);
+  assert.equal(errors.length, 0);
+});
+
+test('ui.toast reports a throwing action instead of raising it', () => {
+  let action;
+  const { api, errors } = uiHarness({ toast: (owner, o) => { [action] = o.actions; } });
+  api.ui.toast({ text: 'Undo?', actions: [{ label: 'Undo', onClick: () => { throw new Error('boom'); } }] });
+  assert.doesNotThrow(() => action.onClick());
+  assert.match(errors[0], /\[ext:fake\] ui\.toast action threw: boom/);
+});
+
+test('ui.toast refuses a malformed toast without showing anything', () => {
+  let shown = 0;
+  const { api, errors } = uiHarness({ toast: () => { shown += 1; } });
+  const fn = () => {};
+  assert.equal(api.ui.toast(), false);
+  assert.equal(api.ui.toast({ text: '  ' }), false);
+  assert.equal(api.ui.toast({ text: 'x', severity: 'fatal' }), false);
+  assert.equal(api.ui.toast({ text: 'x', detail: 3 }), false);
+  assert.equal(api.ui.toast({ text: 'x', actions: 'Undo' }), false);
+  assert.equal(api.ui.toast({ text: 'x', actions: [1, 2, 3, 4].map(() => ({ label: 'a', onClick: fn })) }), false);
+  assert.equal(api.ui.toast({ text: 'x', actions: [{ label: 'Undo' }] }), false);
+  assert.equal(shown, 0);
+  assert.equal(errors.length, 7);
+  assert.match(errors[0], /\[ext:fake\] ui\.toast refused: text/);
+  assert.match(errors[2], /severity must be one of success, info, warning, error/);
+});
+
+test('ui.toast is false on a board without the stack', () => {
+  assert.equal(uiHarness({}).api.ui.toast({ text: 'x' }), false);
+});
+
 test('ui.withdraw forces the owner; removing an extension reports it for cleanup', () => {
   const withdrawn = [];
   const removed = [];
@@ -2258,4 +2302,34 @@ test('rail.button hands the caller\'s id and options to the board', () => {
   assert.equal(typeof handle.update, 'function');
   assert.deepEqual(f.calls.filter((c) => c[0] === 'rail'), [['rail', 'a', 'mic']]);
   assert.equal(h.slots.forExtension('b', {}).api.rail.button({ id: 'x' }), null);
+});
+
+test('sessionPanel: view and scroll pass through; type needs session:type and is bound to no raw panel', () => {
+  const h = harness({ requiresFor: (id) => (id === 'p' ? ['session:type'] : []) });
+  const calls = [];
+  const sessionPanel = {
+    view: () => 'terminal',
+    scroll: (how) => { calls.push(['scroll', how]); return how === 'top' ? { ok: true, view: 'terminal', moved: true } : { ok: false, reason: how ? 'no-panel' : 'bad-scroll' }; },
+    type: (text, opts) => { calls.push(['type', text, opts]); return text === 'locked' ? { ok: false, reason: 'gated' } : { ok: true, view: 'terminal', submitted: opts.submit }; },
+  };
+  const p = h.slots.forExtension('p', { sessionPanel }).api;
+  const q = h.slots.forExtension('q', { sessionPanel }).api;
+  assert.equal(p.sessionPanel.view(), 'terminal');
+  assert.deepEqual(p.sessionPanel.scroll('top'), { ok: true, view: 'terminal', moved: true });
+  assert.deepEqual(q.sessionPanel.scroll('page-up'), { ok: false, reason: 'no-panel' }, 'scrolling needs no capability');
+  assert.deepEqual(p.sessionPanel.type('hi', { submit: true }), { ok: true, view: 'terminal', submitted: true });
+  assert.deepEqual(p.sessionPanel.type('hi', { submit: 'yes' }).submitted, false, 'only a true submit submits');
+  assert.deepEqual(p.sessionPanel.type('locked'), { ok: false, reason: 'gated' });
+  assert.deepEqual(q.sessionPanel.type('hi'), { ok: false, reason: 'capability' });
+  assert.deepEqual(p.sessionPanel.type('hi', 'submit'), { ok: false, reason: 'bad-options' });
+  assert.equal(calls.filter((c) => c[0] === 'type').length, 3, 'refusals never reach the panel');
+  assert.ok(h.errors.some((e) => /\[ext:q\] sessionPanel\.type refused: needs the session:type capability/.test(e)));
+  assert.ok(!h.errors.some((e) => /gated|no-panel/.test(e)), 'an ordinary state is answered, not reported');
+  p.sessionPanel.scroll();
+  assert.ok(h.errors.some((e) => /sessionPanel\.scroll refused: bad-scroll/.test(e)));
+  assert.equal(p.sessionPanel, p.sessionPanel, 'one frozen object');
+  assert.equal(p.sessionPanel.raw, undefined);
+  const old = h.slots.forExtension('old', {}).api;
+  assert.equal(old.sessionPanel.view(), null, 'an older base api has no panel');
+  assert.deepEqual(old.sessionPanel.scroll('top'), { ok: false, reason: 'no-panel' });
 });

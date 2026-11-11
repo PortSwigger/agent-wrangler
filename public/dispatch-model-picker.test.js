@@ -305,7 +305,7 @@ test('model colours stay stable across effort changes and agent list ordering', 
 test('log cost ticks use round dollar values at their actual logarithmic positions', async () => {
   const { costTicks } = await import('./dispatch-model-picker.js');
   const ticks = costTicks();
-  assert.deepEqual(ticks.map((t) => t.label), ['$0.10', '$0.20', '$0.50', '$1', '$2', '$5', '$10']);
+  assert.deepEqual(ticks.map((t) => t.label), ['$0.10', '$0.20', '$0.50', '$1', '$2', '$5', '$10', '$20']);
   assert.ok(ticks.every((t) => t.cost >= 0 && t.cost <= 100));
   const one = ticks.find((t) => t.usd === 1), two = ticks.find((t) => t.usd === 2), ten = ticks.find((t) => t.usd === 10);
   assert.ok(Math.abs((two.cost - one.cost) / (ten.cost - one.cost) - Math.log10(2)) < 1e-10);
@@ -366,9 +366,9 @@ test('graph cost range fits visible points and expands for an expensive selected
   const { costRange, costTicks } = await import('./dispatch-model-picker.js');
   const visible = [...MODEL_FRONT.frontOf(agents), ...MODEL_FRONT.unavailableOf(MODEL_FRONT.frontOf(agents))];
   const range = costRange(visible);
-  assert.deepEqual(range, [0.1, 10]);
-  assert.equal(costTicks(range).at(-1).label, '$10');
-  assert.deepEqual(costRange([...visible, { usd: 16.18 }]), [0.1, 20]);
+  assert.deepEqual(range, [0.1, 20]);
+  assert.equal(costTicks(range).at(-1).label, '$20');
+  assert.deepEqual(costRange([...visible, { usd: 22.87 }]), [0.1, 50]);
   assert.deepEqual(costRange([]), [0.1, 10]);
   const single = costRange([{ usd: 1 }]);
   assert.ok(single[0] <= 1 && single[1] >= 1 && single[1] > single[0]);

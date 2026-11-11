@@ -8,7 +8,7 @@ const prices = JSON.parse(readFileSync(new URL('../server/price-catalog.snapshot
 const chart = (series, version = '4.0') => ({ _type: 'chart', title: `Terminal-Bench ${version}`, data: 'series,x,y,label,labelPlacement\n' + series.flatMap((s) => ['Low', 'Med', 'High', 'Xhigh', 'Max'].map((e, i) => `${s},${i + 1},${20 + i},${e},hidden`)).join('\n') });
 const page = (...charts) => `<script>self.__next_f.push(${JSON.stringify([1, '1:' + JSON.stringify({ body: charts }) + '\n'])})</script>`;
 const pages = {
-  'https://www.anthropic.com/claude-opus-5-5': page(chart(['fable51', 'gpt6astra'])),
+  'https://www.anthropic.com/claude-opus-5-5': page(chart(['gpt6astra'])),
   'https://www.anthropic.com/claude-sonnet-5-5': page(chart(['opus55'])),
   'https://www.anthropic.com/claude-haiku-5-5': page(chart(['haiku55', 'sonnet55', 'sonnet55old'])),
 };
@@ -30,6 +30,8 @@ test('reader uses board version, precise Anthropic CSVs and LiteLLM, retaining O
   const { inputs, log } = await readSources(options());
   assert.equal(inputs.benchmarks['terminal-bench'].version, '4.0');
   assert.deepEqual(inputs.models.codex['gpt-6.1-sol']['terminal-bench'].sweep, base.models.codex['gpt-6.1-sol']['terminal-bench'].sweep);
+  assert.deepEqual(inputs.models.claude.fable['terminal-bench'].sweep, base.models.claude.fable['terminal-bench'].sweep, 'Fable has no chart, so its sweep is carried');
+  assert.equal(inputs.models.claude.fable.price.write, prices.anthropic['claude-fable-5-2'].cacheWrite5m);
   assert.deepEqual(inputs.models.claude.sonnet['terminal-bench'].sweep.efforts.medium, [21, 2]);
   assert.equal(inputs.models.claude.opus.price.write, prices.anthropic['claude-opus-5-5'].cacheWrite5m);
   assert.equal(inputs.models.codex['gpt-6.1-sol'].price.write, prices.openai['gpt-6.1-sol'].cacheWrite5m);

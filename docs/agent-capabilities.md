@@ -1,6 +1,6 @@
 # Agent capabilities
 
-Managed Claude and Codex sessions receive Wrangler-specific skills: guidance for using the underlying
+Managed Claude, Codex and Gemini sessions receive Wrangler-specific skills: guidance for using the underlying
 [agent tools](agent-tools.md) correctly. Ask in ordinary language or use the examples below.
 
 ## Built-in Wrangler skills

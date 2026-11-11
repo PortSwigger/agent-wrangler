@@ -22,6 +22,7 @@ import path from 'node:path';
 import { costUsd, costUsdByType, codexCostUsd } from './pricing.js';
 import { CLAUDE_DIR } from './claude-paths.js';
 import { usageSince } from './transcript-reader.js';
+import { billedRunEntries } from './billed-runs.js';
 import { DATA_DIR as DEFAULT_DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 
@@ -727,10 +728,20 @@ export async function scanAllDaily({
   let statTick = 0;
   const maybeYield = async () => { if ((statTick += 1) % STAT_YIELD_EVERY === 0) await new Promise((r) => setImmediate(r)); };
 
+  // A billed run's Claude transcript resolves by its exact id only: it has no
+  // cwd bucket of its own to guess from, and the card's id is not its id.
+  const exactClaudeTranscripts = (_cardId, run) => [index.byUuid.get(run.liveSessionId)].filter(Boolean);
   for (const [cardId, entry] of Object.entries(entries)) {
     const agent = entry.agent ?? 'claude';
     const task = taskInfoFor(cardId, entry, assignments, taskNameById);
-    failedFiles += (await resolveAdapter(agent).usage.scanDaily({ cardId, entry, task, index, projectsDir, seenClaudeFiles, claudeDailyCached, normalizeClaudeDays, resolveClaudeTranscripts, usageSince, maybeYield, raw, trackedSessionIds: sessionIdsByAgent.get(agent), codexRolloutIndex, codexSessionsDir, seenCodexFiles, analyzeCodexCached, analyzeCodex, findRolloutChain, blankTokens, dayKeyOf })) || 0;
+    const scan = (scanAgent, scanEntry, resolveTranscripts) => resolveAdapter(scanAgent).usage.scanDaily({ cardId, entry: scanEntry, task, index, projectsDir, seenClaudeFiles, claudeDailyCached, normalizeClaudeDays, resolveClaudeTranscripts: resolveTranscripts, usageSince, maybeYield, raw, trackedSessionIds: sessionIdsByAgent.get(scanAgent) || new Set(), codexRolloutIndex, codexSessionsDir, seenCodexFiles, analyzeCodexCached, analyzeCodex, findRolloutChain, blankTokens, dayKeyOf });
+    failedFiles += (await scan(agent, entry, resolveClaudeTranscripts)) || 0;
+    // Headless runs another agent made for this card, priced by that agent's
+    // scanner and billed to this card (billed-runs.js). An agent this server
+    // no longer registers has no scanner to price it with.
+    for (const run of billedRunEntries(entry)) {
+      try { failedFiles += (await scan(run.agent, run.entry, exactClaudeTranscripts)) || 0; } catch { failedFiles += 1; }
+    }
   }
 
   for (const key of [...claudeFileCache.keys()]) {

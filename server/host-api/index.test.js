@@ -204,7 +204,7 @@ test('sessions:interrupt passes the card id straight to the composed interruptSe
 // -- links:write -----------------------------------------------------------
 // A links wiring over one real card's link list, with the normalise hooks of
 // two extensions: `x` claims `cloud`, `other` claims `jira`.
-function linksWiring({ links = [], rebuilds = [] } = {}) {
+function linksWiring({ links = [], rebuilds = [], requires = ['links:write'] } = {}) {
   const stored = { c1: links };
   const hooks = [
     { extId: 'x', fn: ({ link, host }) => {
@@ -222,7 +222,7 @@ function linksWiring({ links = [], rebuilds = [] } = {}) {
   });
   w.core.sessionManager.getLinks = (sid) => [...(stored[sid] || [])];
   w.core.sessionManager.setLinks = (sid, next) => { stored[sid] = [...next]; return true; };
-  host = buildHostApi({ id: 'x', requires: ['links:write'], ...w });
+  host = buildHostApi({ id: 'x', requires, ...w });
   return { host, stored, rebuilds };
 }
 
@@ -234,6 +234,31 @@ test('links:write get returns a copy of the card\'s links, [] for an unknown car
   assert.equal(stored.c1[0].url, 'https://github.com/o/r/pull/1');
   assert.deepEqual(host.links.get('gone'), []);
 });
+
+test('links:read exposes only get and returns independent link copies', () => {
+  const { host, stored } = linksWiring({
+    requires: ['links:read'],
+    links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }],
+  });
+  assert.deepEqual(Object.keys(host.links), ['get']);
+  const got = host.links.get('c1');
+  assert.deepEqual(got, stored.c1);
+  got[0].url = 'mutated';
+  got.push({ type: 'pr', url: 'extra' });
+  assert.deepEqual(host.links.get('c1'), [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }]);
+  assert.deepEqual(host.links.get('gone'), []);
+});
+
+for (const requires of [['links:read', 'links:write'], ['links:write', 'links:read']]) {
+  test(`${requires.join(' + ')} preserves get and attach`, () => {
+    const { host, stored, rebuilds } = linksWiring({ requires });
+    const link = host.links.attach('c1', { type: 'cloud', key: 'session_1' });
+    assert.deepEqual(host.links.get('c1'), [link]);
+    assert.deepEqual(stored.c1, [link]);
+    assert.deepEqual(host.links.get('gone'), []);
+    assert.equal(rebuilds.length, 1);
+  });
+}
 
 test('links:write attach runs the CALLER\'s own normalise, appends, then upserts in place, and rebuilds', () => {
   const { host, stored, rebuilds } = linksWiring({ links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }] });
@@ -373,6 +398,13 @@ test('spawn disallowedTools rides dispatch deduplicated for Claude, and is absen
   assert.equal('disallowedTools' in seen.dispatch[2], false);
 });
 
+test('spawn disallowedTools takes Claude permission rules beside tool names, spaces intact', async () => {
+  const { seen, host } = spawnWiring();
+  const rules = ['AskUserQuestion', 'Bash(gh pr merge:*)', 'Bash(terraform apply:*)', 'WebFetch(domain:example.com)', 'mcp__srv__tool(x)'];
+  await host.sessions.spawn({ cwd: '/repo', disallowedTools: [...rules, 'Bash(gh pr merge:*)'] });
+  assert.deepEqual(seen.dispatch[0].disallowedTools, rules);
+});
+
 test('a mistyped spawn option is REFUSED by name, never launched around', async () => {
   const { seen, host } = spawnWiring();
   const bad = [
@@ -400,7 +432,15 @@ test('a mistyped spawn option is REFUSED by name, never launched around', async 
     [{ disallowedTools: 'AskUserQuestion' }, /disallowedTools must be an array/],
     [{ disallowedTools: [''] }, /disallowedTools entries must be tool names/],
     [{ disallowedTools: [7] }, /disallowedTools entries must be tool names/],
-    [{ disallowedTools: ['Bash(rm:*)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(rm:*'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash()'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(   )'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash (rm:*)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['(rm:*)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(a)(b)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(echo (x))'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: ['Bash(rm\n-rf)'] }, /disallowedTools entries must be tool names/],
+    [{ disallowedTools: [`Bash(${'x'.repeat(257)})`] }, /disallowedTools entries must be tool names/],
     [{ disallowedTools: ['-p'] }, /disallowedTools entries must be tool names/],
     [{ disallowedTools: ['Ask User'] }, /disallowedTools entries must be tool names/],
     [{ disallowedTools: Array(65).fill('Read') }, /disallowedTools holds at most 64/],
@@ -577,17 +617,97 @@ test('usage is ABSENT without usage:read, and sessions.bill is ABSENT without se
   assert.equal('bill' in host.sessions, false);
 });
 
+// ---- agents:read ---------------------------------------------------------
+test('agents is ABSENT without agents:read', () => {
+  const host = buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring() });
+  assert.equal('agents' in host, false);
+});
+
+test('agents.list() lists every registered agent from the real registry with their capability flags', async () => {
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
+  const agents = await host.agents.list();
+  assert.deepEqual(agents.map((a) => a.id), ['claude', 'codex', 'gemini']);
+  const [claude, codex, gemini] = agents;
+  assert.deepEqual(gemini.capabilities, { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: false, mailWhileWorking: false, headless: true });
+  assert.equal(gemini.models.find((m) => m.value === 'auto').resolved, null);
+  assert.equal(gemini.models.find((m) => m.value === 'gemini-2.5-pro').resolved, 'gemini-2.5-pro');
+  assert.equal(claude.label, 'Claude');
+  assert.equal(claude.available, true);
+  assert.equal(typeof codex.available, 'boolean');
+  assert.deepEqual(claude.capabilities, { disallowedTools: true, remoteControl: true, askUserTool: 'AskUserQuestion', sandbox: false, mailWhileWorking: true, headless: true });
+  assert.deepEqual(codex.capabilities, { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: true, mailWhileWorking: false, headless: true });
+  const opus = claude.models.find((m) => m.value === 'opus');
+  assert.equal(opus.resolved, adapterFor('claude').modelId('opus'));
+  assert.match(opus.resolved, /^claude-opus-/);
+  assert.equal(opus.default, true);
+  assert.deepEqual(opus.efforts, claude.efforts.map((e) => e.value));
+  assert.equal(claude.models.find((m) => m.value === 'opusplan').resolved, null, 'opusplan runs two models');
+  for (const m of codex.models) assert.equal(m.resolved, m.value, 'a Codex value already is its id');
+  for (const a of agents) {
+    assert.equal(a.models.filter((m) => m.default).length, 1, `${a.id} has one default`);
+    for (const m of a.models) {
+      assert.deepEqual(Object.keys(m).sort(), ['autoEffort', 'background', 'default', 'efforts', 'label', 'resolved', 'value']);
+      assert.ok(m.autoEffort === null || a.efforts.some((e) => e.value === m.autoEffort), `${a.id}/${m.value} autoEffort`);
+    }
+  }
+});
+
+test('agents.list() marks the Background model, Claude Haiku by default', async () => {
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
+  const marked = (await host.agents.list()).flatMap((a) => a.models.filter((m) => m.background).map((m) => [a.id, m.value]));
+  assert.deepEqual(marked, [['claude', 'haiku']]);
+});
+
+// ---- agents:headless -----------------------------------------------------
+test('agents.headless is ABSENT without agents:headless, and agents:read alone does not bring it', () => {
+  assert.equal('agents' in buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring() }), false);
+  const reader = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
+  assert.deepEqual(Object.keys(reader.agents), ['list']);
+  const both = buildHostApi({ id: 'x', requires: ['agents:read', 'agents:headless'], ...wiring() });
+  assert.deepEqual(Object.keys(both.agents).sort(), ['headless', 'list']);
+});
+
+test('agents.headless passes only the documented options through and returns a frozen result with an error message', async () => {
+  const calls = [];
+  const runHeadless = async (o) => { calls.push(o); return { text: null, liveSessionId: 'T-1', agent: 'codex', model: 'm', error: new Error('exit 1') }; };
+  const host = buildHostApi({ id: 'x', requires: ['agents:headless'], ...wiring({ runHeadless }) });
+  const out = await host.agents.headless({ prompt: 'P', stdin: 'S', agent: 'codex', model: 'm', effort: 'low', timeoutMs: 5, env: { LEAK: '1' }, execFile: () => {} });
+  assert.deepEqual(calls, [{ prompt: 'P', stdin: 'S', agent: 'codex', model: 'm', effort: 'low', timeoutMs: 5 }]);
+  assert.deepEqual(out, { text: null, liveSessionId: 'T-1', agent: 'codex', model: 'm', error: 'exit 1' });
+  assert.ok(Object.isFrozen(out));
+  await assert.rejects(host.agents.headless('P'), /agents\.headless: pass \{ prompt/);
+});
+
+test('agents.headless rejects a bad call through the real runner without running anything', async () => {
+  const host = buildHostApi({ id: 'x', requires: ['agents:headless'], ...wiring() });
+  await assert.rejects(host.agents.headless({ prompt: 'P', agent: 'nope' }), /Unknown agent "nope"/);
+  await assert.rejects(host.agents.headless({ prompt: 'P', agent: 'claude', model: 'gpt-x' }), /Unknown model "gpt-x"/);
+  await assert.rejects(host.agents.headless({ stdin: 'x' }), /prompt must be a non-empty string/);
+});
+
+test('agents.list() reads afresh each call and its rows are frozen', async () => {
+  let calls = 0;
+  const listAgents = async () => { calls += 1; return [{ id: 'fixture', models: [{ value: 'm' }], capabilities: { sandbox: false } }]; };
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents }) });
+  const first = await host.agents.list();
+  await host.agents.list();
+  assert.equal(calls, 2);
+  assert.ok(Object.isFrozen(first[0].models[0]));
+  assert.throws(() => { first[0].capabilities.sandbox = true; }, TypeError);
+});
+
 // ---- sessions:bill -------------------------------------------------------
 test('sessions.bill forwards both ids to recordPriorLiveSessionId and returns its boolean', () => {
   const calls = [];
   const host = buildHostApi({
     id: 'x',
     requires: ['sessions:bill'],
-    ...wiring({ core: { ...wiring().core, sessionManager: { recordPriorLiveSessionId: (sid, live) => { calls.push([sid, live]); return sid === 'c1'; } } } }),
+    ...wiring({ core: { ...wiring().core, sessionManager: { recordPriorLiveSessionId: (sid, live, agent) => { calls.push([sid, live, agent]); return sid === 'c1'; } } } }),
   });
   assert.equal(host.sessions.bill('c1', 'head-1'), true);
   assert.equal(host.sessions.bill('missing', 'head-1'), false);
-  assert.deepEqual(calls, [['c1', 'head-1'], ['missing', 'head-1']]);
+  assert.equal(host.sessions.bill('c1', 'thread-1', 'codex'), true);
+  assert.deepEqual(calls, [['c1', 'head-1', undefined], ['missing', 'head-1', undefined], ['c1', 'thread-1', 'codex']]);
   // Only `bill` on the namespace: no read, wake or spawn rode in with it.
   assert.deepEqual(Object.keys(host.sessions), ['bill']);
 });
@@ -871,4 +991,32 @@ test('host spawn Remote Control refuses unknown agents and missing capability be
   } finally {
     adapter.supportsRemoteControl = prev;
   }
+});
+
+// ---- telemetry:emit (1.72.0) ------------------------------------------------
+test('host.telemetry is ABSENT without telemetry:emit, and offers no way to name a destination', () => {
+  assert.equal('telemetry' in buildHostApi({ id: 'x', requires: [], ...wiring() }), false);
+  const emitOnly = buildHostApi({ id: 'x', requires: ['telemetry:emit'], ...wiring() });
+  assert.deepEqual(Object.keys(emitOnly.telemetry).sort(), ['emit', 'model', 'on', 'ref', 'repo']);
+});
+
+test('telemetry.emit forces the caller\'s own id as the emitter, so no extension can emit as another', () => {
+  const calls = [];
+  const telemetry = {
+    on: () => true,
+    emit: (...args) => { calls.push(args); return true; },
+    ref: (k, v) => `${k}:${v}`,
+    repo: (r) => r,
+    model: (m) => m,
+  };
+  const host = buildHostApi({ id: 'jobs', requires: ['telemetry:emit'], ...wiring({ telemetry }) });
+  assert.equal(host.telemetry.emit('step.ended', { n: 1 }), true);
+  assert.deepEqual(calls, [['jobs', 'step.ended', { n: 1 }]]);
+  assert.equal(host.telemetry.emit.length, 2, 'there is no emitter argument to pass');
+});
+
+test('without core telemetry wired, host.telemetry is inert', () => {
+  const host = buildHostApi({ id: 'x', requires: ['telemetry:emit'], ...wiring() });
+  assert.equal(host.telemetry.on(), false);
+  assert.equal(host.telemetry.emit('a', {}), false);
 });

@@ -1,6 +1,6 @@
 // A persistent, non-auto-dismissing banner for server-wide alerts (as opposed to
-// #toast, which is single-slot and timer-driven even for action toasts — wrong
-// for something meant to stay visible, unmissed, until acted on). Zero coupling,
+// the #toast stack, whose toasts are transient and can be pushed out by newer
+// ones — wrong for something meant to stay visible, unmissed, until acted on). Zero coupling,
 // like toast.js: pure DOM, no app state.
 
 const DISMISS_KEY = 'aw-system-banner-dismiss';

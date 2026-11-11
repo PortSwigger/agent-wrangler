@@ -470,7 +470,54 @@ import semver from 'semver';
 // text), `api.front()` with `front.onChange`, and `api.rail.button()` with its
 // progress ring. An older board has none of them, so an extension that uses them
 // declares `^1.65.0`.
-export const HOST_API_VERSION = '1.65.0';
+//
+// 1.66.0 adds the `agents:read` capability (`host.agents.list()`, every
+// registered agent with its availability, models and capability flags) and
+// `resolved`, the full model id, on each model of the client `api.agents()`. An
+// older server quarantines the unknown capability and an older board's models
+// have no `resolved`, so a manifest reading either declares `^1.66.0`.
+//
+// 1.67.0 adds the `agents:headless` capability (`host.agents.headless({ prompt,
+// stdin, agent?, model?, effort?, timeoutMs? })`, a tool-less one-shot on any
+// agent whose adapter has a `headless` capability, on Settings › Background
+// model when no model is named), the `headless` capability flag and each
+// model's `background` mark on `host.agents.list()` rows, and an optional third
+// `agent` argument to `host.sessions.bill`, which bills a run by another agent
+// than the card's own. An older server quarantines the unknown capability and
+// lists neither field, so a manifest using any of them declares `^1.67.0`.
+//
+// 1.68.0 is CLIENT-only: `api.sessionPanel` for the open session's panel, on the
+// board or lent to an extension view: `view()` ('chat', 'terminal' or null),
+// `scroll(how)` (the Chat stream, or the Terminal by wheel reports as the wheel
+// does) and `type(text, { submit })` behind the new client capability
+// `session:type`, refused while the session's `session.inputGate` holds. The
+// open Terminal is listed by `api.targets` as `panel:terminal` (pressing it
+// focuses it) and `api.front()` gains `panel`. An older board has none of them,
+// so an extension that uses them declares `^1.68.0`.
+//
+// 1.69.0 lets `sessions.spawn`'s `disallowedTools` hold Claude permission rules
+// such as `Bash(gh pr merge:*)` beside plain tool names, each passed to Claude
+// as its own argument so its spaces survive launch, resume and fork. An older
+// server refuses a rule by name before anything launches, so a manifest that
+// spawns with one declares `^1.69.0`.
+// 1.70.0 adds `links:read`: `host.links.get(sessionId)` without attach.
+// Extensions needing read-only session links declare `^1.70.0`.
+//
+// 1.71.0 is CLIENT-only: `api.ui.toast({ severity, text, detail, actions })`
+// shows a transient message in the board's own toast stack, so it is seen on
+// every view and above an open dialog. An older board has no `ui.toast`, so an
+// extension that calls it either checks for the function or declares `^1.71.0`.
+//
+// 1.72.0 adds telemetry. `telemetry:emit` gives `host.telemetry.{on, emit, ref,
+// repo, model}` for the events a manifest declares under `telemetry.events`
+// (typed fields from a closed vocabulary with no string type, sent as
+// `<id>.<name>`). Core owns where they go (its built-in collector, overridable
+// by AW_TELEMETRY_URL or config `telemetry.url`), the queue, batching and
+// retries. Telemetry is always on, with no switch. A manifest
+// cannot name a destination. The manifest also gains an optional `version`,
+// stamped on its events. An older server quarantines the unknown capability, so
+// a manifest using it declares `^1.72.0`.
+export const HOST_API_VERSION = '1.72.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

@@ -4,6 +4,7 @@ import { readConfig, extensionEnabled, extensionSettings } from '../config-store
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
+import { normaliseTelemetryDecl, VERSION_RE } from './telemetry-schema.js';
 import { isValidBranchName } from '../worktree.js';
 import { parseCombo, SCOPES as KEY_SCOPES } from '../../public/keybindings.js';
 import checklist from './builtin/checklist/index.js';
@@ -67,7 +68,7 @@ export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
   'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'childFullViewByDefault',
   'autoFixPrChecksDefault', 'mailWakesDormant', 'prModelFooter', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
-  'codexPolicyDefaults', 'quarantinedBuiltins',
+  'codexPolicyDefaults', 'backgroundModel', 'quarantinedBuiltins',
 ]);
 
 // The CLOSED capability vocabulary a manifest's `requires` is drawn from. It
@@ -89,9 +90,13 @@ export const CAPABILITIES = new Set([
   'usage:read',
   'sessions:bill',
   'sessions:interrupt',
+  'links:read',
   'links:write',
   'images:keep',
   'files:view',
+  'agents:read',
+  'agents:headless',
+  'telemetry:emit',
 ]);
 
 // Capabilities with NO server façade: grants the BROWSER half checks (slots.js
@@ -102,7 +107,8 @@ export const CAPABILITIES = new Set([
 //   cards:hideChips — hide chips in the board cards' meta row (api.cards).
 //   files:open — open the file links clicked in chat and the terminal (file.open).
 //   board:press — press the board's buttons, cards and menu rows (api.targets.press).
-export const CLIENT_CAPABILITIES = new Set(['cards:hideChips', 'files:open', 'board:press']);
+//   session:type — type and send prompts into the open session (api.sessionPanel.type).
+export const CLIENT_CAPABILITIES = new Set(['cards:hideChips', 'files:open', 'board:press', 'session:type']);
 
 // The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
 // core dispatch-modal fields an extension may take over by drawing its own
@@ -217,6 +223,9 @@ function shipsSkill(dir, name) {
 export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkillNames() } = {}) {
   if (!ext || typeof ext !== 'object') throw new Error('Extension <no id>: manifest is not an object');
   if (typeof ext.id !== 'string' || !ID_RE.test(ext.id)) fail(ext, `id must match ${ID_RE} (got ${JSON.stringify(ext.id)})`);
+  // `core` is the wrangler's own telemetry emitter (`core.*` events), so no
+  // extension may take the id and emit as it.
+  if (ext.id === 'core') fail(ext, 'id "core" is reserved for the wrangler itself');
   if (typeof ext.label !== 'string' || !ext.label) fail(ext, 'label must be a non-empty string');
   if (ext.help != null && typeof ext.help !== 'string') fail(ext, 'help must be a string');
   // Consent-modal and settings-row prose. Optional, and third-party strings for
@@ -236,6 +245,16 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       if (!CAPABILITIES.has(c) && !CLIENT_CAPABILITIES.has(c)) fail(ext, `unknown capability "${c}" (known: ${[...CAPABILITIES, ...CLIENT_CAPABILITIES].sort().join(', ')})`);
     }
   }
+  // `version` (1.72.0, optional): the extension's own version, stamped on its
+  // telemetry events as `emitterVersion`.
+  if (ext.version != null && (typeof ext.version !== 'string' || !VERSION_RE.test(ext.version))) {
+    fail(ext, 'version must be a version like 1.2.3');
+  }
+  // `telemetry` (1.72.0): an event catalogue to emit (`telemetry:emit`). Shape
+  // and capability are checked here; the loader carries the normalised form for
+  // index.js to register. Where events go is core's, never a manifest's.
+  const tele = normaliseTelemetryDecl(ext.telemetry, Array.isArray(ext.requires) ? ext.requires : []);
+  if (tele.error) fail(ext, tele.error);
   // Which core dispatch-modal rows this extension's browser half may hide. The
   // DISCLOSURE half of the two-key veto — a contribution's own `hides` is
   // filtered against it client-side, so the browser can never widen what the
@@ -657,6 +676,8 @@ function quarantinedEntry(ext, quarantine) {
     dir: typeof ext?.dir === 'string' ? ext.dir : null,
     provenance: ext?.provenance ?? null,
     earlyAdopterBranch: null,
+    telemetry: { events: null },
+    version: null,
     quarantine,
   };
 }
@@ -728,6 +749,11 @@ function stageExtension(ext, { cfg, out, reg }) {
     dir: typeof ext.dir === 'string' ? ext.dir : null,
     provenance: ext.provenance ?? null,
     earlyAdopterBranch: ext.earlyAdopter?.branch ?? null,
+    // The normalised `telemetry` declaration (its events, null when absent)
+    // and the version stamped on them. Registered with core
+    // telemetry by index.js on activate, taken back on deactivate.
+    telemetry: normaliseTelemetryDecl(ext.telemetry, ext.requires || []),
+    version: typeof ext.version === 'string' ? ext.version : null,
     quarantine: null,
   };
   if (!enabled) {

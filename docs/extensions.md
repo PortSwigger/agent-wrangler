@@ -169,6 +169,7 @@ Supported manifest contributions are:
 | Browser UI | `client`, optional `styles`, and slots from `public/slots.js` |
 | Themes | `themes`: a directory of `<id>/theme.json` + assets, offered in Settings › Appearance. See [Themes](#themes) |
 | Core access | `requires`, served through the versioned host API in `server/host-api/` |
+| Telemetry | `telemetry.events` to emit typed usage events, which core sends to its built-in collector. See [Telemetry](#telemetry) |
 
 ### Themes
 
@@ -1275,9 +1276,12 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `wranglerExtension` when using these hooks. Server host access still requires
   the capabilities listed in `requires`.
 - **`api.agents()`** (1.25.0) returns the dispatch dialog's agent list —
-  `[{ id, label, models: [{ value, label, default, autoEffort }], efforts: [{ value, label }] }]`,
+  `[{ id, label, models: [{ value, label, default, autoEffort, resolved }], efforts: [{ value, label }] }]`,
   the same list core's model select reads, sourced from the live model and
-  price catalogs — as a fresh deep copy per call. A model's `autoEffort`
+  price catalogs — as a fresh deep copy per call. A model's `resolved` (1.66.0)
+  is the full model id its value runs today (`opus` → `claude-opus-5-5`, a
+  Codex value is already its own id), or null for a value that runs more than
+  one model (`opusplan`); an older board's models have no `resolved`. A model's `autoEffort`
   (1.49.0) is the level the agent runs it at when a launch passes no effort
   ("Auto"), read from the user's and organization's settings (Claude: managed
   settings, a settings `env` block's `CLAUDE_CODE_EFFORT_LEVEL`, user settings,
@@ -1417,10 +1421,13 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   open dialog (the focused one, else the last opened) takes it all, then an open
   context menu, otherwise the rail, the board, Search or the extension view in
   front, the open session's panel and chat, and the diff. A terminal's own DOM
-  is never listed. `where` is `'rail'`, `'board'`, `'search'`, `'view'`,
+  is never listed; the open session's Terminal is one target instead (1.68.0),
+  `panel:terminal` of kind `'terminal'` and label `Terminal`, listed while it
+  shows and nothing is over it, and pressing it focuses it, so typed keys go to
+  the session. `where` is `'rail'`, `'board'`, `'search'`, `'view'`,
   `'panel'`, `'diff'`, `'dialog'` or `'menu'`; `kind` is `'session'`,
-  `'task-new-session'`, `'task-menu'`, `'rail'`, `'tab'`, `'field'`, `'link'` or
-  `'button'`; `label` is its aria-label, title or text (80 characters at most);
+  `'task-new-session'`, `'task-menu'`, `'rail'`, `'tab'`, `'field'`, `'link'`,
+  `'terminal'` or `'button'`; `label` is its aria-label, title or text (80 characters at most);
   `href` is a link's own; `rect` is `{ x, y, width, height }` in viewport pixels,
   clipped to what shows.
   **A key names the same thing across redraws**: a session card is
@@ -1448,11 +1455,13 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   them. The board watches the DOM only while some extension listens or has
   badges, and subscriptions and badges die with the extension.
 - **`api.front()`** (1.65.0) is what is in front:
-  `{ view, ext, dialog, menu, session }`: `view` the board's view key (`'grid'`,
+  `{ view, ext, dialog, menu, session, panel }`: `view` the board's view key (`'grid'`,
   `'search'` or `ext:<extId>:<id>`), `ext` the extension owning that view or
   null, `dialog` the open dialog's id (`'dialog'` for one with none) or null,
   `menu` whether a context menu is open, `session` the open session's id or
-  null. **`api.front.onChange(fn)`** calls `fn` with a fresh copy whenever one of
+  null, and `panel` (1.68.0) what that session's panel shows, `'chat'` or
+  `'terminal'` (a live pane attached), or null (none open, a dormant session's
+  Resume page). **`api.front.onChange(fn)`** calls `fn` with a fresh copy whenever one of
   those changes, and returns the unsubscribe function.
 - **`api.rail.button({ id, label, icon?, active?, progress?, onPress })`**
   (1.65.0, `public/rail-buttons.js`) puts a button in the rail's bottom zone,
@@ -1465,6 +1474,39 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   with the extension. It is listed by `api.targets` as `rail:ext:<extId>:<id>`.
   An extension using `api.targets`, `api.front` or `api.rail` declares
   `^1.65.0`, or checks for them and does without on an older board.
+- **`api.sessionPanel`** (1.68.0, `public/session-panel.js`) works the open
+  session's panel, on the board or lent to an extension view by
+  `api.mountSession` alike, so an extension can drive it by something other
+  than a pointer and keyboard (voice, a switch). Each call answers
+  `{ ok: true, view, … }` or `{ ok: false, reason }`; a misuse (a bad argument,
+  no capability) is reported to the console too.
+  **`view()`** is `'chat'`, `'terminal'` or null, as `api.front().panel`.
+  **`scroll(how)`**, `how` one of `'page-up'`, `'page-down'`, `'line-up'`,
+  `'line-down'`, `'top'` or `'bottom'`, scrolls whichever shows. The Chat stream
+  moves by most of its height a page, 40 pixels a line, and to either end;
+  `moved` is false when it was already there. The Terminal scrolls as the wheel
+  does: the board sends wheel notches over the pane, which tmux (`mouse on`)
+  hands to an app that takes the mouse (Claude's fullscreen TUI scrolls its
+  history) or uses itself (copy-mode scrollback, 5 lines a notch); a line is
+  one notch, a page 0.3 notches per row of the pane (17 on 56 rows, which
+  Claude's TUI, speeding up through a burst, turns into most of a screen), and
+  top or bottom 400 notches, since a pane cannot say where its history ends;
+  they go out 25 every 16 ms, as a fast flick would, and a newer scroll drops
+  what is left of the last. Scrolling needs no
+  capability: a notch is a pointer report, which even a locked session takes.
+  **`type(text, { submit })`** needs the client-only capability
+  **`session:type`** (`reason: 'capability'` without it) and types `text` into
+  the session as the human would. In Chat it goes on the end of the composer,
+  and `submit: true` then sends the composer as its Send does (`submitted:
+  true`), waking a dormant session. In the Terminal it is pasted at the pane's
+  cursor as xterm pastes (bracketed); `submit: true` sends `text` as the
+  composer's own send does (pasted after whatever the pane holds, then
+  submitted), or with empty text presses Enter. Nothing is typed while the
+  session's `session.inputGate` holds (`reason: 'gated'`), while the Chat
+  composer is waiting on a terminal prompt (`'blocked'`), or with no panel open
+  (`'no-panel'`); `'not-sent'` means the send did not go out (no connection, a
+  send already in flight). The caller owns spacing between stretches of text.
+  An extension using it declares `^1.68.0`, or checks for `api.sessionPanel`.
 - **`api.onThemeChange(fn)`** (1.39.0) calls `fn({ id, base })` whenever the
   board applies a different theme palette (`id` the style, `base` `'dark'` or
   `'light'`). Returns an unsubscribe function; listeners go with the extension. A
@@ -1646,11 +1688,17 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   a relaunch after an update, and a fork (which inherits it, since a fork of an
   unwatched session is no more watched). Use it for a session whose pane nobody
   watches, where a tool that waits on the terminal would block it. Entries are
-  plain tool names (`AskUserQuestion`, `mcp__server__tool`), at most 64;
-  duplicates collapse and an empty array is no option. Permission rules such as
-  `Bash(rm:*)`, a non-array, or any agent other than Claude are refused by name
-  before anything launches. An older server ignores the option and launches
-  with every tool, so a manifest relying on it declares `^1.58.0`.
+  plain tool names (`AskUserQuestion`, `mcp__server__tool`) or, since 1.69.0,
+  Claude permission rules such as `Bash(gh pr merge:*)`, at most 64; duplicates
+  collapse and an empty array is no option. Each entry is its own argument, so
+  a rule keeps its spaces on launch, resume and fork. A rule is Claude's own
+  deny check, not a sandbox: it stops the matching tool call, not a shell that
+  reaches the same command another way. A malformed entry (an empty, unclosed
+  or nested specifier, a control character, a leading `-`), a non-array, or any
+  agent other than Claude is refused by name before anything launches. An older
+  server ignores the option and launches with every tool, so a manifest
+  relying on it declares `^1.58.0`, and one passing a rule declares `^1.69.0`
+  (a 1.58–1.68 server refuses the rule).
 - **`adversarial-review`'s shape is a SKILL plus a
   TOOL on purpose.** A SKILL.md is static, so it cannot carry the human's
   configured process; Claude's `` !`cmd` `` injection would, but Codex reads
@@ -1775,9 +1823,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Headless requests must leave the card's live session bindings unchanged; hooks
   should only resolve the requested environment, and core does not cache their
   directory grants. Task memory contributes nothing to a headless run.
-  Core's `runHeadlessClaude` merges an `env` option over the process environment,
-  then strips nested-Claude markers, preserving an explicitly supplied
-  `CLAUDE_CODE_OAUTH_TOKEN` for the selected login;
+  Core's `runHeadless` (`server/headless.js`) merges an `env` option over the
+  process environment; Claude's headless command then strips nested-Claude
+  markers, preserving an explicitly supplied `CLAUDE_CODE_OAUTH_TOKEN` for the
+  selected login;
   archive memory review collects the card's headless context before running and logs
   a refusal as a skipped review, without stamping or publishing a result.
 - **`hooks['session.prepare']`** (1.32.0), called with `{ sessionId, taskId,
@@ -1841,6 +1890,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   stored on that task or session: those pass through unchanged, so an agent
   resending the full list from `get_links` is not broken by an extension being off.
   `remove_links` matches non-`pr` links generically (key, case-insensitive, or url).
+- **`host.links.get(sessionId)`** (capability `links:read`, 1.70.0) returns a
+  copy of the card's session links, including PR links, or `[]` for an unknown
+  card. This capability exposes only `get`; it does not expose `attach`.
 - **`host.links`** (capability `links:write`, 1.19.0) lets server code put a link
   on a card when no agent will call `set_links` for it, e.g. a sweep that learns a
   URL after launch. `get(sid)` returns a copy of the card's session links (`[]` for
@@ -1977,6 +2029,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   withdrawn. Showing an `id` that is already up updates it in place.
   `api.ui.withdraw(id)` takes one down. Ids are per extension, and an extension's
   cards are removed when it is turned off. All text is set as text.
+- **Client `api.ui.toast({ severity, text, detail, actions })`** (1.71.0) shows a
+  transient message in the board's own toast stack (`public/toast.js`), the one
+  core's toasts use, for feedback on something the human just did. It shows on
+  every view, not only the extension's own, and above an open dialog.
+  `severity` is `'success'`, `'info'` (the default), `'warning'` or `'error'`
+  and sets how long it stays: 3 s, 5 s, 8 s, or until closed. `detail` is
+  longer text behind a Details expander, and `actions` is up to three
+  `{ label, onClick }` buttons; clicking one closes the toast, and a throwing
+  `onClick` is reported, not raised. It returns `true` when shown and `false`
+  when refused (reported as `[ext:<id>] ui.toast refused: …`) or on a board
+  without the stack. All text is set as text. Use `ui.notify` instead for
+  something the human did not ask about and must not miss. An extension using
+  it declares `^1.71.0`, or checks for `api.ui.toast`.
 - **`host.tasks.archive(taskId)`** (capability `tasks:archive`, 1.23.0) archives a
   task as its tile's Archive does: the task and every live session assigned to it.
   Resolves `{ archived, sessionIds, unclean }`; `archived` is false for an unknown or
@@ -1994,6 +2059,162 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   that day (`{}` when the scan recorded none). A Codex conversation's whole
   estimate sits on the UTC day it started. A manifest reading `days` declares
   `^1.60.0`.
+
+- **`host.agents.list()`** (capability `agents:read`, 1.66.0) resolves every
+  agent the server registers, installed or not, as frozen rows read afresh per
+  call: `{ id, label, available, models, efforts, capabilities }`. `available`
+  is whether its CLI is installed here. `efforts` is the agent's
+  `[{ value, label }]`. Each model is `{ value, resolved, label, default,
+  efforts, autoEffort, background }`: `resolved` as on `api.agents()`, `efforts` the effort
+  values a launch of that model accepts, `autoEffort` the level it runs at with no effort
+  passed (null when unknown), `background` (1.67.0) true on the one model
+  Settings › Automation › Background model names. `capabilities` is what a host can lean on, so it
+  branches on what an agent does rather than on its id:
+
+  | Flag | Meaning |
+  | --- | --- |
+  | `disallowedTools` | `spawn({ disallowedTools })` is honoured (refused otherwise). |
+  | `remoteControl` | `spawn({ remoteControl })` gives the session phone control (refused otherwise). |
+  | `askUserTool` | The tool that asks the human in the pane, to block with `disallowedTools` when nobody watches it (`AskUserQuestion` for Claude), or null. |
+  | `sandbox` | It runs under an OS sandbox that `codexPolicy` hooks shape; `spawn({ addDirs })` become its extra writable folders. |
+  | `mailWhileWorking` | Mail reaches it mid-turn; without it a pasted message waits for the turn to end. |
+  | `headless` (1.67.0) | `host.agents.headless({ agent })` can run on it. |
+
+  A manifest using it declares `^1.66.0` (`^1.67.0` to read `headless` or `background`).
+
+- **`host.agents.headless({ prompt, stdin?, agent?, model?, effort?, timeoutMs? })`**
+  (capability `agents:headless`, 1.67.0) runs one tool-less one-shot and resolves a
+  frozen `{ text, liveSessionId, agent, model, error }`. `prompt` goes in argv and
+  `stdin` (a string, default empty) is piped in; every tool is off, and the user's own
+  settings and MCP servers are not loaded. Claude runs `claude -p` with its tools
+  disallowed; Codex runs `codex exec` in a read-only sandbox with its tool features
+  disabled and the user's `config.toml` ignored. With no `model` the run uses the
+  **Background model** (Settings › Automation, Claude Haiku by default); an `agent`
+  alone runs the Background model when it is that agent, otherwise that agent's own
+  headless default. `timeoutMs` defaults to two minutes and is capped at ten. A failed
+  run resolves with `error` as a message and `text` null; `liveSessionId` is still set
+  when the run started a conversation, because that conversation spent tokens. It
+  rejects only for a bad call: no prompt, an unknown agent, a model or effort that
+  agent does not list, or an agent without `capabilities.headless`. The spend is not
+  billed to any card until the extension calls `host.sessions.bill(sessionId,
+  liveSessionId, agent)` (`sessions:bill`) with the returned id and agent.
+
+## Telemetry
+
+Telemetry (1.72.0) lets core and extensions **emit** typed usage events (`telemetry:emit`). Where they
+go is core's alone: one built-in collector, which no extension can change or add to. Core owns
+everything between: an install id, refs, the on-disk queue, batching and retries.
+Telemetry is **always on**, with no switch to turn it off: events queue from the first run and are
+sent whenever the collector is reachable. The URL override below is for development, not an opt-out.
+
+### Emitting
+
+Declare every event and its fields in the manifest, then emit at runtime:
+
+```js
+export default {
+  id: 'jobs',
+  version: '1.4.0',               // optional, stamped on its events as emitterVersion
+  requires: ['telemetry:emit'],
+  engines: { wranglerApi: '^1.72.0' },
+  telemetry: {
+    events: {
+      // sent as type `jobs.step.ended`; bump v whenever a field changes
+      'step.ended': { v: 1, fields: {
+        job: 'ref',
+        kind: { enum: ['pr', 'session', 'human', 'write'] },
+        repo: { repo: true, nullable: true },
+        tries: { int: [0, 200] },
+        acceptedRed: 'bool',
+        ms: 'ms',
+      } },
+    },
+  },
+};
+
+// in a tool, handler, hook or sweep:
+if (host.telemetry.on()) {
+  host.telemetry.emit('step.ended', {
+    job: host.telemetry.ref('job', job.id),
+    kind: 'pr',
+    repo: host.telemetry.repo('git@github.com:acme/widgets.git'),
+    tries: 2, acceptedRed: false, ms: 120000,
+  });
+}
+```
+
+- **`host.telemetry.on()`** is false only while a URL override is not a valid endpoint, so an emitter
+  can skip building an event.
+- **`host.telemetry.emit(name, data)`** checks `data` against the declaration and throws on an
+  undeclared event, an undeclared field, a missing field or a value its type refuses, even when
+  `on()` is false, so a bug shows up in development. It returns whether the event was queued. The wire `type` is
+  forced to `<your id>.<name>`: no extension can emit another's events, and the id `core` is reserved
+  for the wrangler.
+- **`host.telemetry.ref(kind, id)`** is an HMAC of `kind:id` under a per-install secret that never
+  leaves the machine, 16 hex characters: stable on this machine, meaningless anywhere else.
+- **`host.telemetry.repo(raw)`** takes a slug or a git remote and gives `owner/name`, `none` for
+  nothing and `other` for anything it cannot read. At send, a repo whose owner does not start with core's
+  allowed prefix goes as `other` (see [The collector](#the-collector)).
+- **`host.telemetry.model(raw)`** gives a model id the price catalogue lists exactly, `default` for
+  none, or `other`.
+
+Field types form a closed vocabulary with **no string type**, so free text has nothing to travel in:
+
+| Type | Accepts |
+| --- | --- |
+| `'bool'` | `true` or `false` |
+| `'ms'` | an integer from 0 to 24 hours in milliseconds |
+| `'usd'` | a number from 0 to 10 000 with at most 2 decimal places |
+| `{ int: [min, max] }` | an integer in range |
+| `{ enum: [...] }` | one of up to 60 values, each `[a-z0-9][a-z0-9._-]{0,39}` |
+| `{ list: { enum: [...] }, max }` | an array of up to `max` of those values |
+| `'ref'` | a value from `host.telemetry.ref` |
+| `{ repo: true }` | a value from `host.telemetry.repo` |
+| `'model'` | a value from `host.telemetry.model` |
+| `'version'` | a version such as `1.2.3` |
+
+Any type can add `nullable: true` (a simple type is then written `{ type: 'ms', nullable: true }`).
+Every declared field is required; a nullable one is sent as `null`. Field names may not reuse the
+envelope's.
+
+### The collector
+
+Core sends every event to one collector:
+
+| | |
+| --- | --- |
+| Built in | `https://wrangler-telemetry.platform-prod.portswigger.io/v1/events` |
+| Override | `AW_TELEMETRY_URL`, then `telemetry.url` in `config.json` (for a dev collector or a local stub) |
+| Repo names sent | any owner that starts with `portswigger` (lowercased), e.g. `portswigger` or `portswigger-apps`; any other repo goes as `other` |
+
+The request carries no credentials: the collector's ingress admits only its organisation's office
+network. Anywhere else a send fails, and the events wait in the queue (within its limits below) until
+the machine is back on that network; the last error is recorded beside the queue in `telemetry.json`.
+
+An override must be `https://` (`http://` only to `localhost`, `127.0.0.1` or `[::1]`, for a local
+stub), with no credentials, query or fragment. An invalid override is not fallen back from: nothing is
+sent, and the server log says why. A manifest that declares `telemetry.sinks` is refused.
+
+Core POSTs `{ "events": [...] }` as JSON, at most 100 events and 64 KiB per request. Each event is the envelope plus the declared fields, flat:
+
+| Field | Meaning |
+| --- | --- |
+| `eventId` | random UUID per event, the same on every retry so a collector can dedupe |
+| `ts` | when it was emitted, RFC 3339 UTC to the second |
+| `type`, `v` | `<emitter>.<name>` and the declared version |
+| `install` | a random UUID made once per data directory, not derived from the machine or user |
+| `awVersion`, `emitterVersion` | the wrangler's version and the emitter's (`version`, or the wrangler's for core and builtins) |
+
+There is no team or user field: `install` plus each event's `repo` is what ties events to one
+person's work.
+
+A 2xx removes the batch. 403, 404, 408, 429, 5xx and network errors retry the same batch with a
+backoff from 15 seconds doubling to an hour (a new URL is tried at once); any other 4xx drops it. Before each send an event is checked
+again against the catalogue as it stands then: fields no longer declared are stripped, and an event
+that no longer fits (or whose emitter is gone) is dropped. The queue lives in
+`<data dir>/telemetry.json` (mode 0600, with the install id and ref secret), holds at most 5 000
+events and 30 days, drops the oldest first, and survives restarts. Disabling an extension stops its
+events, and any of them still queued are dropped at the next send.
 
 ## Runtimes
 
@@ -2128,7 +2349,8 @@ all of that; notes stay on disk under `~/.agent-wrangler/memory`. The old
 
 The **Auto-review archived sessions into task memory** toggle lives under
 Settings > Extensions > Task memory and defaults to off. When enabled, archiving
-a Claude session runs a Haiku review and appends learnings to the task's memory;
+a Claude session runs a review on the Background model (Settings > Automation,
+Claude Haiku by default), billed to that session, and appends learnings to the task's memory;
 this costs a small amount per archive and grows the file. Disabling the extension
 also stops these reviews. The value is stored at
 `extensionSettings.task-memory.archiveReviewEnabled`; at boot, `RETIRED_SETTINGS`

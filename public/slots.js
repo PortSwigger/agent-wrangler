@@ -104,6 +104,11 @@ export const FILES_OPEN_CAPABILITY = 'files:open';
 // badges, the rail button and `api.front` need nothing.
 export const BOARD_PRESS_CAPABILITY = 'board:press';
 
+// Gates `api.sessionPanel.type` (1.68.0): typing and sending prompts into the
+// open session for the human is disclosed at consent. Its view and scroll need
+// nothing: a scroll is a wheel report, which even a locked session takes.
+export const SESSION_TYPE_CAPABILITY = 'session:type';
+
 // The value slots and the one function each contribution must carry in place
 // of mount().
 const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue', 'file.open': 'open', 'session.inputGate': 'gate' };
@@ -152,6 +157,8 @@ const REQUIRED_FIELDS = { view: ['label'], 'dispatch.field': ['at'] };
 function copyAgents(agents) {
   return Array.isArray(agents) ? JSON.parse(JSON.stringify(agents)) : [];
 }
+
+const TOAST_SEVERITIES = ['success', 'info', 'warning', 'error'];
 
 function isPlainObject(v) {
   return v != null && typeof v === 'object' && !Array.isArray(v);
@@ -450,9 +457,10 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             prefill from what Settings holds right now. Unset keys are
   //             absent, exactly as `host.settings` reads them server-side.
   //   agents  — the dispatch dialog's agent list (1.25.0): `[{ id, label,
-  //             models: [{ value, label, default, autoEffort }], efforts }]`
+  //             models: [{ value, label, default, autoEffort, resolved }], efforts }]`
   //             (`autoEffort`, 1.49.0: the level the agent runs that model at
-  //             when no effort is passed, absent when unknown), the same
+  //             when no effort is passed, absent when unknown; `resolved`,
+  //             1.66.0: the full model id it runs, null for opusplan), the same
   //             live-catalog list the board's own model select reads, as a
   //             fresh deep copy per call. `agents.onChange(fn)` fires when the
   //             server re-sends it (on connect, and on a catalog refresh), so
@@ -470,6 +478,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             resolves with the clicked action's id, or null when it is
   //             closed or withdrawn; `withdraw(id)` takes one down. The owner
   //             is forced to this extension, and its cards go when it does.
+  //             `toast({ severity, text, detail, actions })` (1.71.0) shows a
+  //             transient message in the board's toast stack
+  //             (public/toast.js), on every view and above open dialogs.
+  //             `severity` is success, info (default), warning or error, which
+  //             sets how long it stays; `detail` sits behind Details; up to
+  //             three `{ label, onClick }` actions. True when shown.
   // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
   // told an extension's types (no announcement, no graph) must fail closed and
   // report rather than forward blind.
@@ -490,7 +504,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         return null;
       };
       // openExtFile takes an extension id; only the bound openFile below may reach it.
-      const { openExtFile: _bound, board: _board, railButtons: _rail, ...exposed } = baseApi;
+      const { openExtFile: _bound, board: _board, railButtons: _rail, sessionPanel: _panel, ...exposed } = baseApi;
       apis.set(extId, {
         ...exposed,
         // Resolved HERE rather than at createSlots time: the server announces it,
@@ -642,6 +656,33 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           withdraw: (id) => {
             if (typeof id === 'string' && id) baseApi.withdrawNotification?.(extId, id);
           },
+          toast: (opts) => {
+            const o = isPlainObject(opts) ? opts : {};
+            const actions = o.actions == null ? [] : o.actions;
+            const bad = typeof o.text !== 'string' || !o.text.trim() ? 'text must be a non-empty string'
+              : o.severity != null && !TOAST_SEVERITIES.includes(o.severity) ? `severity must be one of ${TOAST_SEVERITIES.join(', ')}`
+                : o.detail != null && typeof o.detail !== 'string' ? 'detail must be a string'
+                  : !Array.isArray(actions) || actions.length > 3 ? 'actions must be an array of at most three'
+                    : actions.some((a) => !isPlainObject(a) || typeof a.label !== 'string' || !a.label || typeof a.onClick !== 'function') ? 'each action needs a string label and an onClick function'
+                      : null;
+            if (bad) {
+              onError(`[ext:${extId}] ui.toast refused: ${bad}`);
+              return false;
+            }
+            if (typeof baseApi.toast !== 'function') return false;
+            baseApi.toast(extId, {
+              severity: o.severity || 'info',
+              text: o.text,
+              detail: o.detail || '',
+              // A throwing handler is the extension's bug: report it, never let
+              // it escape into the board's click handling.
+              actions: actions.map((a) => ({
+                label: a.label,
+                onClick: () => { try { a.onClick(); } catch (e) { onError(`[ext:${extId}] ui.toast action threw: ${e?.message || e}`); } },
+              })),
+            });
+            return true;
+          },
         }),
         settings: settingsApi(extId, baseApi),
         agents: agentsApi(extId, baseApi),
@@ -649,6 +690,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         targets: targetsApi(extId, baseApi),
         front: frontApi(extId, baseApi),
         rail: railApi(extId, baseApi),
+        sessionPanel: sessionPanelApi(extId, baseApi),
         dispatchFields: Object.freeze({
           mount: (el, ctx, opts) => mountDispatchFields(extId, baseApi, el, ctx, opts),
         }),
@@ -965,6 +1007,32 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       onChange: (fn) => {
         if (typeof fn !== 'function') { onError(`[ext:${extId}] front.onChange needs a function`); return () => {}; }
         return holdBoardSub(extId, baseApi.board?.onFront(guarded(extId, 'front.onChange', fn)));
+      },
+    });
+  }
+
+  // The open session's panel (1.68.0, public/session-panel.js): `view()` 'chat',
+  // 'terminal' or null, `scroll(how)`, and `type(text, { submit })` (session:type).
+  // Each answers `{ ok, reason?, … }`; a misuse is reported as well.
+  function sessionPanelApi(extId, baseApi) {
+    const panel = () => baseApi.sessionPanel;
+    const refused = (what, reason, why) => {
+      onError(`[ext:${extId}] sessionPanel.${what} refused: ${why}`);
+      return { ok: false, reason };
+    };
+    const quiet = new Set(['no-panel', 'gated', 'blocked', 'not-sent']);
+    const answer = (what, r) => {
+      const out = isPlainObject(r) ? { ...r } : { ok: false, reason: 'no-panel' };
+      if (!out.ok && !quiet.has(out.reason)) onError(`[ext:${extId}] sessionPanel.${what} refused: ${out.reason}`);
+      return out;
+    };
+    return Object.freeze({
+      view: () => panel()?.view() ?? null,
+      scroll: (how) => answer('scroll', panel()?.scroll(how)),
+      type: (text, opts) => {
+        if (!(requiresFor(extId) || []).includes(SESSION_TYPE_CAPABILITY)) return refused('type', 'capability', `needs the ${SESSION_TYPE_CAPABILITY} capability`);
+        if (opts != null && !isPlainObject(opts)) return refused('type', 'bad-options', 'options must be an object');
+        return answer('type', panel()?.type(text, { submit: opts?.submit === true }));
       },
     });
   }

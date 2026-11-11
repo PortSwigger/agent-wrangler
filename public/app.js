@@ -39,6 +39,7 @@ import {
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createBoardTargets } from './board-targets.js';
+import { createSessionPanel } from './session-panel.js';
 import { createRailButtons } from './rail-buttons.js';
 import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
@@ -72,7 +73,7 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { CODEX_POLICY_FALLBACK, syncCodexPolicyControls, fillCodexPolicyControls, readCodexPolicyControls } from './codex-policy-field.js';
-import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -181,6 +182,8 @@ let prModelFooter = true;
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
+// Settings › Background model (server config, resolved, every graph push).
+let backgroundModel = null;
 // Settings › Sessions' Codex sandbox/approval defaults (server config, every
 // graph push): what the dialog's Codex controls prefill from.
 let codexPolicyDefaults = { ...CODEX_POLICY_FALLBACK };
@@ -258,6 +261,65 @@ const boardTargets = createBoardTargets({
   view: () => currentView,
   session: () => selectedSessionId,
   extOfView: (v) => (typeof v === 'string' && v.startsWith(EXT_VIEW_PREFIX) ? v.slice(EXT_VIEW_PREFIX.length).split(':')[0] : null),
+  panel: () => openPanelView(),
+  terminal: () => (openPanelView() === 'terminal' && current?.term.element
+    ? { el: current.term.element, focus: () => { current?.term.focus(); if (current) acknowledge(current.sessionId); } }
+    : null),
+});
+
+// What the open session's panel shows, on the board or lent to an extension
+// view (api.mountSession): 'chat', 'terminal' (a live pane attached) or null.
+function openPanelView() {
+  const sid = selectedSessionId;
+  if (!sid || document.getElementById('sidebar')?.classList.contains('collapsed')) return null;
+  const shows = (el) => Boolean(el) && !el.hidden && el.checkVisibility?.() !== false;
+  if (shows(document.getElementById('chat-wrap'))) return 'chat';
+  if (current?.sessionId === sid && shows(document.getElementById('term-wrap'))) return 'terminal';
+  return null;
+}
+
+// Backs `api.sessionPanel` (1.68.0); slots checks session:type before type().
+const WHEEL_NOTCHES_PER_TICK = 25;
+let wheelBurst = 0;
+const sessionPanel = createSessionPanel({
+  view: openPanelView,
+  session: () => latestSessions.find((x) => x.sessionId === selectedSessionId) || null,
+  gateFor: (sid) => inputGates.get(sid),
+  chat: () => ({ stream: chatView.stream, append: (t) => chatView.appendText(t), submit: () => chatView.submit() }),
+  terminal: () => {
+    const t = current;
+    if (!t) return null;
+    return {
+      rows: t.term.rows,
+      // As the wheel does: one synthetic notch per report, aimed at the
+      // screen's middle, so xterm encodes it for whatever mouse mode the pane is
+      // in. Paced like a fast flick: Claude's TUI drops part of a burst of
+      // hundreds at once. A newer scroll cancels what is left of the last.
+      wheel: (dir, notches) => {
+        const screen = t.term.element?.querySelector('.xterm-screen');
+        const r = screen?.getBoundingClientRect();
+        if (!r?.width || !r.height) return false;
+        const init = { deltaY: dir, deltaMode: WheelEvent.DOM_DELTA_LINE, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true };
+        const burst = ++wheelBurst;
+        let left = notches;
+        const step = () => {
+          if (burst !== wheelBurst || current !== t) return;
+          for (let n = Math.min(WHEEL_NOTCHES_PER_TICK, left); n > 0; n--, left--) screen.dispatchEvent(new WheelEvent('wheel', init));
+          if (left > 0) setTimeout(step, 16);
+        };
+        step();
+        return true;
+      },
+      // xterm's own paste, bracketed as a human's paste is.
+      paste: (text) => t.term.paste(text),
+      enter: () => {
+        if (t.ws.readyState !== 1 || !inputGates.allow(t.sessionId, '\r')) return false;
+        t.ws.send('\r');
+        return true;
+      },
+    };
+  },
+  sendMessage: (sessionId, text) => send({ type: 'message', sessionId, text }),
 });
 const railButtons = createRailButtons({ doc: document });
 const slots = createSlots({
@@ -378,6 +440,7 @@ const migrateSoundPreference = createSoundMigration();
 const extApi = {
   board: boardTargets,
   railButtons,
+  sessionPanel,
   send,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
   selectedSessionId: () => selectedSessionId,
@@ -431,6 +494,9 @@ const extApi = {
   // Back `api.ui.notify`/`withdraw`; slots forces the owner to the caller.
   notify: (owner, opts) => notifications.show(owner, opts),
   withdrawNotification: (owner, id) => notifications.withdraw(owner, id),
+  // Backs `api.ui.toast`: the board's own stack, so it shows on every view.
+  // `owner` is forced by slots; the stack sets every string as text.
+  toast: (_owner, o) => toast(o.text, o.severity, { actions: o.actions, details: o.detail }),
   // Backs `api.requestBoardRender`: the task.body counterpart of
   // requestPanelRender, for content that changes a tile's size.
   requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },
@@ -872,6 +938,7 @@ function applyGraph(graph) {
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
+  backgroundModel = graph.backgroundModel && typeof graph.backgroundModel === 'object' ? graph.backgroundModel : null;
   codexPolicyDefaults = graph.codexPolicyDefaults && typeof graph.codexPolicyDefaults === 'object' ? { ...CODEX_POLICY_FALLBACK, ...graph.codexPolicyDefaults } : { ...CODEX_POLICY_FALLBACK };
   const prevAutoUpdate = autoUpdate;
   autoUpdate = graph.autoUpdate || 'notify';
@@ -2901,7 +2968,7 @@ function copySessionReference(s) {
   const ref = `Agent Wrangler session "${s.label || s.sessionId.slice(0, 8)}" (id: ${s.sessionId}) — read it with the read_session_transcript tool`;
   const p = navigator.clipboard?.writeText(ref);
   if (!p) return toast('Clipboard unavailable', true);
-  p.then(() => toast('Copied session reference', false, { duration: 1500 }), () => toast('Could not copy to clipboard', true));
+  p.then(() => toast('Copied session reference', 'success', { duration: 1500 }), () => toast('Could not copy to clipboard', true));
 }
 
 // The session pane header's "Actions" overflow menu — the inline icon row
@@ -3737,7 +3804,7 @@ function archivedToast(sessionId, text, worktree, archivedIds = [sessionId]) {
   // A worktree cleanup or a container-stop offer is worth acting on deliberately,
   // so give it the longer 15s window (and the bar lets the user see it); plain
   // archives keep 10s.
-  toast(text, false, { actions, duration: (cleanup || stopContainer) ? 15000 : 10000 });
+  toast(text, false, { actions, duration: (cleanup || stopContainer) ? 15000 : 10000, id: `archived:${sessionId}` });
 }
 
 // The "Stop container" button for an archived devcontainer session: `devcontainer
@@ -5503,7 +5570,7 @@ function attachClipboard(term) {
       if (!text) return;
       const p = navigator.clipboard?.writeText(text);
       if (!p) return;
-      return p.then(() => { if (text && text.trim()) toast('Copied to clipboard', false, { duration: 1500 }); }, () => {});
+      return p.then(() => { if (text && text.trim()) toast('Copied to clipboard', 'success', { duration: 1500 }); }, () => {});
     },
   }));
 }
@@ -5777,7 +5844,10 @@ function refreshFolderList() {
   const items = [
     ...latestSessions.flatMap((s) => [s.cwd, ...(s.addDirs || [])].map((c) => ({ cwd: c, at: s.lastActivity || 0 }))),
     ...latestHistory.map((h) => ({ cwd: h.cwd, at: h.archivedAt || 0 })),
-  ].filter((x) => x.cwd && !isScratchDir(x.cwd)).map((x) => ({ cwd: repoRoot(x.cwd), at: x.at }));
+  ].filter((x) => x.cwd && !isScratchDir(x.cwd)).map((x) => ({ cwd: repoRoot(x.cwd), at: x.at }))
+    // repoRoot can't fold a worktrees.noindex dir without its branch, and those
+    // pile up (extensions mint one per run), crowding the real repo off the top.
+    .filter((x) => !x.cwd.includes('/worktrees.noindex/'));
   items.sort((a, b) => b.at - a.at);
   const seen = new Set();
   recentFolders = [];
@@ -6032,13 +6102,19 @@ function syncRuntimeToggle() {
   syncCodexPolicyRow(agent);
 }
 
-// The Codex sandbox/approval controls show for a Codex draft only. Switching TO
-// Codex prefills them from Settings as they are now; re-syncs while the draft
-// stays on Codex keep what was picked.
+// Whether this provider takes the Codex sandbox/approval policy (its adapter's
+// launch.codexPolicy, carried as controls.codexPolicy).
+function takesCodexPolicy(agent) {
+  return providerMetadataFor(agent).controls?.codexPolicy === true;
+}
+
+// The Codex sandbox/approval controls show only for a draft whose provider takes
+// them. Switching TO one prefills them from Settings as they are now; re-syncs
+// while the draft stays on one keep what was picked.
 function syncCodexPolicyRow(agent) {
   const row = document.getElementById('m-codex-policy-row');
   if (!row) return;
-  const codex = agent === 'codex';
+  const codex = takesCodexPolicy(agent);
   row.classList.toggle('hidden', !codex);
   if (codex && !codexPolicyDraftWasCodex) fillCodexPolicyControls(row, codexPolicyDefaults);
   codexPolicyDraftWasCodex = codex;
@@ -6248,7 +6324,7 @@ function readCoreDispatchFields() {
     worktreeAuto: wfOn,
     parentSession: parentSessionId || undefined,
     runtime: runtime !== 'local' ? runtime : undefined,
-    codexPolicy: agent === 'codex' ? readCodexPolicyControls(document.getElementById('m-codex-policy-row')) : undefined,
+    codexPolicy: takesCodexPolicy(agent) ? readCodexPolicyControls(document.getElementById('m-codex-policy-row')) : undefined,
   };
 }
 
@@ -6410,7 +6486,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   // A saved schedule restores its Codex pick; a new draft starts from Settings.
   // Marked as already-Codex so the syncs below do not refill over a schedule's.
   fillCodexPolicyControls(document.getElementById('m-codex-policy-row'), schedule && d.codexPolicy ? d.codexPolicy : codexPolicyDefaults);
-  codexPolicyDraftWasCodex = autoCompactAgent === 'codex';
+  codexPolicyDraftWasCodex = takesCodexPolicy(autoCompactAgent);
   document.getElementById('m-advanced-options').open = false;
   dispatchModelPicker?.reset();
   populateEffortSelect();
@@ -6852,9 +6928,9 @@ function readUpdateToasted() {
 
 const EXT_UPDATE_TOASTED_KEY = 'aw-ext-update-toasted';
 const UPDATE_TOAST_MS = 15000;
-// There is one toast slot, so a core update and extension updates found in the
-// same check share it: whichever lands second re-shows the first's toast with
-// both folded in, keeping the core toast's actions.
+// A core update and extension updates found in the same check share one toast
+// (id 'update'): whichever lands second replaces the first's toast with both
+// folded in, keeping the core toast's actions.
 let shownUpdateToast = null;
 
 function showUpdateToast({ core = null, ext = null }) {
@@ -6863,13 +6939,13 @@ function showUpdateToast({ core = null, ext = null }) {
   ext = ext || recent.ext || null;
   shownUpdateToast = { at: Date.now(), core, ext };
   if (!core) {
-    toast(extUpdateToastText(ext), false, { actions: [{ label: 'View', onClick: () => openSettings('extensions') }], duration: UPDATE_TOAST_MS });
+    toast(extUpdateToastText(ext), false, { actions: [{ label: 'View', onClick: () => openSettings('extensions') }], duration: UPDATE_TOAST_MS, id: 'update' });
     return;
   }
   const text = (ext && extUpdateToastText(ext, { core: true })) || updateToastText(core);
   const actions = [{ label: 'View', onClick: () => openSettings('updates') }];
   if (core.canApply) actions.push({ label: 'Update now', onClick: () => { updatePhase = 'applying'; send({ type: 'update-apply' }); remountUpdatePanel(); } });
-  toast(text, false, { actions, duration: UPDATE_TOAST_MS });
+  toast(text, false, { actions, duration: UPDATE_TOAST_MS, id: 'update' });
 }
 
 function toastNewUpdate(status, { userAsked }) {
@@ -7184,6 +7260,7 @@ initSettings({
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'defaultRuntime') return defaultRuntime;
+      if (id === 'backgroundModel') return backgroundModel ? `${backgroundModel.agent}:${backgroundModel.model}` : undefined;
       if (CODEX_DEFAULT_SETTINGS[id]) return codexPolicyDefaults[CODEX_DEFAULT_SETTINGS[id]];
       if (id === 'autoUpdate') return autoUpdate;
       if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
@@ -7227,6 +7304,14 @@ initSettings({
       } else if (id === 'defaultRuntime') {
         defaultRuntime = String(value || 'local');
         send({ type: 'set-default-runtime', runtime: defaultRuntime });
+      } else if (id === 'backgroundModel') {
+        // `<agent>:<model>`: an agent id never holds a colon, a model value may.
+        const raw = String(value || '');
+        const at = raw.indexOf(':');
+        if (at > 0) {
+          backgroundModel = { agent: raw.slice(0, at), model: raw.slice(at + 1) };
+          send({ type: 'set-background-model', ...backgroundModel });
+        }
       } else if (CODEX_DEFAULT_SETTINGS[id]) {
         const key = CODEX_DEFAULT_SETTINGS[id];
         codexPolicyDefaults = { ...codexPolicyDefaults, [key]: value };
@@ -7637,7 +7722,7 @@ function connect() {
     // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
     else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
     else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
-    else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); } populateModelSelect(); }
+    else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); setBackgroundModelOptions(availableAgents); } populateModelSelect(); }
     else if (msg.type === 'notify') notify(msg.session);
     else if (msg.type === 'diff') onDiff(msg);
     else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);
@@ -7647,7 +7732,7 @@ function connect() {
     else if (msg.type === 'pr-unresolved') onPrComments(msg);
     else if (msg.type === 'schedule-fired') onScheduleFired(msg);
     else if (msg.type === 'schedule-error') toast(`Schedule "${msg.name}" failed: ${msg.message}`, true);
-    else if (msg.type === 'prepare-warnings') for (const w of msg.warnings || []) toast(w, true);
+    else if (msg.type === 'prepare-warnings') toastLaunchWarnings(msg.warnings || []);
     else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
     else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
     else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
@@ -7703,7 +7788,7 @@ function connect() {
       else toast('Worktree removed');
     }
     else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop');
-    else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`);
+    else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`, 'success');
     else if (msg.type === 'branch-delete-blocked') {
       confirmDialog({
         title: 'Branch has unmerged commits',
@@ -7781,6 +7866,14 @@ function connect() {
       }
     }
   };
+}
+
+// One toast for a launch's warnings: a single one as it is, several as a count
+// with the list behind Details, so none is lost under the next.
+function toastLaunchWarnings(warnings) {
+  if (!warnings.length) return;
+  if (warnings.length === 1) return toast(warnings[0], 'warning');
+  toast(`${warnings.length} launch warnings`, 'warning', { details: warnings.map((w) => `• ${w}`).join('\n') });
 }
 
 // --- notifications + toast ---

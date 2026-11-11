@@ -5,6 +5,7 @@ import { costUsd } from '../pricing.js';
 import { claudeHistory } from './claude-history.js';
 import { claudePermissionArgs } from './permission-mode.js';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { INSTALL_ROOT } from '../install-root.js';
 import { launchAddDirArgs, launchClaudeHooksOf, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { analyze, listResumable, activityInRange, findTranscript, subagentDetail } from '../transcript-reader.js';
@@ -12,7 +13,7 @@ import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl, prModelUrl } from '../mcp/client-config.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
-import { newestClaudeId, newestClaudeName, priceCatalogVersion, snapshotClaudeFamilies } from '../price-catalog.js';
+import { modelFamilies, priceCatalogVersion } from '../price-catalog.js';
 
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
 // as a plugin only on workflow launches (below), so it's available no matter which
@@ -111,7 +112,7 @@ export function withCleanClaudeEnv(cmd) {
 }
 
 // Same strip, as an env OBJECT rather than a shell-wrapped command — for a
-// direct execFile() call (archive-review-runner.js's headless Haiku review),
+// direct execFile() call (the headless one-shot below),
 // which has no shell to prefix with `env -u`. Single source of truth for the
 // var list, shared with withCleanClaudeEnv above.
 export function cleanClaudeEnv(env = process.env) {
@@ -119,6 +120,44 @@ export function cleanClaudeEnv(env = process.env) {
   const strip = new Set([...NESTED_CLAUDE_ENV, ...dynamic]);
   return Object.fromEntries(Object.entries(env).filter(([k]) => !strip.has(k)));
 }
+
+// Every tool a headless one-shot is denied: it classifies or summarises what it
+// is handed on stdin and must never act on the machine.
+export const HEADLESS_DISALLOWED_TOOLS = [
+  'Bash', 'Read', 'Write', 'Edit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch',
+  'WebSearch', 'Task', 'Agent', 'TodoWrite', 'BashOutput', 'KillShell', 'Skill',
+  'SlashCommand',
+];
+
+// The adapter's `headless` capability (server/headless.js runs it): a tool-less
+// `claude -p` with the payload on stdin. The conversation id is a fresh uuid
+// passed as `--session-id`, not `--no-session-persistence`, so the transcript
+// survives and the usage scan bills it to whichever card it is recorded on.
+// `--bare` is NOT an option: verified against the real binary, it reads only
+// ANTHROPIC_API_KEY and fails with api_error under OAuth/keychain auth.
+const claudeHeadless = {
+  defaultModel: () => 'haiku',
+  command({ prompt, model, effort, env = {} }) {
+    const liveSessionId = crypto.randomUUID();
+    const childEnv = cleanClaudeEnv({ ...process.env, ...env });
+    if (Object.hasOwn(env, 'CLAUDE_CODE_OAUTH_TOKEN')) childEnv.CLAUDE_CODE_OAUTH_TOKEN = env.CLAUDE_CODE_OAUTH_TOKEN;
+    const args = ['-p', '--model', model];
+    if (effort) args.push('--effort', effort);
+    args.push(
+      '--strict-mcp-config',
+      '--setting-sources', '',
+      '--disallowed-tools', HEADLESS_DISALLOWED_TOOLS.join(' '),
+      '--session-id', liveSessionId,
+      '--output-format', 'json',
+      prompt,
+    );
+    return { file: 'claude', args, env: childEnv, liveSessionId };
+  },
+  parse(stdout) {
+    const parsed = JSON.parse(stdout);
+    return { text: typeof parsed.result === 'string' ? parsed.result.trim() : null };
+  },
+};
 
 export function buildInnerCommand({ args, intent = '', sessionId, worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
   // memory/links are wrangler-meta skills now (loaded via --plugin-dir below), but
@@ -176,13 +215,15 @@ function remoteControlArgs(remoteControl) {
   return remoteControl?.name ? ['--remote-control', remoteControl.name] : [];
 }
 
-// `--disallowed-tools <names>` for a session spawned with `disallowedTools`.
+// `--disallowed-tools <entry>...` for a session spawned with `disallowedTools`.
 // Stored on the entry, so launch, fork and every resume pass it: a host that
 // removes a tool (e.g. AskUserQuestion in an unwatched pane) must not get it
-// back after an idle-suspend or a mail wake. One space-joined value, like the
-// headless launch, so the variadic flag cannot swallow the next argument.
+// back after an idle-suspend or a mail wake. Each entry is its own argument, so
+// a rule like `Bash(gh pr merge:*)` reaches Claude with its spaces intact; the
+// variadic flag cannot swallow anything, since buildInnerCommand always follows
+// it with more flags and puts the prompt after `--`.
 function disallowedToolsArgs(disallowedTools) {
-  return disallowedTools?.length ? ['--disallowed-tools', disallowedTools.join(' ')] : [];
+  return disallowedTools?.length ? ['--disallowed-tools', ...disallowedTools] : [];
 }
 
 const MODELS = [
@@ -196,6 +237,30 @@ const MODELS = [
 
 // Families LiteLLM prices but Claude Code does not offer as a selectable model.
 const EXCLUDED_FAMILIES = new Set(['mythos']);
+
+// How the price catalog's first-party Claude ids read as (family, major, minor?).
+export const CATALOG_FAMILIES = { provider: 'anthropic', pattern: /^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?$/ };
+
+const familyName = (family, [major, minor]) => `${family[0].toUpperCase()}${family.slice(1)} ${major}${minor >= 0 ? `.${minor}` : ''}`;
+
+// The catalog's newest model of a family, or null.
+function newestOfFamily(family) {
+  return modelFamilies(CATALOG_FAMILIES).find((f) => f.family === family) || null;
+}
+
+// The newest model of a family as a display name: newestClaudeName('opus') →
+// "Opus 5.5". Null when the catalog has none.
+export function newestClaudeName(family) {
+  const newest = newestOfFamily(family);
+  return newest ? familyName(family, newest.version) : null;
+}
+
+// The families in the bundled snapshot, each with its newest model:
+// [{ family: 'opus', id: 'claude-opus-5-5', name: 'Opus 5.5' }].
+function snapshotClaudeFamilies() {
+  return modelFamilies(CATALOG_FAMILIES, { snapshotOnly: true })
+    .map(({ family, id, version }) => ({ family, id, name: familyName(family, version) }));
+}
 
 // A family in the price snapshot that MODELS has no alias for is offered by its
 // newest full model id, which `--model` accepts; the next snapshot refresh moves it.
@@ -216,7 +281,7 @@ export function derivedModels(families = snapshotClaudeFamilies()) {
 // label names; a derived entry already is one. Null for opusplan, which runs two.
 export function claudeModelId(value) {
   const family = MODELS.find((m) => m.value === value)?.family;
-  if (family) return newestClaudeId(family);
+  if (family) return newestOfFamily(family)?.id ?? null;
   return /^claude-/.test(value || '') ? value : null;
 }
 
@@ -246,7 +311,7 @@ export const claude = {
   },
   subagentDetail,
   subagentDetailOverride: 'subagentDetail',
-  usage: { billingProviders: [{ id: 'anthropic', label: 'Anthropic' }], scanDaily, scanMonth, costUsd: costUsd, unknownModelLabel: 'unknown' },
+  usage: { billingProviders: [{ id: 'anthropic', label: 'Anthropic' }], scanDaily, scanMonth, costUsd: costUsd, unknownModelLabel: 'unknown', catalogFamilies: CATALOG_FAMILIES },
   labels: { liveTitle: true, summaryFirst: false },
   statusSource: 'live-file',
   presentation: { icon: 'claude', color: '#d97757', estimatedCost: false },
@@ -257,7 +322,7 @@ export const claude = {
     permissionModes: ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'],
     autoCompact: { min: 100000, presets: [100000, 250000, 500000, 1000000] },
   },
-  launch: { grantPaths: 'symlink', trust: 'claude', gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false },
+  launch: { grantPaths: 'symlink', trust: 'claude-config', gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false },
   terminal: {
     readySignal: 'title',
     contextSource: 'pane',
@@ -278,12 +343,20 @@ export const claude = {
     socketMail: true,
     allowWhileWorking: false,
     imageAcknowledgement: true,
+    // A 'waiting' live status may be the timed auto-mode safety check (state-reader waitingReasonFor).
+    autoBlock: true,
     interruptKeys: ['Escape'],
   },
   reviewPriority: 10,
   supportsRemoteControl: true,
   supportsDisallowedTools: true,
+  // The tool that asks the human a question in the pane, which a host launching
+  // into a pane nobody watches blocks through disallowedTools.
+  askUserTool: 'AskUserQuestion',
+  // Its transcripts are what archive review reads (archive-review-runner.js);
+  // the review itself runs on the Background model, whichever agent that is.
   headlessArchiveReview: true,
+  headless: claudeHeadless,
   label: 'Claude',
   tmuxPrefix: 'cc_',
   presetsSessionId: true,

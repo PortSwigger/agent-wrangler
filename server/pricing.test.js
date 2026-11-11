@@ -100,3 +100,7 @@ test('snapshot distinguishes fable 5.1 cache reads from fable 5', () => {
   const reads = { input: 0, output: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 1_000_000 };
   assert.ok(costUsd({ 'claude-fable-5-1': reads }) < costUsd({ 'claude-fable-5': reads }));
 });
+
+test('snapshot prices fable 5.2 below fable 5.1', () => {
+  assert.ok(costUsd({ 'claude-fable-5-2': ONE }) < costUsd({ 'claude-fable-5-1': ONE }));
+});

@@ -90,8 +90,9 @@ test('the change keys ignore rects but not labels or front', () => {
   const t = { key: 'k', kind: 'button', label: 'A', where: 'board', primary: false };
   assert.equal(targetsKey([{ ...t, rect: { x: 1 } }]), targetsKey([{ ...t, rect: { x: 9 } }]));
   assert.notEqual(targetsKey([t]), targetsKey([{ ...t, label: 'B' }]));
-  const f = { view: 'grid', ext: null, dialog: null, menu: false, session: null };
+  const f = { view: 'grid', ext: null, dialog: null, menu: false, session: null, panel: null };
   assert.notEqual(frontKey(f), frontKey({ ...f, dialog: 'modal' }));
+  assert.notEqual(frontKey({ ...f, session: 's1', panel: 'chat' }), frontKey({ ...f, session: 's1', panel: 'terminal' }), 'Chat to Terminal is a front change');
   assert.equal(frontKey(f), frontKey({ ...f }));
 });
 

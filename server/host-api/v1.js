@@ -10,6 +10,8 @@ import { collectLaunchContext, launchProcessEnv } from '../launch-context.js';
 import { deliverFirstPrompt } from '../dispatch-runner.js';
 import { requestOrigin } from '../request-origin.js';
 import { supportsRemoteControl, supportsDisallowedTools } from '../agents/index.js';
+import { agentList } from '../agents/listing.js';
+import { runHeadless } from '../headless.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -130,21 +132,25 @@ function checkRemoteControl(remoteControl, agent = 'claude') {
   return { remoteControl: { name: name.trim() } };
 }
 
-// `['AskUserQuestion', ...]` -> the tool names the session launches without,
-// passed as `--disallowed-tools` on its launch, fork and every resume. Plain
-// tool names only (built-ins and `mcp__server__tool`), never permission rules:
-// a rule like `Bash(rm:*)` would make this a sandbox, which it is not. Claude
-// only, refused for any other agent like remoteControl, since an option that
-// is silently dropped reads as a tool that is gone when it is not. Duplicates
-// collapse; an empty array is no option.
-const TOOL_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/;
+// `['AskUserQuestion', 'Bash(gh pr merge:*)', ...]` -> the tools and Claude
+// permission rules the session launches without, passed as `--disallowed-tools`
+// on its launch, fork and every resume. An entry is a plain tool name
+// (built-ins and `mcp__server__tool`) or a deny rule `Tool(specifier)`, whose
+// specifier may hold spaces but no parentheses or control characters. A rule
+// is Claude's own permission check, not a sandbox: it stops the matching call,
+// not a shell that reaches the same command another way. Claude only, refused
+// for any other agent like remoteControl, since an option that is silently
+// dropped reads as a tool that is gone when it is not. Duplicates collapse; an
+// empty array is no option.
+// eslint-disable-next-line no-control-regex
+const TOOL_ENTRY = /^[A-Za-z][A-Za-z0-9_-]{0,127}(?:\((?=[^()]*[^()\s])[^()\x00-\x1f\x7f]{1,256}\))?$/;
 const MAX_DISALLOWED_TOOLS = 64;
 function checkDisallowedTools(disallowedTools, agent = 'claude') {
   if (disallowedTools === undefined || disallowedTools === null) return {};
-  if (!Array.isArray(disallowedTools)) spawnError('disallowedTools must be an array of tool names');
+  if (!Array.isArray(disallowedTools)) spawnError('disallowedTools must be an array of tool names or permission rules');
   if (disallowedTools.length > MAX_DISALLOWED_TOOLS) spawnError(`disallowedTools holds at most ${MAX_DISALLOWED_TOOLS} entries (got ${disallowedTools.length})`);
   for (const t of disallowedTools) {
-    if (typeof t !== 'string' || !TOOL_NAME.test(t)) spawnError(`disallowedTools entries must be tool names like AskUserQuestion or mcp__server__tool (got ${JSON.stringify(t)})`);
+    if (typeof t !== 'string' || !TOOL_ENTRY.test(t)) spawnError(`disallowedTools entries must be tool names like AskUserQuestion or mcp__server__tool, or rules like Bash(gh pr merge:*) (got ${JSON.stringify(t)})`);
   }
   if (!disallowedTools.length) return {};
   if (!supportsDisallowedTools(agent)) spawnError(`Agent "${agent}" does not support disallowedTools.`);
@@ -307,13 +313,15 @@ const sessionsInterrupt = ({ interruptSession }) => ({
 });
 
 // Bill a headless conversation to a card. Thin bind over the primitive, which
-// does the validating (a missing card, an empty id or the card's CURRENT
-// conversation are all `false`, never a throw) and never touches
-// `liveSessionId` — so an extension can make a card PAY for a `claude -p` it
-// ran on the card's behalf, but can never make the card RESUME into it.
+// does the validating (a missing card, an empty id, the card's CURRENT
+// conversation or an unknown agent are all `false`, never a throw) and never
+// touches `liveSessionId` — so an extension can make a card PAY for a one-shot
+// it ran on the card's behalf, but can never make the card RESUME into it.
+// `agent` (1.67.0) is the agent that ran it, as `host.agents.headless` returns
+// it; omitted, the run is taken to be the card's own agent's.
 const sessionsBill = ({ core }) => ({
   sessions: {
-    bill: (sid, liveSessionId) => core.sessionManager.recordPriorLiveSessionId(sid, liveSessionId),
+    bill: (sid, liveSessionId, agent) => core.sessionManager.recordPriorLiveSessionId(sid, liveSessionId, agent),
   },
 });
 
@@ -544,6 +552,12 @@ const usageRead = ({ scanUsage }) => ({
   },
 });
 
+const linksRead = ({ core }) => ({
+  links: {
+    get: (sid) => core.sessionManager.getLinks(sid).map((l) => ({ ...l })),
+  },
+});
+
 // Write a link onto a card from server code — a sweep that learns a URL after
 // launch has no agent to call set_links for it. The link goes through the
 // CALLING extension's own `links.normalise` hook(s) and nobody else's, so an
@@ -566,7 +580,7 @@ const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
   };
   return {
     links: {
-      get: (sid) => core.sessionManager.getLinks(sid).map((l) => ({ ...l })),
+      ...linksRead({ core }).links,
       attach: (sid, link) => {
         if (!core.sessionManager.entryFor(sid)) throw new Error(`links.attach: unknown session ${sid}`);
         const stored = normalise(link);
@@ -580,6 +594,61 @@ const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
     },
   };
 };
+
+// Every registered agent, installed or not, with its models (each with the full
+// id it resolves to) and the capability flags the registry knows, so a host
+// branches on what an agent can do rather than on its id. Read fresh per call:
+// the model catalogs refresh and an agent can be installed while the board runs.
+const agentsRead = ({ listAgents = agentList }) => ({
+  agents: {
+    list: async () => deepFreeze(await listAgents()),
+  },
+});
+
+// A tool-less one-shot (server/headless.js): `prompt` in argv, `stdin` piped,
+// every tool off, on `agent`/`model` or Settings › Background model when no
+// model is named. Resolves a frozen `{ text, liveSessionId, agent, model,
+// error }`, `error` a message string when the run failed (text then null);
+// rejects only for a bad call (no prompt, an unknown agent, model or effort,
+// an agent with no headless mode). Billing stays the caller's choice, through
+// `sessions:bill` with the returned id and agent. No `env` key: a launch
+// environment is the core's to collect, never an extension's to inject.
+const agentsHeadless = ({ runHeadless: run = runHeadless }) => ({
+  agents: {
+    headless: async (opts) => {
+      if (!opts || typeof opts !== 'object') throw new TypeError('agents.headless: pass { prompt, stdin?, agent?, model?, effort?, timeoutMs? }');
+      const { prompt, stdin = '', agent, model, effort, timeoutMs } = opts;
+      const r = await run({ prompt, stdin, agent, model, effort, timeoutMs });
+      return Object.freeze({
+        text: r.text,
+        liveSessionId: r.liveSessionId,
+        agent: r.agent,
+        model: r.model,
+        error: r.error ? String(r.error.message || r.error) : null,
+      });
+    },
+  },
+});
+
+// `telemetry:emit` (1.72.0): emit an event this extension declared under
+// `telemetry.events`. The wire type is FORCED to `<own id>.<name>`, closed over
+// like broadcast's type, so no extension can emit (or forge) another's events.
+// `on()` is false only while a URL override is not a valid endpoint (telemetry
+// has no off switch), so an emitter can skip building an event; `emit` still checks the data
+// against the declaration then, and returns whether it was queued. `ref`,
+// `repo` and `model` make the only values the `ref`, `repo` and `model` field
+// types accept. Without core telemetry wired (a test) it is inert.
+const telemetryEmit = ({ id, telemetry }) => ({
+  telemetry: telemetry
+    ? {
+      on: () => telemetry.on(),
+      emit: (name, data) => telemetry.emit(id, name, data),
+      ref: (kind, value) => telemetry.ref(kind, value),
+      repo: (raw) => telemetry.repo(raw),
+      model: (raw) => telemetry.model(raw),
+    }
+    : { on: () => false, emit: () => false, ref: () => '0000000000000000', repo: () => 'none', model: () => 'default' },
+});
 
 export const V1_BUILDERS = {
   'sessions:read': sessionsRead,
@@ -605,7 +674,11 @@ export const V1_BUILDERS = {
   'usage:read': usageRead,
   'sessions:bill': sessionsBill,
   'sessions:interrupt': sessionsInterrupt,
+  'links:read': linksRead,
   'links:write': linksWrite,
   'images:keep': imagesKeep,
   'files:view': filesView,
+  'agents:read': agentsRead,
+  'agents:headless': agentsHeadless,
+  'telemetry:emit': telemetryEmit,
 };

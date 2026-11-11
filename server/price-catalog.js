@@ -18,7 +18,10 @@ export const LITELLM_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/ma
 export const CACHE_PATH = path.join(DATA_DIR, 'price-catalog.json');
 const SNAPSHOT_PATH = new URL('./price-catalog.snapshot.json', import.meta.url);
 const REFRESH_MS = 12 * 60 * 60 * 1000;
-const PROVIDERS = ['anthropic', 'openai'];
+const PROVIDERS = ['anthropic', 'openai', 'gemini'];
+// LiteLLM names some providers' first-party ids with a route prefix
+// ("gemini/gemini-2.5-pro"); the catalog keys them by the bare model id.
+const ID_PREFIX = { gemini: 'gemini/' };
 const MODES = new Set(['chat', 'responses']);
 // A fetch that reduces to fewer rows than this is a broken or truncated upstream
 // file, not a real catalog — keep what we have rather than adopt it.
@@ -74,13 +77,17 @@ export function reduceEntry(e) {
   return rate;
 }
 
-// LiteLLM's whole file → { anthropic: {id: rate}, openai: {id: rate} }. Only the
-// providers' own first-party ids (no "bedrock/…"-style routes) for chat models.
+// LiteLLM's whole file → { anthropic: {id: rate}, openai: {id: rate}, gemini: {id: rate} }.
+// Only the providers' own first-party ids (no "bedrock/…"-style routes) for chat
+// models; Gemini's API ids carry LiteLLM's "gemini/" route, which is stripped.
 export function reduceLitellm(raw) {
   const out = Object.fromEntries(PROVIDERS.map((p) => [p, {}]));
   if (!isRecord(raw)) return out;
-  for (const [id, e] of Object.entries(raw)) {
+  for (const [rawId, e] of Object.entries(raw)) {
     if (!isRecord(e) || !PROVIDERS.includes(e.litellm_provider) || !MODES.has(e.mode)) continue;
+    const prefix = ID_PREFIX[e.litellm_provider];
+    if (prefix && !rawId.toLowerCase().startsWith(prefix)) continue;
+    const id = prefix ? rawId.slice(prefix.length) : rawId;
     const rate = reduceEntry(e);
     if (rate) out[e.litellm_provider][id.toLowerCase()] = rate;
   }
@@ -205,57 +212,35 @@ function lookup(table, model) {
   return null;
 }
 
+// Is `id` a model id one of the tables lists exactly? No prefix matching, so a
+// telemetry `model` field can carry nothing but a published id.
+export function knownModelId(id) {
+  return typeof id === 'string' && PROVIDERS.some((p) => Object.hasOwn(tables[p] || {}, id));
+}
+
 export function priceFor(provider, model) {
   const key = `${provider}\0${model}`;
   if (!memo.has(key)) memo.set(key, lookup(tables[provider] || {}, model));
   return memo.get(key);
 }
 
-// The newest first-party Claude model of a family, as a display name:
-// newestClaudeName('opus') → "Opus 5.5". Null when the catalog has none.
-export function newestClaudeName(family) {
-  const best = newestClaudeVersion(family);
-  if (!best) return null;
-  const name = family[0].toUpperCase() + family.slice(1);
-  return `${name} ${best[0]}${best[1] >= 0 ? `.${best[1]}` : ''}`;
-}
-
-// The same newest model as its full id ("claude-opus-5-5"), or null.
-export function newestClaudeId(family) {
-  const best = newestClaudeVersion(family);
-  return best ? `claude-${family}-${best[0]}${best[1] >= 0 ? `-${best[1]}` : ''}` : null;
-}
-
-function newestClaudeVersion(family) {
-  const re = new RegExp(`^claude-${family}-(\\d{1,2})(?:-(\\d{1,2}))?$`);
-  let best = null;
-  for (const id of Object.keys(tables.anthropic)) {
-    const m = re.exec(id);
-    if (!m) continue;
-    const v = [Number(m[1]), m[2] == null ? -1 : Number(m[2])];
-    if (!best || compareVersions(v, best) > 0) best = v;
-  }
-  return best;
-}
-
-// The families of first-party Claude models in the bundled snapshot, each with its
-// newest model: [{ family: 'opus', id: 'claude-opus-5-5', name: 'Opus 5.5' }]. Read
-// from the snapshot alone, so a family only joins the picker once a reviewed
-// snapshot refresh carries it — never straight from a live fetch.
-export function snapshotClaudeFamilies() {
+// The model families in one provider's table, each with its newest model, read
+// with an adapter-supplied `pattern` (no /g) matching a first-party id as
+// (family, major, minor?): Claude's /^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?$/
+// gives [{ family: 'opus', id: 'claude-opus-5-5', version: [5, 5] }], a missing
+// minor reading as -1. `snapshotOnly` reads the bundled snapshot alone, so a
+// family only joins a picker once a reviewed snapshot refresh carries it — never
+// straight from a live fetch.
+export function modelFamilies({ provider, pattern }, { snapshotOnly = false } = {}) {
   const newest = new Map();
-  for (const id of Object.keys(snapshot.anthropic || {})) {
-    const m = /^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?$/.exec(id);
+  for (const id of Object.keys((snapshotOnly ? snapshot : tables)[provider] || {})) {
+    const m = pattern.exec(id);
     if (!m) continue;
     const v = [Number(m[2]), m[3] == null ? -1 : Number(m[3])];
     const cur = newest.get(m[1]);
-    if (!cur || compareVersions(v, cur.v) > 0) newest.set(m[1], { id, v });
+    if (!cur || compareVersions(v, cur.version) > 0) newest.set(m[1], { id, version: v });
   }
-  return [...newest].map(([family, { id, v }]) => ({
-    family,
-    id,
-    name: `${family[0].toUpperCase()}${family.slice(1)} ${v[0]}${v[1] >= 0 ? `.${v[1]}` : ''}`,
-  }));
+  return [...newest].map(([family, { id, version }]) => ({ family, id, version }));
 }
 
 // LiteLLM's raw file, read with a size cap. Throws with a message of our own

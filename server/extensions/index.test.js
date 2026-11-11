@@ -115,7 +115,8 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
     id: 'fake', label: 'Fake extension', help: 'Does fake things.', defaultEnabled: true, enabled: false,
     description: '', author: '', homepage: '',
     requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['mail'], handlerTypes: [],
-    hideDispatchField: [], keybindings: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, earlyAdopterBranch: null, quarantine: null,
+    hideDispatchField: [], keybindings: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, earlyAdopterBranch: null,
+    telemetry: { events: null }, version: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
@@ -554,6 +555,11 @@ test('requires must be an array of known capability names', () => {
   assert.ok(validateManifest(manifest({ requires: [...CAPABILITIES] })));
 });
 
+test('links:read is accepted and carried onto the extension entry', () => {
+  const out = loadExtensions({ cfg: {}, builtin: [manifest({ requires: ['links:read'] })] });
+  assert.deepEqual(out.list[0].requires, ['links:read']);
+});
+
 test('the capability vocabulary is closed and carried onto the list entry', () => {
   assert.ok(CAPABILITIES.has('board:rebuild'));
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ requires: ['board:rebuild'], engines: { wranglerApi: '^1.0.0' } })] });
@@ -747,7 +753,8 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
   assert.deepEqual(out.list, [{
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
     defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
-    handlerTypes: [], hideDispatchField: [], keybindings: [], runtimes: [], external: true, dir: null, provenance: null, earlyAdopterBranch: null, quarantine: 'no index.js',
+    handlerTypes: [], hideDispatchField: [], keybindings: [], runtimes: [], external: true, dir: null, provenance: null, earlyAdopterBranch: null,
+    telemetry: { events: null }, version: null, quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);
 });
@@ -1287,4 +1294,33 @@ test('runtime announcement and graph identify own-launch and wrapping runtimes',
   assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes.map(({ id, ownLaunch }) => ({ id, ownLaunch })), [
     { id: 'own', ownLaunch: true }, { id: 'toyrt', ownLaunch: false },
   ]);
+});
+
+// ---- telemetry (1.72.0) ----------------------------------------------------
+test('a telemetry declaration needs its capability, a valid shape, and never the id core', () => {
+  const events = { 'thing.done': { v: 1, fields: { n: { int: [0, 9] } } } };
+  const sinks = [{ id: 'main', endpoint: 'https://collector.example.com/v1/events', accepts: ['*'] }];
+  rejects(manifest({ telemetry: { events } }), /telemetry\.events needs the telemetry:emit capability/);
+  rejects(manifest({ telemetry: { sinks }, requires: ['telemetry:emit'] }), /telemetry\.sinks is not supported/);
+  rejects(manifest({ requires: ['telemetry:sink'] }), /unknown capability "telemetry:sink"/);
+  rejects(manifest({ telemetry: { events: { e: { v: 1, fields: { prompt: 'string' } } } }, requires: ['telemetry:emit'] }), /unknown type "string"/);
+  rejects(manifest({ id: 'core' }), /id "core" is reserved/);
+  rejects(manifest({ version: 'one' }), /version must be a version/);
+});
+
+test('a valid telemetry declaration is carried normalised on the entry, with the manifest version', () => {
+  const out = loadExtensions({
+    cfg: {},
+    builtin: [manifest({
+      requires: ['telemetry:emit'],
+      version: '1.2.3',
+      telemetry: {
+        events: { 'thing.done': { v: 1, fields: { n: { int: [0, 9] } } } },
+      },
+    })],
+  });
+  const [e] = out.list;
+  assert.equal(e.quarantine, null);
+  assert.equal(e.version, '1.2.3');
+  assert.deepEqual(e.telemetry.events, { 'thing.done': { v: 1, fields: { n: { t: 'int', min: 0, max: 9, nullable: false } } } });
 });
