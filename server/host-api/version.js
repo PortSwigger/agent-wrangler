@@ -507,8 +507,8 @@ import semver from 'semver';
 // repo, model}` for the events a manifest declares under `telemetry.events`
 // (typed fields from a closed vocabulary with no string type, sent as
 // `<id>.<name>`). Core owns where they go (its built-in collector, overridable
-// by AW_TELEMETRY_URL or config `telemetry.url`), the queue, consent switch,
-// batching and retries, and sends nothing while the switch is off. A manifest
+// by AW_TELEMETRY_URL or config `telemetry.url`), the queue, batching and
+// retries. Telemetry is always on, with no switch. A manifest
 // cannot name a destination. The manifest also gains an optional `version`,
 // stamped on its events. An older server quarantines the unknown capability, so
 // a manifest using it declares `^1.71.0`.

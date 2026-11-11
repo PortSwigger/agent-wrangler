@@ -6884,15 +6884,12 @@ function mountTelemetryPanel(host) {
   host.replaceChildren(telemetryPanelEl({
     status: telemetryStatus,
     preview: telemetryPreview,
-    onTeam: (team) => send({ type: 'set-telemetry', team }),
     onPreview: () => send({ type: 'telemetry-preview' }),
-    onClear: () => send({ type: 'telemetry-clear-queue' }),
   }));
 }
 
 // Only while the tab's mount point is in the open modal: a graph tick must not
-// rebuild a closed panel, and a rebuild keeps an open team select's choice
-// because it is redrawn from the value the server now holds.
+// rebuild a closed panel.
 function remountTelemetryPanel() {
   if (telemetryHost?.isConnected && !document.getElementById('settings-modal')?.classList.contains('hidden')) mountTelemetryPanel(telemetryHost);
 }
@@ -7294,7 +7291,6 @@ initSettings({
       if (CODEX_DEFAULT_SETTINGS[id]) return codexPolicyDefaults[CODEX_DEFAULT_SETTINGS[id]];
       if (id === 'autoUpdate') return autoUpdate;
       if (id === 'refreshSessionsAfterUpdate') return refreshSessionsAfterUpdate;
-      if (id === 'telemetryEnabled') return telemetryStatus?.enabled === true;
       // Every extension toggle (`ext:<id>`, built by setExtensionDefs) reads
       // back off graph.extensions — one rung for all of them, no per-extension
       // branch. Undefined for an unknown id so settings.js falls back to its
@@ -7355,10 +7351,6 @@ initSettings({
       } else if (id === 'refreshSessionsAfterUpdate') {
         refreshSessionsAfterUpdate = Boolean(value);
         send({ type: 'set-refresh-sessions-after-update', enabled: refreshSessionsAfterUpdate });
-      } else if (id === 'telemetryEnabled') {
-        if (telemetryStatus) telemetryStatus = { ...telemetryStatus, enabled: Boolean(value) };
-        if (!value) telemetryPreview = null;
-        send({ type: 'set-telemetry', enabled: Boolean(value) });
       } else if (id.startsWith(EXT_SETTING_PREFIX)) {
         // Nothing flips locally: the server fixed the extension's tools/handlers
         // at boot, so the toggle only records the choice (read back off the next

@@ -11,8 +11,8 @@ import { checkEventData, checkEndpoint, REPO_RE } from './extensions/telemetry-s
 // AW_TELEMETRY_URL, then `telemetry.url` in config.json, point it elsewhere (a
 // dev collector or a local stub).
 //
-// Off until the human switches it on in Settings › Telemetry. While off, emit
-// is a no-op; switching off drops whatever was queued.
+// Always on, with no switch: events queue from first run and send whenever the
+// collector is reachable. The URL override is for development, not a way out.
 //
 // Every event is checked three times: at emit against the emitter's declared
 // catalogue (an undeclared or ill-typed field throws), again before each send
@@ -20,17 +20,13 @@ import { checkEventData, checkEndpoint, REPO_RE } from './extensions/telemetry-s
 // event that no longer fits is dropped), and at the collector.
 //
 // State lives in <DATA_DIR>/telemetry.json (0600): the install id, the secret
-// refs are keyed with (never sent), the queue and the send counters. The
-// switch, the team and any URL override live in config.json beside every other
-// setting.
+// refs are keyed with (never sent), the queue and the send counters. Any URL
+// override lives in config.json beside every other setting.
 
 export const BUILTIN_ENDPOINT = 'https://wrangler-telemetry.platform-prod.portswigger.io/v1/events';
 export const ENDPOINT_ENV = 'AW_TELEMETRY_URL';
 // Only these GitHub owners' repo names are sent; any other repo goes as `other`.
 export const REPO_OWNERS = Object.freeze(['portswigger', 'portswigger-apps']);
-// The Settings team picker's list. Empty until the teams are agreed: the picker
-// is hidden and every event goes with `team: null`.
-export const TEAMS = Object.freeze([]);
 
 export const QUEUE_MAX = 5000;
 export const QUEUE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -90,13 +86,11 @@ export function repoSlug(raw) {
 export function createTelemetry({
   file,
   readConfig = () => ({}),
-  writeConfig = () => {},
   fetchImpl = globalThis.fetch,
   now = Date.now,
   env = process.env,
   builtinEndpoint = BUILTIN_ENDPOINT,
   repoOwners = REPO_OWNERS,
-  teams = TEAMS,
   awVersion = '0.0.0',
   isModel = () => false,
   log = () => {},
@@ -125,8 +119,6 @@ export function createTelemetry({
     const t = readConfig().telemetry;
     return t && typeof t === 'object' ? t : {};
   };
-  const enabled = () => cfg().enabled === true;
-  const teamChoice = () => (typeof cfg().team === 'string' ? cfg().team : null);
 
   // Where events go now: AW_TELEMETRY_URL, then config.json `telemetry.url`,
   // then the built-in collector. An override that is not a valid endpoint is
@@ -163,8 +155,9 @@ export function createTelemetry({
     return before - state.queue.length;
   }
 
+  // False only while a URL override is not a valid endpoint.
   function on() {
-    return enabled() && !destination().error;
+    return !destination().error;
   }
 
   function emit(emitterId, name, data) {
@@ -173,8 +166,8 @@ export function createTelemetry({
     if (!em) throw new Error(`${where}: ${emitterId} declares no telemetry events`);
     if (typeof name !== 'string' || !Object.hasOwn(em.catalogue, name)) throw new TypeError(`${where}: not declared in telemetry.events`);
     const spec = em.catalogue[name];
-    // Checked even when nothing will be sent, so an emitter's bug shows in
-    // development rather than only on the machines that switched it on.
+    // Checked even when nothing will be sent, so an emitter's bug shows
+    // under a broken override too.
     const fields = checkEventData(spec, data, { strict: true, isModel, where });
     if (!on()) return false;
     const at = now();
@@ -189,8 +182,7 @@ export function createTelemetry({
   }
 
   // The wire form: the envelope plus the fields the catalogue declares NOW
-  // (anything else is stripped), with repo and team narrowed to core's
-  // allowlists. Null when it no longer fits.
+  // (anything else is stripped), with repo narrowed to core's allowlist. Null when it no longer fits.
   function render(entry) {
     const { e } = entry;
     const em = emitters.get(e.emitter);
@@ -202,14 +194,12 @@ export function createTelemetry({
       if (type.t !== 'repo' || typeof data[key] !== 'string' || !data[key].includes('/')) continue;
       if (!repoOwners.includes(data[key].split('/')[0])) data[key] = 'other';
     }
-    const team = teamChoice();
     return {
       eventId: e.eventId,
       ts: e.ts,
       type: e.type,
       v: e.v,
       install: state.install,
-      team: team && teams.includes(team) ? team : null,
       awVersion,
       emitterVersion: e.emitterVersion,
       ...data,
@@ -265,8 +255,6 @@ export function createTelemetry({
     } finally {
       timers.clearTimeout(timer);
     }
-    // Switched off (queue dropped) while the request was in flight.
-    if (!enabled()) return 'idle';
     if (status >= 200 && status < 300) {
       remove(picked);
       stats.sent += picked.length;
@@ -323,10 +311,7 @@ export function createTelemetry({
     const dest = destination();
     const st = state.sink;
     return {
-      enabled: enabled(),
       install: state.install,
-      team: teamChoice(),
-      teams: [...teams],
       queued: state.queue.length,
       sink: {
         url: dest.url,
@@ -353,7 +338,6 @@ export function createTelemetry({
 
   return {
     install: () => state.install,
-    enabled,
     on,
     emit,
     flush,
@@ -388,26 +372,6 @@ export function createTelemetry({
       if (emitters.delete(id)) onChange();
     },
 
-    setEnabled(value) {
-      const next = value === true;
-      writeConfig({ telemetry: { ...cfg(), enabled: next } });
-      if (!next) {
-        state.queue = [];
-        backoff = null;
-        saveNow();
-      }
-      onChange();
-    },
-    setTeam(team) {
-      const next = typeof team === 'string' && teams.includes(team) ? team : null;
-      writeConfig({ telemetry: { ...cfg(), team: next } });
-      onChange();
-    },
-    clearQueue() {
-      state.queue = [];
-      saveNow();
-      onChange();
-    },
 
     // The newest queued events, exactly as each would leave.
     preview(limit = 50) {

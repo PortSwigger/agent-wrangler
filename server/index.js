@@ -37,7 +37,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, writeConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
@@ -167,13 +167,11 @@ const sessionManager = new SessionManager();
 const taskStore = new TaskStore();
 // Core telemetry (server/telemetry.js): one queue for core and every extension
 // declaring `telemetry:emit`, sent to the built-in collector (or the URL
-// AW_TELEMETRY_URL / config `telemetry.url` names) only once Settings ›
-// Telemetry is switched on. Its flush timer starts in main(), after the
-// instance lock, like the sweeps.
+// AW_TELEMETRY_URL / config `telemetry.url` names). Always on, no switch. Its
+// flush timer starts in main(), after the instance lock, like the sweeps.
 const telemetry = createTelemetry({
   file: path.join(DATA_DIR, 'telemetry.json'),
   readConfig,
-  writeConfig,
   awVersion: VERSION,
   isModel: knownModelId,
   log: logError,
@@ -1129,7 +1127,7 @@ async function rebuildOnce() {
   graph.codexPolicyDefaults = codexPolicyDefaults();
   graph.autoUpdate = autoUpdateMode();
   graph.refreshSessionsAfterUpdate = refreshSessionsAfterUpdate();
-  // Settings › Telemetry: the switch, the team, the collector URL in use and
+  // Settings › Telemetry: the collector URL in use and
   // its counters, and each emitter's catalogue (type names and field names only).
   graph.telemetry = telemetry.status();
   graph.codeVersion = codeVersion;

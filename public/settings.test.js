@@ -39,7 +39,6 @@ test('each registered setting appears in exactly one tab', () => {
     'flipNavHotkeys',
     'autoUpdate',
     'refreshSessionsAfterUpdate',
-    'telemetryEnabled',
   ]));
 });
 
@@ -184,4 +183,9 @@ test('Codex approvals default to on-request in Settings, the dialog fallback and
   assert.match(def.help, /never/);
   assert.equal(CODEX_POLICY_FALLBACK.approval, 'on-request');
   assert.deepEqual({ ...CODEX_POLICY_FALLBACK }, { ...CODEX_POLICY_DEFAULTS });
+});
+
+test('the Telemetry tab has no switch: telemetry is always on', () => {
+  assert.deepEqual(SETTINGS_TABS.find((t) => t.id === 'telemetry').settingIds, []);
+  assert.equal(SETTINGS.some((s) => /telemetry/i.test(s.id)), false);
 });

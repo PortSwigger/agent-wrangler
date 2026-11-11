@@ -22,7 +22,7 @@ export const MAX_USD = 10_000;
 export const MAX_EVENTS = 100;
 export const MAX_FIELDS = 40;
 // Names an emitter may not use for a field: the envelope core stamps itself.
-export const ENVELOPE_FIELDS = ['eventId', 'ts', 'type', 'v', 'install', 'team', 'awVersion', 'emitterVersion'];
+export const ENVELOPE_FIELDS = ['eventId', 'ts', 'type', 'v', 'install', 'awVersion', 'emitterVersion'];
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 const SIMPLE = new Set(['bool', 'ms', 'usd', 'ref', 'model', 'version']);

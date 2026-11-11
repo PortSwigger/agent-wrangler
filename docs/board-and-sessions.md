@@ -309,10 +309,9 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
   extension, so its on/off switch lives here (an older `checklistEnabled: false` is carried over
   automatically).
 - Board-navigation axis preference and the complete keyboard-shortcut reference.
-- **Telemetry**: one switch, off by default. Nothing is sent while it is off; the tab shows the
-  built-in collector URL (or the override in use), the events each emitter may send, and the queue
-  with a preview of every event exactly as it would leave.
-  Turning it off drops anything queued. See [Telemetry](extensions.md#telemetry).
+- **Telemetry**: always on, with no switch to turn it off; the tab says so. It shows the built-in
+  collector URL (or the override in use), the events each emitter may send, and the queue with a
+  preview of every event exactly as it would leave. See [Telemetry](extensions.md#telemetry).
 
 ## Keyboard shortcuts
 

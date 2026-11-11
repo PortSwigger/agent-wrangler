@@ -25,7 +25,7 @@ import { chatViewDefaultHandler } from './chat-view-default.js';
 import { defaultSessionCwdHandler } from './default-session-cwd.js';
 import { defaultRuntimeHandler } from './default-runtime.js';
 import { backgroundModelHandler } from './background-model.js';
-import { telemetrySetHandler, telemetryPreviewHandler, telemetryClearHandler } from './telemetry.js';
+import { telemetryPreviewHandler } from './telemetry.js';
 import { codexPolicyDefaultsHandler } from './codex-policy-defaults.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
 import { extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler, extSetAutoUpdateHandler, extSetEarlyAdopterHandler } from './extensions-install.js';
@@ -101,9 +101,7 @@ export const CONTROL_HANDLERS = [
   defaultSessionCwdHandler,
   defaultRuntimeHandler,
   backgroundModelHandler,
-  telemetrySetHandler,
   telemetryPreviewHandler,
-  telemetryClearHandler,
   codexPolicyDefaultsHandler,
   extensionEnabledHandler,
   extSettingSetHandler,

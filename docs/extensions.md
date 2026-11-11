@@ -2090,8 +2090,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 Telemetry (1.71.0) lets core and extensions **emit** typed usage events (`telemetry:emit`). Where they
 go is core's alone: one built-in collector, which no extension can change or add to. Core owns
-everything between: the consent switch, an install id, refs, the on-disk queue, batching, retries and
-the Settings tab. With the switch off (the default) nothing is queued and nothing is sent.
+everything between: an install id, refs, the on-disk queue, batching, retries and the Settings tab.
+Telemetry is **always on**, with no switch to turn it off: events queue from the first run and are
+sent whenever the collector is reachable. The URL override below is for development, not an opt-out.
 
 ### Emitting
 
@@ -2129,11 +2130,11 @@ if (host.telemetry.on()) {
 }
 ```
 
-- **`host.telemetry.on()`** is false while Settings › Telemetry is off (or its URL override is not a
-  valid endpoint), so an emitter can skip building an event.
+- **`host.telemetry.on()`** is false only while a URL override is not a valid endpoint, so an emitter
+  can skip building an event.
 - **`host.telemetry.emit(name, data)`** checks `data` against the declaration and throws on an
-  undeclared event, an undeclared field, a missing field or a value its type refuses, even while
-  off, so a bug shows up in development. It returns whether the event was queued. The wire `type` is
+  undeclared event, an undeclared field, a missing field or a value its type refuses, even when
+  `on()` is false, so a bug shows up in development. It returns whether the event was queued. The wire `type` is
   forced to `<your id>.<name>`: no extension can emit another's events, and the id `core` is reserved
   for the wrangler.
 - **`host.telemetry.ref(kind, id)`** is an HMAC of `kind:id` under a per-install secret that never
@@ -2172,7 +2173,6 @@ Core sends every event to one collector:
 | Built in | `https://wrangler-telemetry.platform-prod.portswigger.io/v1/events` |
 | Override | `AW_TELEMETRY_URL`, then `telemetry.url` in `config.json` (for a dev collector or a local stub) |
 | Repo names sent | owners `portswigger` and `portswigger-apps`; any other repo goes as `other` |
-| Teams offered | none yet, so the Settings team picker is hidden and `team` is `null` |
 
 The request carries no credentials: the collector's ingress admits only its organisation's office
 network. Anywhere else a send fails, and the events wait in the queue (within its limits below) until
@@ -2190,8 +2190,10 @@ Core POSTs `{ "events": [...] }` as JSON, at most 100 events and 64 KiB per requ
 | `ts` | when it was emitted, RFC 3339 UTC to the second |
 | `type`, `v` | `<emitter>.<name>` and the declared version |
 | `install` | a random UUID made once per data directory, not derived from the machine or user |
-| `team` | the team picked in Settings, when core offers it, else `null` |
 | `awVersion`, `emitterVersion` | the wrangler's version and the emitter's (`version`, or the wrangler's for core and builtins) |
+
+There is no team or user field: `install` plus each event's `repo` is what ties events to one
+person's work.
 
 A 2xx removes the batch. 403, 404, 408, 429, 5xx and network errors retry the same batch with a
 backoff from 15 seconds doubling to an hour (a new URL is tried at once); any other 4xx drops it. Before each send an event is checked
@@ -2203,11 +2205,12 @@ events, and any of them still queued are dropped at the next send.
 
 ### Settings › Telemetry
 
-One switch, **off by default**; turning it off drops the queue. Below it the tab shows the collector
+No switch: the tab opens by saying telemetry is always on. Below that it shows the collector
 URL in use and where it came from (built in, `AW_TELEMETRY_URL` or `config.json`, with the built-in
-URL beside an override), its counts, the repo owners whose names are sent and its last error; the team
-picker when core offers teams; every emitter's event types and field names; and the queue, with
-**Show queued events** (the newest 50, exactly as each would be sent) and **Clear queue**.
+URL beside an override), its counts, the repo owners whose names are sent and its last error; every
+emitter's event types and field names; and the queue, with
+**Show queued events** (the newest 50, exactly as each would be sent). Nothing in the tab turns
+telemetry off or discards the queue.
 
 ## Runtimes
 

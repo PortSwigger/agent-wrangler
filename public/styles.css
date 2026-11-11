@@ -3664,8 +3664,9 @@ a.ext-row-origin { color: var(--blue-fg); }
 
 /* An extension's own settings.panel contributions, above its manifest rows. */
 .ext-settings-panel { margin-bottom: 12px; }
-/* Settings › Telemetry: sinks, team, catalogue and queue below the switch row. */
+/* Settings › Telemetry: the always-on line, then collector, catalogue and queue. */
 .telemetry-panel { display: flex; flex-direction: column; gap: 4px; padding: 0 2px 8px; }
+.telemetry-always-on { padding: 12px 0 8px; border-bottom: 1px solid var(--border-muted); }
 .telemetry-section { padding: 6px 0 8px; border-bottom: 1px solid var(--border-muted); }
 .telemetry-section:last-of-type { border-bottom: 0; }
 .telemetry-empty { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 4px; }
@@ -3674,7 +3675,6 @@ a.ext-row-origin { color: var(--blue-fg); }
 .telemetry-sink-from { font-size: 12px; color: var(--fg-muted); margin-top: 2px; overflow-wrap: anywhere; }
 .telemetry-sink-status { font-size: 12px; color: var(--fg-subtle); margin-top: 4px; }
 .telemetry-sink-error { font-size: 12px; color: var(--danger-strong); margin-top: 4px; overflow-wrap: anywhere; }
-.telemetry-team-row { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-top: 4px; }
 .telemetry-emitter { margin-top: 6px; font-size: 12px; }
 .telemetry-emitter summary { cursor: pointer; color: var(--fg); font-family: var(--font-mono); }
 .telemetry-event { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 4px 0 0 14px; }

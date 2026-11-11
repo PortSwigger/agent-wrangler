@@ -16,10 +16,10 @@ const DECL = normaliseTelemetryDecl({
 
 const BUILTIN = 'https://collector.example.com/v1/events';
 
-function setup({ enabled = true, team = null, url, env = {}, responses = [], clock = { t: Date.UTC(2026, 10, 10, 12, 0, 0, 400) } } = {}) {
+function setup({ url, env = {}, responses = [], clock = { t: Date.UTC(2026, 10, 10, 12, 0, 0, 400) } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-telemetry-'));
   const file = path.join(dir, 'telemetry.json');
-  let cfg = { telemetry: { enabled, team, ...(url ? { url } : {}) } };
+  const cfg = { telemetry: { ...(url ? { url } : {}) } };
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, init, body: JSON.parse(init.body) });
@@ -30,13 +30,11 @@ function setup({ enabled = true, team = null, url, env = {}, responses = [], clo
   const t = createTelemetry({
     file,
     readConfig: () => cfg,
-    writeConfig: (patch) => { cfg = { ...cfg, ...patch }; },
     fetchImpl,
     now: () => clock.t,
     env,
     builtinEndpoint: BUILTIN,
     repoOwners: ['acme'],
-    teams: ['platform', 'web'],
     awVersion: '0.1.0',
     timers: noTimers,
   });
@@ -50,7 +48,7 @@ function withDemo(t) {
 const step = (t, over = {}) => ({ kind: 'pr', tries: 1, repo: t.repo('git@github.com:acme/widgets.git'), job: t.ref('job', 'job_1'), ...over });
 
 test('an event from an extension reaches the built-in collector as the envelope plus its declared fields, with no credentials', async () => {
-  const { t, calls } = setup({ team: 'web' });
+  const { t, calls } = setup();
   withDemo(t);
   assert.equal(t.emit('demo', 'step.ended', step(t)), true);
   await t.flush();
@@ -61,7 +59,7 @@ test('an event from an extension reaches the built-in collector as the envelope 
   const [ev] = calls[0].body.events;
   assert.match(ev.eventId, /^[0-9a-f-]{36}$/);
   assert.deepEqual({ ...ev, eventId: 'x' }, {
-    eventId: 'x', ts: '2026-11-10T12:00:00Z', type: 'demo.step.ended', v: 1, install: t.install(), team: 'web',
+    eventId: 'x', ts: '2026-11-10T12:00:00Z', type: 'demo.step.ended', v: 1, install: t.install(),
     awVersion: '0.1.0', emitterVersion: '2.0.0', kind: 'pr', tries: 1, repo: 'acme/widgets', job: t.ref('job', 'job_1'),
   });
   assert.equal(t.status().queued, 0, 'a 2xx removes the batch');
@@ -104,17 +102,33 @@ test('an override that is not a valid endpoint sends nothing rather than falling
   }
 });
 
-test('nothing is queued or sent while the switch is off', async () => {
-  const b = setup({ enabled: false });
-  withDemo(b.t);
-  assert.equal(b.t.on(), false);
-  assert.equal(b.t.emit('demo', 'step.ended', step(b.t)), false);
-  await b.t.flush();
-  assert.equal(b.calls.length, 0);
+test('telemetry is on from first run with no config, and a stale enabled:false in config does not turn it off', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-telemetry-'));
+  for (const config of [{}, { telemetry: { enabled: false } }]) {
+    const calls = [];
+    const t = createTelemetry({
+      file: path.join(dir, `${calls.length}-${Object.keys(config).length}.json`),
+      readConfig: () => config,
+      fetchImpl: async (url, init) => { calls.push(JSON.parse(init.body)); return { status: 200, text: async () => '' }; },
+      builtinEndpoint: BUILTIN,
+      timers: noTimers,
+    });
+    withDemo(t);
+    assert.equal(t.on(), true);
+    assert.equal(t.emit('demo', 'step.ended', step(t)), true);
+    await t.flush();
+    assert.equal(calls.length, 1, JSON.stringify(config));
+    assert.equal('enabled' in t.status(), false);
+  }
 });
 
-test('emit throws on an undeclared event, an undeclared field or an ill-typed one, even while off', () => {
-  const { t } = setup({ enabled: false });
+test('there is no way to switch telemetry off or discard the queue', () => {
+  const { t } = setup();
+  for (const name of ['setEnabled', 'enabled', 'clearQueue', 'disable', 'setTeam']) assert.equal(t[name], undefined, name);
+});
+
+test('emit throws on an undeclared event, an undeclared field or an ill-typed one, even under a broken override', () => {
+  const { t } = setup({ env: { AW_TELEMETRY_URL: 'not a url' } });
   withDemo(t);
   assert.throws(() => t.emit('demo', 'nope', {}), /not declared/);
   assert.throws(() => t.emit('demo', 'step.ended', { ...step(t), prompt: 'fix the login bug' }), /"prompt" is not declared/);
@@ -123,22 +137,8 @@ test('emit throws on an undeclared event, an undeclared field or an ill-typed on
   assert.throws(() => t.emit('stranger', 'step.ended', step(t)), /declares no telemetry events/);
 });
 
-test('switching off drops the queue; switching on starts empty', async () => {
-  const { t, calls } = setup({ responses: [503] });
-  withDemo(t);
-  t.emit('demo', 'step.ended', step(t));
-  await t.flush();
-  assert.equal(t.status().queued, 1);
-  t.setEnabled(false);
-  assert.equal(t.status().queued, 0);
-  assert.equal(t.status().enabled, false);
-  t.setEnabled(true);
-  await t.flush();
-  assert.equal(calls.length, 1, 'the dropped event is never sent');
-});
-
-test('a repo outside the allowed owners goes as other, and a team not on the list goes as null', async () => {
-  const { t, calls } = setup({ team: 'unknown-team' });
+test('a repo outside the allowed owners goes as other, and no event carries a team', async () => {
+  const { t, calls } = setup();
   withDemo(t);
   t.emit('demo', 'step.ended', step(t, { repo: t.repo('https://github.com/SomeoneElse/private-thing') }));
   t.emit('demo', 'step.ended', step(t, { repo: t.repo('') }));
@@ -146,7 +146,7 @@ test('a repo outside the allowed owners goes as other, and a team not on the lis
   const [a, b] = calls[0].body.events;
   assert.equal(a.repo, 'other');
   assert.equal(b.repo, 'none');
-  assert.equal(a.team, null);
+  assert.equal('team' in a, false);
 });
 
 test('5xx, 403, 404, 408, 429 and network errors retry with doubling backoff; other 4xx drop the batch', async () => {
@@ -284,7 +284,7 @@ test('the queue, install id and secret survive a restart; the file is private', 
   await t.flush();
   t.saveNow();
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-  const again = createTelemetry({ file, readConfig: () => ({ telemetry: { enabled: true } }), timers: noTimers });
+  const again = createTelemetry({ file, readConfig: () => ({}), timers: noTimers });
   assert.equal(again.install(), t.install());
   assert.equal(again.ref('job', 'job_1'), t.ref('job', 'job_1'));
   assert.equal(again.status().queued, 1);
@@ -318,20 +318,9 @@ test('status shows the URL in use and where it came from; preview shows events a
   assert.equal(st.sink.host, 'collector.example.com');
   assert.equal(st.sink.source, 'builtin');
   assert.deepEqual(st.sink.repoOwners, ['acme']);
-  assert.deepEqual(st.teams, ['platform', 'web']);
+  assert.equal('teams' in st || 'team' in st, false);
   assert.deepEqual(st.emitters[0].events, [{ type: 'demo.step.ended', v: 1, fields: ['kind', 'tries', 'repo', 'job'] }]);
   const [p] = t.preview();
   assert.equal(p.sink, 'collector.example.com');
   assert.equal(p.event.type, 'demo.step.ended');
-  t.clearQueue();
-  assert.equal(t.preview().length, 0);
-});
-
-test('setTeam takes only a team on the list', () => {
-  const s = setup();
-  withDemo(s.t);
-  s.t.setTeam('platform');
-  assert.equal(s.cfg().telemetry.team, 'platform');
-  s.t.setTeam('made-up');
-  assert.equal(s.cfg().telemetry.team, null);
 });

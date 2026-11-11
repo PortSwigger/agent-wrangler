@@ -44,7 +44,7 @@ const SINK = {
   sent: 5, dropped: 0, lastSentAt: null, lastError: 'HTTP 503: retrying in 15s', lastErrorAt: 1, retryAt: 2,
 };
 const STATUS = {
-  enabled: true, install: 'b1c7f5c2-0000-4000-8000-000000000000', team: 'web', teams: ['platform', 'web'], queued: 2,
+  install: 'b1c7f5c2-0000-4000-8000-000000000000', queued: 2,
   sink: SINK,
   emitters: [{ id: 'core', version: '0.1.0', events: [] }, { id: 'demo', version: '1.0.0', events: [{ type: 'demo.step.ended', v: 1, fields: ['kind', 'tries'] }] }],
 };
@@ -74,32 +74,21 @@ test('an invalid override says nothing is sent, and offers no counters', () => w
   assert.doesNotMatch(text, /5 sent/);
 }));
 
-test('with no teams there is no team picker', () => withDom(() => {
-  const el = telemetryPanelEl({ status: { ...STATUS, teams: [], team: null } });
-  assert.equal(all(el, (n) => n.tagName === 'SELECT').length, 0);
-}));
-
-test('the team picker offers the teams and reports a pick, empty as null', () => withDom(() => {
-  const picked = [];
-  const el = telemetryPanelEl({ status: STATUS, onTeam: (t) => picked.push(t) });
-  const [select] = all(el, (n) => n.tagName === 'SELECT');
-  assert.deepEqual(select.children.map((o) => o.value), ['', 'platform', 'web']);
-  assert.equal(select.value, 'web');
-  select.value = '';
-  select.listeners.change();
-  assert.deepEqual(picked, [null]);
-}));
-
-test('the queue preview shows each event exactly as it would leave, and Clear is off for an empty queue', () => withDom(() => {
+test('the queue preview shows each event exactly as it would leave', () => withDom(() => {
   const el = telemetryPanelEl({ status: STATUS, preview: [{ sink: 'collector.example.com', event: { type: 'demo.step.ended', tries: 1 } }] });
   const [pre] = all(el, (n) => n.tagName === 'PRE');
   assert.match(pre.textContent, /→ collector\.example\.com\n\{\n {2}"type": "demo\.step\.ended"/);
-  const empty = telemetryPanelEl({ status: { ...STATUS, queued: 0 } });
-  const clear = all(empty, (n) => n.tagName === 'BUTTON' && n.textContent === 'Clear queue')[0];
-  assert.equal(clear.disabled, true);
 }));
 
-test('the collector line says when the switch is off', () => {
-  assert.match(sinkStatusText(SINK, { enabled: false, queued: 0 }), /not sending: telemetry is off/);
-  assert.doesNotMatch(sinkStatusText(SINK, { enabled: true, queued: 0 }), /not sending/);
+test('the panel says telemetry is always on and offers no switch, team picker or way to clear the queue', () => withDom(() => {
+  const el = telemetryPanelEl({ status: STATUS });
+  assert.match(el.textContent, /Telemetry is always on\. There is no switch to turn it off\./);
+  assert.equal(all(el, (n) => n.tagName === 'INPUT' || n.tagName === 'SELECT').length, 0);
+  assert.doesNotMatch(el.textContent, /team/i);
+  assert.deepEqual(all(el, (n) => n.tagName === 'BUTTON').map((b) => b.textContent), ['Show queued events']);
+  assert.match(telemetryPanelEl({ status: null }).textContent, /always on/, 'said even before the first graph');
+}));
+
+test('the collector line never says it is not sending because telemetry is off', () => {
+  assert.equal(sinkStatusText(SINK, { queued: 0 }), '5 sent · 0 queued');
 });

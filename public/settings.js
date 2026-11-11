@@ -34,7 +34,6 @@
 import { esc, anyModalOpen } from './util.js';
 import { shortcutsHtml } from './shortcuts.js';
 import { keybindings } from './keybindings.js';
-import { TELEMETRY_HELP } from './telemetry-panel.js';
 
 const STORE_PREFIX = 'cm-setting-';
 
@@ -198,14 +197,6 @@ export const SETTINGS = [
     default: 'notify',
   },
   {
-    id: 'telemetryEnabled',
-    type: 'toggle',
-    scope: 'server',
-    label: 'Send telemetry',
-    help: TELEMETRY_HELP,
-    default: false,
-  },
-  {
     id: 'refreshSessionsAfterUpdate',
     type: 'toggle',
     scope: 'server',
@@ -237,7 +228,7 @@ export const SETTINGS_TABS = [
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
   { id: 'updates', label: 'Updates', settingIds: ['autoUpdate', 'refreshSessionsAfterUpdate'] },
-  { id: 'telemetry', label: 'Telemetry', settingIds: ['telemetryEnabled'] },
+  { id: 'telemetry', label: 'Telemetry', settingIds: [] },
 ];
 
 // Every extension toggle is a scope:'server' def under this prefix, so app.js's
@@ -504,8 +495,8 @@ function tabPanelHtml(tab, selected) {
   } else if (tab.id === 'updates') {
     inner = `<div id="settings-updates"></div>${inner}`;
   } else if (tab.id === 'telemetry') {
-    // The switch is an ordinary row; the sinks, team, catalogue and queue
-    // below it are extension-supplied text, built by telemetry-panel.js.
+    // No switch row: telemetry is always on. The collector, catalogue
+    // and queue carry extension-supplied text, built by telemetry-panel.js.
     inner += '<div id="settings-telemetry"></div>';
   }
   return `<div id="settings-panel-${tab.id}" class="settings-panel${selected ? '' : ' hidden'}"

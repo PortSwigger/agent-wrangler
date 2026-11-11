@@ -1,10 +1,11 @@
-// Settings › Telemetry, below the switch row: where events go (the collector
-// URL in use and where it came from), the team picker, what each emitter may
+// Settings › Telemetry: that it is always on, where events go (the collector
+// URL in use and where it came from), what each emitter may
 // send, and the queue with a preview of exactly what would leave. Built with
 // textContent throughout: the URL can come from config and event names from
 // extensions.
 
-export const TELEMETRY_HELP = 'Sends usage events (counts, durations, kinds and model ids; never prompt text, titles, paths or branch names) to the collector below. Nothing is sent while this is off. Turning it off drops anything still queued.';
+export const TELEMETRY_ALWAYS_ON = 'Telemetry is always on. There is no switch to turn it off.';
+export const TELEMETRY_HELP = 'Sends usage events (counts, durations, kinds and model ids; never prompt text, titles, paths or branch names) to the collector below. Events queue from the first run and are sent whenever the collector is reachable.';
 
 const SOURCE_TEXT = {
   builtin: 'Built in. Reachable only from the office network; elsewhere events wait in the queue.',
@@ -32,11 +33,10 @@ function when(ms) {
   return d.toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', day: 'numeric', month: 'short' });
 }
 
-export function sinkStatusText(sink, { enabled, queued = 0 } = {}) {
+export function sinkStatusText(sink, { queued = 0 } = {}) {
   const parts = [`${sink.sent} sent`, `${queued} queued`];
   if (sink.dropped) parts.push(`${sink.dropped} dropped`);
   if (sink.lastSentAt) parts.push(`last sent ${when(sink.lastSentAt)}`);
-  if (!enabled) parts.push('not sending: telemetry is off');
   return parts.join(' · ');
 }
 
@@ -46,7 +46,7 @@ function section(title) {
   return wrap;
 }
 
-function sinkEl(sink, { enabled, queued }) {
+function sinkEl(sink, { queued }) {
   const row = el('div', 'telemetry-sink');
   row.append(el('div', 'telemetry-sink-host', sink.url));
   row.append(el('div', 'telemetry-sink-from', SOURCE_TEXT[sink.source] || ''));
@@ -55,44 +55,27 @@ function sinkEl(sink, { enabled, queued }) {
     row.append(el('div', 'telemetry-sink-error', `Not sending: ${sink.error}`));
     return row;
   }
-  row.append(el('div', 'telemetry-sink-status', sinkStatusText(sink, { enabled, queued })));
+  row.append(el('div', 'telemetry-sink-status', sinkStatusText(sink, { queued })));
   if (sink.repoOwners?.length) row.append(el('div', 'telemetry-sink-status', `Repo names sent for ${sink.repoOwners.join(', ')}; any other repo goes as "other".`));
   if (sink.lastError) row.append(el('div', 'telemetry-sink-error', `Last error: ${sink.lastError}`));
   return row;
 }
 
 // status: graph.telemetry. preview: the last 'telemetry-preview' reply, or null.
-export function telemetryPanelEl({ status, preview = null, onTeam, onPreview, onClear } = {}) {
+export function telemetryPanelEl({ status, preview = null, onPreview } = {}) {
   const wrap = el('div', 'telemetry-panel');
+  const head = el('div', 'telemetry-always-on');
+  head.append(el('div', 'setting-label', TELEMETRY_ALWAYS_ON));
+  head.append(el('div', 'setting-help', TELEMETRY_HELP));
+  wrap.append(head);
   if (!status) {
     wrap.append(el('div', 'setting-help', 'Waiting for the server…'));
     return wrap;
   }
 
   const where = section('Where events go');
-  where.append(sinkEl(status.sink, { enabled: status.enabled, queued: status.queued }));
+  where.append(sinkEl(status.sink, { queued: status.queued }));
   wrap.append(where);
-
-  if (status.teams.length) {
-    const team = section('Team');
-    const row = el('div', 'telemetry-team-row');
-    row.append(el('div', 'setting-help', 'Optional. Lets the stats group events by team.'));
-    const select = el('select', 'setting-select telemetry-team');
-    select.setAttribute('aria-label', 'Team');
-    const none = el('option', null, 'Not set');
-    none.value = '';
-    select.append(none);
-    for (const t of status.teams) {
-      const o = el('option', null, t);
-      o.value = t;
-      select.append(o);
-    }
-    select.value = status.team && status.teams.includes(status.team) ? status.team : '';
-    select.addEventListener('change', () => onTeam?.(select.value || null));
-    row.append(select);
-    team.append(row);
-    wrap.append(team);
-  }
 
   const what = section('What can be sent');
   const withEvents = status.emitters.filter((e) => e.events.length);
@@ -114,9 +97,6 @@ export function telemetryPanelEl({ status, preview = null, onTeam, onPreview, on
   const qrow = el('div', 'telemetry-queue-row');
   qrow.append(el('span', 'telemetry-queue-count', `${status.queued} event${status.queued === 1 ? '' : 's'} queued`));
   qrow.append(button(preview ? 'Refresh' : 'Show queued events', onPreview));
-  const clear = button('Clear queue', onClear, 'ext-btn ext-btn-danger');
-  clear.disabled = !status.queued;
-  qrow.append(clear);
   queue.append(qrow);
   if (preview) {
     if (!preview.length) queue.append(el('div', 'telemetry-empty', 'The queue is empty.'));
