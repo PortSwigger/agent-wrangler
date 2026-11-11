@@ -74,7 +74,7 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.68.0 the client `api.sessionPanel`, `session:type`, the Terminal target and `front().panel`,
 // and 1.69.0 permission rules in sessions.spawn `disallowedTools`,
 // and 1.70.0 the `links:read` capability,
-// and 1.71.0 `telemetry:emit`, `telemetry:sink`, the manifest `telemetry` block and `version`,
+// and 1.71.0 `telemetry:emit`, the manifest `telemetry` block and `version`,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.

@@ -1,10 +1,16 @@
-// Settings › Telemetry, below the switch row: where events go (each sink an
-// extension declared, by host), the team picker, what each emitter may send,
-// and the queue with a preview of exactly what would leave. Built with
-// textContent throughout: sink labels, hosts and event names come from
+// Settings › Telemetry, below the switch row: where events go (the collector
+// URL in use and where it came from), the team picker, what each emitter may
+// send, and the queue with a preview of exactly what would leave. Built with
+// textContent throughout: the URL can come from config and event names from
 // extensions.
 
-export const TELEMETRY_HELP = 'Sends usage events (counts, durations, kinds and model ids; never prompt text, titles, paths or branch names) to the sinks listed below. Nothing is sent while this is off or no extension supplies a sink. Turning it off drops anything still queued.';
+export const TELEMETRY_HELP = 'Sends usage events (counts, durations, kinds and model ids; never prompt text, titles, paths or branch names) to the collector below. Nothing is sent while this is off. Turning it off drops anything still queued.';
+
+const SOURCE_TEXT = {
+  builtin: 'Built in. Reachable only from the office network; elsewhere events wait in the queue.',
+  env: 'Set by AW_TELEMETRY_URL, in place of the built-in collector.',
+  config: 'Set by telemetry.url in config.json, in place of the built-in collector.',
+};
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -26,8 +32,8 @@ function when(ms) {
   return d.toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', day: 'numeric', month: 'short' });
 }
 
-export function sinkStatusText(sink, { enabled } = {}) {
-  const parts = [`${sink.sent} sent`, `${sink.pending} queued`];
+export function sinkStatusText(sink, { enabled, queued = 0 } = {}) {
+  const parts = [`${sink.sent} sent`, `${queued} queued`];
   if (sink.dropped) parts.push(`${sink.dropped} dropped`);
   if (sink.lastSentAt) parts.push(`last sent ${when(sink.lastSentAt)}`);
   if (!enabled) parts.push('not sending: telemetry is off');
@@ -40,19 +46,17 @@ function section(title) {
   return wrap;
 }
 
-function sinkEl(sink, enabled) {
+function sinkEl(sink, { enabled, queued }) {
   const row = el('div', 'telemetry-sink');
-  const head = el('div', 'telemetry-sink-head');
-  head.append(el('span', 'telemetry-sink-host', sink.host));
-  head.append(el('span', 'telemetry-sink-from', `from ${sink.extLabel}${sink.label ? ` · ${sink.label}` : ''}`));
-  row.append(head);
-  const accepts = el('div', 'ext-chips');
-  for (const a of sink.accepts) accepts.append(el('span', 'ext-chip', a));
-  row.append(accepts);
-  row.append(el('div', 'telemetry-sink-status', sinkStatusText(sink, { enabled })));
-  if (sink.headerNames.length) {
-    row.append(el('div', 'telemetry-sink-status', `Sends headers ${sink.headerNames.join(', ')} (values hidden)`));
+  row.append(el('div', 'telemetry-sink-host', sink.url));
+  row.append(el('div', 'telemetry-sink-from', SOURCE_TEXT[sink.source] || ''));
+  if (sink.source !== 'builtin') row.append(el('div', 'telemetry-sink-from', `Built-in collector: ${sink.builtin}`));
+  if (sink.error) {
+    row.append(el('div', 'telemetry-sink-error', `Not sending: ${sink.error}`));
+    return row;
   }
+  row.append(el('div', 'telemetry-sink-status', sinkStatusText(sink, { enabled, queued })));
+  if (sink.repoOwners?.length) row.append(el('div', 'telemetry-sink-status', `Repo names sent for ${sink.repoOwners.join(', ')}; any other repo goes as "other".`));
   if (sink.lastError) row.append(el('div', 'telemetry-sink-error', `Last error: ${sink.lastError}`));
   return row;
 }
@@ -66,17 +70,13 @@ export function telemetryPanelEl({ status, preview = null, onTeam, onPreview, on
   }
 
   const where = section('Where events go');
-  if (!status.sinks.length) {
-    where.append(el('div', 'telemetry-empty', 'No extension supplies a sink, so nothing is sent whatever the switch says. A sink comes from an installed extension declaring telemetry:sink.'));
-  } else {
-    for (const s of status.sinks) where.append(sinkEl(s, status.enabled));
-  }
+  where.append(sinkEl(status.sink, { enabled: status.enabled, queued: status.queued }));
   wrap.append(where);
 
   if (status.teams.length) {
     const team = section('Team');
     const row = el('div', 'telemetry-team-row');
-    row.append(el('div', 'setting-help', 'Optional. Lets the stats group events by team; sent only to sinks that list it.'));
+    row.append(el('div', 'setting-help', 'Optional. Lets the stats group events by team.'));
     const select = el('select', 'setting-select telemetry-team');
     select.setAttribute('aria-label', 'Team');
     const none = el('option', null, 'Not set');

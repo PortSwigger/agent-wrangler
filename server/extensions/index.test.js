@@ -116,7 +116,7 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
     description: '', author: '', homepage: '',
     requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['mail'], handlerTypes: [],
     hideDispatchField: [], keybindings: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, earlyAdopterBranch: null,
-    telemetry: { events: null, sinks: null }, version: null, quarantine: null,
+    telemetry: { events: null }, version: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
@@ -754,7 +754,7 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
     defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
     handlerTypes: [], hideDispatchField: [], keybindings: [], runtimes: [], external: true, dir: null, provenance: null, earlyAdopterBranch: null,
-    telemetry: { events: null, sinks: null }, version: null, quarantine: 'no index.js',
+    telemetry: { events: null }, version: null, quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);
 });
@@ -1301,8 +1301,8 @@ test('a telemetry declaration needs its capability, a valid shape, and never the
   const events = { 'thing.done': { v: 1, fields: { n: { int: [0, 9] } } } };
   const sinks = [{ id: 'main', endpoint: 'https://collector.example.com/v1/events', accepts: ['*'] }];
   rejects(manifest({ telemetry: { events } }), /telemetry\.events needs the telemetry:emit capability/);
-  rejects(manifest({ telemetry: { sinks }, requires: ['telemetry:emit'] }), /telemetry\.sinks needs the telemetry:sink capability/);
-  rejects(manifest({ telemetry: { sinks: [{ ...sinks[0], endpoint: 'http://collector.example.com/' }] }, requires: ['telemetry:sink'] }), /https/);
+  rejects(manifest({ telemetry: { sinks }, requires: ['telemetry:emit'] }), /telemetry\.sinks is not supported/);
+  rejects(manifest({ requires: ['telemetry:sink'] }), /unknown capability "telemetry:sink"/);
   rejects(manifest({ telemetry: { events: { e: { v: 1, fields: { prompt: 'string' } } } }, requires: ['telemetry:emit'] }), /unknown type "string"/);
   rejects(manifest({ id: 'core' }), /id "core" is reserved/);
   rejects(manifest({ version: 'one' }), /version must be a version/);
@@ -1312,11 +1312,10 @@ test('a valid telemetry declaration is carried normalised on the entry, with the
   const out = loadExtensions({
     cfg: {},
     builtin: [manifest({
-      requires: ['telemetry:emit', 'telemetry:sink'],
+      requires: ['telemetry:emit'],
       version: '1.2.3',
       telemetry: {
         events: { 'thing.done': { v: 1, fields: { n: { int: [0, 9] } } } },
-        sinks: [{ id: 'main', endpoint: 'https://collector.example.com/v1/events', accepts: ['fake.*'] }],
       },
     })],
   });
@@ -1324,5 +1323,4 @@ test('a valid telemetry declaration is carried normalised on the entry, with the
   assert.equal(e.quarantine, null);
   assert.equal(e.version, '1.2.3');
   assert.deepEqual(e.telemetry.events, { 'thing.done': { v: 1, fields: { n: { t: 'int', min: 0, max: 9, nullable: false } } } });
-  assert.equal(e.telemetry.sinks[0].host, 'collector.example.com');
 });

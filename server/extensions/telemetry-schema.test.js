@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normaliseFieldType, checkValue, normaliseCatalogue, normaliseSinks, normaliseTelemetryDecl, checkEventData, accepts, checkEndpoint,
+  normaliseFieldType, checkValue, normaliseCatalogue, normaliseTelemetryDecl, checkEventData, checkEndpoint,
 } from './telemetry-schema.js';
 
 test('every written field type normalises to one canonical form, and nothing string-shaped exists', () => {
@@ -54,7 +54,7 @@ test('a catalogue refuses bad names, envelope field names and bad versions', () 
   assert.match(normaliseCatalogue({ a: { v: 1, fields: { n: 'string' } } }).error, /unknown type/);
 });
 
-test('a sink must name an https endpoint (http only to localhost) with no credentials, query or fragment', () => {
+test('a collector URL must be https (http only to localhost) with no credentials, query or fragment', () => {
   assert.equal(checkEndpoint('https://collector.example.com/v1/events'), null);
   assert.equal(checkEndpoint('http://127.0.0.1:9999/v1/events'), null);
   assert.equal(checkEndpoint('http://localhost:9999/v1/events'), null);
@@ -64,35 +64,13 @@ test('a sink must name an https endpoint (http only to localhost) with no creden
   assert.match(checkEndpoint('https://collector.example.com/#x'), /query or fragment/);
 });
 
-test('sinks normalise with their host and defaults, and refuse reserved headers', () => {
-  const { sinks } = normaliseSinks([{ id: 'main', endpoint: 'https://c.example.com/v1/events', accepts: ['core.*'], headers: { 'X-Ingest-Token': 't' } }]);
-  assert.deepEqual(sinks, [{
-    id: 'main', label: '', endpoint: 'https://c.example.com/v1/events', host: 'c.example.com', accepts: ['core.*'],
-    repoOwners: [], teams: [], headers: { 'X-Ingest-Token': 't' }, batchMax: 100,
-  }]);
-  assert.match(normaliseSinks([{ id: 'm', endpoint: 'https://c.example.com/', accepts: ['*'], headers: { Host: 'x' } }]).error, /not allowed/);
-  assert.match(normaliseSinks([{ id: 'm', endpoint: 'https://c.example.com/', accepts: [] }]).error, /accepts/);
-  assert.match(normaliseSinks([{ id: 'm', endpoint: 'https://c.example.com/', accepts: ['*'], teams: ['Not A Team'] }]).error, /teams/);
-  assert.match(normaliseSinks([{ id: 'm', endpoint: 'https://c.example.com/', accepts: ['*'], batchMax: 500 }]).error, /batchMax/);
-  assert.match(normaliseSinks([{ id: 'm', endpoint: 'https://c.example.com/', accepts: ['*'], secret: 1 }]).error, /unknown key/);
-});
-
-test('telemetry.events and telemetry.sinks each need their own capability in requires', () => {
+test('telemetry.events needs telemetry:emit, and a manifest cannot name a destination', () => {
   const events = { a: { v: 1, fields: {} } };
-  const sinks = [{ id: 'm', endpoint: 'https://c.example.com/', accepts: ['*'] }];
   assert.match(normaliseTelemetryDecl({ events }, []).error, /telemetry:emit/);
-  assert.match(normaliseTelemetryDecl({ sinks }, ['telemetry:emit']).error, /telemetry:sink/);
-  const ok = normaliseTelemetryDecl({ events, sinks }, ['telemetry:emit', 'telemetry:sink']);
-  assert.ok(ok.events.a && ok.sinks.length === 1);
-  assert.deepEqual(normaliseTelemetryDecl(undefined, []), { events: null, sinks: null });
+  assert.ok(normaliseTelemetryDecl({ events }, ['telemetry:emit']).events.a);
+  assert.deepEqual(normaliseTelemetryDecl(undefined, []), { events: null });
+  assert.match(normaliseTelemetryDecl({ sinks: [{ endpoint: 'https://c.example.com/' }] }, ['telemetry:emit']).error, /telemetry\.sinks is not supported: core sends every event to its built-in collector/);
   assert.match(normaliseTelemetryDecl({ endpoint: 'x' }, []).error, /unknown key/);
-});
-
-test('accepts matches exact types, dotted prefixes and *', () => {
-  assert.equal(accepts(['core.*'], 'core.session.started'), true);
-  assert.equal(accepts(['core.*'], 'corex.a'), false);
-  assert.equal(accepts(['jobs.step.ended'], 'jobs.step.ended'), true);
-  assert.equal(accepts(['*'], 'anything.at.all'), true);
 });
 
 test('checkEventData throws on undeclared or ill-typed fields at emit, and strips or drops at send', () => {

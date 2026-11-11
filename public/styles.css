@@ -3635,9 +3635,8 @@ a.ext-row-origin { color: var(--blue-fg); }
 .telemetry-section:last-of-type { border-bottom: 0; }
 .telemetry-empty { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin-top: 4px; }
 .telemetry-sink { margin-top: 6px; padding: 8px 10px; border: 1px solid var(--border-muted); border-radius: 6px; background: var(--surface-2); }
-.telemetry-sink-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .telemetry-sink-host { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
-.telemetry-sink-from { font-size: 12px; color: var(--fg-muted); }
+.telemetry-sink-from { font-size: 12px; color: var(--fg-muted); margin-top: 2px; overflow-wrap: anywhere; }
 .telemetry-sink-status { font-size: 12px; color: var(--fg-subtle); margin-top: 4px; }
 .telemetry-sink-error { font-size: 12px; color: var(--danger-strong); margin-top: 4px; overflow-wrap: anywhere; }
 .telemetry-team-row { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-top: 4px; }

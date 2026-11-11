@@ -506,13 +506,12 @@ import semver from 'semver';
 // 1.71.0 adds telemetry. `telemetry:emit` gives `host.telemetry.{on, emit, ref,
 // repo, model}` for the events a manifest declares under `telemetry.events`
 // (typed fields from a closed vocabulary with no string type, sent as
-// `<id>.<name>`); `telemetry:sink` lets a manifest declare `telemetry.sinks`, the
-// endpoints core sends batches to, and read their status with
-// `host.telemetry.sinks()`. Core owns the queue, consent switch, batching and
-// retries, and sends nothing while the switch is off or no sink is installed.
-// The manifest also gains an optional `version`, stamped on its events. An older
-// server quarantines the unknown capabilities, so a manifest using them declares
-// `^1.71.0`.
+// `<id>.<name>`). Core owns where they go (its built-in collector, overridable
+// by AW_TELEMETRY_URL or config `telemetry.url`), the queue, consent switch,
+// batching and retries, and sends nothing while the switch is off. A manifest
+// cannot name a destination. The manifest also gains an optional `version`,
+// stamped on its events. An older server quarantines the unknown capability, so
+// a manifest using it declares `^1.71.0`.
 export const HOST_API_VERSION = '1.71.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and

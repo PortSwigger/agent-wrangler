@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createTelemetry, repoSlug, QUEUE_MAX, BACKOFF_START_MS, BACKOFF_MAX_MS, QUEUE_MAX_AGE_MS } from './telemetry.js';
+import { createTelemetry, repoSlug, QUEUE_MAX, BACKOFF_START_MS, BACKOFF_MAX_MS, QUEUE_MAX_AGE_MS, BUILTIN_ENDPOINT, REPO_OWNERS, BATCH_MAX } from './telemetry.js';
 import { normaliseTelemetryDecl } from './extensions/telemetry-schema.js';
 
 const noTimers = { setTimeout: () => ({}), clearTimeout: () => {}, setInterval: () => ({}), clearInterval: () => {} };
@@ -12,13 +12,14 @@ const DECL = normaliseTelemetryDecl({
   events: {
     'step.ended': { v: 1, fields: { kind: { enum: ['pr', 'session'] }, tries: { int: [0, 50] }, repo: { repo: true }, job: 'ref' } },
   },
-  sinks: [{ id: 'main', endpoint: 'https://collector.example.com/v1/events', accepts: ['demo.*'], repoOwners: ['acme'], teams: ['platform', 'web'], headers: { 'X-Ingest-Token': 'tok' } }],
-}, ['telemetry:emit', 'telemetry:sink']);
+}, ['telemetry:emit']);
 
-function setup({ enabled = true, team = null, responses = [], clock = { t: Date.UTC(2026, 10, 10, 12, 0, 0, 400) } } = {}) {
+const BUILTIN = 'https://collector.example.com/v1/events';
+
+function setup({ enabled = true, team = null, url, env = {}, responses = [], clock = { t: Date.UTC(2026, 10, 10, 12, 0, 0, 400) } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-telemetry-'));
   const file = path.join(dir, 'telemetry.json');
-  let cfg = { telemetry: { enabled, team } };
+  let cfg = { telemetry: { enabled, team, ...(url ? { url } : {}) } };
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, init, body: JSON.parse(init.body) });
@@ -32,29 +33,31 @@ function setup({ enabled = true, team = null, responses = [], clock = { t: Date.
     writeConfig: (patch) => { cfg = { ...cfg, ...patch }; },
     fetchImpl,
     now: () => clock.t,
+    env,
+    builtinEndpoint: BUILTIN,
+    repoOwners: ['acme'],
+    teams: ['platform', 'web'],
     awVersion: '0.1.0',
     timers: noTimers,
   });
   return { t, file, calls, clock, cfg: () => cfg };
 }
 
-function withDemo(t, { sinks = true } = {}) {
+function withDemo(t) {
   t.registerEmitter('demo', { version: '2.0.0', events: DECL.events });
-  if (sinks) t.registerSinks('privsink', { label: 'Private sink', sinks: DECL.sinks });
 }
 
 const step = (t, over = {}) => ({ kind: 'pr', tries: 1, repo: t.repo('git@github.com:acme/widgets.git'), job: t.ref('job', 'job_1'), ...over });
 
-test('an event from an extension reaches its sink as the envelope plus its declared fields', async () => {
+test('an event from an extension reaches the built-in collector as the envelope plus its declared fields, with no credentials', async () => {
   const { t, calls } = setup({ team: 'web' });
   withDemo(t);
   assert.equal(t.emit('demo', 'step.ended', step(t)), true);
   await t.flush();
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, 'https://collector.example.com/v1/events');
+  assert.equal(calls[0].url, BUILTIN);
   assert.equal(calls[0].init.method, 'POST');
-  assert.equal(calls[0].init.headers['content-type'], 'application/json');
-  assert.equal(calls[0].init.headers['X-Ingest-Token'], 'tok');
+  assert.deepEqual(calls[0].init.headers, { 'content-type': 'application/json' });
   const [ev] = calls[0].body.events;
   assert.match(ev.eventId, /^[0-9a-f-]{36}$/);
   assert.deepEqual({ ...ev, eventId: 'x' }, {
@@ -62,18 +65,46 @@ test('an event from an extension reaches its sink as the envelope plus its decla
     awVersion: '0.1.0', emitterVersion: '2.0.0', kind: 'pr', tries: 1, repo: 'acme/widgets', job: t.ref('job', 'job_1'),
   });
   assert.equal(t.status().queued, 0, 'a 2xx removes the batch');
-  assert.equal(t.status().sinks[0].sent, 1);
+  assert.equal(t.status().sink.sent, 1);
 });
 
-test('nothing is queued or sent without a sink, or while the switch is off', async () => {
-  const a = setup();
-  withDemo(a.t, { sinks: false });
-  assert.equal(a.t.on(), false);
-  assert.equal(a.t.emit('demo', 'step.ended', step(a.t)), false);
-  await a.t.flush();
-  assert.equal(a.calls.length, 0);
-  assert.equal(a.t.status().queued, 0);
+test('the built-in collector is the shipped prod URL, and only the report\'s repo owners are named', () => {
+  assert.equal(BUILTIN_ENDPOINT, 'https://wrangler-telemetry.platform-prod.portswigger.io/v1/events');
+  assert.deepEqual([...REPO_OWNERS], ['portswigger', 'portswigger-apps']);
+  const t = createTelemetry({ file: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-telemetry-')), 't.json'), env: {}, timers: noTimers });
+  assert.deepEqual(t.destination(), { url: BUILTIN_ENDPOINT, source: 'builtin', error: null, host: 'wrangler-telemetry.platform-prod.portswigger.io' });
+});
 
+test('AW_TELEMETRY_URL, then config telemetry.url, override the built-in URL', async () => {
+  const a = setup({ env: { AW_TELEMETRY_URL: 'http://127.0.0.1:4318/v1/events' }, url: 'https://dev.example.com/v1/events' });
+  withDemo(a.t);
+  a.t.emit('demo', 'step.ended', step(a.t));
+  await a.t.flush();
+  assert.equal(a.calls[0].url, 'http://127.0.0.1:4318/v1/events');
+  assert.equal(a.t.status().sink.source, 'env');
+  assert.equal(a.t.status().sink.builtin, BUILTIN);
+
+  const b = setup({ url: 'https://dev.example.com/v1/events' });
+  withDemo(b.t);
+  b.t.emit('demo', 'step.ended', step(b.t));
+  await b.t.flush();
+  assert.equal(b.calls[0].url, 'https://dev.example.com/v1/events');
+  assert.equal(b.t.status().sink.source, 'config');
+});
+
+test('an override that is not a valid endpoint sends nothing rather than falling back', async () => {
+  for (const url of ['http://collector.example.com/v1/events', 'https://user:pw@collector.example.com/', 'https://collector.example.com/?k=v', 'not a url']) {
+    const { t, calls } = setup({ env: { AW_TELEMETRY_URL: url } });
+    withDemo(t);
+    assert.equal(t.on(), false, url);
+    assert.equal(t.emit('demo', 'step.ended', step(t)), false, url);
+    await t.flush();
+    assert.equal(calls.length, 0, url);
+    assert.ok(t.status().sink.error, url);
+  }
+});
+
+test('nothing is queued or sent while the switch is off', async () => {
   const b = setup({ enabled: false });
   withDemo(b.t);
   assert.equal(b.t.on(), false);
@@ -106,7 +137,7 @@ test('switching off drops the queue; switching on starts empty', async () => {
   assert.equal(calls.length, 1, 'the dropped event is never sent');
 });
 
-test('a repo outside the sink\'s owners goes as other, and a team the sink does not list goes as null', async () => {
+test('a repo outside the allowed owners goes as other, and a team not on the list goes as null', async () => {
   const { t, calls } = setup({ team: 'unknown-team' });
   withDemo(t);
   t.emit('demo', 'step.ended', step(t, { repo: t.repo('https://github.com/SomeoneElse/private-thing') }));
@@ -118,28 +149,28 @@ test('a repo outside the sink\'s owners goes as other, and a team the sink does 
   assert.equal(a.team, null);
 });
 
-test('5xx, 404, 408, 429 and network errors retry with doubling backoff; other 4xx drop the batch', async () => {
+test('5xx, 403, 404, 408, 429 and network errors retry with doubling backoff; other 4xx drop the batch', async () => {
   const { t, calls, clock } = setup({ responses: [503, new Error('ECONNREFUSED'), 429, 200] });
   withDemo(t);
   t.emit('demo', 'step.ended', step(t));
   await t.flush();
   assert.equal(calls.length, 1);
-  assert.match(t.status().sinks[0].lastError, /HTTP 503: retrying in 15s/);
+  assert.match(t.status().sink.lastError, /HTTP 503: retrying in 15s/);
   await t.flush();
   assert.equal(calls.length, 1, 'inside the backoff nothing is sent');
   clock.t += BACKOFF_START_MS;
   await t.flush();
   assert.equal(calls.length, 2);
-  assert.match(t.status().sinks[0].lastError, /retrying in 30s/);
+  assert.match(t.status().sink.lastError, /retrying in 30s/);
   clock.t += 2 * BACKOFF_START_MS;
   await t.flush();
   assert.equal(calls.length, 3);
-  assert.match(t.status().sinks[0].lastError, /HTTP 429: retrying in 60s/);
+  assert.match(t.status().sink.lastError, /HTTP 429: retrying in 60s/);
   clock.t += 4 * BACKOFF_START_MS;
   await t.flush();
   assert.equal(calls.length, 4);
   assert.equal(t.status().queued, 0);
-  assert.equal(t.status().sinks[0].lastError, null);
+  assert.equal(t.status().sink.lastError, null);
   // Every retry re-sent the same event, so the collector can dedupe on eventId.
   assert.equal(new Set(calls.map((c) => c.body.events[0].eventId)).size, 1);
 
@@ -148,8 +179,8 @@ test('5xx, 404, 408, 429 and network errors retry with doubling backoff; other 4
   d.t.emit('demo', 'step.ended', step(d.t));
   await d.t.flush();
   assert.equal(d.t.status().queued, 0);
-  assert.equal(d.t.status().sinks[0].dropped, 1);
-  assert.match(d.t.status().sinks[0].lastError, /HTTP 400: batch of 1 refused and dropped/);
+  assert.equal(d.t.status().sink.dropped, 1);
+  assert.match(d.t.status().sink.lastError, /HTTP 400: batch of 1 refused and dropped/);
 });
 
 test('backoff is capped at an hour', async () => {
@@ -160,17 +191,46 @@ test('backoff is capped at an hour', async () => {
     await t.flush();
     clock.t += BACKOFF_MAX_MS;
   }
-  assert.match(t.status().sinks[0].lastError, /retrying in 3600s/);
+  assert.match(t.status().sink.lastError, /retrying in 3600s/);
 });
 
-test('batches hold at most batchMax events', async () => {
+test('batches hold at most BATCH_MAX events, oldest first', async () => {
   const { t, calls } = setup();
-  t.registerEmitter('demo', { version: '2.0.0', events: DECL.events });
-  t.registerSinks('privsink', { sinks: [{ ...DECL.sinks[0], batchMax: 2 }] });
-  for (let i = 0; i < 5; i += 1) t.emit('demo', 'step.ended', step(t, { tries: i }));
+  withDemo(t);
+  for (let i = 0; i < BATCH_MAX * 2 + 1; i += 1) t.emit('demo', 'step.ended', step(t, { tries: i % 50 }));
   await t.flush();
-  assert.deepEqual(calls.map((c) => c.body.events.length), [2, 2, 1]);
-  assert.deepEqual(calls.flatMap((c) => c.body.events.map((e) => e.tries)), [0, 1, 2, 3, 4], 'oldest first');
+  assert.deepEqual(calls.map((c) => c.body.events.length), [BATCH_MAX, BATCH_MAX, 1]);
+  assert.deepEqual(calls[0].body.events.slice(0, 3).map((e) => e.tries), [0, 1, 2]);
+});
+
+test('off the office network the events stay queued: a 403 or an unreachable host retries, it never drops', async () => {
+  const err = Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } });
+  const { t, calls, clock } = setup({ responses: [403, err, 200] });
+  withDemo(t);
+  t.emit('demo', 'step.ended', step(t));
+  await t.flush();
+  assert.equal(t.status().queued, 1);
+  assert.match(t.status().sink.lastError, /HTTP 403: retrying in 15s/);
+  clock.t += BACKOFF_START_MS;
+  await t.flush();
+  assert.equal(t.status().queued, 1);
+  assert.match(t.status().sink.lastError, /ENOTFOUND: retrying in 30s/);
+  assert.equal(t.status().sink.dropped, 0);
+  clock.t += 2 * BACKOFF_START_MS;
+  await t.flush();
+  assert.equal(calls.length, 3);
+  assert.equal(t.status().queued, 0);
+});
+
+test('a new URL is tried at once, not after the old one\'s backoff', async () => {
+  const s = setup({ responses: [503, 200] });
+  withDemo(s.t);
+  s.t.emit('demo', 'step.ended', step(s.t));
+  await s.t.flush();
+  s.cfg().telemetry.url = 'http://localhost:4318/v1/events';
+  await s.t.flush();
+  assert.deepEqual(s.calls.map((c) => c.url), [BUILTIN, 'http://localhost:4318/v1/events']);
+  assert.equal(s.t.status().queued, 0);
 });
 
 test('before each send, fields the catalogue no longer declares are stripped', async () => {
@@ -200,20 +260,11 @@ test('an event that no longer fits its catalogue, or whose emitter has gone, is 
   await t.flush();
   assert.equal(calls.length, 1, 'a v1 event is not sent under a v2 catalogue');
   assert.equal(t.status().queued, 0);
-  assert.equal(t.status().sinks[0].dropped, 1);
+  assert.equal(t.status().sink.dropped, 1);
 
   t.emit('demo', 'step.ended', { kind: 'pr' });
   t.unregisterEmitter('demo');
   assert.equal(t.preview().length, 0);
-});
-
-test('removing a sink drops the events only it was waiting for', async () => {
-  const { t } = setup({ responses: [503] });
-  withDemo(t);
-  t.emit('demo', 'step.ended', step(t));
-  t.unregisterSinks('privsink');
-  assert.equal(t.status().queued, 0);
-  assert.equal(t.on(), false);
 });
 
 test('the queue is capped at its size and age, oldest dropped first', () => {
@@ -258,14 +309,15 @@ test('repoSlug reads slugs and remotes, and refuses paths', () => {
   assert.equal(repoSlug('not a repo'), null);
 });
 
-test('status shows each sink\'s host and header names but never header values; preview shows events as they would leave', () => {
+test('status shows the URL in use and where it came from; preview shows events as they would leave', () => {
   const { t } = setup({ responses: [] });
   withDemo(t);
   t.emit('demo', 'step.ended', step(t));
   const st = t.status();
-  assert.equal(st.sinks[0].host, 'collector.example.com');
-  assert.deepEqual(st.sinks[0].headerNames, ['X-Ingest-Token']);
-  assert.equal(JSON.stringify(st).includes('tok"'), false);
+  assert.equal(st.sink.url, BUILTIN);
+  assert.equal(st.sink.host, 'collector.example.com');
+  assert.equal(st.sink.source, 'builtin');
+  assert.deepEqual(st.sink.repoOwners, ['acme']);
   assert.deepEqual(st.teams, ['platform', 'web']);
   assert.deepEqual(st.emitters[0].events, [{ type: 'demo.step.ended', v: 1, fields: ['kind', 'tries', 'repo', 'job'] }]);
   const [p] = t.preview();
@@ -275,18 +327,11 @@ test('status shows each sink\'s host and header names but never header values; p
   assert.equal(t.preview().length, 0);
 });
 
-test('setTeam takes only a team some sink offers', () => {
+test('setTeam takes only a team on the list', () => {
   const s = setup();
   withDemo(s.t);
   s.t.setTeam('platform');
   assert.equal(s.cfg().telemetry.team, 'platform');
   s.t.setTeam('made-up');
   assert.equal(s.cfg().telemetry.team, null);
-});
-
-test('sinkStatus is narrowed to one extension\'s own sinks', () => {
-  const { t } = setup();
-  withDemo(t);
-  t.registerSinks('other', { sinks: [{ ...DECL.sinks[0], id: 'theirs' }] });
-  assert.deepEqual(t.sinkStatus('privsink').map((s) => s.id), ['main']);
 });

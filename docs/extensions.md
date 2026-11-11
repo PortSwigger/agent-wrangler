@@ -169,7 +169,7 @@ Supported manifest contributions are:
 | Browser UI | `client`, optional `styles`, and slots from `public/slots.js` |
 | Themes | `themes`: a directory of `<id>/theme.json` + assets, offered in Settings › Appearance. See [Themes](#themes) |
 | Core access | `requires`, served through the versioned host API in `server/host-api/` |
-| Telemetry | `telemetry.events` to emit typed usage events, `telemetry.sinks` to receive them. See [Telemetry](#telemetry) |
+| Telemetry | `telemetry.events` to emit typed usage events, which core sends to its built-in collector. See [Telemetry](#telemetry) |
 
 ### Themes
 
@@ -2088,11 +2088,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 ## Telemetry
 
-Telemetry (1.71.0) is a capability, not a destination: this repository holds no endpoint. An extension
-**emits** events it declares (`telemetry:emit`), and an extension **supplies a sink** (`telemetry:sink`)
-naming where events go. Core owns everything between: the consent switch, an install id, refs, the
-on-disk queue, batching, retries and the Settings tab. With no sink installed nothing is queued and
-nothing is sent; with the switch off (the default) the same.
+Telemetry (1.71.0) lets core and extensions **emit** typed usage events (`telemetry:emit`). Where they
+go is core's alone: one built-in collector, which no extension can change or add to. Core owns
+everything between: the consent switch, an install id, refs, the on-disk queue, batching, retries and
+the Settings tab. With the switch off (the default) nothing is queued and nothing is sent.
 
 ### Emitting
 
@@ -2130,8 +2129,8 @@ if (host.telemetry.on()) {
 }
 ```
 
-- **`host.telemetry.on()`** is false while Settings › Telemetry is off or no sink is installed, so an
-  emitter can skip building an event.
+- **`host.telemetry.on()`** is false while Settings › Telemetry is off (or its URL override is not a
+  valid endpoint), so an emitter can skip building an event.
 - **`host.telemetry.emit(name, data)`** checks `data` against the declaration and throws on an
   undeclared event, an undeclared field, a missing field or a value its type refuses, even while
   off, so a bug shows up in development. It returns whether the event was queued. The wire `type` is
@@ -2140,8 +2139,8 @@ if (host.telemetry.on()) {
 - **`host.telemetry.ref(kind, id)`** is an HMAC of `kind:id` under a per-install secret that never
   leaves the machine, 16 hex characters: stable on this machine, meaningless anywhere else.
 - **`host.telemetry.repo(raw)`** takes a slug or a git remote and gives `owner/name`, `none` for
-  nothing and `other` for anything it cannot read. Each sink later narrows an owner it does not list
-  to `other`.
+  nothing and `other` for anything it cannot read. At send, a repo whose owner core does not allow
+  goes as `other` (see [The collector](#the-collector)).
 - **`host.telemetry.model(raw)`** gives a model id the price catalogue lists exactly, `default` for
   none, or `other`.
 
@@ -2164,39 +2163,26 @@ Any type can add `nullable: true` (a simple type is then written `{ type: 'ms', 
 Every declared field is required; a nullable one is sent as `null`. Field names may not reuse the
 envelope's.
 
-### Sinks
+### The collector
 
-A sink is declared, not coded. The extension that carries an organisation's endpoint is usually
-nothing but this:
+Core sends every event to one collector:
 
-```js
-export default {
-  id: 'acme-telemetry',
-  label: 'Acme telemetry',
-  requires: ['telemetry:sink'],
-  engines: { wranglerApi: '^1.71.0' },
-  telemetry: {
-    sinks: [{
-      id: 'collector',
-      endpoint: 'https://telemetry.example.com/v1/events',
-      accepts: ['core.*', 'jobs.*'],      // types, prefixes ending .*, or *
-      repoOwners: ['acme'],               // only these owners' repo names are sent
-      teams: ['platform', 'web'],         // the Settings team picker's list
-      headers: { 'X-Ingest-Token': '…' }, // optional, sent only to this endpoint
-      batchMax: 100,
-    }],
-  },
-};
-```
+| | |
+| --- | --- |
+| Built in | `https://wrangler-telemetry.platform-prod.portswigger.io/v1/events` |
+| Override | `AW_TELEMETRY_URL`, then `telemetry.url` in `config.json` (for a dev collector or a local stub) |
+| Repo names sent | owners `portswigger` and `portswigger-apps`; any other repo goes as `other` |
+| Teams offered | none yet, so the Settings team picker is hidden and `team` is `null` |
 
-`endpoint` must be `https://` (`http://` only to `localhost`, `127.0.0.1` or `[::1]`, for a local
-stub), with no credentials, query or fragment. `headers` may not set `Host`, `Content-Type`,
-`Content-Length`, `Transfer-Encoding`, `Connection` or `Cookie`; Settings shows their names, never
-their values. `host.telemetry.sinks()` gives the extension its own sinks' `{ id, host, pending,
-sent, dropped, lastSentAt, lastError }`, never the queue.
+The request carries no credentials: the collector's ingress admits only its organisation's office
+network. Anywhere else a send fails, and the events wait in the queue (within its limits below) until
+the machine is back on that network; the only sign is the collector's last-error line in Settings.
 
-Core POSTs `{ "events": [...] }` as JSON, at most `batchMax` (up to 100) events and 64 KiB per
-request. Each event is the envelope plus the declared fields, flat:
+An override must be `https://` (`http://` only to `localhost`, `127.0.0.1` or `[::1]`, for a local
+stub), with no credentials, query or fragment. An invalid override is not fallen back from: nothing is
+sent, and Settings says why. A manifest that declares `telemetry.sinks` is refused.
+
+Core POSTs `{ "events": [...] }` as JSON, at most 100 events and 64 KiB per request. Each event is the envelope plus the declared fields, flat:
 
 | Field | Meaning |
 | --- | --- |
@@ -2204,23 +2190,24 @@ request. Each event is the envelope plus the declared fields, flat:
 | `ts` | when it was emitted, RFC 3339 UTC to the second |
 | `type`, `v` | `<emitter>.<name>` and the declared version |
 | `install` | a random UUID made once per data directory, not derived from the machine or user |
-| `team` | the team picked in Settings, when this sink lists it, else `null` |
+| `team` | the team picked in Settings, when core offers it, else `null` |
 | `awVersion`, `emitterVersion` | the wrangler's version and the emitter's (`version`, or the wrangler's for core and builtins) |
 
-A 2xx removes the batch. 404, 408, 429, 5xx and network errors retry the same batch with a backoff
-from 15 seconds doubling to an hour; any other 4xx drops it. Before each send an event is checked
+A 2xx removes the batch. 403, 404, 408, 429, 5xx and network errors retry the same batch with a
+backoff from 15 seconds doubling to an hour (a new URL is tried at once); any other 4xx drops it. Before each send an event is checked
 again against the catalogue as it stands then: fields no longer declared are stripped, and an event
 that no longer fits (or whose emitter is gone) is dropped. The queue lives in
 `<data dir>/telemetry.json` (mode 0600, with the install id and ref secret), holds at most 5 000
 events and 30 days, drops the oldest first, and survives restarts. Disabling an extension stops its
-events and drops whatever was queued only for its sinks.
+events, and any of them still queued are dropped at the next send.
 
 ### Settings › Telemetry
 
-One switch, **off by default**; turning it off drops the queue. Below it the tab lists each sink by
-host and extension with its accepted types, counts and last error; the team picker when a sink offers
-teams; every emitter's event types and field names; and the queue, with **Show queued events** (the
-newest 50, exactly as each would be sent) and **Clear queue**.
+One switch, **off by default**; turning it off drops the queue. Below it the tab shows the collector
+URL in use and where it came from (built in, `AW_TELEMETRY_URL` or `config.json`, with the built-in
+URL beside an override), its counts, the repo owners whose names are sent and its last error; the team
+picker when core offers teams; every emitter's event types and field names; and the queue, with
+**Show queued events** (the newest 50, exactly as each would be sent) and **Clear queue**.
 
 ## Runtimes
 

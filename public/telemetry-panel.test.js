@@ -39,34 +39,47 @@ function all(node, pred, out = []) {
 }
 
 const SINK = {
-  key: 'privsink/main', extId: 'privsink', extLabel: 'Private sink', id: 'main', label: '', host: 'collector.example.com',
-  accepts: ['core.*', 'jobs.*'], headerNames: ['X-Ingest-Token'], pending: 2, sent: 5, dropped: 0, lastSentAt: null, lastError: 'HTTP 503: retrying in 15s', lastErrorAt: 1, retryAt: 2,
+  url: 'https://collector.example.com/v1/events', host: 'collector.example.com', source: 'builtin', error: null,
+  builtin: 'https://collector.example.com/v1/events', env: 'AW_TELEMETRY_URL', repoOwners: ['acme'],
+  sent: 5, dropped: 0, lastSentAt: null, lastError: 'HTTP 503: retrying in 15s', lastErrorAt: 1, retryAt: 2,
 };
 const STATUS = {
   enabled: true, install: 'b1c7f5c2-0000-4000-8000-000000000000', team: 'web', teams: ['platform', 'web'], queued: 2,
-  sinks: [SINK],
+  sink: SINK,
   emitters: [{ id: 'core', version: '0.1.0', events: [] }, { id: 'demo', version: '1.0.0', events: [{ type: 'demo.step.ended', v: 1, fields: ['kind', 'tries'] }] }],
 };
 
-test('the panel names each sink by host and extension, with its counters, error and header names but no values', () => withDom(() => {
+test('the panel shows the built-in collector URL with its counters, error and repo owners', () => withDom(() => {
   const text = telemetryPanelEl({ status: STATUS }).textContent;
-  assert.match(text, /collector\.example\.com/);
-  assert.match(text, /from Private sink/);
+  assert.match(text, /https:\/\/collector\.example\.com\/v1\/events/);
+  assert.match(text, /Built in\. Reachable only from the office network/);
   assert.match(text, /5 sent · 2 queued/);
   assert.match(text, /Last error: HTTP 503: retrying in 15s/);
-  assert.match(text, /Sends headers X-Ingest-Token \(values hidden\)/);
+  assert.match(text, /Repo names sent for acme/);
   assert.match(text, /demo\.step\.ended v1/);
   assert.match(text, /kind, tries/);
   assert.match(text, /2 events queued/);
 }));
 
-test('with no sink the panel says nothing is sent, and offers no team picker', () => withDom(() => {
-  const el = telemetryPanelEl({ status: { ...STATUS, sinks: [], teams: [], queued: 0 } });
-  assert.match(el.textContent, /No extension supplies a sink, so nothing is sent/);
+test('an override names where it came from and the built-in URL it replaces', () => withDom(() => {
+  const text = telemetryPanelEl({ status: { ...STATUS, sink: { ...SINK, url: 'http://127.0.0.1:4318/v1/events', source: 'env' } } }).textContent;
+  assert.match(text, /http:\/\/127\.0\.0\.1:4318\/v1\/events/);
+  assert.match(text, /Set by AW_TELEMETRY_URL/);
+  assert.match(text, /Built-in collector: https:\/\/collector\.example\.com\/v1\/events/);
+}));
+
+test('an invalid override says nothing is sent, and offers no counters', () => withDom(() => {
+  const text = telemetryPanelEl({ status: { ...STATUS, sink: { ...SINK, url: 'http://collector.example.com/', source: 'config', error: 'endpoint must use https (http only to localhost)' } } }).textContent;
+  assert.match(text, /Not sending: endpoint must use https/);
+  assert.doesNotMatch(text, /5 sent/);
+}));
+
+test('with no teams there is no team picker', () => withDom(() => {
+  const el = telemetryPanelEl({ status: { ...STATUS, teams: [], team: null } });
   assert.equal(all(el, (n) => n.tagName === 'SELECT').length, 0);
 }));
 
-test('the team picker offers the sinks\' teams and reports a pick, empty as null', () => withDom(() => {
+test('the team picker offers the teams and reports a pick, empty as null', () => withDom(() => {
   const picked = [];
   const el = telemetryPanelEl({ status: STATUS, onTeam: (t) => picked.push(t) });
   const [select] = all(el, (n) => n.tagName === 'SELECT');
@@ -86,7 +99,7 @@ test('the queue preview shows each event exactly as it would leave, and Clear is
   assert.equal(clear.disabled, true);
 }));
 
-test('a sink line says when the switch is off', () => {
-  assert.match(sinkStatusText(SINK, { enabled: false }), /not sending: telemetry is off/);
-  assert.doesNotMatch(sinkStatusText(SINK, { enabled: true }), /not sending/);
+test('the collector line says when the switch is off', () => {
+  assert.match(sinkStatusText(SINK, { enabled: false, queued: 0 }), /not sending: telemetry is off/);
+  assert.doesNotMatch(sinkStatusText(SINK, { enabled: true, queued: 0 }), /not sending/);
 });

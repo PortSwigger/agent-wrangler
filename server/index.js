@@ -166,9 +166,10 @@ function quarantineFor(id, err) {
 const sessionManager = new SessionManager();
 const taskStore = new TaskStore();
 // Core telemetry (server/telemetry.js): one queue for core and every extension
-// declaring `telemetry:emit`, sent only to sinks an extension declares with
-// `telemetry:sink`, and only once Settings › Telemetry is switched on. Its
-// flush timer starts in main(), after the instance lock, like the sweeps.
+// declaring `telemetry:emit`, sent to the built-in collector (or the URL
+// AW_TELEMETRY_URL / config `telemetry.url` names) only once Settings ›
+// Telemetry is switched on. Its flush timer starts in main(), after the
+// instance lock, like the sweeps.
 const telemetry = createTelemetry({
   file: path.join(DATA_DIR, 'telemetry.json'),
   readConfig,
@@ -413,7 +414,6 @@ function activateExtension(id, { startSweeps = true } = {}) {
     // What it declared under `telemetry`, checked and normalised by the loader.
     // A builtin's events carry the wrangler's version; an installed one's its own.
     if (e.telemetry?.events) telemetry.registerEmitter(id, { version: e.version || (e.external ? '0.0.0' : VERSION), events: e.telemetry.events });
-    if (e.telemetry?.sinks) telemetry.registerSinks(id, { label: e.label, sinks: e.telemetry.sinks });
     // Graph contributors run every ~4s tick where nothing may log or throw, so
     // their keys are checked ONCE here, against a real façade — and a
     // contributor that claims a reserved key (or throws) is the caller's to
@@ -517,10 +517,9 @@ function deactivateExtension(id) {
   }
   coreEvents.offOwner(id);
   extFiles.clear(id);
-  // Its events stop being sendable and its sinks stop receiving: whatever was
-  // queued only for them is dropped.
+  // Its events stop being sendable: whatever of them is still queued is
+  // dropped at the next send.
   telemetry.unregisterEmitter(id);
-  telemetry.unregisterSinks(id);
   // Here rather than beside the loader's unregister, so the runtime registry
   // agrees with the loader whichever of the two runs first and a live disable
   // takes the runtime away with no restart. A card already launched on it
@@ -1130,8 +1129,8 @@ async function rebuildOnce() {
   graph.codexPolicyDefaults = codexPolicyDefaults();
   graph.autoUpdate = autoUpdateMode();
   graph.refreshSessionsAfterUpdate = refreshSessionsAfterUpdate();
-  // Settings › Telemetry: the switch, the team, each sink's host and counters,
-  // and each emitter's catalogue (type names and field names only).
+  // Settings › Telemetry: the switch, the team, the collector URL in use and
+  // its counters, and each emitter's catalogue (type names and field names only).
   graph.telemetry = telemetry.status();
   graph.codeVersion = codeVersion;
   // Which extensions exist and whether each is on — what the settings toggles read

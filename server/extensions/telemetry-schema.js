@@ -1,6 +1,6 @@
-// The telemetry vocabulary: what a manifest may declare under `telemetry`
-// (an event catalogue to emit, sinks to send to) and how a value is checked
-// against a declared field type. A LEAF like the rest of server/extensions/**:
+// The telemetry vocabulary: what a manifest may declare under `telemetry` (the
+// event catalogue it emits) and how a value is checked against a declared
+// field type. A LEAF like the rest of server/extensions/**:
 // the loader validates a manifest's declarations at load time with it, and
 // server/telemetry.js checks every event with the same functions, so the two
 // cannot disagree about what a type allows.
@@ -16,19 +16,13 @@ export const ENUM_VALUE_RE = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 export const REF_RE = /^[0-9a-f]{16}$/;
 export const REPO_RE = /^[a-z0-9][a-z0-9_.-]{0,38}\/[a-z0-9_.][a-z0-9_.-]{0,99}$/;
 export const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,6}(-[0-9a-z.-]{1,20})?$/;
-export const SINK_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
-const HEADER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
-const OWNER_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
 
 export const MAX_MS = 24 * 60 * 60 * 1000;
 export const MAX_USD = 10_000;
 export const MAX_EVENTS = 100;
 export const MAX_FIELDS = 40;
-export const MAX_BATCH = 100;
 // Names an emitter may not use for a field: the envelope core stamps itself.
 export const ENVELOPE_FIELDS = ['eventId', 'ts', 'type', 'v', 'install', 'team', 'awVersion', 'emitterVersion'];
-// Headers core sets itself, or that would change what the request means.
-const RESERVED_HEADERS = new Set(['host', 'content-type', 'content-length', 'transfer-encoding', 'connection', 'cookie']);
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 const SIMPLE = new Set(['bool', 'ms', 'usd', 'ref', 'model', 'version']);
@@ -139,7 +133,8 @@ export function normaliseCatalogue(events) {
   return { catalogue: out };
 }
 
-// A sink's endpoint: https, or http to this machine only (a local stub). No
+// The collector URL, built in or overridden: https, or http to this machine
+// only (a local stub). No
 // credentials, query or fragment, so nothing secret or variable rides in it.
 export function checkEndpoint(raw) {
   if (typeof raw !== 'string' || raw.length > 500) return 'endpoint must be a URL string';
@@ -151,91 +146,19 @@ export function checkEndpoint(raw) {
   return null;
 }
 
-// A type pattern from `accepts`: an exact type (`jobs.step.ended`) or a prefix
-// ending `.*` (`core.*`), or `*` for everything.
-const ACCEPT_RE = /^(\*|[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*){0,4}(\.\*)?)$/;
-
-export function accepts(patterns, type) {
-  return patterns.some((p) => p === '*' || p === type || (p.endsWith('.*') && type.startsWith(p.slice(0, -1))));
-}
-
-function stringList(raw, re, where, max) {
-  if (raw == null) return { list: [] };
-  if (!Array.isArray(raw) || raw.length > max) return { error: `${where} must be an array of at most ${max} values` };
-  for (const v of raw) if (typeof v !== 'string' || !re.test(v)) return { error: `${where} value ${JSON.stringify(v)} must match ${re}` };
-  if (new Set(raw).size !== raw.length) return { error: `${where} has a duplicate value` };
-  return { list: [...raw] };
-}
-
-// A manifest's `telemetry.sinks` to canonical sinks, or { error }.
-//   { id, label?, endpoint, accepts, repoOwners?, teams?, headers?, batchMax? }
-export function normaliseSinks(sinks) {
-  if (!Array.isArray(sinks) || !sinks.length || sinks.length > 5) return { error: 'telemetry.sinks must be an array of 1 to 5 sinks' };
-  const out = [];
-  for (const [i, s] of sinks.entries()) {
-    const at = `telemetry.sinks[${i}]`;
-    if (!s || typeof s !== 'object' || Array.isArray(s)) return { error: `${at} must be an object` };
-    const known = ['id', 'label', 'endpoint', 'accepts', 'repoOwners', 'teams', 'headers', 'batchMax'];
-    const extra = Object.keys(s).find((k) => !known.includes(k));
-    if (extra) return { error: `${at} has unknown key ${JSON.stringify(extra)}` };
-    if (typeof s.id !== 'string' || !SINK_ID_RE.test(s.id)) return { error: `${at}.id must match ${SINK_ID_RE}` };
-    if (out.some((o) => o.id === s.id)) return { error: `duplicate sink id "${s.id}"` };
-    if (s.label != null && (typeof s.label !== 'string' || s.label.length > 80)) return { error: `${at}.label must be a string of at most 80 characters` };
-    const bad = checkEndpoint(s.endpoint);
-    if (bad) return { error: `${at}.${bad}` };
-    if (!Array.isArray(s.accepts) || !s.accepts.length || s.accepts.length > 40) return { error: `${at}.accepts must be a non-empty array of event types` };
-    for (const p of s.accepts) if (typeof p !== 'string' || !ACCEPT_RE.test(p)) return { error: `${at}.accepts value ${JSON.stringify(p)} must be a type, a prefix ending .* or *` };
-    const owners = stringList(s.repoOwners, OWNER_RE, `${at}.repoOwners`, 50);
-    if (owners.error) return { error: owners.error };
-    const teams = stringList(s.teams, ENUM_VALUE_RE, `${at}.teams`, 60);
-    if (teams.error) return { error: teams.error };
-    const headers = {};
-    if (s.headers != null) {
-      if (typeof s.headers !== 'object' || Array.isArray(s.headers) || Object.keys(s.headers).length > 8) return { error: `${at}.headers must be an object of at most 8 headers` };
-      for (const [k, v] of Object.entries(s.headers)) {
-        if (!HEADER_NAME_RE.test(k) || RESERVED_HEADERS.has(k.toLowerCase())) return { error: `${at}.headers name ${JSON.stringify(k)} is not allowed` };
-        if (typeof v !== 'string' || v.length > 2000 || /[\r\n]/.test(v)) return { error: `${at}.headers.${k} must be a single-line string` };
-        headers[k] = v;
-      }
-    }
-    if (s.batchMax != null && (!isInt(s.batchMax) || s.batchMax < 1 || s.batchMax > MAX_BATCH)) return { error: `${at}.batchMax must be an integer from 1 to ${MAX_BATCH}` };
-    out.push({
-      id: s.id,
-      label: s.label || '',
-      endpoint: s.endpoint,
-      host: new URL(s.endpoint).host,
-      accepts: [...s.accepts],
-      repoOwners: owners.list,
-      teams: teams.list,
-      headers,
-      batchMax: s.batchMax ?? MAX_BATCH,
-    });
-  }
-  return { sinks: out };
-}
-
 // A manifest's whole `telemetry` block, checked against its `requires`.
-// Returns { events, sinks } (each null when absent) or { error }.
+// Returns { events } (null when absent) or { error }. Where events go is core's
+// alone: there is no way for a manifest to name a destination.
 export function normaliseTelemetryDecl(telemetry, requires = []) {
-  if (telemetry == null) return { events: null, sinks: null };
+  if (telemetry == null) return { events: null };
   if (typeof telemetry !== 'object' || Array.isArray(telemetry)) return { error: 'telemetry must be an object' };
-  const extra = Object.keys(telemetry).find((k) => k !== 'events' && k !== 'sinks');
+  if (telemetry.sinks != null) return { error: 'telemetry.sinks is not supported: core sends every event to its built-in collector' };
+  const extra = Object.keys(telemetry).find((k) => k !== 'events');
   if (extra) return { error: `telemetry has unknown key ${JSON.stringify(extra)}` };
-  let events = null;
-  let sinks = null;
-  if (telemetry.events != null) {
-    if (!requires.includes('telemetry:emit')) return { error: 'telemetry.events needs the telemetry:emit capability in requires' };
-    const r = normaliseCatalogue(telemetry.events);
-    if (r.error) return { error: r.error };
-    events = r.catalogue;
-  }
-  if (telemetry.sinks != null) {
-    if (!requires.includes('telemetry:sink')) return { error: 'telemetry.sinks needs the telemetry:sink capability in requires' };
-    const r = normaliseSinks(telemetry.sinks);
-    if (r.error) return { error: r.error };
-    sinks = r.sinks;
-  }
-  return { events, sinks };
+  if (telemetry.events == null) return { events: null };
+  if (!requires.includes('telemetry:emit')) return { error: 'telemetry.events needs the telemetry:emit capability in requires' };
+  const r = normaliseCatalogue(telemetry.events);
+  return r.error ? { error: r.error } : { events: r.catalogue };
 }
 
 // Event data against its declared spec.

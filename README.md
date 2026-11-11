@@ -155,6 +155,7 @@ Environment variables:
 - `AW_OPEN_BROWSER=1` — auto-open the board in a browser on startup (default: off; the legacy `AW_NO_OPEN=1` still suppresses)
 - `AW_DEFAULT_MODEL` — model pre-selected in the dispatch dialog, by value (e.g. `fable`, `opus`, `opusplan`, `sonnet`, `sonnet[1m]`, `haiku`); unset or unrecognised leaves the built-in default (`opus`)
 - `AW_JIRA_BASE_URL` — default for the Jira extension's **Jira base URL** setting (e.g. `https://yourcompany.atlassian.net/browse/`), used while that setting is empty; at boot it is copied into the setting when none is set, after which the variable can be dropped. Unset by default, so a bare key renders as plain text until a base URL is set in Settings → Extensions → Jira
+- `AW_TELEMETRY_URL` — where Settings › Telemetry sends events instead of the built-in collector (e.g. a dev collector or `http://127.0.0.1:<port>/v1/events` for a local stub); nothing is sent while telemetry is off, which it is by default. See [Telemetry](docs/extensions.md#the-collector)
 - `AW_DEVCONTAINER_HOST_ADDR` — host address a devcontainer session uses to reach the wrangler's
   own server; defaults to `host.docker.internal`, which Docker Desktop (macOS/Windows) resolves
   automatically but native Docker Engine on Linux does not. On Linux, either run the Docker daemon

@@ -96,7 +96,7 @@ export const CAPABILITIES = new Set([
   'files:view',
   'agents:read',
   'agents:headless',
-  'telemetry:emit', 'telemetry:sink',
+  'telemetry:emit',
 ]);
 
 // Capabilities with NO server façade: grants the BROWSER half checks (slots.js
@@ -250,9 +250,9 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   if (ext.version != null && (typeof ext.version !== 'string' || !VERSION_RE.test(ext.version))) {
     fail(ext, 'version must be a version like 1.2.3');
   }
-  // `telemetry` (1.71.0): an event catalogue to emit (`telemetry:emit`) and
-  // sinks to send to (`telemetry:sink`). Shape and capability are checked here;
-  // the loader carries the normalised form for index.js to register.
+  // `telemetry` (1.71.0): an event catalogue to emit (`telemetry:emit`). Shape
+  // and capability are checked here; the loader carries the normalised form for
+  // index.js to register. Where events go is core's, never a manifest's.
   const tele = normaliseTelemetryDecl(ext.telemetry, Array.isArray(ext.requires) ? ext.requires : []);
   if (tele.error) fail(ext, tele.error);
   // Which core dispatch-modal rows this extension's browser half may hide. The
@@ -676,7 +676,7 @@ function quarantinedEntry(ext, quarantine) {
     dir: typeof ext?.dir === 'string' ? ext.dir : null,
     provenance: ext?.provenance ?? null,
     earlyAdopterBranch: null,
-    telemetry: { events: null, sinks: null },
+    telemetry: { events: null },
     version: null,
     quarantine,
   };
@@ -749,8 +749,8 @@ function stageExtension(ext, { cfg, out, reg }) {
     dir: typeof ext.dir === 'string' ? ext.dir : null,
     provenance: ext.provenance ?? null,
     earlyAdopterBranch: ext.earlyAdopter?.branch ?? null,
-    // The normalised `telemetry` declaration (events and sinks, each null when
-    // absent) and the version stamped on its events. Registered with core
+    // The normalised `telemetry` declaration (its events, null when absent)
+    // and the version stamped on them. Registered with core
     // telemetry by index.js on activate, taken back on deactivate.
     telemetry: normaliseTelemetryDecl(ext.telemetry, ext.requires || []),
     version: typeof ext.version === 'string' ? ext.version : null,

@@ -1,12 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { checkEventData, accepts, REPO_RE } from './extensions/telemetry-schema.js';
+import { checkEventData, checkEndpoint, REPO_RE } from './extensions/telemetry-schema.js';
 
 // Core telemetry: the one queue every emitter (core itself, and each extension
-// declaring `telemetry:emit`) writes to, and the transport to every sink an
-// extension contributes (`telemetry:sink`). This repository holds no endpoint:
-// with no sink installed nothing is queued and nothing is sent.
+// declaring `telemetry:emit`) writes to, and the transport to the one collector
+// core sends to. The collector is built in (BUILTIN_ENDPOINT) and takes no
+// credentials: its ingress only admits the owning organisation's office
+// network, so from anywhere else a send fails and the events wait in the queue.
+// AW_TELEMETRY_URL, then `telemetry.url` in config.json, point it elsewhere (a
+// dev collector or a local stub).
 //
 // Off until the human switches it on in Settings › Telemetry. While off, emit
 // is a no-op; switching off drops whatever was queued.
@@ -17,12 +20,22 @@ import { checkEventData, accepts, REPO_RE } from './extensions/telemetry-schema.
 // event that no longer fits is dropped), and at the collector.
 //
 // State lives in <DATA_DIR>/telemetry.json (0600): the install id, the secret
-// refs are keyed with (never sent), the queue and per-sink counters. The switch
-// and the team live in config.json beside every other setting.
+// refs are keyed with (never sent), the queue and the send counters. The
+// switch, the team and any URL override live in config.json beside every other
+// setting.
+
+export const BUILTIN_ENDPOINT = 'https://wrangler-telemetry.platform-prod.portswigger.io/v1/events';
+export const ENDPOINT_ENV = 'AW_TELEMETRY_URL';
+// Only these GitHub owners' repo names are sent; any other repo goes as `other`.
+export const REPO_OWNERS = Object.freeze(['portswigger', 'portswigger-apps']);
+// The Settings team picker's list. Empty until the teams are agreed: the picker
+// is hidden and every event goes with `team: null`.
+export const TEAMS = Object.freeze([]);
 
 export const QUEUE_MAX = 5000;
 export const QUEUE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 export const BODY_MAX_BYTES = 64 * 1024;
+export const BATCH_MAX = 100;
 export const BACKOFF_START_MS = 15_000;
 export const BACKOFF_MAX_MS = 60 * 60 * 1000;
 export const FLUSH_EVERY_MS = 15_000;
@@ -30,7 +43,9 @@ const FLUSH_SOON_MS = 1_000;
 const SAVE_DELAY_MS = 500;
 const SEND_TIMEOUT_MS = 15_000;
 const BATCHES_PER_FLUSH = 10;
-const RETRY_STATUS = new Set([404, 408, 429]);
+// 403 is what an ingress allowlist answers off the office network: keep the
+// events for when the machine is back on it.
+const RETRY_STATUS = new Set([403, 404, 408, 429]);
 
 export const CORE_EMITTER = 'core';
 
@@ -78,6 +93,10 @@ export function createTelemetry({
   writeConfig = () => {},
   fetchImpl = globalThis.fetch,
   now = Date.now,
+  env = process.env,
+  builtinEndpoint = BUILTIN_ENDPOINT,
+  repoOwners = REPO_OWNERS,
+  teams = TEAMS,
   awVersion = '0.0.0',
   isModel = () => false,
   log = () => {},
@@ -88,16 +107,15 @@ export function createTelemetry({
   let dirty = false;
   if (typeof state.install !== 'string') { state.install = crypto.randomUUID(); dirty = true; }
   if (typeof state.secret !== 'string' || state.secret.length !== 64) { state.secret = crypto.randomBytes(32).toString('hex'); dirty = true; }
-  if (!Array.isArray(state.queue)) state.queue = [];
-  if (!state.stats || typeof state.stats !== 'object') state.stats = {};
+  state.queue = Array.isArray(state.queue) ? state.queue.filter((q) => q && typeof q.at === 'number' && q.e && typeof q.e === 'object').map(({ at, e }) => ({ at, e })) : [];
+  if (!state.sink || typeof state.sink !== 'object') state.sink = { sent: 0, dropped: 0, lastSentAt: null, lastError: null, lastErrorAt: null };
+  delete state.stats;
   if (dirty) writePrivate(file, state);
 
   // emitter id -> { version, catalogue }
   const emitters = new Map();
-  // `${extId}/${sinkId}` -> { key, extId, extLabel, ...sink }
-  const sinks = new Map();
-  // sink key -> { failures, nextAt }
-  const backoff = new Map();
+  // { url, failures, nextAt }: reset when the URL changes.
+  let backoff = null;
   let saveTimer = null;
   let soonTimer = null;
   let interval = null;
@@ -109,6 +127,18 @@ export function createTelemetry({
   };
   const enabled = () => cfg().enabled === true;
   const teamChoice = () => (typeof cfg().team === 'string' ? cfg().team : null);
+
+  // Where events go now: AW_TELEMETRY_URL, then config.json `telemetry.url`,
+  // then the built-in collector. An override that is not a valid endpoint is
+  // not fallen back from (that would send to the collector it meant to avoid):
+  // nothing is sent and Settings says why.
+  function destination() {
+    const fromEnv = typeof env?.[ENDPOINT_ENV] === 'string' ? env[ENDPOINT_ENV].trim() : '';
+    const fromCfg = typeof cfg().url === 'string' ? cfg().url.trim() : '';
+    const [url, source] = fromEnv ? [fromEnv, 'env'] : fromCfg ? [fromCfg, 'config'] : [builtinEndpoint, 'builtin'];
+    const error = checkEndpoint(url);
+    return { url, source, error, host: error ? null : new URL(url).host };
+  }
 
   function save() {
     if (saveTimer) return;
@@ -123,27 +153,18 @@ export function createTelemetry({
     save();
     try { onChange(); } catch { /* a listener's failure is not the queue's */ }
   }
-  function statsFor(key) {
-    if (!state.stats[key]) state.stats[key] = { sent: 0, dropped: 0, lastSentAt: null, lastError: null, lastErrorAt: null };
-    return state.stats[key];
-  }
 
-  // Drops what is too old or beyond the cap, oldest first, and entries no sink
-  // is waiting on any more.
+  // Drops what is too old or beyond the cap, oldest first.
   function trim() {
     const cutoff = now() - QUEUE_MAX_AGE_MS;
     const before = state.queue.length;
-    state.queue = state.queue.filter((q) => q.at >= cutoff && q.pending.length);
+    state.queue = state.queue.filter((q) => q.at >= cutoff);
     if (state.queue.length > QUEUE_MAX) state.queue = state.queue.slice(state.queue.length - QUEUE_MAX);
     return before - state.queue.length;
   }
 
-  function sinksFor(type) {
-    return [...sinks.values()].filter((s) => accepts(s.accepts, type));
-  }
-
   function on() {
-    return enabled() && sinks.size > 0;
+    return enabled() && !destination().error;
   }
 
   function emit(emitterId, name, data) {
@@ -155,15 +176,11 @@ export function createTelemetry({
     // Checked even when nothing will be sent, so an emitter's bug shows in
     // development rather than only on the machines that switched it on.
     const fields = checkEventData(spec, data, { strict: true, isModel, where });
-    if (!enabled()) return false;
-    const type = `${emitterId}.${name}`;
-    const targets = sinksFor(type);
-    if (!targets.length) return false;
+    if (!on()) return false;
     const at = now();
     state.queue.push({
       at,
-      e: { eventId: crypto.randomUUID(), ts: tsOf(at), type, v: spec.v, emitter: emitterId, name, emitterVersion: em.version, data: fields },
-      pending: targets.map((s) => s.key),
+      e: { eventId: crypto.randomUUID(), ts: tsOf(at), type: `${emitterId}.${name}`, v: spec.v, emitter: emitterId, name, emitterVersion: em.version, data: fields },
     });
     trim();
     changed();
@@ -171,10 +188,10 @@ export function createTelemetry({
     return true;
   }
 
-  // The wire form for one sink: the envelope plus the fields the catalogue
-  // declares NOW (anything else is stripped), with repo and team narrowed to
-  // that sink's own allowlists. Null when it no longer fits.
-  function render(entry, sink) {
+  // The wire form: the envelope plus the fields the catalogue declares NOW
+  // (anything else is stripped), with repo and team narrowed to core's
+  // allowlists. Null when it no longer fits.
+  function render(entry) {
     const { e } = entry;
     const em = emitters.get(e.emitter);
     const spec = em?.catalogue[e.name];
@@ -183,7 +200,7 @@ export function createTelemetry({
     if (!data) return null;
     for (const [key, type] of Object.entries(spec.fields)) {
       if (type.t !== 'repo' || typeof data[key] !== 'string' || !data[key].includes('/')) continue;
-      if (!sink.repoOwners.includes(data[key].split('/')[0])) data[key] = 'other';
+      if (!repoOwners.includes(data[key].split('/')[0])) data[key] = 'other';
     }
     const team = teamChoice();
     return {
@@ -192,50 +209,51 @@ export function createTelemetry({
       type: e.type,
       v: e.v,
       install: state.install,
-      team: team && sink.teams.includes(team) ? team : null,
+      team: team && teams.includes(team) ? team : null,
       awVersion,
       emitterVersion: e.emitterVersion,
       ...data,
     };
   }
 
-  function settle(entries, key) {
-    for (const q of entries) q.pending = q.pending.filter((k) => k !== key);
+  function remove(entries) {
+    const gone = new Set(entries);
+    state.queue = state.queue.filter((q) => !gone.has(q));
   }
 
-  // One batch to one sink. Returns 'sent', 'retry', 'dropped' or 'idle'.
-  async function sendBatch(sink) {
-    const due = state.queue.filter((q) => q.pending.includes(sink.key));
-    if (!due.length) return 'idle';
+  // One batch, oldest first. Returns 'sent', 'retry', 'dropped' or 'idle'.
+  async function sendBatch(dest) {
+    const stats = state.sink;
     const picked = [];
     const events = [];
-    for (const q of due) {
-      if (events.length >= sink.batchMax) break;
-      const wire = render(q, sink);
-      if (!wire) { settle([q], sink.key); statsFor(sink.key).dropped += 1; continue; }
+    const unfit = [];
+    for (const q of state.queue) {
+      if (events.length >= BATCH_MAX) break;
+      const wire = render(q);
+      if (!wire) { unfit.push(q); continue; }
       picked.push(q);
       events.push(wire);
     }
+    if (unfit.length) { remove(unfit); stats.dropped += unfit.length; }
     while (events.length && Buffer.byteLength(JSON.stringify({ events })) > BODY_MAX_BYTES) {
       if (events.length === 1) {
-        settle(picked, sink.key);
-        statsFor(sink.key).dropped += 1;
+        remove(picked);
+        stats.dropped += 1;
         return 'dropped';
       }
       events.pop();
       picked.pop();
     }
     if (!events.length) return 'idle';
-    const stats = statsFor(sink.key);
     let status = 0;
     let failure = null;
     const ctl = new AbortController();
     const timer = timers.setTimeout(() => ctl.abort(), SEND_TIMEOUT_MS);
     timer.unref?.();
     try {
-      const res = await fetchImpl(sink.endpoint, {
+      const res = await fetchImpl(dest.url, {
         method: 'POST',
-        headers: { ...sink.headers, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ events }),
         signal: ctl.signal,
         redirect: 'error',
@@ -247,29 +265,27 @@ export function createTelemetry({
     } finally {
       timers.clearTimeout(timer);
     }
-    // The sink may have been removed while the request was in flight.
-    if (!sinks.has(sink.key)) return 'idle';
+    // Switched off (queue dropped) while the request was in flight.
+    if (!enabled()) return 'idle';
     if (status >= 200 && status < 300) {
-      settle(picked, sink.key);
+      remove(picked);
       stats.sent += picked.length;
       stats.lastSentAt = now();
       stats.lastError = null;
-      backoff.delete(sink.key);
+      backoff = null;
       return 'sent';
     }
     if (status && status < 500 && !RETRY_STATUS.has(status)) {
-      settle(picked, sink.key);
+      remove(picked);
       stats.dropped += picked.length;
       stats.lastError = `HTTP ${status}: batch of ${picked.length} refused and dropped`;
       stats.lastErrorAt = now();
-      backoff.delete(sink.key);
+      backoff = null;
       return 'dropped';
     }
-    const b = backoff.get(sink.key) || { failures: 0, nextAt: 0 };
-    b.failures += 1;
-    const wait = Math.min(BACKOFF_START_MS * 2 ** (b.failures - 1), BACKOFF_MAX_MS);
-    b.nextAt = now() + wait;
-    backoff.set(sink.key, b);
+    const failures = (backoff?.url === dest.url ? backoff.failures : 0) + 1;
+    const wait = Math.min(BACKOFF_START_MS * 2 ** (failures - 1), BACKOFF_MAX_MS);
+    backoff = { url: dest.url, failures, nextAt: now() + wait };
     stats.lastError = `${failure || `HTTP ${status}`}: retrying in ${Math.round(wait / 1000)}s`;
     stats.lastErrorAt = now();
     return 'retry';
@@ -277,22 +293,20 @@ export function createTelemetry({
 
   async function flushOnce() {
     if (!on()) return;
+    const dest = destination();
     const dropped = trim();
     if (dropped) log(`[telemetry] dropped ${dropped} queued events past the cap or age limit`);
-    for (const sink of [...sinks.values()]) {
-      for (let i = 0; i < BATCHES_PER_FLUSH; i += 1) {
-        const b = backoff.get(sink.key);
-        if (b && now() < b.nextAt) break;
-        const r = await sendBatch(sink);
-        if (r === 'idle' || r === 'retry') break;
-      }
+    for (let i = 0; i < BATCHES_PER_FLUSH; i += 1) {
+      if (backoff && backoff.url === dest.url && now() < backoff.nextAt) break;
+      const r = await sendBatch(dest);
+      if (r === 'idle' || r === 'retry') break;
     }
     trim();
     changed();
   }
 
-  // One flush at a time: a slow sink must not let the timer start a second
-  // flush that sends the same batch again.
+  // One flush at a time: a slow collector must not let the timer start a
+  // second flush that sends the same batch again.
   function flush() {
     if (!flushing) flushing = flushOnce().finally(() => { flushing = null; });
     return flushing;
@@ -304,42 +318,31 @@ export function createTelemetry({
     soonTimer.unref?.();
   }
 
-  function dropSinkFromQueue(key) {
-    settle(state.queue, key);
-    backoff.delete(key);
-    trim();
-  }
-
-  // What Settings › Telemetry shows. Never the headers or the secret.
+  // What Settings › Telemetry shows.
   function status() {
-    const team = teamChoice();
+    const dest = destination();
+    const st = state.sink;
     return {
       enabled: enabled(),
       install: state.install,
-      team,
-      teams: [...new Set([...sinks.values()].flatMap((s) => s.teams))],
+      team: teamChoice(),
+      teams: [...teams],
       queued: state.queue.length,
-      sinks: [...sinks.values()].map((s) => {
-        const st = state.stats[s.key] || {};
-        const b = backoff.get(s.key);
-        return {
-          key: s.key,
-          extId: s.extId,
-          extLabel: s.extLabel,
-          id: s.id,
-          label: s.label,
-          host: s.host,
-          accepts: [...s.accepts],
-          headerNames: Object.keys(s.headers),
-          pending: state.queue.filter((q) => q.pending.includes(s.key)).length,
-          sent: st.sent || 0,
-          dropped: st.dropped || 0,
-          lastSentAt: st.lastSentAt ?? null,
-          lastError: st.lastError ?? null,
-          lastErrorAt: st.lastErrorAt ?? null,
-          retryAt: b ? b.nextAt : null,
-        };
-      }),
+      sink: {
+        url: dest.url,
+        host: dest.host,
+        source: dest.source,
+        error: dest.error,
+        builtin: builtinEndpoint,
+        env: ENDPOINT_ENV,
+        repoOwners: [...repoOwners],
+        sent: st.sent || 0,
+        dropped: st.dropped || 0,
+        lastSentAt: st.lastSentAt ?? null,
+        lastError: st.lastError ?? null,
+        lastErrorAt: st.lastErrorAt ?? null,
+        retryAt: backoff && backoff.url === dest.url ? backoff.nextAt : null,
+      },
       emitters: [...emitters.entries()].map(([id, em]) => ({
         id,
         version: em.version,
@@ -355,6 +358,7 @@ export function createTelemetry({
     emit,
     flush,
     saveNow,
+    destination,
 
     // HMAC of `${kind}:${id}` under the install secret, cut to 16 hex: the
     // same local id always gives the same ref on this machine, and the ref
@@ -364,9 +368,8 @@ export function createTelemetry({
       return crypto.createHmac('sha256', Buffer.from(state.secret, 'hex')).update(`${kind}:${id}`).digest('hex').slice(0, 16);
     },
 
-    // `owner/name`, or 'none' for nothing. Each sink later narrows an owner it
-    // does not list to 'other', so the queue holds the slug and the wire never
-    // carries a name outside the sink's allowlist.
+    // `owner/name`, or 'none' for nothing. An owner outside REPO_OWNERS is
+    // narrowed to 'other' at send, so the wire never carries one.
     repo(raw) {
       if (raw == null || raw === '') return 'none';
       return repoSlug(raw) ?? 'other';
@@ -384,37 +387,19 @@ export function createTelemetry({
     unregisterEmitter(id) {
       if (emitters.delete(id)) onChange();
     },
-    registerSinks(extId, { label = extId, sinks: list = [] } = {}) {
-      for (const s of list) {
-        const key = `${extId}/${s.id}`;
-        sinks.set(key, { ...s, key, extId, extLabel: label });
-      }
-      onChange();
-    },
-    unregisterSinks(extId) {
-      let any = false;
-      for (const key of [...sinks.keys()]) {
-        if (sinks.get(key).extId !== extId) continue;
-        sinks.delete(key);
-        dropSinkFromQueue(key);
-        any = true;
-      }
-      if (any) changed();
-    },
 
     setEnabled(value) {
       const next = value === true;
       writeConfig({ telemetry: { ...cfg(), enabled: next } });
       if (!next) {
         state.queue = [];
-        backoff.clear();
+        backoff = null;
         saveNow();
       }
       onChange();
     },
     setTeam(team) {
-      const offered = new Set([...sinks.values()].flatMap((s) => s.teams));
-      const next = typeof team === 'string' && offered.has(team) ? team : null;
+      const next = typeof team === 'string' && teams.includes(team) ? team : null;
       writeConfig({ telemetry: { ...cfg(), team: next } });
       onChange();
     },
@@ -424,20 +409,13 @@ export function createTelemetry({
       onChange();
     },
 
-    // The newest queued events, as each would leave for its first pending sink.
+    // The newest queued events, exactly as each would leave.
     preview(limit = 50) {
-      return state.queue.slice(-limit).reverse().map((q) => {
-        const sink = sinks.get(q.pending[0]);
-        return { sink: sink ? sink.host : null, event: sink ? render(q, sink) : null };
-      }).filter((p) => p.event);
+      const host = destination().host;
+      return state.queue.slice(-limit).reverse().map((q) => ({ sink: host, event: render(q) })).filter((p) => p.event);
     },
 
     status,
-
-    // This extension's own sinks, for `telemetry:sink`.
-    sinkStatus(extId) {
-      return status().sinks.filter((s) => s.extId === extId).map(({ id, host, pending, sent, dropped, lastSentAt, lastError }) => ({ id, host, pending, sent, dropped, lastSentAt, lastError }));
-    },
 
     start() {
       if (interval) return;
