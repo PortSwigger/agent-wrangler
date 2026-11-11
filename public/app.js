@@ -494,6 +494,9 @@ const extApi = {
   // Back `api.ui.notify`/`withdraw`; slots forces the owner to the caller.
   notify: (owner, opts) => notifications.show(owner, opts),
   withdrawNotification: (owner, id) => notifications.withdraw(owner, id),
+  // Backs `api.ui.toast`: the board's own stack, so it shows on every view.
+  // `owner` is forced by slots; the stack sets every string as text.
+  toast: (_owner, o) => toast(o.text, o.severity, { actions: o.actions, details: o.detail }),
   // Backs `api.requestBoardRender`: the task.body counterpart of
   // requestPanelRender, for content that changes a tile's size.
   requestBoardRender: () => { if (currentView === 'grid' && !gridEditing()) renderGrid(); },

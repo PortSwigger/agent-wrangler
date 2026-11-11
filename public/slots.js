@@ -158,6 +158,8 @@ function copyAgents(agents) {
   return Array.isArray(agents) ? JSON.parse(JSON.stringify(agents)) : [];
 }
 
+const TOAST_SEVERITIES = ['success', 'info', 'warning', 'error'];
+
 function isPlainObject(v) {
   return v != null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -476,6 +478,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             resolves with the clicked action's id, or null when it is
   //             closed or withdrawn; `withdraw(id)` takes one down. The owner
   //             is forced to this extension, and its cards go when it does.
+  //             `toast({ severity, text, detail, actions })` (1.71.0) shows a
+  //             transient message in the board's toast stack
+  //             (public/toast.js), on every view and above open dialogs.
+  //             `severity` is success, info (default), warning or error, which
+  //             sets how long it stays; `detail` sits behind Details; up to
+  //             three `{ label, onClick }` actions. True when shown.
   // `handlerTypesFor` defaults to allowing NOTHING: a board that has not yet been
   // told an extension's types (no announcement, no graph) must fail closed and
   // report rather than forward blind.
@@ -647,6 +655,33 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           },
           withdraw: (id) => {
             if (typeof id === 'string' && id) baseApi.withdrawNotification?.(extId, id);
+          },
+          toast: (opts) => {
+            const o = isPlainObject(opts) ? opts : {};
+            const actions = o.actions == null ? [] : o.actions;
+            const bad = typeof o.text !== 'string' || !o.text.trim() ? 'text must be a non-empty string'
+              : o.severity != null && !TOAST_SEVERITIES.includes(o.severity) ? `severity must be one of ${TOAST_SEVERITIES.join(', ')}`
+                : o.detail != null && typeof o.detail !== 'string' ? 'detail must be a string'
+                  : !Array.isArray(actions) || actions.length > 3 ? 'actions must be an array of at most three'
+                    : actions.some((a) => !isPlainObject(a) || typeof a.label !== 'string' || !a.label || typeof a.onClick !== 'function') ? 'each action needs a string label and an onClick function'
+                      : null;
+            if (bad) {
+              onError(`[ext:${extId}] ui.toast refused: ${bad}`);
+              return false;
+            }
+            if (typeof baseApi.toast !== 'function') return false;
+            baseApi.toast(extId, {
+              severity: o.severity || 'info',
+              text: o.text,
+              detail: o.detail || '',
+              // A throwing handler is the extension's bug: report it, never let
+              // it escape into the board's click handling.
+              actions: actions.map((a) => ({
+                label: a.label,
+                onClick: () => { try { a.onClick(); } catch (e) { onError(`[ext:${extId}] ui.toast action threw: ${e?.message || e}`); } },
+              })),
+            });
+            return true;
           },
         }),
         settings: settingsApi(extId, baseApi),
