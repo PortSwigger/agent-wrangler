@@ -1187,7 +1187,7 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
 
 /* api.ui.notify's stack (public/notifications.js): persistent cards in the
    bottom-right corner, newest at the bottom, that never take focus. Clear of
-   #toast, which sits bottom-centre. */
+   the #toast stack, which sits bottom-centre. */
 .notif-stack {
   position: fixed; right: 16px; bottom: 16px; z-index: 30;
   display: flex; flex-direction: column; gap: 8px; width: 340px; max-width: calc(100vw - 32px);
@@ -1209,26 +1209,61 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   background: none; color: var(--fg-muted); font-size: 16px; line-height: 1; cursor: pointer;
 }
 .notif-close:hover { color: var(--fg); background: none; }
+/* The toast stack (public/toast.js): a manual popover, so it is drawn in the top
+   layer, above board modals and (moved inside the topmost one) above modal
+   <dialog>s. Bottom-centre, newest at the bottom. Its font is set here because
+   inside a dialog it inherits from the dialog. */
 #toast {
-  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
-  background: var(--accent); color: var(--accent-fg); padding: 9px 16px; border-radius: 8px;
-  font-size: 13px; z-index: 30; box-shadow: 0 4px 16px var(--shadow); overflow: hidden;
+  position: fixed; inset: auto auto 18px 50%; transform: translateX(-50%); margin: 0;
+  padding: 0; border: 0; background: none; overflow: visible; color: var(--fg);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  width: max-content; max-width: min(560px, calc(100vw - 32px));
+  font: 13px/1.45 var(--font, system-ui, -apple-system, sans-serif); text-align: left;
 }
-#toast.err { background: var(--red); }
-#toast.hidden { display: none; }
+#toast:not(:popover-open) { display: none; }
+.toast {
+  --toast-bg: var(--accent); --toast-fg: var(--accent-fg);
+  position: relative; box-sizing: border-box; max-width: 100%; min-width: 200px;
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px;
+  padding: 9px 34px 9px 16px; border-radius: 8px; overflow: hidden;
+  background: var(--toast-bg); color: var(--toast-fg); box-shadow: 0 4px 16px var(--shadow);
+}
+.toast-success { --toast-bg: var(--green); --toast-fg: #fff; }
+.toast-warning { --toast-bg: var(--warn); --toast-fg: #1b1b1b; }
+.toast-error { --toast-bg: var(--red); --toast-fg: #fff; }
+/* About three lines; Details lifts the clamp. */
+.toast-text {
+  flex: 1 1 auto; min-width: 0; white-space: pre-line; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
+}
+.toast.expanded .toast-text { display: block; -webkit-line-clamp: none; line-clamp: none; max-height: 40vh; overflow-y: auto; }
+.toast-details {
+  flex-basis: 100%; margin-top: 6px; padding-top: 6px; border-top: 1px solid currentColor;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow-y: auto; opacity: 0.92;
+}
+.toast-details[hidden] { display: none; }
+.toast-actions { display: flex; gap: 12px; flex: 0 0 auto; margin-left: auto; }
+.toast-actions:empty { display: none; }
 .toast-action {
-  margin-left: 12px; padding: 0; border: none; background: none;
-  color: var(--accent-fg); font: inherit; font-weight: 600; text-decoration: underline;
-  cursor: pointer;
+  padding: 0; border: none; background: none;
+  color: inherit; font: inherit; font-weight: 600; text-decoration: underline;
+  cursor: pointer; white-space: nowrap;
 }
+.toast-action[hidden] { display: none; }
 .toast-action:hover { background: none; opacity: 0.8; }
-/* Depleting time-remaining bar along the toast's bottom edge; JS sets its
-   animation-duration and pauses play-state on hover. */
+.toast-close {
+  position: absolute; top: 5px; right: 6px; padding: 0 5px; border: none; border-radius: 4px;
+  background: none; color: inherit; font-size: 16px; line-height: 1.2; cursor: pointer; opacity: 0.75;
+}
+.toast-close:hover { background: none; opacity: 1; }
+/* Depleting time-remaining bar along an action toast's bottom edge; JS sets its
+   duration and start, and it pauses with the timers while the stack is hovered. */
 .toast-progress {
   position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
-  background: var(--accent-fg); opacity: 0.5; transform-origin: left;
+  background: currentColor; opacity: 0.5; transform-origin: left;
   animation-name: toast-deplete; animation-timing-function: linear; animation-fill-mode: forwards;
 }
+#toast:hover .toast-progress, #toast:has(:focus-visible) .toast-progress { animation-play-state: paused; }
 @keyframes toast-deplete { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 
 /* ── Task Grid ─────────────────────────────────────────────────────────── */

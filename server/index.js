@@ -32,7 +32,7 @@ import { deliverPrNudge } from './pr-nudge-runner.js';
 import { createSnoozeWakeSweeper } from './snooze-wake-runner.js';
 import { createFullSweepGuard } from './poll-guard.js';
 import { createRebuildCoalescer } from './rebuild-coalescer.js';
-import { diffNeedsYou, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
+import { diffNeedsYou, notifyLabel, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
@@ -1157,7 +1157,7 @@ async function rebuildOnce() {
   }
 
   for (const s of diffNeedsYou(graph.sessions)) {
-    broadcast({ type: 'notify', session: { sessionId: s.sessionId, label: s.label, waitingFor: s.waitingFor } });
+    broadcast({ type: 'notify', session: { sessionId: s.sessionId, label: notifyLabel(s.label), waitingFor: s.waitingFor } });
   }
   statusNotices.run(graph).catch((error) => logError('[status-notice]', error));
   for (const session of graph.sessions) session.statusNoticeBlocked = statusNotices.blocked(session.sessionId);

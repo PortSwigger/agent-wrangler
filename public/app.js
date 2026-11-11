@@ -2977,7 +2977,7 @@ function copySessionReference(s) {
   const ref = `Agent Wrangler session "${s.label || s.sessionId.slice(0, 8)}" (id: ${s.sessionId}) — read it with the read_session_transcript tool`;
   const p = navigator.clipboard?.writeText(ref);
   if (!p) return toast('Clipboard unavailable', true);
-  p.then(() => toast('Copied session reference', false, { duration: 1500 }), () => toast('Could not copy to clipboard', true));
+  p.then(() => toast('Copied session reference', 'success', { duration: 1500 }), () => toast('Could not copy to clipboard', true));
 }
 
 // The session pane header's "Actions" overflow menu — the inline icon row
@@ -3813,7 +3813,7 @@ function archivedToast(sessionId, text, worktree, archivedIds = [sessionId]) {
   // A worktree cleanup or a container-stop offer is worth acting on deliberately,
   // so give it the longer 15s window (and the bar lets the user see it); plain
   // archives keep 10s.
-  toast(text, false, { actions, duration: (cleanup || stopContainer) ? 15000 : 10000 });
+  toast(text, false, { actions, duration: (cleanup || stopContainer) ? 15000 : 10000, id: `archived:${sessionId}` });
 }
 
 // The "Stop container" button for an archived devcontainer session: `devcontainer
@@ -5579,7 +5579,7 @@ function attachClipboard(term) {
       if (!text) return;
       const p = navigator.clipboard?.writeText(text);
       if (!p) return;
-      return p.then(() => { if (text && text.trim()) toast('Copied to clipboard', false, { duration: 1500 }); }, () => {});
+      return p.then(() => { if (text && text.trim()) toast('Copied to clipboard', 'success', { duration: 1500 }); }, () => {});
     },
   }));
 }
@@ -6958,9 +6958,9 @@ function readUpdateToasted() {
 
 const EXT_UPDATE_TOASTED_KEY = 'aw-ext-update-toasted';
 const UPDATE_TOAST_MS = 15000;
-// There is one toast slot, so a core update and extension updates found in the
-// same check share it: whichever lands second re-shows the first's toast with
-// both folded in, keeping the core toast's actions.
+// A core update and extension updates found in the same check share one toast
+// (id 'update'): whichever lands second replaces the first's toast with both
+// folded in, keeping the core toast's actions.
 let shownUpdateToast = null;
 
 function showUpdateToast({ core = null, ext = null }) {
@@ -6969,13 +6969,13 @@ function showUpdateToast({ core = null, ext = null }) {
   ext = ext || recent.ext || null;
   shownUpdateToast = { at: Date.now(), core, ext };
   if (!core) {
-    toast(extUpdateToastText(ext), false, { actions: [{ label: 'View', onClick: () => openSettings('extensions') }], duration: UPDATE_TOAST_MS });
+    toast(extUpdateToastText(ext), false, { actions: [{ label: 'View', onClick: () => openSettings('extensions') }], duration: UPDATE_TOAST_MS, id: 'update' });
     return;
   }
   const text = (ext && extUpdateToastText(ext, { core: true })) || updateToastText(core);
   const actions = [{ label: 'View', onClick: () => openSettings('updates') }];
   if (core.canApply) actions.push({ label: 'Update now', onClick: () => { updatePhase = 'applying'; send({ type: 'update-apply' }); remountUpdatePanel(); } });
-  toast(text, false, { actions, duration: UPDATE_TOAST_MS });
+  toast(text, false, { actions, duration: UPDATE_TOAST_MS, id: 'update' });
 }
 
 function toastNewUpdate(status, { userAsked }) {
@@ -7768,7 +7768,7 @@ function connect() {
     else if (msg.type === 'pr-unresolved') onPrComments(msg);
     else if (msg.type === 'schedule-fired') onScheduleFired(msg);
     else if (msg.type === 'schedule-error') toast(`Schedule "${msg.name}" failed: ${msg.message}`, true);
-    else if (msg.type === 'prepare-warnings') for (const w of msg.warnings || []) toast(w, true);
+    else if (msg.type === 'prepare-warnings') toastLaunchWarnings(msg.warnings || []);
     else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
     else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
     else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
@@ -7824,7 +7824,7 @@ function connect() {
       else toast('Worktree removed');
     }
     else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop');
-    else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`);
+    else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`, 'success');
     else if (msg.type === 'branch-delete-blocked') {
       confirmDialog({
         title: 'Branch has unmerged commits',
@@ -7903,6 +7903,14 @@ function connect() {
       }
     }
   };
+}
+
+// One toast for a launch's warnings: a single one as it is, several as a count
+// with the list behind Details, so none is lost under the next.
+function toastLaunchWarnings(warnings) {
+  if (!warnings.length) return;
+  if (warnings.length === 1) return toast(warnings[0], 'warning');
+  toast(`${warnings.length} launch warnings`, 'warning', { details: warnings.map((w) => `• ${w}`).join('\n') });
 }
 
 // --- notifications + toast ---

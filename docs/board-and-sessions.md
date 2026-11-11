@@ -212,6 +212,16 @@ notices skipped during snooze are discarded rather than delivered when the snooz
 Subscriptions survive resume, are not inherited by forks, and end when the child exits or the
 subscriber is archived or missing. A server restart seeds observations without sending notices.
 
+## Messages at the bottom of the board
+
+Short messages (toasts) stack bottom-centre, up to three at once, newest at the bottom, and show
+above any open dialog. How long one stays depends on its kind: a success 3 seconds, information 5,
+a warning 8, and an error until you close it with **×**. Hovering over the stack pauses every timer.
+A long message shows its first three lines with **Details** for the rest; opening Details keeps that
+message up until you close it. When a fourth arrives, the oldest plain message makes room before one
+with an action (such as **Resume** after an archive) or an error. Several launch warnings from
+extensions arrive as one warning with the list under Details.
+
 ## Session actions
 
 Right-click a card or open **Actions** to find:
