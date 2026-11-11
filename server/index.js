@@ -176,8 +176,7 @@ const telemetry = createTelemetry({
   isModel: knownModelId,
   log: logError,
 });
-// Core's own catalogue. Empty until core emits something; the Settings tab
-// lists it beside every extension's.
+// Core's own catalogue. Empty until core emits something.
 telemetry.registerEmitter(CORE_EMITTER, { version: VERSION, events: {} });
 // The core singletons an extension's capability builder binds on its behalf (the
 // leaf rule means nothing under server/extensions/** can import them — see
@@ -1127,9 +1126,6 @@ async function rebuildOnce() {
   graph.codexPolicyDefaults = codexPolicyDefaults();
   graph.autoUpdate = autoUpdateMode();
   graph.refreshSessionsAfterUpdate = refreshSessionsAfterUpdate();
-  // Settings › Telemetry: the collector URL in use and
-  // its counters, and each emitter's catalogue (type names and field names only).
-  graph.telemetry = telemetry.status();
   graph.codeVersion = codeVersion;
   // Which extensions exist and whether each is on — what the settings toggles read
   // back, and what the client mounts/unmounts its slot contributions from. `enabled`
@@ -1262,7 +1258,6 @@ controlWss.on('connection', (ws) => {
     ext: extBag,
     hostApiFor,
     rebuild,
-    telemetry,
     runSchedule: runScheduleNow,
     graph: () => lastGraph,
     sessionFromGraph,

@@ -70,7 +70,7 @@ test('the built-in collector is the shipped prod URL, and only the report\'s rep
   assert.equal(BUILTIN_ENDPOINT, 'https://wrangler-telemetry.platform-prod.portswigger.io/v1/events');
   assert.deepEqual([...REPO_OWNERS], ['portswigger', 'portswigger-apps']);
   const t = createTelemetry({ file: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-telemetry-')), 't.json'), env: {}, timers: noTimers });
-  assert.deepEqual(t.destination(), { url: BUILTIN_ENDPOINT, source: 'builtin', error: null, host: 'wrangler-telemetry.platform-prod.portswigger.io' });
+  assert.deepEqual(t.destination(), { url: BUILTIN_ENDPOINT, source: 'builtin', error: null });
 });
 
 test('AW_TELEMETRY_URL, then config telemetry.url, override the built-in URL', async () => {
@@ -264,17 +264,21 @@ test('an event that no longer fits its catalogue, or whose emitter has gone, is 
 
   t.emit('demo', 'step.ended', { kind: 'pr' });
   t.unregisterEmitter('demo');
-  assert.equal(t.preview().length, 0);
+  await t.flush();
+  assert.equal(calls.length, 1, 'an event whose emitter has gone is not sent');
+  assert.equal(t.status().queued, 0);
+  assert.equal(t.status().sink.dropped, 2);
 });
 
 test('the queue is capped at its size and age, oldest dropped first', () => {
-  const { t, clock } = setup({ responses: [] });
+  const { t, clock, file } = setup({ responses: [] });
   withDemo(t);
   t.emit('demo', 'step.ended', step(t, { tries: 0 }));
   clock.t += QUEUE_MAX_AGE_MS + 1;
   for (let i = 0; i < QUEUE_MAX + 3; i += 1) t.emit('demo', 'step.ended', step(t, { tries: 1 }));
   assert.equal(t.status().queued, QUEUE_MAX);
-  assert.equal(t.preview(QUEUE_MAX).some((p) => p.event.tries === 0), false);
+  t.saveNow();
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).queue.some((q) => q.e.data.tries === 0), false);
 });
 
 test('the queue, install id and secret survive a restart; the file is private', async () => {
@@ -309,18 +313,23 @@ test('repoSlug reads slugs and remotes, and refuses paths', () => {
   assert.equal(repoSlug('not a repo'), null);
 });
 
-test('status shows the URL in use and where it came from; preview shows events as they would leave', () => {
+test('status shows the URL in use and where it came from, with no team', () => {
   const { t } = setup({ responses: [] });
   withDemo(t);
   t.emit('demo', 'step.ended', step(t));
   const st = t.status();
+  assert.equal(st.queued, 1);
   assert.equal(st.sink.url, BUILTIN);
-  assert.equal(st.sink.host, 'collector.example.com');
   assert.equal(st.sink.source, 'builtin');
-  assert.deepEqual(st.sink.repoOwners, ['acme']);
   assert.equal('teams' in st || 'team' in st, false);
-  assert.deepEqual(st.emitters[0].events, [{ type: 'demo.step.ended', v: 1, fields: ['kind', 'tries', 'repo', 'job'] }]);
-  const [p] = t.preview();
-  assert.equal(p.sink, 'collector.example.com');
-  assert.equal(p.event.type, 'demo.step.ended');
+});
+
+test('an invalid override is logged once, not on every flush', async () => {
+  const logs = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-telemetry-'));
+  const t = createTelemetry({ file: path.join(dir, 't.json'), env: { AW_TELEMETRY_URL: 'http://collector.example.com/' }, log: (m) => logs.push(m), timers: noTimers });
+  await t.flush();
+  await t.flush();
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /not sending: AW_TELEMETRY_URL or telemetry\.url is not a valid endpoint/);
 });

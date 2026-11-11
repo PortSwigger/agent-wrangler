@@ -43,7 +43,6 @@ import { createSessionPanel } from './session-panel.js';
 import { createRailButtons } from './rail-buttons.js';
 import { MODEL_FRONT } from './model-front-api.js';
 import { createClientExtensionLoader } from './extensions.js';
-import { telemetryPanelEl } from './telemetry-panel.js';
 import { updatePanelEl, restartPanelEl, shouldReloadForVersion, updateAvailable, rolledBackText, updateToastText, outdatedExtensions, extUpdateKeys, extUpdateIsNew, extUpdateToastText, extUpdatesEl, extUpdateStatusFor } from './update-panel.js';
 import { extensionsPanelEl, extensionSettingRowsEl, commitFocusedField, focusedFieldState, restoreFocusedField, consentBodyEl, consentButtonLabels, progressText, uninstallBodyText, AUTO_UPDATE_WARNING, TRANSIENT_PROGRESS_PHASES, RESTART_NOTE as EXT_RESTART_NOTE, AUTO_RESTART_NOTE as EXT_AUTO_RESTART_NOTE, UNINSTALL_RESTART_NOTE as EXT_UNINSTALL_RESTART_NOTE } from './extensions-panel.js';
 import { HINT_CHARS, hintLabels } from './hints.js';
@@ -185,11 +184,6 @@ let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
 // Settings › Background model (server config, resolved, every graph push).
 let backgroundModel = null;
-// Settings › Telemetry: graph.telemetry, the last queue preview the server sent
-// (null until asked), and the tab's mount point while Settings is open.
-let telemetryStatus = null;
-let telemetryPreview = null;
-let telemetryHost = null;
 // Settings › Sessions' Codex sandbox/approval defaults (server config, every
 // graph push): what the dialog's Codex controls prefill from.
 let codexPolicyDefaults = { ...CODEX_POLICY_FALLBACK };
@@ -942,12 +936,6 @@ function applyGraph(graph) {
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
   backgroundModel = graph.backgroundModel && typeof graph.backgroundModel === 'object' ? graph.backgroundModel : null;
-  {
-    const next = graph.telemetry && typeof graph.telemetry === 'object' ? graph.telemetry : null;
-    const moved = JSON.stringify(next) !== JSON.stringify(telemetryStatus);
-    telemetryStatus = next;
-    if (moved) remountTelemetryPanel();
-  }
   codexPolicyDefaults = graph.codexPolicyDefaults && typeof graph.codexPolicyDefaults === 'object' ? { ...CODEX_POLICY_FALLBACK, ...graph.codexPolicyDefaults } : { ...CODEX_POLICY_FALLBACK };
   const prevAutoUpdate = autoUpdate;
   autoUpdate = graph.autoUpdate || 'notify';
@@ -6876,24 +6864,6 @@ let installDrift = null;
 let installDriftRestarting = false;
 const UPDATE_IN_FLIGHT = new Set(['checking', 'applying', 'restarting']);
 
-function mountTelemetryPanel(host) {
-  telemetryHost = host;
-  if (!host) return;
-  // A closed Settings is re-rendered on open, so the preview is asked for
-  // again rather than shown stale.
-  host.replaceChildren(telemetryPanelEl({
-    status: telemetryStatus,
-    preview: telemetryPreview,
-    onPreview: () => send({ type: 'telemetry-preview' }),
-  }));
-}
-
-// Only while the tab's mount point is in the open modal: a graph tick must not
-// rebuild a closed panel.
-function remountTelemetryPanel() {
-  if (telemetryHost?.isConnected && !document.getElementById('settings-modal')?.classList.contains('hidden')) mountTelemetryPanel(telemetryHost);
-}
-
 function mountUpdatePanel(host) {
   updatePanelHost = host;
   if (!host) return;
@@ -7374,7 +7344,6 @@ initSettings({
   },
   extensions: { mount: openExtensionsPanel },
   updates: { mount: mountUpdatePanel },
-  telemetry: { mount: mountTelemetryPanel },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', () => submitDispatch());
@@ -7852,7 +7821,6 @@ function connect() {
     else if (msg.type === 'paste-image-result') { if (!terminalImagePaste.onResult(msg) && !intentImages.onResult(msg) && !extImageStaging.onResult(msg)) chatView.onPasteImageResult(msg); }
     else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
     else if (msg.type === 'usage') onUsage(msg);
-    else if (msg.type === 'telemetry-preview') { telemetryPreview = Array.isArray(msg.events) ? msg.events : []; remountTelemetryPanel(); }
     else if (msg.type === 'search-results') onSearchResults(msg);
     else if (msg.type === 'search-status') onSearchStatus(msg);
     else if (msg.type === 'worktree-validation') onWorktreeValidation(msg);

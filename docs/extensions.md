@@ -2090,7 +2090,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 Telemetry (1.71.0) lets core and extensions **emit** typed usage events (`telemetry:emit`). Where they
 go is core's alone: one built-in collector, which no extension can change or add to. Core owns
-everything between: an install id, refs, the on-disk queue, batching, retries and the Settings tab.
+everything between: an install id, refs, the on-disk queue, batching and retries.
 Telemetry is **always on**, with no switch to turn it off: events queue from the first run and are
 sent whenever the collector is reachable. The URL override below is for development, not an opt-out.
 
@@ -2176,11 +2176,11 @@ Core sends every event to one collector:
 
 The request carries no credentials: the collector's ingress admits only its organisation's office
 network. Anywhere else a send fails, and the events wait in the queue (within its limits below) until
-the machine is back on that network; the only sign is the collector's last-error line in Settings.
+the machine is back on that network; the last error is recorded beside the queue in `telemetry.json`.
 
 An override must be `https://` (`http://` only to `localhost`, `127.0.0.1` or `[::1]`, for a local
 stub), with no credentials, query or fragment. An invalid override is not fallen back from: nothing is
-sent, and Settings says why. A manifest that declares `telemetry.sinks` is refused.
+sent, and the server log says why. A manifest that declares `telemetry.sinks` is refused.
 
 Core POSTs `{ "events": [...] }` as JSON, at most 100 events and 64 KiB per request. Each event is the envelope plus the declared fields, flat:
 
@@ -2202,15 +2202,6 @@ that no longer fits (or whose emitter is gone) is dropped. The queue lives in
 `<data dir>/telemetry.json` (mode 0600, with the install id and ref secret), holds at most 5 000
 events and 30 days, drops the oldest first, and survives restarts. Disabling an extension stops its
 events, and any of them still queued are dropped at the next send.
-
-### Settings › Telemetry
-
-No switch: the tab opens by saying telemetry is always on. Below that it shows the collector
-URL in use and where it came from (built in, `AW_TELEMETRY_URL` or `config.json`, with the built-in
-URL beside an override), its counts, the repo owners whose names are sent and its last error; every
-emitter's event types and field names; and the queue, with
-**Show queued events** (the newest 50, exactly as each would be sent). Nothing in the tab turns
-telemetry off or discards the queue.
 
 ## Runtimes
 

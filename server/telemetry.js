@@ -114,6 +114,8 @@ export function createTelemetry({
   let soonTimer = null;
   let interval = null;
   let flushing = null;
+  // The invalid override last logged, so the flush timer logs it once.
+  let warnedUrl = null;
 
   const cfg = () => {
     const t = readConfig().telemetry;
@@ -123,13 +125,12 @@ export function createTelemetry({
   // Where events go now: AW_TELEMETRY_URL, then config.json `telemetry.url`,
   // then the built-in collector. An override that is not a valid endpoint is
   // not fallen back from (that would send to the collector it meant to avoid):
-  // nothing is sent and Settings says why.
+  // nothing is sent and the log says why, once per URL.
   function destination() {
     const fromEnv = typeof env?.[ENDPOINT_ENV] === 'string' ? env[ENDPOINT_ENV].trim() : '';
     const fromCfg = typeof cfg().url === 'string' ? cfg().url.trim() : '';
     const [url, source] = fromEnv ? [fromEnv, 'env'] : fromCfg ? [fromCfg, 'config'] : [builtinEndpoint, 'builtin'];
-    const error = checkEndpoint(url);
-    return { url, source, error, host: error ? null : new URL(url).host };
+    return { url, source, error: checkEndpoint(url) };
   }
 
   function save() {
@@ -280,8 +281,13 @@ export function createTelemetry({
   }
 
   async function flushOnce() {
-    if (!on()) return;
     const dest = destination();
+    if (dest.error) {
+      if (warnedUrl !== dest.url) log(`[telemetry] not sending: ${ENDPOINT_ENV} or telemetry.url is not a valid endpoint (${dest.error})`);
+      warnedUrl = dest.url;
+      return;
+    }
+    warnedUrl = null;
     const dropped = trim();
     if (dropped) log(`[telemetry] dropped ${dropped} queued events past the cap or age limit`);
     for (let i = 0; i < BATCHES_PER_FLUSH; i += 1) {
@@ -306,33 +312,23 @@ export function createTelemetry({
     soonTimer.unref?.();
   }
 
-  // What Settings › Telemetry shows.
+  // Where events go and the send counters, for tests and debugging.
   function status() {
     const dest = destination();
     const st = state.sink;
     return {
-      install: state.install,
       queued: state.queue.length,
       sink: {
         url: dest.url,
-        host: dest.host,
         source: dest.source,
         error: dest.error,
         builtin: builtinEndpoint,
-        env: ENDPOINT_ENV,
-        repoOwners: [...repoOwners],
         sent: st.sent || 0,
         dropped: st.dropped || 0,
         lastSentAt: st.lastSentAt ?? null,
         lastError: st.lastError ?? null,
         lastErrorAt: st.lastErrorAt ?? null,
-        retryAt: backoff && backoff.url === dest.url ? backoff.nextAt : null,
       },
-      emitters: [...emitters.entries()].map(([id, em]) => ({
-        id,
-        version: em.version,
-        events: Object.entries(em.catalogue).map(([name, spec]) => ({ type: `${id}.${name}`, v: spec.v, fields: Object.keys(spec.fields) })),
-      })),
     };
   }
 
@@ -372,12 +368,6 @@ export function createTelemetry({
       if (emitters.delete(id)) onChange();
     },
 
-
-    // The newest queued events, exactly as each would leave.
-    preview(limit = 50) {
-      const host = destination().host;
-      return state.queue.slice(-limit).reverse().map((q) => ({ sink: host, event: render(q) })).filter((p) => p.event);
-    },
 
     status,
 

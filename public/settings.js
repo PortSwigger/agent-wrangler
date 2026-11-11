@@ -228,7 +228,6 @@ export const SETTINGS_TABS = [
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
   { id: 'updates', label: 'Updates', settingIds: ['autoUpdate', 'refreshSessionsAfterUpdate'] },
-  { id: 'telemetry', label: 'Telemetry', settingIds: [] },
 ];
 
 // Every extension toggle is a scope:'server' def under this prefix, so app.js's
@@ -354,7 +353,6 @@ let changeBridge = () => {};
 // keeps every settings test free of the extensions panel.
 let extensionsBridge = { mount: () => {} };
 let updatesBridge = { mount: () => {} };
-let telemetryBridge = { mount: () => {} };
 let openModal = () => {};
 
 const byId = new Map(SETTINGS.map((s) => [s.id, s]));
@@ -494,10 +492,6 @@ function tabPanelHtml(tab, selected) {
     inner += '<div class="ext-installed" id="settings-ext-installed"></div>';
   } else if (tab.id === 'updates') {
     inner = `<div id="settings-updates"></div>${inner}`;
-  } else if (tab.id === 'telemetry') {
-    // No switch row: telemetry is always on. The collector, catalogue
-    // and queue carry extension-supplied text, built by telemetry-panel.js.
-    inner += '<div id="settings-telemetry"></div>';
   }
   return `<div id="settings-panel-${tab.id}" class="settings-panel${selected ? '' : ' hidden'}"
       role="tabpanel" aria-labelledby="settings-tab-${tab.id}">${inner}</div>`;
@@ -628,13 +622,12 @@ function selectTab(body, tabId, focus = false) {
 // `server` is the { get(id), set(id, value) } bridge for scope:'server' entries;
 // `appearance` is the theme/font-size bridge described above; `onChange(id, value)`
 // fires after every write, either scope.
-export function initSettings({ server, appearance, onChange, extensions, updates, telemetry } = {}) {
+export function initSettings({ server, appearance, onChange, extensions, updates } = {}) {
   if (server) serverBridge = server;
   if (appearance) appearanceBridge = appearance;
   if (onChange) changeBridge = onChange;
   if (extensions) extensionsBridge = extensions;
   if (updates) updatesBridge = updates;
-  if (telemetry) telemetryBridge = telemetry;
   const btn = document.getElementById('settings-btn');
   const modal = document.getElementById('settings-modal');
   const body = document.getElementById('settings-body');
@@ -654,7 +647,6 @@ export function initSettings({ server, appearance, onChange, extensions, updates
     // changed since the last open is current without any subscription here.
     extensionsBridge.mount(body.querySelector('#settings-ext-installed'));
     updatesBridge.mount(body.querySelector('#settings-updates'));
-    telemetryBridge.mount(body.querySelector('#settings-telemetry'));
     modal.classList.remove('hidden');
     closeBtn?.focus();
   };
