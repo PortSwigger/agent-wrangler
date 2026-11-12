@@ -42,6 +42,7 @@ export const TRUST_STATEMENT = 'An extension runs inside the wrangler with full 
 export const MAX_TEXTAREA_LENGTH = 20000;
 
 export const RESTART_NOTE = 'Restart the wrangler to finish.';
+export const RESTART_PENDING_NOTE = 'restart the wrangler to load it';
 
 // An auto-applied update's toast where the wrangler can restart itself: it
 // does, once idle (update-service.js), so asking for a restart would be wrong.
@@ -206,7 +207,8 @@ function sourceEl(entry) {
     }
     kvRow(list, 'Repository', repo);
   }
-  if (entry.sha) kvRow(list, 'Commit', el('span', 'ext-mono', entry.sha.slice(0, 8)));
+  if (entry.sha) kvRow(list, entry.restartPending ? 'Running' : 'Commit', el('span', 'ext-mono', entry.sha.slice(0, 8)));
+  if (entry.restartPending) kvRow(list, 'Installed', el('span', 'ext-mono', `${entry.installedSha.slice(0, 8)} — ${RESTART_PENDING_NOTE}`));
   return list;
 }
 
@@ -953,9 +955,11 @@ export function extensionsPanelEl({
   // still running rather than the one on disk, so its "restart to finish" line
   // lives here rather than on the entry.
   const notices = el('div', 'ext-notices');
+  const stale = installed.filter((e) => e.restartPending).map((e) => e.label || e.id);
   if (pendingInstall) notices.append(noteEl('ext-row-note', progress || `Installed ${pendingInstall}. ${RESTART_NOTE}`));
   else if (progress) notices.append(noteEl('ext-install-progress', progress));
-  if (canRestart && (pendingRemoval.length || pendingInstall)) notices.append(restartButtonEl({ restarting, onRestart }));
+  if (stale.length && !pendingInstall) notices.append(noteEl('ext-row-note', `${stale.join(', ')}: installed version differs from the running one, so new tools and schemas are not served yet. ${RESTART_NOTE}`));
+  if (canRestart && (pendingRemoval.length || pendingInstall || stale.length)) notices.append(restartButtonEl({ restarting, onRestart }));
   if (notices.childNodes.length) detail.append(notices);
 
   if (adding || !selected) {

@@ -363,6 +363,15 @@ test('extensionsForGraph reports the boot value alongside the live one', () => {
   assert.deepEqual(extensionsForGraph(live.list, () => false).map((e) => [e.enabled, e.bootEnabled]), [[false, true]]);
 });
 
+test('extensionsForGraph flags an installed extension whose on-disk sha differs from the loaded one', () => {
+  const ext = { ...manifest(), external: true, provenance: { sha: 'aaaa1111' } };
+  const loaded = loadExtensions({ cfg: {}, builtin: [ext] });
+  const at = (sha) => extensionsForGraph(loaded.list, () => true, () => ({}), { fake: { sha } })[0];
+  assert.deepEqual({ s: at('aaaa1111').restartPending, i: at('aaaa1111').installedSha }, { s: false, i: 'aaaa1111' });
+  assert.deepEqual({ s: at('bbbb2222').restartPending, i: at('bbbb2222').installedSha, r: at('bbbb2222').sha }, { s: true, i: 'bbbb2222', r: 'aaaa1111' });
+  assert.equal(extensionsForGraph(loaded.list, () => true, () => ({}), {})[0].restartPending, false, 'no record, nothing to compare');
+});
+
 test('extensionsForGraph carries identity off the boot snapshot, never the live read', () => {
   const loaded = loadExtensions({ cfg: {}, builtin: [manifest()] });
   const [row] = extensionsForGraph(loaded.list, () => true);

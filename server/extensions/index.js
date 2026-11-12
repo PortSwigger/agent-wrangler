@@ -486,7 +486,7 @@ export function themeSources(themeDirs, valuesFor = extensionSettings) {
 // The extra fields are the installed-extension row's own content (origin, SHA,
 // author, description) and are third-party strings — the client renders every
 // one of them through `textContent`.
-export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings) {
+export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings, installed = {}) {
   return list.map(({
     id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes, hideDispatchField, keybindings,
     quarantine, external, description, author, homepage, provenance, requires, settings, runtimes, earlyAdopterBranch,
@@ -530,6 +530,13 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // the board needs on every tick.
     origin: provenance?.originUrl || '',
     sha: provenance?.sha || '',
+    // What is on disk NOW, from the live record, against `sha` above, which is
+    // what this process loaded. They differ after an in-place update, whose code
+    // only loads on a restart; `restartPending` is the board's persistent
+    // "restart to load it" flag, surviving a reload that drops the install
+    // reply's one-shot notice.
+    installedSha: installed[id]?.sha || '',
+    restartPending: Boolean(external && provenance?.sha && installed[id]?.sha && installed[id].sha !== provenance.sha),
     // The auto-update opt-in, for the detail pane's switch. False for a
     // builtin or hand-placed entry, which has no record to carry it.
     autoUpdate: Boolean(provenance?.autoUpdate),
