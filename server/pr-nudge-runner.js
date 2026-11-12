@@ -104,7 +104,10 @@ export async function deliverPrNudge(ev, entry, deps) {
       if (tmux) {
         const sent = await paneDeferral.deliverOrDefer({ id, text: message, tmux, socket });
         if (sent === 'deferred') return 'dormant-held';
-      } else onError?.(ev, new Error('resume produced no live pane to deliver the PR nudge'));
+      } else {
+        onError?.(ev, new Error('resume produced no live pane to deliver the PR nudge'));
+        return 'error';
+      }
     }
   } catch (err) {
     onError?.(ev, err);

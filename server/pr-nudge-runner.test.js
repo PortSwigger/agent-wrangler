@@ -175,7 +175,7 @@ test('FIX 2 — coalescing JOIN with no resulting pane: nudge failure is surface
   const entry = { cwd: dir, socket: '/s/z' };
   const d = deps({ message: 'PR #7 failing', entries: { CARD1: entry }, resuming: true, resumeReturnsPane: false });
   const mode = await deliverPrNudge(EV, entry, d);
-  assert.equal(mode, 'dormant');
+  assert.equal(mode, 'error');
   assert.equal(d.sent.length, 0);      // no pane to deliver into
   assert.equal(d.errors.length, 1);    // so the loss is surfaced, never silent
   assert.match(String(d.errors[0].err.message), /no live pane/);

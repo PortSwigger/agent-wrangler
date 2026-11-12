@@ -668,7 +668,7 @@ const pollPrStatuses = createFullSweepGuard(runPrStatusSweep);
 function announceAfterNudge(event) {
   return (mode) => {
     broadcast({ ...event, nudged: mode === 'live' || mode === 'dormant' });
-    if (mode === 'dormant' || mode === 'dormant-held') return rebuild();
+    if (mode === 'dormant' || mode === 'dormant-held') return Promise.resolve(rebuild()).catch(() => {});
     return undefined;
   };
 }
