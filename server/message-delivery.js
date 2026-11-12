@@ -4,6 +4,7 @@ import { resolveResumeDir } from './transcript-reader.js';
 import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearComposer as defaultClearComposer } from './tmux-scraper.js';
 import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted, waitForCompactionEnd as defaultWaitForCompactionEnd, pasteImages as defaultPasteImages } from './pane-ready.js';
 import { adapterFor } from './agents/index.js';
+import { notePrompt, promptSourceForReason } from './prompt-ledger.js';
 
 const STARTUP_WINDOW_MS = 60000;
 
@@ -48,6 +49,8 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   const ensureSubmitted = deps.ensureSubmitted ?? defaultEnsureSubmitted;
   const waitForCompactionEnd = deps.waitForCompactionEnd ?? defaultWaitForCompactionEnd;
   const pasteImages = deps.pasteImages ?? defaultPasteImages;
+  // Telemetry's record of who sent this turn (server/prompt-ledger.js).
+  notePrompt(text, promptSourceForReason(reason));
 
   // No Enter on any of these — prefillPane pastes and stops, so the TUI absorbs
   // each path into its composer and the single sendText below is what submits the

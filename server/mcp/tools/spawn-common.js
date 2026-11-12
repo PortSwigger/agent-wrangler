@@ -93,6 +93,7 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
       // land afterwards.
       taskId: taskId || undefined,
       launchReason: 'spawn',
+      launchSource: 'agent',
     });
   } catch (e) {
     return errorResult(e?.message || 'Spawn failed');

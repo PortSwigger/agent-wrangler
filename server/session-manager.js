@@ -25,6 +25,7 @@ import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
 import { log, logWarn, logError, humanDuration } from './log.js';
+import { notePrompt, promptSourceForReason } from './prompt-ledger.js';
 import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
 import { checkGuiSession } from './gui-session.js';
 import { gentleKill } from './tmux-gentle-kill.js';
@@ -501,6 +502,11 @@ export class SessionManager {
     // core operation: a hook throw is logged (event-only — these run on
     // archive/fork/purge/dispatch/resume, never per tick) and the next hook runs.
     this._extHooks = { onBeforeDispatch: [], onArchive: [], onFork: [], onPurge: [], onDispatch: [], onResume: [] };
+    // Seam for core telemetry (server/core-telemetry.js), bound by
+    // server/index.js: told of each new card with how it was launched
+    // (`launchSource`: board, workflow, schedule, extension, agent or fork).
+    // A no-op by default, never awaited, and its throw is the seam's own.
+    this._onLaunched = () => {};
     // Seam (same mould) for the `session.launchContext` hook
     // (server/launch-context.js): asked by dispatch/resume/fork BEFORE the launch
     // command is built, answering the `{ env, addDirs }` the enabled extensions
@@ -572,6 +578,12 @@ export class SessionManager {
       return null;
     }
     return this._writeSecretEnv(tmux, launchSecretEnvOf(launchContext));
+  }
+
+  _launched(payload) {
+    try {
+      Promise.resolve(this._onLaunched(payload)).catch((err) => logError('[telemetry] launch', err));
+    } catch (err) { logError('[telemetry] launch', err); }
   }
 
   async _fireExtHooks(name, payload) {
@@ -1220,6 +1232,9 @@ export class SessionManager {
   // Resume an existing session's conversation in a fresh, attachable tmux
   // session (used for sessions not already running in tmux).
   async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified', automatic = false } = {}) {
+    // A prompt riding the relaunch, for telemetry's source: a caller that knows
+    // better (deliverMessage) noted it already, and this only fills the gap.
+    if (intent) notePrompt(intent, promptSourceForReason(reason), { fallback: true });
     const prev = this.map.get(sessionId);
     // A runtime that can't be resumed (or one whose extension is gone) refuses
     // HERE, before the kill below: a held pane may be the only thing keeping a
@@ -1449,6 +1464,7 @@ export class SessionManager {
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onFork', { sessionId, parentId, entry });
+    this._launched({ sessionId, entry, source: 'fork' });
     await this.refreshAlive();
     return { sessionId, tmux };
   }
@@ -1965,7 +1981,8 @@ export class SessionManager {
 
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, codexPolicy: pickedCodexPolicy } = {}) {
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, codexPolicy: pickedCodexPolicy,
+                   launchSource, spawner } = {}) {
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
@@ -2139,6 +2156,7 @@ export class SessionManager {
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });
+    this._launched({ sessionId, entry, source: launchSource || (spawnedBy ? 'agent' : 'board'), spawner: spawner || null });
     await this.refreshAlive();
     return { sessionId, tmux, cwd };
   }
