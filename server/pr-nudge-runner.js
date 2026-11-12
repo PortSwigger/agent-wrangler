@@ -27,7 +27,7 @@ import { adapterFor } from './agents/index.js';
 // snooze-wake-runner rather than delegating to runSessionAction) so the two
 // concurrency guards below can sit SYNCHRONOUSLY immediately before resume() — the
 // only place they close their windows. Deps injected (no session-manager import).
-// Returns the mode: 'live' | 'dormant' | 'skip' (archived/gone) | 'error' (resume
+// Returns the mode: 'live' (pasted) | 'held' (live pane, queued behind a draft or dialog) | 'dormant' | 'dormant-held' (woken, line queued) | 'skip' (archived/gone) | 'error' (resume
 // failed). Only 'dormant' warrants the caller's rebuild(); 'error' must NOT rebuild
 // (nothing woke) and is surfaced via onError instead.
 export async function deliverPrNudge(ev, entry, deps) {
@@ -36,8 +36,8 @@ export async function deliverPrNudge(ev, entry, deps) {
 
   const target = tmuxFor(id);
   if (target) {
-    await paneDeferral.deliverOrDefer({ id, text: message, tmux: target, socket: socketFor(id) });
-    return 'live';
+    const sent = await paneDeferral.deliverOrDefer({ id, text: message, tmux: target, socket: socketFor(id) });
+    return sent === 'deferred' ? 'held' : 'live';
   }
 
   // Not live: archived (entry with archivedAt), snoozed (entry with snooze), or gone
@@ -101,8 +101,10 @@ export async function deliverPrNudge(ev, entry, deps) {
       // No explicit pane-readiness wait here: waitForPaneReady lives in the
       // control-handlers layer, which this leaf runner must not import — so this
       // mirrors the joined path's exact timing and shares its paste-timing residual.
-      if (tmux) await paneDeferral.deliverOrDefer({ id, text: message, tmux, socket });
-      else onError?.(ev, new Error('resume produced no live pane to deliver the PR nudge'));
+      if (tmux) {
+        const sent = await paneDeferral.deliverOrDefer({ id, text: message, tmux, socket });
+        if (sent === 'deferred') return 'dormant-held';
+      } else onError?.(ev, new Error('resume produced no live pane to deliver the PR nudge'));
     }
   } catch (err) {
     onError?.(ev, err);

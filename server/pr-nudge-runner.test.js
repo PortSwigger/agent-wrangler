@@ -207,7 +207,7 @@ test('a live session whose composer holds a draft has its nudge held, not pasted
   });
   d.paneDeferral = pd;
 
-  assert.equal(await deliverPrNudge({ ownerId: 'c1' }, { sessionId: 'c1' }, d), 'live');
+  assert.equal(await deliverPrNudge({ ownerId: 'c1' }, { sessionId: 'c1' }, d), 'held');
   assert.deepEqual(sent, [], 'nothing pasted on top of the draft');
   assert.deepEqual(d.sent, [], 'and not smuggled past the gate by a direct paste either');
   assert.deepEqual(pd.pending('c1'), ['nudge'], 'held for the next drain');
@@ -250,7 +250,15 @@ test('a live Codex owner mid-prompt has its PR nudge held, not pasted into the d
   });
   d.paneDeferral = pd;
 
-  assert.equal(await deliverPrNudge({ ownerId: 'c1' }, { sessionId: 'c1', agent: 'codex' }, d), 'live');
+  assert.equal(await deliverPrNudge({ ownerId: 'c1' }, { sessionId: 'c1', agent: 'codex' }, d), 'held');
   assert.deepEqual(sent, [], 'nothing pasted on top of the Codex draft');
   assert.deepEqual(pd.pending('c1'), ['PR #7 failing'], 'held for the next drain');
+});
+
+test('dormant Codex owner whose pasted nudge is held reports dormant-held', async () => {
+  const dir = realDir();
+  const entry = { cwd: dir, agent: 'codex', socket: '/s/cx' };
+  const d = deps({ message: 'PR #7 failing', entries: { CARD1: entry }, resumeTmux: 'cx_woken' });
+  d.paneDeferral = { deliverOrDefer: async () => 'deferred' };
+  assert.equal(await deliverPrNudge(EV, entry, d), 'dormant-held');
 });

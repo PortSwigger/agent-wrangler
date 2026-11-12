@@ -158,12 +158,13 @@ auto-merge actions do not wait for the session's input to clear.
 
 ### PR toasts on the board
 
-When the owning session receives the same notice in its pane (a live session, or
-a dormant one the notice wakes), the board skips the toast, since the session
-already has it. **Hide PR toasts the session already got** in Settings → Automation
+Once the owning session has the same notice (pasted into its pane, or carried by
+the resume that wakes a dormant session), the board skips the toast. The toast is
+decided after delivery: a notice held back behind a draft, a dialog or an
+unreadable pane does not count, so the toast shows until the notice lands. **Hide PR toasts the session already got** in Settings → Automation
 controls this and is on by default. The toast still shows when the session was not
-nudged: Auto-fix off, a task-scope link, an archived or snoozed session, or no
-session to deliver to. This covers checks, conflicts, review threads and auto-merge.
+nudged: Auto-fix off, a task-scope link, an archived or snoozed session, a held
+notice, a failed wake, or no session to deliver to. This covers checks, conflicts, review threads and auto-merge.
 
 A PR toast that is still shown disappears after 15 seconds, including the error
 ones; hovering or focusing the toast stack pauses the countdown.

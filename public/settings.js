@@ -66,7 +66,7 @@ export const SETTINGS = [
     type: 'toggle',
     scope: 'server',
     label: 'Hide PR toasts the session already got',
-    help: 'Skip the board toast for a PR status change (checks, merge conflict, review threads, auto-merge) when the owning session received the same notice in its pane. The toast still shows when the session was not nudged, for example when auto-fix is off, for a task-level PR, or when no live session can take it.',
+    help: 'Skip the board toast for a PR status change (checks, merge conflict, review threads, auto-merge) once the owning session has the same notice in its pane. The toast still shows when the session was not nudged (auto-fix off, a task-level PR, no live session) or when the notice is held back, for example behind a draft or a dialog.',
     default: true,
   },
   {

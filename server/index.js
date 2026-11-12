@@ -32,7 +32,7 @@ import { deliverPrNudge } from './pr-nudge-runner.js';
 import { createSnoozeWakeSweeper } from './snooze-wake-runner.js';
 import { createFullSweepGuard } from './poll-guard.js';
 import { createRebuildCoalescer } from './rebuild-coalescer.js';
-import { diffNeedsYou, notifyLabel, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled, prNudgeReaches } from './notifier.js';
+import { diffNeedsYou, notifyLabel, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
@@ -661,6 +661,18 @@ let lastControlActivity = Date.now();
 // starved by a long full sweep and never runs the transition diff below.
 const pollPrStatuses = createFullSweepGuard(runPrStatusSweep);
 
+// Broadcast a PR event once its pane nudge has been delivered. `nudged` is true
+// only when the session actually has the line: pasted into a live pane, or
+// carried by a woken session's resume. A held line (draft, dialog, unreadable
+// pane), a skipped owner or a failed wake leaves the board toast showing.
+function announceAfterNudge(event) {
+  return (mode) => {
+    broadcast({ ...event, nudged: mode === 'live' || mode === 'dormant' });
+    if (mode === 'dormant' || mode === 'dormant-held') return rebuild();
+    return undefined;
+  };
+}
+
 async function runPrStatusSweep(only) {
   const links = [
     ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
@@ -727,10 +739,10 @@ async function runPrStatusSweep(only) {
       // behaves like an idle-but-live one; the auto-merge confirmation line below
       // stays board-only when dormant (terminal/informational — not expanded here).
       const { merge: willMerge, nudge } = planCheckTransition(ev, entry, fixPrDefault);
-      broadcast({ type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
-                  url: ev.url, number: ev.number, status: ev.checkStatus, headSha: ev.headSha,
-                  nudged: nudge && prNudgeReaches(entry, tmuxFor(ev.ownerId)) });
-      if (nudge) {
+      const checksEvent = { type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
+                            url: ev.url, number: ev.number, status: ev.checkStatus, headSha: ev.headSha };
+      if (!nudge) broadcast({ ...checksEvent, nudged: false });
+      else {
         // A live session gets the nudge in its pane; a DORMANT one (entry, no tmux)
         // is woken and handed the SAME nudge as its resume intent — dormancy is only
         // a RAM optimization, so it behaves like an idle-but-live session. Archived/
@@ -745,7 +757,7 @@ async function runPrStatusSweep(only) {
         deliverPrNudge(ev, entry, {
           message: prPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
-        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+        }).then(announceAfterNudge(checksEvent)).catch(() => broadcast({ ...checksEvent, nudged: false }));
       }
       // A successful merge leaves the MERGED-state path (next poll) to remove the
       // link and nudge "merged"; either way we report the outcome now (board
@@ -753,12 +765,14 @@ async function runPrStatusSweep(only) {
       if (willMerge) {
         const res = await mergePr(ev.url);
         const target = tmuxFor(ev.ownerId);
-        broadcast({ type: 'pr-merge', scope: ev.scope, sessionId: ev.ownerId,
-                    url: ev.url, number: ev.number, ok: res.ok, error: res.ok ? null : res.error,
-                    nudged: Boolean(target) });
-        if (target) {
+        const mergeEvent = { type: 'pr-merge', scope: ev.scope, sessionId: ev.ownerId,
+                             url: ev.url, number: ev.number, ok: res.ok, error: res.ok ? null : res.error };
+        if (!target) broadcast({ ...mergeEvent, nudged: false });
+        else {
           const phrase = res.ok ? 'auto-merged' : `auto-merge failed: ${res.error}`;
-          paneDeferral.deliverOrDefer({ id: ev.ownerId, text: prPaneLine(ev.number, ev.url, phrase), tmux: target, socket: socketFor(ev.ownerId) }).catch(() => {});
+          paneDeferral.deliverOrDefer({ id: ev.ownerId, text: prPaneLine(ev.number, ev.url, phrase), tmux: target, socket: socketFor(ev.ownerId) })
+            .then((sent) => broadcast({ ...mergeEvent, nudged: sent === 'sent' }))
+            .catch(() => broadcast({ ...mergeEvent, nudged: false }));
         }
       }
     }
@@ -769,13 +783,13 @@ async function runPrStatusSweep(only) {
     for (const ev of diffDirty(current)) {
       const entry = sessionManager.entryFor(ev.ownerId);
       const dirtyNudge = planDirtyTransition(ev, entry, fixPrDefault);
-      broadcast({ type: 'pr-dirty', scope: ev.scope, sessionId: ev.ownerId, url: ev.url, number: ev.number,
-                  nudged: dirtyNudge && prNudgeReaches(entry, tmuxFor(ev.ownerId)) });
-      if (dirtyNudge) {
+      const dirtyEvent = { type: 'pr-dirty', scope: ev.scope, sessionId: ev.ownerId, url: ev.url, number: ev.number };
+      if (!dirtyNudge) broadcast({ ...dirtyEvent, nudged: false });
+      else {
         deliverPrNudge(ev, entry, {
           message: prDirtyPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
-        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+        }).then(announceAfterNudge(dirtyEvent)).catch(() => broadcast({ ...dirtyEvent, nudged: false }));
       }
     }
     // Detect unresolved review-thread-count increases — own diff/baseline,
@@ -792,14 +806,14 @@ async function runPrStatusSweep(only) {
       const entry = sessionManager.entryFor(ev.ownerId);
       const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
       const commentNudge = !checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault);
-      broadcast({ type: 'pr-unresolved', scope: ev.scope, sessionId: ev.ownerId,
-                  url: ev.url, number: ev.number, count: ev.unresolvedCount, delta: ev.delta,
-                  nudged: commentNudge && prNudgeReaches(entry, tmuxFor(ev.ownerId)) });
-      if (commentNudge) {
+      const commentEvent = { type: 'pr-unresolved', scope: ev.scope, sessionId: ev.ownerId,
+                             url: ev.url, number: ev.number, count: ev.unresolvedCount, delta: ev.delta };
+      if (!commentNudge) broadcast({ ...commentEvent, nudged: false });
+      else {
         deliverPrNudge(ev, entry, {
           message: prUnresolvedPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
-        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+        }).then(announceAfterNudge(commentEvent)).catch(() => broadcast({ ...commentEvent, nudged: false }));
       }
     }
   }
