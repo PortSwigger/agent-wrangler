@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { notifyLabel, NOTIFY_LABEL_MAX, diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
+import { notifyLabel, NOTIFY_LABEL_MAX, diffCheckStatus, planCheckTransition, prPaneNudge, repoFromPrUrl, diffDirty, planDirtyTransition, prDirtyPaneNudge, prLabel, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled, prNudgeReaches } from './notifier.js';
 
 // link factory: { scope, ownerId, url, number, checkStatus, headSha }.
 const L = (checkStatus, { scope = 'session', ownerId = 's1', url = 'https://github.com/o/r/pull/1', number = 1, headSha = 'sha-default' } = {}) =>
@@ -450,4 +450,15 @@ test('notifyLabel clamps a launch-prompt label to one short line', () => {
 test('notifyLabel hard-cuts one long unbroken word', () => {
   const out = notifyLabel('x'.repeat(500));
   assert.equal(out, `${'x'.repeat(NOTIFY_LABEL_MAX - 1)}…`);
+});
+
+test('prNudgeReaches: a live pane or a wakeable dormant session gets the nudge', () => {
+  assert.equal(prNudgeReaches(undefined, 'tmux:1'), true);
+  assert.equal(prNudgeReaches({}, null), true);
+});
+
+test('prNudgeReaches: archived, snoozed and gone owners get no nudge', () => {
+  assert.equal(prNudgeReaches({ archivedAt: 1 }, null), false);
+  assert.equal(prNudgeReaches({ snooze: { until: 1 } }, null), false);
+  assert.equal(prNudgeReaches(undefined, null), false);
 });

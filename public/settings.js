@@ -62,6 +62,14 @@ export const SETTINGS = [
     default: true,
   },
   {
+    id: 'suppressNudgedPrToasts',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Hide PR toasts the session already got',
+    help: 'Skip the board toast for a PR status change (checks, merge conflict, review threads, auto-merge) when the owning session received the same notice in its pane. The toast still shows when the session was not nudged, for example when auto-fix is off, for a task-level PR, or when no live session can take it.',
+    default: true,
+  },
+  {
     id: 'trustCodexLaunchCwd',
     type: 'toggle',
     scope: 'server',
@@ -223,7 +231,7 @@ export const SETTINGS_TABS = [
   {
     id: 'automation',
     label: 'Automation',
-    settingIds: ['autoFixPrChecksDefault', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'mailWakesDormant', 'backgroundModel'],
+    settingIds: ['autoFixPrChecksDefault', 'suppressNudgedPrToasts', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'mailWakesDormant', 'backgroundModel'],
   },
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },

@@ -58,7 +58,7 @@ import { readTerminalTheme, readTerminalFont, setCustomStyles, onThemeChange, in
 import { toast } from './toast.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
-import { prCheckToastOptions } from './pr-check-notification.js';
+import { prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
@@ -178,6 +178,7 @@ let trustClaudeLaunchCwd = true; // likewise
 let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let mailWakesDormant = false;
+let suppressNudgedPrToasts = true;
 let prModelFooter = true;
 let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
@@ -934,6 +935,7 @@ function applyGraph(graph) {
   childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   mailWakesDormant = graph.mailWakesDormant === true;
+  suppressNudgedPrToasts = graph.suppressNudgedPrToasts !== false;
   prModelFooter = graph.prModelFooter !== false;
   chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
@@ -7256,6 +7258,7 @@ initSettings({
       if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'mailWakesDormant') return mailWakesDormant;
+      if (id === 'suppressNudgedPrToasts') return suppressNudgedPrToasts;
       if (id === 'prModelFooter') return prModelFooter;
       if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
@@ -7289,6 +7292,9 @@ initSettings({
       } else if (id === 'autoFixPrChecksDefault') {
         autoFixPrChecksDefault = Boolean(value);
         send({ type: 'set-auto-fix-pr-checks-default', enabled: autoFixPrChecksDefault });
+      } else if (id === 'suppressNudgedPrToasts') {
+        suppressNudgedPrToasts = Boolean(value);
+        send({ type: 'set-suppress-nudged-pr-toasts', enabled: suppressNudgedPrToasts });
       } else if (id === 'mailWakesDormant') {
         mailWakesDormant = Boolean(value);
         send({ type: 'set-mail-wakes-dormant', enabled: mailWakesDormant });
@@ -7917,7 +7923,7 @@ function prRepoName(url) {
   return m ? m[1] : '';
 }
 function onPrChecks(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const isErr = msg.status === 'failing' || msg.status === 'changes-requested';
   // Omit the `(<repo>)` segment entirely for an enterprise/malformed url (prRepoName
   // returns '') rather than rendering bare `()` — mirrors the server's prPaneNudge.
@@ -7939,11 +7945,11 @@ function onPrChecks(msg) {
 // Success → accent toast; failure → red .err toast + a one-shot dot flash, so a
 // blocked merge (branch protection, conflicts) is visible rather than silent.
 function onPrMerge(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const text = msg.ok
     ? `PR #${msg.number} auto-merged`
     : `PR #${msg.number} auto-merge failed: ${msg.error}`;
-  toast(text, !msg.ok);
+  toast(text, !msg.ok, msg.ok ? undefined : prAlertToastOptions());
   if (!msg.ok) flashPr(msg.url);
 }
 
@@ -7951,11 +7957,11 @@ function onPrMerge(msg) {
 // an alert, unlike onPrChecks where only some statuses are errors. Mirrors
 // onPrChecks' shape (focus-suppressed toast + browser Notification + dot flash).
 function onPrDirty(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
-  toast(text, true);
+  toast(text, true, prAlertToastOptions());
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(msg.sessionId); };
@@ -7969,12 +7975,12 @@ function onPrDirty(msg) {
 // toast + browser Notification + dot flash). Notification-only — no new
 // persistent PR-dot/card UI beyond the existing transient flash.
 function onPrComments(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const phrase = `${msg.delta} new unresolved review thread${msg.delta === 1 ? '' : 's'} (${msg.count} unresolved total)`;
   const text = `[Agent Wrangler] ${label}: ${phrase}`;
-  toast(text, true);
+  toast(text, true, prAlertToastOptions());
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(msg.sessionId); };

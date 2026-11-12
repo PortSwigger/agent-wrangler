@@ -107,6 +107,15 @@ export function planCheckTransition(ev, entry, fixDefault = true) {
   return { merge, nudge };
 }
 
+// Whether a planned PR nudge will reach its session: a live pane takes it, and a
+// dormant session (an entry that is neither archived nor snoozed) is woken for
+// it. Mirrors deliverPrNudge's routing; the board uses it to skip a toast the
+// session already received. Archived, snoozed and gone owners get the toast only.
+export function prNudgeReaches(entry, live) {
+  if (live) return true;
+  return Boolean(entry) && !entry.archivedAt && !entry.snooze;
+}
+
 // Pane-nudge phrasing per notifiable checkStatus (see fetchPrStatus). Deliberately
 // contextual and non-instructive (no emoji, no imperative) — the line states what
 // happened, not what to do. `passing` means genuinely mergeable (mergeStateStatus

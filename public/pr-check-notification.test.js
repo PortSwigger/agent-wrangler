@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prCheckToastOptions } from './pr-check-notification.js';
+import { prCheckToastOptions, prAlertToastOptions, prToastSuppressed, PR_TOAST_MS } from './pr-check-notification.js';
 
 test('failing session checks offer a session action for 15 seconds', () => {
   const opened = [];
@@ -28,4 +28,15 @@ test('review changes requested use the actionable error toast', () => {
 
 test('non-error check statuses keep the default toast behavior', () => {
   assert.equal(prCheckToastOptions('passing', 'session', 's3', () => {}), undefined);
+});
+
+test('conflict, review-thread and merge-failure toasts expire like the checks toast', () => {
+  assert.equal(prAlertToastOptions().duration, PR_TOAST_MS);
+});
+
+test('a PR toast is suppressed only when the session was nudged and the setting is on', () => {
+  assert.equal(prToastSuppressed({ nudged: true }, true), true);
+  assert.equal(prToastSuppressed({ nudged: true }, false), false);
+  assert.equal(prToastSuppressed({ nudged: false }, true), false);
+  assert.equal(prToastSuppressed({}, true), false);
 });

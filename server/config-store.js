@@ -142,6 +142,13 @@ export function autoFixPrChecksDefault(cfg = readConfig()) {
   return cfg.autoFixPrChecksDefault !== false;
 }
 
+// Whether the board skips a PR status toast when the owning session already got
+// the same notice in its pane. Default on; the toast still shows when the
+// session did not get the nudge. Takes cfg so tests never write config.json.
+export function suppressNudgedPrToasts(cfg = readConfig()) {
+  return cfg.suppressNudgedPrToasts !== false;
+}
+
 // Which view a session's sidebar opens in for cards the user hasn't explicitly
 // toggled either way. Default off (terminal) to preserve today's behaviour;
 // toggled from the board's settings modal (config.json `chatViewDefault: true`).

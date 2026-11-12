@@ -156,6 +156,18 @@ auto-merge results. Notices wait while the terminal holds a draft, shows a dialo
 or cannot be read; once the input clears they arrive together. Board toasts and
 auto-merge actions do not wait for the session's input to clear.
 
+### PR toasts on the board
+
+When the owning session receives the same notice in its pane (a live session, or
+a dormant one the notice wakes), the board skips the toast, since the session
+already has it. **Hide PR toasts the session already got** in Settings → Automation
+controls this and is on by default. The toast still shows when the session was not
+nudged: Auto-fix off, a task-scope link, an archived or snoozed session, or no
+session to deliver to. This covers checks, conflicts, review threads and auto-merge.
+
+A PR toast that is still shown disappears after 15 seconds, including the error
+ones; hovering or focusing the toast stack pauses the countdown.
+
 ### Waiting without agent polling
 
 Agents receive brief always-on guidance through the mail skill sidecar on both

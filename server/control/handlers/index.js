@@ -18,6 +18,7 @@ import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-defau
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { trustClaudeLaunchCwdHandler } from './trust-claude-launch-cwd.js';
 import { mailWakesDormantHandler } from './mail-wakes-dormant.js';
+import { suppressNudgedPrToastsHandler } from './suppress-nudged-pr-toasts.js';
 import { prModelFooterHandler } from './pr-model-footer.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { childFullViewDefaultHandler } from './child-full-view-default.js';
@@ -93,6 +94,7 @@ export const CONTROL_HANDLERS = [
   trustCodexLaunchCwdHandler,
   trustClaudeLaunchCwdHandler,
   mailWakesDormantHandler,
+  suppressNudgedPrToastsHandler,
   prModelFooterHandler,
   childFullViewHandler,
   childFullViewDefaultHandler,
