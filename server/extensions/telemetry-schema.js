@@ -17,7 +17,8 @@ export const REF_RE = /^[0-9a-f]{16}$/;
 export const REPO_RE = /^[a-z0-9][a-z0-9_.-]{0,38}\/[a-z0-9_.][a-z0-9_.-]{0,99}$/;
 export const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,6}(-[0-9a-z.-]{1,20})?$/;
 
-export const MAX_MS = 24 * 60 * 60 * 1000;
+// A year and a day, as the collector bounds it: a card or a job can live for weeks.
+export const MAX_MS = 366 * 24 * 60 * 60 * 1000;
 export const MAX_USD = 10_000;
 export const MAX_EVENTS = 100;
 export const MAX_FIELDS = 40;

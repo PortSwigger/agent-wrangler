@@ -61,6 +61,7 @@ export const interruptHandler = {
     const entry = ctx.sessionManager?.entryFor?.(msg.sessionId);
     const agent = node?.agent ?? entry?.agent ?? 'claude';
     const adapter = adapterFor(agent);
+    ctx.onInterrupt?.(msg.sessionId);
     await sendKeys(target, adapter.terminal.interruptKeys, socket);
 
 

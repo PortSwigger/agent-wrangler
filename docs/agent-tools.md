@@ -27,6 +27,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | `assign_session` | Move a session and its descendants to a task, or back to Ad-hoc. |
 | `attach_session` | Nest a session under another compatible session on the board. |
 | `detach_session` | Promote a nested session back to the top level. |
+| `stop_status_notices` | Stop status notices for a session you spawned with `notify_status` or `nest`, by full or 8-character id. Nesting and mail are unaffected. |
 | `rename_session` | Change a session's board label. |
 | `archive_session` | Archive a session, optionally cascading to descendants. Archiving the caller requires `allow_self: true`. |
 | `restore_session` | Resume an archived or dormant session onto the board. Refuses a live session; `recreate_dir: true` recreates a deleted launch dir. |
@@ -64,6 +65,8 @@ Child mail does not suppress the idle notice: it mentions mail from that working
 idle hold, including mail the subscriber already read. Approval pauses and relaunches preserve
 that mail window until new work after idle. Returning to working restarts the quiet timer.
 These are observations: read the child's transcript or message it before assuming it finished.
+Call `stop_status_notices` with the child's id when you no longer need to supervise it, for example
+once a person is working with it directly; nesting and mail continue.
 See [board behavior](board-and-sessions.md#status-notices-to-spawners) for delivery and lifecycle.
 
 ## Remote Control on `spawn_session`
