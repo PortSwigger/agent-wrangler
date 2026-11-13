@@ -522,7 +522,13 @@ import semver from 'semver';
 // collector's bound), so a card's or a job's whole life fits. An older server
 // throws on an `ms` value past 24 hours, so an emitter sending one declares
 // `^1.73.0`.
-export const HOST_API_VERSION = '1.73.0';
+//
+// 1.74.0 enforces the metadata-only contract of `host.mail.list(sessionId)`
+// under `mail:read`: id, from, fromLabel, at, size, state and readAt, without
+// bodies or excerpts. Core list_mail retains bounded previews through a
+// separate accessor that is not available on the extension facade. Extensions
+// relying on sender/time metadata without reading text can declare `^1.74.0`.
+export const HOST_API_VERSION = '1.74.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

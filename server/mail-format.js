@@ -9,7 +9,6 @@ const BATCH_BUDGET_BYTES = 16 * 1024;
 // are a Phase 1 default: enough to recognise the message and decide whether to
 // fetch it in full via read_mail({id}).
 const DRAIN_EXCERPT_CHARS = 2000;
-const LIST_EXCERPT_CHARS = 200;
 
 function excerptOf(body, chars) {
   return body.length > chars ? `${body.slice(0, chars)}…` : body;
@@ -74,6 +73,6 @@ export function formatOneMail(m) {
 export function formatMailMeta(m) {
   return {
     id: m.id, from: m.from, fromLabel: m.fromLabel, at: m.at, size: m.size,
-    read: m.state === 'read', state: m.state, excerpt: excerptOf(m.body, LIST_EXCERPT_CHARS),
+    read: m.state === 'read', state: m.state, excerpt: m.excerpt,
   };
 }

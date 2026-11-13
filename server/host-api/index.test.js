@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import os from 'node:os';
 import { runInNewContext } from 'node:vm';
 import { adapterFor } from '../agents/index.js';
 import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
 import { buildHostApi, buildExtSettings } from './index.js';
 import { V1_BUILDERS, usdByCard } from './v1.js';
 import { HOST_API_VERSION } from './version.js';
+import { MailboxStore } from '../mailbox-store.js';
 import { _resetUsageCache } from '../usage-scan-memo.js';
 import { createEventBus } from '../events.js';
 import { createExtFiles } from '../ext-files.js';
@@ -1019,4 +1021,18 @@ test('without core telemetry wired, host.telemetry is inert', () => {
   const host = buildHostApi({ id: 'x', requires: ['telemetry:emit'], ...wiring() });
   assert.equal(host.telemetry.on(), false);
   assert.equal(host.telemetry.emit('a', {}), false);
+});
+
+test('mail:read lists sender and time metadata without exposing message text', () => {
+  const mailStore = new MailboxStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-host-mail-')), 'mail.json'));
+  mailStore.append('recipient', { from: 'sender', body: 'private message' }, 123);
+  const host = buildHostApi({ id: 'x', requires: ['mail:read'], ...wiring({ mailStore }) });
+  const listed = host.mail.list('recipient');
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].from, 'sender');
+  assert.equal(listed[0].at, 123);
+  assert.equal('body' in listed[0], false);
+  assert.equal('excerpt' in listed[0], false);
+  assert.deepEqual(Object.keys(host.mail).sort(), ['list', 'unread']);
+  assert.equal(mailStore.drain('recipient')[0].body, 'private message');
 });

@@ -75,14 +75,22 @@ test('formatOneMail: always returns the full body regardless of size (the follow
 });
 
 test('formatMailMeta: metadata only, never a body, derives `read` from state', () => {
-  const out = formatMailMeta(msg({ state: 'read' }));
+  const out = formatMailMeta({ ...msg({ state: 'read' }), excerpt: 'hello' });
   assert.equal('body' in out, false);
   assert.equal(out.read, true);
   assert.equal(out.state, 'read');
   assert.equal(out.excerpt, 'hello');
 });
 
-test('formatMailMeta: excerpts even a small body (list_mail never returns a full body)', () => {
-  const out = formatMailMeta(msg());
+test('formatMailMeta: preserves a short preview without returning a body', () => {
+  const out = formatMailMeta({ ...msg(), excerpt: 'hello' });
   assert.equal(out.read, false);
+  assert.equal(out.excerpt, 'hello');
+  assert.equal('body' in out, false);
+});
+
+test('formatMailMeta: accepts bounded excerpts without requiring a message body', () => {
+  const out = formatMailMeta({ id: 'm', from: 'sender', fromLabel: null, at: 1, size: 300, state: 'unread', excerpt: 'preview…' });
+  assert.equal(out.excerpt, 'preview…');
+  assert.equal('body' in out, false);
 });

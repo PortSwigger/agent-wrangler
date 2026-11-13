@@ -380,10 +380,19 @@ export class MailboxStore {
     return { ...m };
   }
 
-  // Metadata only (no bodies), oldest-first — list_mail's whole job.
+  // Metadata only (no bodies or excerpts), oldest-first.
   list(to) {
     const box = this._box(to);
-    return [...box.messages].sort((a, b) => a.at - b.at).map((m) => ({ ...m }));
+    return [...box.messages].sort((a, b) => a.at - b.at).map(({ body, ...metadata }) => metadata);
+  }
+
+  // Core list_mail previews only: bounded to 200 characters plus an ellipsis.
+  // Never exposed through the extension mail:read capability; never marks read.
+  listWithExcerpts(to) {
+    const box = this._box(to);
+    return [...box.messages].sort((a, b) => a.at - b.at).map(({ body, ...metadata }) => ({
+      ...metadata, excerpt: body.length > 200 ? `${body.slice(0, 200)}…` : body,
+    }));
   }
 
   sentSince(from, to, sinceMs) {

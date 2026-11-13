@@ -18,6 +18,7 @@ test('list_mail: metadata only, never a body, oldest-first', async () => {
   assert.equal(out.structuredContent.messages.length, 2);
   assert.equal(out.structuredContent.messages[0].from, 'sess_b'); // 50 < 100
   for (const m of out.structuredContent.messages) assert.equal('body' in m, false);
+  assert.deepEqual(out.structuredContent.messages.map((m) => m.excerpt), ['y'.repeat(50), 'x'.repeat(50)]);
 });
 
 test('list_mail: includes read and undeliverable mail alongside unread', async () => {
