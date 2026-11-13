@@ -72,12 +72,18 @@ See [board behavior](board-and-sessions.md#status-notices-to-spawners) for deliv
 ## Codex approvals on `spawn_session`
 
 Set `agent: "codex"` and `approval_policy: "on-request"` or `"never"` to choose
-when Codex asks for approval. This selects sandbox `workspace-write` and passes
-`--ask-for-approval <policy>` to Codex. Other values and non-Codex agents are
-rejected. Omit the option to use configured policy defaults; a new spawn never
+when Codex asks for approval. This passes `--ask-for-approval <policy>` to Codex
+and preserves the configured effective sandbox. Other values and non-Codex agents
+are rejected. Omit the option to use configured policy defaults; a new spawn never
 inherits the caller's approval policy.
 
-The policy persists across resume and fork. Extension Codex policy overrides
+Read-only and workspace-write defaults keep their sandbox, as does
+`danger-full-access`. A bypass default becomes `danger-full-access` with the
+requested approval policy; the bypass flag is removed. An approve-for-me default
+becomes `workspace-write` with the requested approval policy and automatic
+approval review disabled. With no configured sandbox, core uses `workspace-write`.
+
+The resolved policy persists across resume and fork. Extension Codex policy overrides
 retain precedence. Extensions can use
 `host.sessions.spawn({ agent: 'codex', approvalPolicy: 'on-request' })`
 with host API `^1.74.0`.

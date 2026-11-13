@@ -1671,10 +1671,15 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   selects Codex approvals** (1.74.0). `approvalPolicy` accepts `on-request` or
   `never`; any other value, including `null`, is refused before dispatch.
   Supplying it for another agent (including the default Claude) is refused.
-  It selects sandbox `workspace-write` and the corresponding
-  `--ask-for-approval <policy>` flag. The policy is stored on the session as
-  `codexPolicy: { sandbox: 'workspace-write', approval: <policy> }` and retained
-  on resume and fork. Omit the option to use configured Codex policy defaults.
+  It overrides only approval with `--ask-for-approval <policy>` and preserves
+  the configured effective sandbox. Read-only, workspace-write and
+  danger-full-access defaults retain their sandbox. Bypass resolves to
+  `danger-full-access` with the bypass flag removed; approve-for-me resolves to
+  `workspace-write` with automatic approval review disabled. Both use the
+  requested approval policy. Without a configured sandbox, core uses
+  `workspace-write`. The resolved sandbox and approval are stored as the
+  session's `codexPolicy` and retained on resume and fork. Omit the option to
+  use configured Codex policy defaults unchanged.
   Extension `codexPolicy` answers retain precedence at every launch; the
   requested policy remains stored even when an extension overrides it.
   A manifest relying on this option declares `engines: { wranglerApi: '^1.74.0' }`.

@@ -248,7 +248,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         ...extOpt,
         ...remoteControlOpt,
         ...disallowedToolsOpt,
-        ...(approvalPolicy === undefined ? {} : { codexPolicy: { sandbox: 'workspace-write', approval: approvalPolicy } }),
+        ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
         // Dispatch's own default is off, so `false` is simply no override.
         ...(autoMergeOnPass === undefined ? {} : { autoMergeOnPass }),
         // `taskId` is the WHOLE task binding, and it has to be one option

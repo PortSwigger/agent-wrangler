@@ -16,7 +16,7 @@ import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
 import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, codexPolicyDefaults } from './config-store.js';
-import { cleanCodexPolicy } from './extensions/codex-policy.js';
+import { cleanCodexPolicy, codexApprovalPolicyError } from './extensions/codex-policy.js';
 import { ensureCodexTrust } from './codex-trust.js';
 import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
 import { launchEnvOf, launchSecretEnvOf, withoutSecretEnv } from './launch-context.js';
@@ -1981,8 +1981,10 @@ export class SessionManager {
 
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, codexPolicy: pickedCodexPolicy,
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, approvalPolicy, codexPolicy: pickedCodexPolicy,
                    launchSource, spawner } = {}) {
+    const approvalError = codexApprovalPolicyError(approvalPolicy, agent);
+    if (approvalError) throw new Error(approvalError);
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
@@ -2112,7 +2114,13 @@ export class SessionManager {
     // The dialog's pick is the whole policy (it prefills from Settings and sends
     // every field); a dispatch without one is stored with the Settings defaults
     // as they are now, so a later Settings change never moves a running card.
-    const storedCodexPolicy = adapterFor(agent).launch.codexPolicy ? (cleanCodexPolicy(pickedCodexPolicy ?? this._codexPolicyDefaults()) ?? {}) : undefined;
+    let storedCodexPolicy = adapterFor(agent).launch.codexPolicy ? (cleanCodexPolicy(pickedCodexPolicy ?? this._codexPolicyDefaults()) ?? {}) : undefined;
+    if (approvalPolicy !== undefined) {
+      storedCodexPolicy = {
+        sandbox: storedCodexPolicy?.bypass ? 'danger-full-access' : (storedCodexPolicy?.sandbox ?? 'workspace-write'),
+        approval: approvalPolicy,
+      };
+    }
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'dispatch', sessionId, entry: null }, storedCodexPolicy) : undefined;
     // `deferIntent` launches with no first prompt while still recording the intent
     // as the card's: the caller pastes it into the booted composer itself, which is

@@ -544,7 +544,8 @@ test('spawn_session validates approval_policy and forwards it without inheriting
   for (const approval_policy of ['on-request', 'never']) {
     const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex', approval_policy });
     assert.equal(out.isError, undefined);
-    assert.deepEqual(d.calls.dispatch.at(-1).codexPolicy, { sandbox: 'workspace-write', approval: approval_policy });
+    assert.equal(d.calls.dispatch.at(-1).approvalPolicy, approval_policy);
+    assert.equal('codexPolicy' in d.calls.dispatch.at(-1), false);
   }
   await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex' });
   assert.equal('codexPolicy' in d.calls.dispatch.at(-1), false);

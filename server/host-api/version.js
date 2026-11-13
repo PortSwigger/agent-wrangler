@@ -524,7 +524,9 @@ import semver from 'semver';
 // `^1.73.0`.
 //
 // 1.74.0 adds approvalPolicy to sessions.spawn: on-request or never for
-// Codex, stored as a workspace-write codexPolicy for launch, resume and fork.
+// Codex, retaining its configured sandbox. The resolved codexPolicy persists
+// for launch, resume and fork; combined bypass/approve-for-me modes are resolved
+// to their underlying sandbox with the requested approval.
 // Extension Codex policy answers retain precedence.
 export const HOST_API_VERSION = '1.74.0';
 

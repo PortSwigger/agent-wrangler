@@ -1021,11 +1021,12 @@ test('without core telemetry wired, host.telemetry is inert', () => {
   assert.equal(host.telemetry.emit('a', {}), false);
 });
 
-test('spawn validates Codex approvalPolicy and forwards a workspace-write policy', async () => {
+test('spawn validates Codex approvalPolicy and forwards only the approval selection', async () => {
   const { seen, host } = spawnWiring();
   for (const approvalPolicy of ['on-request', 'never']) {
     await host.sessions.spawn({ agent: 'codex', approvalPolicy });
-    assert.deepEqual(seen.dispatch.at(-1).codexPolicy, { sandbox: 'workspace-write', approval: approvalPolicy });
+    assert.equal(seen.dispatch.at(-1).approvalPolicy, approvalPolicy);
+    assert.equal('codexPolicy' in seen.dispatch.at(-1), false);
   }
   await host.sessions.spawn({ agent: 'codex' });
   assert.equal('codexPolicy' in seen.dispatch.at(-1), false);

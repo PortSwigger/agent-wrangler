@@ -56,7 +56,7 @@ export const spawnSessionTool = {
       + `unless you pass this. Valid values — ${effortChoicesText()}.`,
     ),
     permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional().describe('Claude permission mode: auto (default), manual, acceptEdits, plan, dontAsk, bypassPermissions. Codex only accepts auto; use approval_policy to choose its approval policy. Persisted for resume and forks; not inherited from the spawning caller.'),
-    approval_policy: z.enum(CODEX_APPROVALS).optional().describe('Codex only: on-request or never, with sandbox workspace-write. Omit for configured policy. Persisted for resume and forks; not inherited from the caller. Extension Codex policy overrides still take precedence.'),
+    approval_policy: z.enum(CODEX_APPROVALS).optional().describe('Codex only: on-request or never, retaining the configured sandbox. Bypass becomes danger-full-access without the bypass flag; approve-for-me becomes workspace-write without automatic approval review. Omit for configured policy unchanged. Resolved policy persists for resume and forks; not inherited from the caller. Extension Codex policy overrides still take precedence.'),
     agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     remote_control: z.string().optional().describe('Enable Remote Control with this name (Claude only). Trimmed; must be non-empty, single-line with no control characters, and not start with "-". Defaults to off, including for a Codex caller (agent defaults to claude). Persists on resume; forks do not inherit it.'),
     add_dirs: z.array(z.string()).optional().describe(
@@ -151,7 +151,7 @@ export const spawnSessionTool = {
         intent,
         ...(remoteControl ? { remoteControl } : {}),
         permissionMode: args.permission_mode,
-        ...(args.approval_policy === undefined ? {} : { codexPolicy: { sandbox: 'workspace-write', approval: args.approval_policy } }),
+        ...(args.approval_policy === undefined ? {} : { approvalPolicy: args.approval_policy }),
         runtime: args.runtime || undefined,
         worktree: Boolean(args.worktree),
         worktreeBranch: args.worktree_branch || '',

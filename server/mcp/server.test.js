@@ -273,7 +273,8 @@ test('SDK boundary exposes Codex approval_policy and rejects invalid values befo
     for (const approval_policy of ['on-request', 'never']) {
       const out = await client.callTool({ name: 'spawn_session', arguments: { intent: 'x', agent: 'codex', approval_policy } });
       assert.equal(out.isError, undefined);
-      assert.deepEqual(dispatches.at(-1).codexPolicy, { sandbox: 'workspace-write', approval: approval_policy });
+      assert.equal(dispatches.at(-1).approvalPolicy, approval_policy);
+      assert.equal('codexPolicy' in dispatches.at(-1), false);
     }
     for (const approval_policy of ['untrusted', 'on-failure', '', null, 42]) {
       const out = await client.callTool({ name: 'spawn_session', arguments: { intent: 'x', agent: 'codex', approval_policy } });
