@@ -104,6 +104,7 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     // For telemetry: the board's dialog, or a schedule (performScheduleAction
     // passes it in deps, never the client's message).
     launchSource: launchSource || (workflow ? 'workflow' : 'board'),
+    spawnedBy: launchSource === 'schedule' ? opts.spawnedBy : undefined,
   });
   let firstPrompt;
   if (withImages) {

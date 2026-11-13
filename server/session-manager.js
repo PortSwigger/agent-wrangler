@@ -514,6 +514,8 @@ export class SessionManager {
     // the loader and façades closed over; the default answers nothing, so every
     // existing launch is byte-identical and every test stays inert.
     this._launchContext = async () => ({ env: {}, addDirs: [] });
+    this._beforeSpawn = async () => new Map();
+    this._spawned = async () => {};
     // Seam for writing a launch's secretEnv file (launch-secrets.js), so a test
     // can point it at its own directory or observe it.
     this._writeSecretEnv = writeSecretEnvFile;
@@ -1406,6 +1408,12 @@ export class SessionManager {
     if (refusal) throw new Error(refusal);
     const agent = parentEntry?.agent ?? 'claude';
     if (parentEntry?.disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
+    const spawnPayload = {
+      spawnedBy: parentId || null, parentSession: parentId || null, agent,
+      model: parentEntry?.model || null, effort: parentEntry?.effort || null, cwd: cwd || null,
+      intent: String(prompt).slice(0, 8_000), source: 'fork', taskId: this._taskFor(parentId)?.id || null,
+    };
+    const spawnData = await this._beforeSpawn(spawnPayload);
     const adapter = adapterFor(agent);
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
@@ -1463,6 +1471,7 @@ export class SessionManager {
     entry.launchedCodeVersion = this.codeVersion || undefined;
     this.map.set(sessionId, entry);
     this._save();
+    await this._spawned({ ...spawnPayload, sessionId, cwd: dir }, spawnData);
     await this._fireExtHooks('onFork', { sessionId, parentId, entry });
     this._launched({ sessionId, entry, source: 'fork' });
     await this.refreshAlive();
@@ -2024,6 +2033,12 @@ export class SessionManager {
       ? await rt.preflight({ cwd: trimmed, agent, workflow: Boolean(workflowOpt), worktree: Boolean(worktree), ext: ext || null })
       : null;
     if (preflightErr) throw new Error(preflightErr);
+    const spawnPayload = {
+      spawnedBy: spawnedBy || null, parentSession: parentSession || null, agent,
+      model: model || null, effort: effort || null, cwd: trimmed || null,
+      intent: String(intent).slice(0, 8_000), source: launchSource || (spawnedBy ? 'agent' : 'board'), taskId: taskId || null,
+    };
+    const spawnData = await this._beforeSpawn(spawnPayload);
     // Blank → a fresh timestamped scratch dir; a scratch path the client proposed
     // is ensured-fresh and created here; a real user-typed path is created too
     // (mkdir -p) so it exists before tmux launches in it — but NOT in worktree
@@ -2155,6 +2170,7 @@ export class SessionManager {
     const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
+    await this._spawned({ ...spawnPayload, sessionId, cwd }, spawnData);
     await this._fireExtHooks('onDispatch', { sessionId, entry });
     this._launched({ sessionId, entry, source: launchSource || (spawnedBy ? 'agent' : 'board'), spawner: spawner || null });
     await this.refreshAlive();

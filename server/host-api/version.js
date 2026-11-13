@@ -522,7 +522,12 @@ import semver from 'semver';
 // collector's bound), so a card's or a job's whole life fits. An older server
 // throws on an `ms` value past 24 hours, so an emitter sending one declares
 // `^1.73.0`.
-export const HOST_API_VERSION = '1.73.0';
+//
+// 1.74.0 adds manifest hooks `session.beforeSpawn` and `session.spawned` for
+// new-session launches across providers and launch sources. The first can
+// refuse with a reason or return extension-owned data; the second receives
+// that data and the new session id after launch. Both time out and fail open.
+export const HOST_API_VERSION = '1.74.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

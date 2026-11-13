@@ -1718,6 +1718,35 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 ## Launch context, events and lifecycle
 
+- **`hooks['session.beforeSpawn']`** (1.74.0), called with `{ spawnedBy,
+  parentSession, agent, model, effort, cwd, intent, source, taskId, host }` before
+  a new session's directory, worktree or process is created. All providers use
+  it: MCP spawns (including workflows), scheduled dispatches when they fire,
+  board launches, extension spawns and forks. Resuming an existing session does
+  not call it. `spawnedBy` identifies the launching session (the original
+  schedule creator for an agent-created schedule, or the fork parent);
+  `parentSession` is the requested board nesting parent. Absent ids, model,
+  effort and cwd are `null`; a blank cwd means a fresh scratch directory.
+  `intent` is at most 8,000 characters. `source` is `agent`, `board`, `workflow`,
+  `schedule`, `extension` or `fork`, following the core launch source.
+  Hooks run sequentially and may return nothing to allow, `{ refuse: 'reason' }`
+  to stop the launch, or `{ data: anything }` to carry data to their own
+  `session.spawned` hook. A nonempty refusal stops later hooks and is returned
+  to the caller as the launch error, including through MCP. Data is transient,
+  kept per launch and per extension, and never saved by core.
+- **`hooks['session.spawned']`** (1.74.0) receives the same launch fields plus
+  `{ sessionId, data }`, with `cwd` set to the actual launch directory, after
+  the process launches and its session entry is saved. Only that extension's
+  `data` is supplied (`undefined` if it supplied none). The notification is
+  awaited before dispatch/fork returns; a failed or refused launch never calls
+  it. Hook return values are ignored. Both spawn hooks receive their own host
+  facade, have a two-second timeout per extension, and log and skip thrown
+  errors or timeouts so launches fail open. A timeout cannot cancel extension
+  code already running: hooks should finish promptly and avoid delayed side
+  effects. Use `session.spawned` for enrollment that requires the new id;
+  a before hook's data has no delivery guarantee if a later hook refuses or
+  the launch fails. `server/session-spawn.js`.
+
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, grantPaths, runtime,
   reason, parentId?, ext, host }`, returns `{ env?, secretEnv?, addDirs?, codexConfig?, claudeHooks?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,

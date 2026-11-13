@@ -218,3 +218,12 @@ test('deliverFirstPrompt sends the prose only after the composer shows the image
   assert.ok(steps.some(([k]) => k === 'wait'), 'and it waited for the attach');
   assert.ok(!steps.some(([k]) => k === 'log'));
 });
+
+test('scheduled dispatch passes its stored creator; board dispatch cannot invent one', async () => {
+  const scheduled = deps({ launchSource: 'schedule' });
+  await runDispatch({ cwd: '/repo', intent: 'do it', spawnedBy: 'PARENT' }, scheduled);
+  assert.equal(scheduled.calls.dispatch[0].spawnedBy, 'PARENT');
+  const board = deps();
+  await runDispatch({ cwd: '/repo', intent: 'do it', spawnedBy: 'PARENT' }, board);
+  assert.equal(board.calls.dispatch[0].spawnedBy, undefined);
+});

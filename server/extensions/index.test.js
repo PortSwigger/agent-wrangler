@@ -1324,3 +1324,11 @@ test('a valid telemetry declaration is carried normalised on the entry, with the
   assert.equal(e.version, '1.2.3');
   assert.deepEqual(e.telemetry.events, { 'thing.done': { v: 1, fields: { n: { t: 'int', min: 0, max: 9, nullable: false } } } });
 });
+
+test('spawn hooks register and unload through manifest hooks', () => {
+  const hooks = { 'session.beforeSpawn': () => ({}), 'session.spawned': () => {} };
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ hooks })] });
+  for (const name of Object.keys(hooks)) assert.equal(loaded.hooks[name].length, 1);
+  unregisterExtension(loaded, loaded.list[0].id);
+  for (const name of Object.keys(hooks)) assert.deepEqual(loaded.hooks[name], []);
+});

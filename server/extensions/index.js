@@ -158,7 +158,7 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 //     -> the stored link | undefined — a SYNCHRONOUS claim on a link type. Return
 //     undefined for a type that is not yours; throw to reject an invalid link of
 //     yours. See server/mcp/links.js.
-export const VALUE_HOOKS = ['session.launchContext', 'session.prepare', 'links.normalise'];
+export const VALUE_HOOKS = ['session.launchContext', 'session.prepare', 'session.beforeSpawn', 'session.spawned', 'links.normalise'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 

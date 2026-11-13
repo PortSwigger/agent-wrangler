@@ -3918,3 +3918,66 @@ test('secretEnv: an extension runtime gets no file and no values, and the skip n
   assert.equal(warned.filter((w) => /cannot take secret variables; skipped ACME_TOKEN/.test(w)).length, 2);
   assert.ok(warned.every((w) => !w.includes(SECRET_VALUE)));
 });
+
+for (const agent of ['claude', 'codex', 'gemini']) {
+  test(`beforeSpawn refuses ${agent} before creating a directory or launching`, async () => {
+    const sm = smForDispatch();
+    const target = path.join(os.tmpdir(), `aw-spawn-refused-${agent}-${Date.now()}`);
+    let launched = false;
+    sm._beforeSpawn = async (payload) => {
+      assert.equal(payload.agent, agent);
+      throw new Error('Capacity reached');
+    };
+    sm._newSession = async () => { launched = true; };
+    await assert.rejects(sm.dispatch({ agent, cwd: target, intent: 'do it' }), /Capacity reached/);
+    assert.equal(fs.existsSync(target), false);
+    assert.equal(launched, false);
+    assert.equal(sm.map.size, 0);
+  });
+}
+
+test('beforeSpawn is awaited and its data reaches spawned after the entry exists', async () => {
+  const sm = smForDispatch();
+  const order = [];
+  const token = new Map([['example', { reservation: 7 }]]);
+  sm._beforeSpawn = async (payload) => {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    order.push('before');
+    assert.deepEqual(payload, {
+      spawnedBy: 'PARENT', parentSession: 'NEST', agent: 'codex', model: 'gpt-5', effort: 'high',
+      cwd: os.tmpdir(), intent: 'do it', source: 'schedule', taskId: 'TASK',
+    });
+    return token;
+  };
+  sm._newSession = async () => { order.push('launch'); };
+  sm._spawned = async ({ sessionId, ...payload }, data) => {
+    assert.ok(sm.map.has(sessionId));
+    assert.equal(payload.cwd, os.tmpdir());
+    assert.equal(data, token);
+    order.push('spawned');
+  };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'do it', agent: 'codex', model: 'gpt-5', effort: 'high',
+    spawnedBy: 'PARENT', parentSession: 'NEST', launchSource: 'schedule', taskId: 'TASK' });
+  assert.deepEqual(order, ['before', 'launch', 'spawned']);
+});
+
+test('a failed launch does not emit spawned', async () => {
+  const sm = smForDispatch();
+  let notified = false;
+  sm._beforeSpawn = async () => new Map();
+  sm._spawned = async () => { notified = true; };
+  sm._newSession = async () => { throw new Error('launch failed'); };
+  await assert.rejects(sm.dispatch({ cwd: os.tmpdir() }), /launch failed/);
+  assert.equal(notified, false);
+});
+
+test('fork asks beforeSpawn with its parent and refuses before launch', async () => {
+  const sm = smForDispatch();
+  let asked;
+  sm._beforeSpawn = async (payload) => { asked = payload; throw new Error('Fork refused'); };
+  await assert.rejects(sm.fork({ sourceId: 'LIVE', parentId: 'PARENT',
+    parentEntry: { agent: 'codex', model: 'gpt-5', effort: 'high' }, cwd: os.tmpdir(), prompt: 'branch' }), /Fork refused/);
+  assert.equal(asked.spawnedBy, 'PARENT');
+  assert.equal(asked.source, 'fork');
+  assert.equal(asked.intent, 'branch');
+});

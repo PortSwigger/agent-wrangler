@@ -71,6 +71,7 @@ import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
 import { collectPrepare } from './session-prepare.js';
+import { collectBeforeSpawn, notifySpawned } from './session-spawn.js';
 import { createLinkNormaliser } from './mcp/links.js';
 import { createExtDeliver } from './ext-deliver.js';
 import { sweepStaging } from './extensions/external.js';
@@ -267,6 +268,8 @@ sessionManager._launchContext = (ctx) => {
   return collectLaunchContext(ctx, { ext, hostApiFor, onError: logError });
 };
 sessionManager._taskFor = (sid) => taskStore.taskFor(sid);
+sessionManager._beforeSpawn = (payload) => collectBeforeSpawn(payload, { ext, hostApiFor, onError: logError });
+sessionManager._spawned = (payload, data) => notifySpawned(payload, data, { ext, hostApiFor, onError: logError });
 // `session.prepare` (server/session-prepare.js): runs before a new dispatch's
 // worktree exists; its warnings are toasted, an abort is thrown by dispatch.
 sessionManager._prepare = async (payload) => {

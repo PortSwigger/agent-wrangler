@@ -98,6 +98,7 @@ export function prepareSchedule({ deps, caller }, args) {
       kind: 'dispatch',
       dispatch: {
         cwd: args.cwd,
+        spawnedBy: caller || undefined,
         intent,
         model: args.model,
         agent,
