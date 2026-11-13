@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import { SessionManager } from './session-manager.js';
+import { buildHostApi } from './host-api/index.js';
+import { spawnSessionTool } from './mcp/tools/spawn-session.js';
 
 // The extension session hooks (server/extensions/index.js `sessionHooks`) are
 // bound onto `sm._extHooks` by server/index.js. Their contract: sequential, in
@@ -307,3 +309,39 @@ test('a Claude dispatch stores no Codex policy, whatever the dialog sent', async
   const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'claude', codexPolicy: { bypass: true } });
   assert.equal(sm.entryFor(sessionId).codexPolicy, undefined);
 });
+
+for (const surface of ['host', 'mcp']) {
+  for (const approval of ['on-request', 'never']) {
+    test(`${surface} spawn approval ${approval} survives resume and fork with workspace-write`, async () => {
+      const sm = codexManager();
+      sm._codexPolicyDefaults = () => ({ bypass: true });
+      const built = [];
+      sm._newSession = async (_t, _d, inner) => { built.push(inner); };
+      let sessionId;
+      if (surface === 'host') {
+        const host = buildHostApi({ id: 'test', requires: ['sessions:spawn'], core: { sessionManager: sm } });
+        ({ sessionId } = await host.sessions.spawn({ cwd: os.tmpdir(), intent: 'x', agent: 'codex', approvalPolicy: approval }));
+      } else {
+        const out = await spawnSessionTool.handler({ caller: null, deps: {
+          sessionManager: sm, dispatch: (opts) => sm.dispatch(opts),
+          taskStore: { taskFor: () => null }, rebuild: async () => {},
+        } }, { cwd: os.tmpdir(), intent: 'x', agent: 'codex', approval_policy: approval });
+        assert.equal(out.isError, undefined);
+        sessionId = out.structuredContent.sessionId;
+      }
+      const expected = { sandbox: 'workspace-write', approval };
+      assert.deepEqual(sm.entryFor(sessionId).codexPolicy, expected);
+      sm._codexPolicyDefaults = () => ({ sandbox: 'read-only', approval: approval === 'never' ? 'on-request' : 'never' });
+      await sm.resume(sessionId, os.tmpdir());
+      assert.deepEqual(sm.entryFor(sessionId).codexPolicy, expected);
+      const fork = await sm.fork({ sourceId: 'live-codex', parentId: sessionId, parentEntry: sm.entryFor(sessionId), cwd: os.tmpdir() });
+      assert.deepEqual(sm.entryFor(fork.sessionId).codexPolicy, expected);
+      assert.notEqual(sm.entryFor(fork.sessionId).codexPolicy, sm.entryFor(sessionId).codexPolicy);
+      assert.equal(built.length, 3);
+      for (const cmd of built) {
+        assert.ok(cmd.includes(`'--sandbox' 'workspace-write' '--ask-for-approval' '${approval}'`));
+        assert.doesNotMatch(cmd, /--dangerously-bypass|--approve-for-me/);
+      }
+    });
+  }
+}

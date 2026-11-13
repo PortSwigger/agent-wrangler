@@ -69,6 +69,19 @@ Call `stop_status_notices` with the child's id when you no longer need to superv
 once a person is working with it directly; nesting and mail continue.
 See [board behavior](board-and-sessions.md#status-notices-to-spawners) for delivery and lifecycle.
 
+## Codex approvals on `spawn_session`
+
+Set `agent: "codex"` and `approval_policy: "on-request"` or `"never"` to choose
+when Codex asks for approval. This selects sandbox `workspace-write` and passes
+`--ask-for-approval <policy>` to Codex. Other values and non-Codex agents are
+rejected. Omit the option to use configured policy defaults; a new spawn never
+inherits the caller's approval policy.
+
+The policy persists across resume and fork. Extension Codex policy overrides
+retain precedence. Extensions can use
+`host.sessions.spawn({ agent: 'codex', approvalPolicy: 'on-request' })`
+with host API `^1.74.0`.
+
 ## Remote Control on `spawn_session`
 
 Ask an agent to start a Claude session you can use through Claude Code Remote Control:

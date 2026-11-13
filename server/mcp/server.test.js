@@ -262,3 +262,26 @@ test('update_schedule is callable over MCP and validates patches without writes'
     assert.equal(updated, 1);
   } finally { await client.close(); await server.close(); }
 });
+
+test('SDK boundary exposes Codex approval_policy and rejects invalid values before dispatch', async () => {
+  const dispatches = [];
+  const deps = { ...fakeDeps(), dispatch: async (opts) => { dispatches.push(opts); return { sessionId: 'NEWCARD' }; }, rebuild: async () => {} };
+  const { client, server } = await connect(deps, null);
+  try {
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'spawn_session');
+    assert.deepEqual(tool.inputSchema.properties.approval_policy.enum, ['on-request', 'never']);
+    for (const approval_policy of ['on-request', 'never']) {
+      const out = await client.callTool({ name: 'spawn_session', arguments: { intent: 'x', agent: 'codex', approval_policy } });
+      assert.equal(out.isError, undefined);
+      assert.deepEqual(dispatches.at(-1).codexPolicy, { sandbox: 'workspace-write', approval: approval_policy });
+    }
+    for (const approval_policy of ['untrusted', 'on-failure', '', null, 42]) {
+      const out = await client.callTool({ name: 'spawn_session', arguments: { intent: 'x', agent: 'codex', approval_policy } });
+      assert.equal(out.isError, true);
+    }
+    assert.equal(dispatches.length, 2);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});

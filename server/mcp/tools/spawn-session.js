@@ -1,5 +1,6 @@
 import { CLAUDE_PERMISSION_MODES, permissionModeError, runtimePermissionModeError } from '../../agents/permission-mode.js';
 import { z } from 'zod';
+import { CODEX_APPROVALS, codexApprovalPolicyError } from '../../extensions/codex-policy.js';
 import { knownAgentIds, modelChoicesText, effortChoicesText, supportsRemoteControl } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
 import { knownRuntimes, findRuntime, runtimeAgentError, DEFAULT_RUNTIME } from '../../runtimes/index.js';
@@ -54,7 +55,8 @@ export const spawnSessionTool = {
       + `launching the SAME agent — a cross-agent spawn falls back to that agent's own default `
       + `unless you pass this. Valid values — ${effortChoicesText()}.`,
     ),
-    permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional().describe('Claude permission mode: auto (default), manual, acceptEdits, plan, dontAsk, bypassPermissions. Codex only accepts auto (its configured approval/sandbox policy). Persisted for resume and forks; not inherited from the spawning caller.'),
+    permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional().describe('Claude permission mode: auto (default), manual, acceptEdits, plan, dontAsk, bypassPermissions. Codex only accepts auto; use approval_policy to choose its approval policy. Persisted for resume and forks; not inherited from the spawning caller.'),
+    approval_policy: z.enum(CODEX_APPROVALS).optional().describe('Codex only: on-request or never, with sandbox workspace-write. Omit for configured policy. Persisted for resume and forks; not inherited from the caller. Extension Codex policy overrides still take precedence.'),
     agent: z.string().optional().describe(`Agent to launch (${knownAgentIds().join(' or ')}). Defaults to claude.`),
     remote_control: z.string().optional().describe('Enable Remote Control with this name (Claude only). Trimmed; must be non-empty, single-line with no control characters, and not start with "-". Defaults to off, including for a Codex caller (agent defaults to claude). Persists on resume; forks do not inherit it.'),
     add_dirs: z.array(z.string()).optional().describe(
@@ -98,6 +100,9 @@ export const spawnSessionTool = {
   async handler({ deps, caller }, args = {}) {
     const intent = (args.intent ?? '').trim();
     if (!intent) return errorResult('intent is required.');
+
+    const approvalError = codexApprovalPolicyError(args.approval_policy, args.agent, 'approval_policy');
+    if (approvalError) return errorResult(approvalError);
 
     let remoteControl;
     if (args.remote_control !== undefined) {
@@ -146,6 +151,7 @@ export const spawnSessionTool = {
         intent,
         ...(remoteControl ? { remoteControl } : {}),
         permissionMode: args.permission_mode,
+        ...(args.approval_policy === undefined ? {} : { codexPolicy: { sandbox: 'workspace-write', approval: args.approval_policy } }),
         runtime: args.runtime || undefined,
         worktree: Boolean(args.worktree),
         worktreeBranch: args.worktree_branch || '',

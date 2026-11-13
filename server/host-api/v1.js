@@ -12,6 +12,7 @@ import { requestOrigin } from '../request-origin.js';
 import { supportsRemoteControl, supportsDisallowedTools } from '../agents/index.js';
 import { agentList } from '../agents/listing.js';
 import { runHeadless } from '../headless.js';
+import { codexApprovalPolicyError } from '../extensions/codex-policy.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -217,8 +218,10 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
     // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
     spawn: async ({
       cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
-      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext, remoteControl, disallowedTools,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext, remoteControl, disallowedTools, approvalPolicy,
     } = {}) => {
+      const approvalError = codexApprovalPolicyError(approvalPolicy, agent);
+      if (approvalError) spawnError(approvalError);
       const worktreeOpts = spawnWorktree(worktree);
       const remoteControlOpt = checkRemoteControl(remoteControl, agent);
       const disallowedToolsOpt = checkDisallowedTools(disallowedTools, agent);
@@ -245,6 +248,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         ...extOpt,
         ...remoteControlOpt,
         ...disallowedToolsOpt,
+        ...(approvalPolicy === undefined ? {} : { codexPolicy: { sandbox: 'workspace-write', approval: approvalPolicy } }),
         // Dispatch's own default is off, so `false` is simply no override.
         ...(autoMergeOnPass === undefined ? {} : { autoMergeOnPass }),
         // `taskId` is the WHOLE task binding, and it has to be one option
