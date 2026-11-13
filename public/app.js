@@ -6820,7 +6820,7 @@ function syncStandingBanner() {
     return;
   }
   if (restartPendingExts.length) {
-    showSystemBanner(`⚠ Extension update installed but not loaded (${restartPendingExts.join(', ')}) — restart the wrangler so sessions see its new tools`, { level: 1, kind: 'ext-restart-pending', forever: true });
+    showSystemBanner(`⚠ Extension update installed but not loaded (${restartPendingExts.join(', ')}) — restart the wrangler so sessions see its new tools`);
     return;
   }
   const rollback = rolledBackText(rolledBackUpdate);
