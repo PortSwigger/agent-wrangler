@@ -183,6 +183,10 @@ unread-mail count and, when readable, its last assistant words. Child mail does
 not suppress the notice; it mentions mail from the current working period or
 idle hold, including mail you have already read.
 
+When you no longer need to supervise a child, for example because the person is
+now working with it directly, call `stop_status_notices` with its id. Nesting and
+mail continue.
+
 A notice is an observation, not the child's report. Read the transcript or
 `send_message` the child before assuming it finished. Live Claude gets notices
 over its messaging socket when available; terminal delivery waits for clear
