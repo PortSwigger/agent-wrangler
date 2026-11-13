@@ -43,6 +43,8 @@ function validateAction(action, { isCron }) {
   const a = action && typeof action === 'object' && action.kind ? action : { kind: 'dispatch', dispatch: action };
   if (a.kind === 'dispatch') {
     const d = { ...(a.dispatch && typeof a.dispatch === 'object' ? a.dispatch : {}) };
+    delete d.spawnedBy;
+    delete d.scheduledBy;
     // The OTHER creation door: `schedule-create`/`-update` over /ws writes here
     // without passing through the MCP tool's check, so a stale tab or legacy
     // client could persist an agent/model no adapter offers. Throws like the
@@ -98,7 +100,7 @@ function migrateStored(s) {
 // `nextRunAt` is PERSISTED (not derived per render) so a fire is dedup-safe across
 // ticks and restarts; it's recomputed on create/edit/enable and advanced on fire.
 // On disk: { schedules: [{ id, name, enabled, when, action, createdAt, lastRunAt,
-//   lastSessionId, nextRunAt, missed }] }.
+//   lastSessionId, nextRunAt, missed, scheduledBy? }] }.
 export class ScheduleStore {
   constructor(file = SCHEDULES_FILE) {
     this.file = file;
@@ -120,8 +122,9 @@ export class ScheduleStore {
     return { schedules: this.schedules.map((s) => structuredClone(s)) };
   }
 
-  // Compute the initial nextRunAt from `when` + `now`, assign id/createdAt, persist.
-  create({ name, when, ...rest }, now) {
+  // Compute nextRunAt, assign id/createdAt, persist. `caller` is server-supplied
+  // provenance, separate from the untrusted saved action input.
+  create({ name, when, ...rest }, now, { caller = null } = {}) {
     const v = validateSchedule(when, normaliseAction(rest));
     const schedule = {
       id: `sch_${crypto.randomBytes(4).toString('hex')}`,
@@ -129,6 +132,7 @@ export class ScheduleStore {
       enabled: true,
       when: v.when,
       action: v.action,
+      ...(v.action.kind === 'dispatch' && caller ? { scheduledBy: caller } : {}),
       createdAt: new Date(now).toISOString(),
       lastRunAt: null,
       lastSessionId: null,
@@ -143,7 +147,7 @@ export class ScheduleStore {
   // Merge a patch ({ name?, when?, action? }); re-validate (so a changed action
   // re-applies the recurring+worktree rule) and, only if `when` changed, recompute
   // nextRunAt from `now` and clear a prior stale-skip. Returns null for an unknown id.
-  update(id, patch = {}, now) {
+  update(id, patch = {}, now, { caller = null } = {}) {
     const s = this.schedules.find((x) => x.id === id);
     if (!s) return null;
     const whenChanged = patch.when !== undefined;
@@ -154,6 +158,10 @@ export class ScheduleStore {
     if (patch.name !== undefined) s.name = (patch.name || '').trim() || s.name;
     s.when = v.when;
     s.action = v.action;
+    if (actionGiven) {
+      if (v.action.kind === 'dispatch' && caller) s.scheduledBy = caller;
+      else delete s.scheduledBy;
+    }
     if (whenChanged) {
       s.nextRunAt = isoOrNull(nextRunAt(v.when, now));
       s.missed = false;

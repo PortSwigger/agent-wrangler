@@ -1409,9 +1409,9 @@ export class SessionManager {
     const agent = parentEntry?.agent ?? 'claude';
     if (parentEntry?.disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
     const spawnPayload = {
-      spawnedBy: parentId || null, parentSession: parentId || null, agent,
+      spawnedBy: null, parentSession: parentId || null, spawner: null, agent,
       model: parentEntry?.model || null, effort: parentEntry?.effort || null, cwd: cwd || null,
-      intent: String(prompt).slice(0, 8_000), source: 'fork', taskId: this._taskFor(parentId)?.id || null,
+      intent: prompt == null ? null : String(prompt).slice(0, 8_000), source: 'fork', taskId: this._taskFor(parentId)?.id || null,
     };
     const spawnData = await this._beforeSpawn(spawnPayload);
     const adapter = adapterFor(agent);
@@ -1443,7 +1443,7 @@ export class SessionManager {
     // fires after this launch, so the parent's card id is how an extension finds it.
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'fork', sessionId, entry: parentEntry, parentId }, parentEntry?.codexPolicy) : undefined;
     const inner = adapter.buildFork({
-      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
+      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt ?? '',
       addDirs,
       launchContext,
       disabledSkills,
@@ -1991,7 +1991,7 @@ export class SessionManager {
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, codexPolicy: pickedCodexPolicy,
-                   launchSource, spawner } = {}) {
+                   launchSource, spawner, scheduledBy } = {}) {
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
@@ -2034,9 +2034,9 @@ export class SessionManager {
       : null;
     if (preflightErr) throw new Error(preflightErr);
     const spawnPayload = {
-      spawnedBy: spawnedBy || null, parentSession: parentSession || null, agent,
+      spawnedBy: spawnedBy || (launchSource === 'schedule' ? scheduledBy : null) || null, parentSession: parentSession || null, spawner: spawner || null, agent,
       model: model || null, effort: effort || null, cwd: trimmed || null,
-      intent: String(intent).slice(0, 8_000), source: launchSource || (spawnedBy ? 'agent' : 'board'), taskId: taskId || null,
+      intent: intent == null ? null : String(intent).slice(0, 8_000), source: launchSource || (spawnedBy ? 'agent' : 'board'), taskId: taskId || null,
     };
     const spawnData = await this._beforeSpawn(spawnPayload);
     // Blank → a fresh timestamped scratch dir; a scratch path the client proposed
@@ -2133,7 +2133,7 @@ export class SessionManager {
     // as the card's: the caller pastes it into the booted composer itself, which is
     // the only way a first prompt can carry images (dispatch-runner.js). A launch
     // argument has no composer for an image path to be absorbed into.
-    const launchIntent = deferIntent ? '' : intent;
+    const launchIntent = deferIntent ? '' : (intent ?? '');
     // Asked on both paths so a buildLaunch runtime logs the secrets it skips.
     const secretEnvFile = this._secretEnvFileFor(rt, tmux, launchContext);
     const inner = builds

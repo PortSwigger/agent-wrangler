@@ -1,3 +1,7 @@
+import { ScheduleStore } from '../../schedule-store.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -66,4 +70,20 @@ test('schedule-run-now invokes the injected runSchedule with manual:true (no ext
   assert.deepEqual(c.calls.runSchedule, [{ id: 'sch_1', opts: { manual: true } }]);
   // run-now rebuilds inside runSchedule, so the handler doesn't call ctx.rebuild itself.
   assert.equal(c.calls.rebuild, 0);
+});
+
+test('board schedule create and action update cannot forge attribution', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-schedule-input-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const store = new ScheduleStore(path.join(dir, 'schedules.json'));
+  const c = ctx({ scheduleStore: store });
+  const action = { kind: 'dispatch', dispatch: { intent: 'do it', spawnedBy: 'FORGED', scheduledBy: 'FORGED' } };
+  await scheduleCreateHandler.handler({ action, scheduledBy: 'FORGED', when: { kind: 'cron', cron: '0 9 * * *' } }, c);
+  const created = store.schedules[0];
+  assert.equal(created.action.dispatch.spawnedBy, undefined);
+  assert.equal(created.scheduledBy, undefined);
+  const trusted = store.create({ action, when: created.when }, Date.now(), { caller: 'CREATOR' });
+  await scheduleUpdateHandler.handler({ id: trusted.id, patch: { action, scheduledBy: 'FORGED' } }, c);
+  assert.equal(store.schedules[1].scheduledBy, undefined);
+  assert.equal(store.schedules[1].action.dispatch.spawnedBy, undefined);
 });

@@ -219,11 +219,14 @@ test('deliverFirstPrompt sends the prose only after the composer shows the image
   assert.ok(!steps.some(([k]) => k === 'log'));
 });
 
-test('scheduled dispatch passes its stored creator; board dispatch cannot invent one', async () => {
-  const scheduled = deps({ launchSource: 'schedule' });
-  await runDispatch({ cwd: '/repo', intent: 'do it', spawnedBy: 'PARENT' }, scheduled);
-  assert.equal(scheduled.calls.dispatch[0].spawnedBy, 'PARENT');
+
+test('schedule creator is trusted only from runner dependencies and kept separate from lineage', async () => {
+  const scheduled = deps({ launchSource: 'schedule', scheduledBy: 'EDITOR' });
+  await runDispatch({ cwd: '/repo', intent: 'do it', spawnedBy: 'FORGED', scheduledBy: 'FORGED' }, scheduled);
+  assert.equal(scheduled.calls.dispatch[0].scheduledBy, 'EDITOR');
+  assert.equal(scheduled.calls.dispatch[0].spawnedBy, undefined);
   const board = deps();
-  await runDispatch({ cwd: '/repo', intent: 'do it', spawnedBy: 'PARENT' }, board);
+  await runDispatch({ cwd: '/repo', intent: 'do it', spawnedBy: 'FORGED', scheduledBy: 'FORGED' }, board);
   assert.equal(board.calls.dispatch[0].spawnedBy, undefined);
+  assert.equal(board.calls.dispatch[0].scheduledBy, undefined);
 });

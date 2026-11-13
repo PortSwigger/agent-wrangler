@@ -3944,7 +3944,7 @@ test('beforeSpawn is awaited and its data reaches spawned after the entry exists
     await new Promise((resolve) => setTimeout(resolve, 5));
     order.push('before');
     assert.deepEqual(payload, {
-      spawnedBy: 'PARENT', parentSession: 'NEST', agent: 'codex', model: 'gpt-5', effort: 'high',
+      spawnedBy: 'PARENT', parentSession: 'NEST', spawner: null, agent: 'codex', model: 'gpt-5', effort: 'high',
       cwd: os.tmpdir(), intent: 'do it', source: 'schedule', taskId: 'TASK',
     });
     return token;
@@ -3977,7 +3977,37 @@ test('fork asks beforeSpawn with its parent and refuses before launch', async ()
   sm._beforeSpawn = async (payload) => { asked = payload; throw new Error('Fork refused'); };
   await assert.rejects(sm.fork({ sourceId: 'LIVE', parentId: 'PARENT',
     parentEntry: { agent: 'codex', model: 'gpt-5', effort: 'high' }, cwd: os.tmpdir(), prompt: 'branch' }), /Fork refused/);
-  assert.equal(asked.spawnedBy, 'PARENT');
+  assert.equal(asked.spawnedBy, null);
+  assert.equal(asked.parentSession, 'PARENT');
+  assert.equal(asked.spawner, null);
   assert.equal(asked.source, 'fork');
   assert.equal(asked.intent, 'branch');
+});
+
+test('extension spawn hooks include the extension id and preserve null intent', async () => {
+  const sm = smForDispatch();
+  let asked;
+  let notified;
+  sm._beforeSpawn = async (payload) => { asked = payload; };
+  sm._spawned = async (payload) => { notified = payload; };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: null, launchSource: 'extension', spawner: 'example' });
+  assert.equal(asked.intent, null);
+  assert.equal(asked.spawner, 'example');
+  assert.equal(asked.spawnedBy, null);
+  assert.equal(notified.spawner, 'example');
+});
+
+test('schedule provenance reaches the hook without changing saved lineage or launch context', async () => {
+  const sm = smForDispatch();
+  let asked;
+  let prepared;
+  let command;
+  sm._beforeSpawn = async (payload) => { asked = payload; };
+  sm._prepare = async (payload) => { prepared = payload; };
+  sm._newSession = async (_tmux, _cwd, inner) => { command = inner; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), scheduledBy: 'SCHEDULER', launchSource: 'schedule' });
+  assert.equal(asked.spawnedBy, 'SCHEDULER');
+  assert.equal(prepared.spawnedBy, null);
+  assert.equal(sm.map.get(sessionId).spawnedBy, undefined);
+  assert.ok(!command.includes('AW_SPAWNER_SESSION_ID'));
 });

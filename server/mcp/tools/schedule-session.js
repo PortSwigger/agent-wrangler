@@ -46,7 +46,7 @@ export const scheduleSessionTool = {
     if (prepared.isError) return prepared;
     let created;
     try {
-      created = deps.scheduleStore.create(prepared, Date.now());
+      created = deps.scheduleStore.create(prepared, Date.now(), { caller });
     } catch (e) {
       return errorResult(e?.message || 'Could not create the schedule.');
     }
@@ -98,7 +98,6 @@ export function prepareSchedule({ deps, caller }, args) {
       kind: 'dispatch',
       dispatch: {
         cwd: args.cwd,
-        spawnedBy: caller || undefined,
         intent,
         model: args.model,
         agent,

@@ -818,9 +818,9 @@ function removePrLink(store, ownerId, url) {
 // scheduled dispatch can't drift from a manual one); the `session` kind acts on an
 // EXISTING session via runSessionAction (resume if dormant, message if live).
 // Throws on a gone target — the caller turns that into a schedule-error.
-function performScheduleAction(action, now) {
+function performScheduleAction(action, now, scheduledBy) {
   if (!action || action.kind === 'dispatch') {
-    return runDispatch(action?.dispatch || {}, { sessionManager, taskStore, launchSource: 'schedule' }, now);
+    return runDispatch(action?.dispatch || {}, { sessionManager, taskStore, launchSource: 'schedule', scheduledBy }, now);
   }
   return runSessionAction(action, { sessionManager, tmuxFor, socketFor });
 }
@@ -838,7 +838,7 @@ async function fireSchedule(id, { manual = false } = {}) {
   const now = Date.now();
   const at = new Date(now).toISOString();
   try {
-    const { sessionId } = await performScheduleAction(snap.action, now);
+    const { sessionId } = await performScheduleAction(snap.action, now, snap.scheduledBy);
     scheduleStore.markFired(id, { at, sessionId }, now, { advance: !manual });
     // A one-off that fired cleanly has nothing left to show; delete it so agents'
     // self-scheduled wake-ups don't pile up as dead rows. A failed one stays (below).

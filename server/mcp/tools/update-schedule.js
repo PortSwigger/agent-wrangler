@@ -61,7 +61,7 @@ export const updateScheduleTool = {
       }
     }
     let updated;
-    try { updated = deps.scheduleStore.update(id, patch, Date.now()); }
+    try { updated = deps.scheduleStore.update(id, patch, Date.now(), { caller }); }
     catch (e) { return errorResult(e?.message || 'Could not update the schedule.'); }
     await deps.rebuild();
     return scheduleResult(updated);
