@@ -209,8 +209,8 @@ while Claude's terminal fallback waits until idle. A notice held for two minutes
 dormant status notices are skipped, not saved for later delivery; mail remains unread. This
 setting does not affect live delivery. Snoozed and archived subscribers receive nothing;
 notices skipped during snooze are discarded rather than delivered when the snooze ends.
-Subscriptions survive resume, are not inherited by forks, and end when the child exits or the
-subscriber is archived or missing. A server restart seeds observations without sending notices.
+Subscriptions survive resume, are not inherited by forks, and end when the child exits, the
+subscriber is archived or missing, or the subscriber calls `stop_status_notices` for that child. A server restart seeds observations without sending notices.
 
 ## Messages at the bottom of the board
 
