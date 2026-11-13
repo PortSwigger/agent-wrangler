@@ -18,28 +18,7 @@ import { DATA_DIR } from './data-dir.js';
 
 const clean = { tmux: 'cc_abc', sessionId: 's1', status: 0, archived: false };
 
-// attachSession/dispatch read config-store's childFullViewByDefault() bare (no
-// cfg injection, same as trustCodexLaunchCwd) — so a test asserting the stamped
-// value must pin the real shared config.json for its duration and restore it
-// after, like config-store.test.js's withConfigRestored. Unlike
-// trustCodexLaunchCwd (nobody casually flips that), this setting is exactly
-// the one a person trying the new feature live is likely to have toggled —
-// confirmed happening mid-development (the real config.json picked up
-// `childFullViewByDefault: true` while this feature was being tried out on the
-// live board), which is why this isolation exists rather than assuming the
-// ambient default.
-const CHILD_FULL_VIEW_CONFIG_PATH = path.join(DATA_DIR, 'config.json');
-async function withChildFullViewDefault(value, fn) {
-  let saved;
-  try { saved = fs.readFileSync(CHILD_FULL_VIEW_CONFIG_PATH, 'utf8'); } catch { saved = null; }
-  try {
-    writeConfig({ childFullViewByDefault: value });
-    await fn();
-  } finally {
-    if (saved === null) { try { fs.rmSync(CHILD_FULL_VIEW_CONFIG_PATH); } catch { /* nothing to restore */ } }
-    else fs.writeFileSync(CHILD_FULL_VIEW_CONFIG_PATH, saved);
-  }
-}
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 // Scratch dirs for folderless dispatches must live under the data dir, NOT inside
 // the wrangler checkout. readBranch walks up to the nearest enclosing repo, so a
@@ -2036,26 +2015,13 @@ test('attachSession is a no-op (false) when the target parent is unmapped', () =
   assert.equal(sm.map.get('child').parentSession, undefined);
 });
 
-// "New child sessions show full view by default" is a CREATION-time snapshot,
-// not a live rule (see config-store.js childFullViewByDefault) — attachSession
-// stamps it in once, the first time a session becomes a child.
-test('attachSession stamps entry.childFullView from the current default the first time a session becomes a child', async () => {
-  await withChildFullViewDefault(false, () => {
-    const sm = new SessionManager();
-    sm._save = () => {};
-    sm.map.set('child', { short: 's', tmux: 'cc_c' });
-    sm.map.set('newparent', { short: 'p', tmux: 'cc_p' });
-    sm.attachSession('child', 'newparent');
-    assert.equal(sm.map.get('child').childFullView, false);
-  });
-  await withChildFullViewDefault(true, () => {
-    const sm = new SessionManager();
-    sm._save = () => {};
-    sm.map.set('child2', { short: 's', tmux: 'cc_c' });
-    sm.map.set('newparent2', { short: 'p', tmux: 'cc_p' });
-    sm.attachSession('child2', 'newparent2');
-    assert.equal(sm.map.get('child2').childFullView, true);
-  });
+test('attachSession leaves an unset childFullView unset so the board default applies', () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('child', { short: 's', tmux: 'cc_c' });
+  sm.map.set('newparent', { short: 'p', tmux: 'cc_p' });
+  sm.attachSession('child', 'newparent');
+  assert.equal(sm.map.get('child').childFullView, undefined);
 });
 
 test('attachSession does not overwrite an already-stamped childFullView on re-attach', () => {
@@ -2285,20 +2251,10 @@ test('dispatch leaves parentSession undefined when not passed', async () => {
   assert.equal(sm.map.get(sessionId).parentSession, undefined);
 });
 
-// A `nest:true` spawn sets parentSession directly in dispatch() — the session
-// IS a child from creation, so this is the same creation-time stamp as
-// attachSession (see the comment there).
-test('dispatch stamps entry.childFullView from the current default when parentSession is passed', async () => {
-  await withChildFullViewDefault(false, async () => {
-    const sm = smForDispatch();
-    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'y', parentSession: 'ORCH1' });
-    assert.equal(sm.map.get(sessionId).childFullView, false);
-  });
-  await withChildFullViewDefault(true, async () => {
-    const sm = smForDispatch();
-    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'z', parentSession: 'ORCH2' });
-    assert.equal(sm.map.get(sessionId).childFullView, true);
-  });
+test('dispatch leaves entry.childFullView unset for a nested dispatch so the board default applies', async () => {
+  const sm = smForDispatch();
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'y', parentSession: 'ORCH1' });
+  assert.equal(sm.map.get(sessionId).childFullView, undefined);
 });
 
 test('dispatch leaves entry.childFullView undefined for a non-nested dispatch', async () => {
@@ -2422,13 +2378,13 @@ test('dispatch trusts SESSIONS_DIR (never the launch cwd) for a claude session, 
 
 async function withClaudeTrustSetting(value, fn) {
   let saved;
-  try { saved = fs.readFileSync(CHILD_FULL_VIEW_CONFIG_PATH, 'utf8'); } catch { saved = null; }
+  try { saved = fs.readFileSync(CONFIG_PATH, 'utf8'); } catch { saved = null; }
   try {
     writeConfig({ trustClaudeLaunchCwd: value });
     await fn();
   } finally {
-    if (saved === null) { try { fs.rmSync(CHILD_FULL_VIEW_CONFIG_PATH); } catch { /* nothing to restore */ } }
-    else fs.writeFileSync(CHILD_FULL_VIEW_CONFIG_PATH, saved);
+    if (saved === null) { try { fs.rmSync(CONFIG_PATH); } catch { /* nothing to restore */ } }
+    else fs.writeFileSync(CONFIG_PATH, saved);
   }
 }
 

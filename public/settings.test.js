@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SETTINGS_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, extensionFlipNote, getSetting, EXT_SETTING_PREFIX } from './settings.js';
+import { SETTINGS_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, extensionFlipNote, getSetting, EXT_SETTING_PREFIX, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS } from './settings.js';
 
 test('settings are grouped into six ordered tabs', () => {
   assert.deepEqual(SETTINGS_TABS.map(({ id, label }) => ({ id, label })), [
@@ -182,4 +182,36 @@ test('Codex approvals default to on-request in Settings, the dialog fallback and
   assert.match(def.help, /never/);
   assert.equal(CODEX_POLICY_FALLBACK.approval, 'on-request');
   assert.deepEqual({ ...CODEX_POLICY_FALLBACK }, { ...CODEX_POLICY_DEFAULTS });
+});
+
+function memoryStorage(initial = {}) {
+  const data = new Map(Object.entries(initial));
+  return { getItem: (k) => (data.has(k) ? data.get(k) : null), setItem: (k, v) => data.set(k, String(v)), data };
+}
+
+test('the three former server defaults are board-owned settings', () => {
+  for (const id of LEGACY_SERVER_SETTING_IDS) {
+    const def = SETTINGS.find((s) => s.id === id);
+    assert.equal(def.type, 'toggle', id);
+    assert.equal(def.scope, undefined, id);
+  }
+});
+
+test('migrateLegacySettings copies old config values in once and never over a stored choice', () => {
+  const storage = memoryStorage({ 'cm-setting-subagentsExpandedByDefault': '0' });
+  const migrated = migrateLegacySettings({ chatViewDefault: true, childFullViewByDefault: false, subagentsExpandedByDefault: true }, storage);
+  assert.deepEqual(migrated, ['childFullViewByDefault', 'chatViewDefault']);
+  assert.equal(storage.data.get('cm-setting-chatViewDefault'), '1');
+  assert.equal(storage.data.get('cm-setting-childFullViewByDefault'), '0');
+  assert.equal(storage.data.get('cm-setting-subagentsExpandedByDefault'), '0');
+  storage.setItem('cm-setting-chatViewDefault', '0');
+  assert.deepEqual(migrateLegacySettings({ chatViewDefault: true }, storage), []);
+  assert.equal(storage.data.get('cm-setting-chatViewDefault'), '0');
+});
+
+test('migrateLegacySettings ignores a missing or non-boolean legacy value', () => {
+  const storage = memoryStorage();
+  assert.deepEqual(migrateLegacySettings(undefined, storage), []);
+  assert.deepEqual(migrateLegacySettings({ chatViewDefault: 'yes' }, storage), []);
+  assert.equal(storage.data.size, 0);
 });

@@ -73,7 +73,7 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { CODEX_POLICY_FALLBACK, syncCodexPolicyControls, fillCodexPolicyControls, readCodexPolicyControls } from './codex-policy-field.js';
-import { initSettings, flashSettingsSaved, getSetting, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -172,14 +172,11 @@ function restoreAll() {
 export let latestSessions = [];
 export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
-let subagentsExpandedByDefault = false; // server config flag, carried on every graph push
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let trustClaudeLaunchCwd = true; // likewise
-let childFullViewByDefault = false; // server config flag, carried on every graph push
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let mailWakesDormant = false;
 let prModelFooter = true;
-let chatViewDefault = false; // server config flag, carried on every graph push
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
 // Settings › Background model (server config, resolved, every graph push).
@@ -928,14 +925,12 @@ function applyGraph(graph) {
   latestTasks = graph.tasks || { tasks: [], assignments: {} };
   if (currentView === 'search') refreshSearchTaskFilter();
   latestSchedules = graph.schedules || { schedules: [] };
-  subagentsExpandedByDefault = graph.subagentsExpandedByDefault === true;
+  migrateLegacySettings(graph.legacyBoardSettings);
   trustCodexLaunchCwd = graph.trustCodexLaunchCwd !== false;
   trustClaudeLaunchCwd = graph.trustClaudeLaunchCwd !== false;
-  childFullViewByDefault = graph.childFullViewByDefault === true;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   mailWakesDormant = graph.mailWakesDormant === true;
   prModelFooter = graph.prModelFooter !== false;
-  chatViewDefault = graph.chatViewDefault === true;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
   backgroundModel = graph.backgroundModel && typeof graph.backgroundModel === 'object' ? graph.backgroundModel : null;
@@ -1447,8 +1442,7 @@ function topUnits(body) {
 function childShapeHeight() {
   if (draggedCard?.dataset.childSid) return childRowHeight;
   const s = latestSessions.find((x) => x.sessionId === dragUnitSid(draggedCard));
-  const full = s?.childFullView === true || (s?.childFullView === undefined && childFullViewByDefault);
-  if (full) return dragCardHeight;
+  if (s && isChildFullView(s)) return dragCardHeight;
   return document.querySelector('#grid .worker-row')?.offsetHeight || 30;
 }
 
@@ -1989,7 +1983,7 @@ function persistSubagentShownOverrides() {
   try { localStorage.setItem(SUBAGENT_SHOWN_KEY, JSON.stringify(Object.fromEntries(subagentShownOverrides))); } catch {}
 }
 function isSubagentShown(sessionId) {
-  return subagentShownOverrides.has(sessionId) ? subagentShownOverrides.get(sessionId) : subagentsExpandedByDefault;
+  return subagentShownOverrides.has(sessionId) ? subagentShownOverrides.get(sessionId) : getSetting('subagentsExpandedByDefault');
 }
 function toggleSubagentShown(sessionId) {
   subagentShownOverrides.set(sessionId, !isSubagentShown(sessionId));
@@ -1997,19 +1991,10 @@ function toggleSubagentShown(sessionId) {
   if (currentView === 'grid') renderGrid();
 }
 
-// Whether a CHILD session (parentSession set) renders as a full card instead of
-// the default compact `.worker-row`. Unlike isSubagentShown's client-local
-// override, `s.childFullView` is server-persisted (session-manager
-// setChildFullView, boolean once explicitly set by a card-menu toggle or by
-// the creation-time stamp — see attachSession/dispatch) so the choice follows
-// the session across browsers/reloads. Deliberately NOT a live fallback onto
-// childFullViewByDefault here: that setting is "new child sessions show full
-// view by DEFAULT" — a snapshot taken once when a session becomes a child,
-// not a rule every untouched child re-reads forever — so an unstamped child
-// (never explicitly nested through the stamping sites, e.g. a legacy one from
-// before this shipped) reads as compact, matching what it already rendered as.
+// A child's own full-view choice (card menu, stored on the ranch with the
+// session) wins; a child never toggled follows this board's default.
 function isChildFullView(s) {
-  return s.childFullView === true;
+  return typeof s.childFullView === 'boolean' ? s.childFullView : getSetting('childFullViewByDefault');
 }
 function toggleChildFullView(sessionId, on) {
   send({ type: 'set-child-full-view', sessionId, enabled: on });
@@ -5059,7 +5044,7 @@ function readSessionViews() {
 }
 function viewForSession(sessionId) {
   const stored = readSessionViews()[sessionId];
-  return resolveSessionView(stored, chatViewDefault);
+  return resolveSessionView(stored, getSetting('chatViewDefault'));
 }
 function setSessionView(sessionId, view) {
   const all = readSessionViews();
@@ -5088,7 +5073,7 @@ const panelSubagentShownOverrides = (() => {
   return new Map();
 })();
 function isPanelSubagentShown(sessionId) {
-  return panelSubagentShownOverrides.has(sessionId) ? panelSubagentShownOverrides.get(sessionId) : subagentsExpandedByDefault;
+  return panelSubagentShownOverrides.has(sessionId) ? panelSubagentShownOverrides.get(sessionId) : getSetting('subagentsExpandedByDefault');
 }
 function togglePanelSubagentShown(sessionId) {
   panelSubagentShownOverrides.set(sessionId, !isPanelSubagentShown(sessionId));
@@ -7250,14 +7235,11 @@ const CODEX_DEFAULT_SETTINGS = { codexDefaultSandbox: 'sandbox', codexDefaultApp
 initSettings({
   server: {
     get: (id) => {
-      if (id === 'subagentsExpandedByDefault') return subagentsExpandedByDefault;
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
-      if (id === 'childFullViewByDefault') return childFullViewByDefault;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
       if (id === 'mailWakesDormant') return mailWakesDormant;
       if (id === 'prModelFooter') return prModelFooter;
-      if (id === 'chatViewDefault') return chatViewDefault;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'defaultRuntime') return defaultRuntime;
       if (id === 'backgroundModel') return backgroundModel ? `${backgroundModel.agent}:${backgroundModel.model}` : undefined;
@@ -7274,18 +7256,12 @@ initSettings({
       return undefined;
     },
     set: (id, value) => {
-      if (id === 'subagentsExpandedByDefault') {
-        subagentsExpandedByDefault = Boolean(value);
-        send({ type: 'set-subagents-expanded-by-default', enabled: subagentsExpandedByDefault });
-      } else if (id === 'trustCodexLaunchCwd') {
+      if (id === 'trustCodexLaunchCwd') {
         trustCodexLaunchCwd = Boolean(value);
         send({ type: 'set-trust-codex-launch-cwd', enabled: trustCodexLaunchCwd });
       } else if (id === 'trustClaudeLaunchCwd') {
         trustClaudeLaunchCwd = Boolean(value);
         send({ type: 'set-trust-claude-launch-cwd', enabled: trustClaudeLaunchCwd });
-      } else if (id === 'childFullViewByDefault') {
-        childFullViewByDefault = Boolean(value);
-        send({ type: 'set-child-full-view-default', enabled: childFullViewByDefault });
       } else if (id === 'autoFixPrChecksDefault') {
         autoFixPrChecksDefault = Boolean(value);
         send({ type: 'set-auto-fix-pr-checks-default', enabled: autoFixPrChecksDefault });
@@ -7295,9 +7271,6 @@ initSettings({
       } else if (id === 'prModelFooter') {
         prModelFooter = Boolean(value);
         send({ type: 'set-pr-model-footer', enabled: prModelFooter });
-      } else if (id === 'chatViewDefault') {
-        chatViewDefault = Boolean(value);
-        send({ type: 'set-chat-view-default', enabled: chatViewDefault });
       } else if (id === 'defaultSessionCwd') {
         defaultSessionCwd = String(value || '').trim();
         send({ type: 'set-default-session-cwd', cwd: defaultSessionCwd });
@@ -7336,6 +7309,7 @@ initSettings({
   // on its own, so they have to be applied on the flip itself.
   onChange: (id, value) => {
     if (id === 'terminalSide') applyTerminalSide(value);
+    else if (LEGACY_SERVER_SETTING_IDS.includes(id) && latestGraph) applyGraph(latestGraph);
   },
   appearance: {
     themeRowsHtml: renderThemeRows,

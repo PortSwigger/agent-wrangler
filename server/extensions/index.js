@@ -66,8 +66,8 @@ export const BUILTIN = [
 // run by index.js against the real stores once they exist).
 export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
-  'subagentsExpandedByDefault', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'childFullViewByDefault',
-  'autoFixPrChecksDefault', 'mailWakesDormant', 'prModelFooter', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
+  'legacyBoardSettings', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd',
+  'autoFixPrChecksDefault', 'mailWakesDormant', 'prModelFooter', 'defaultSessionCwd', 'defaultRuntime',
   'codexPolicyDefaults', 'backgroundModel', 'quarantinedBuiltins',
 ]);
 

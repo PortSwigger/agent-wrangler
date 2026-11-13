@@ -15,7 +15,7 @@ import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
-import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, codexPolicyDefaults } from './config-store.js';
+import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, codexPolicyDefaults } from './config-store.js';
 import { cleanCodexPolicy } from './extensions/codex-policy.js';
 import { ensureCodexTrust } from './codex-trust.js';
 import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
@@ -916,14 +916,6 @@ export class SessionManager {
     const entry = this.map.get(sessionId);
     if (!entry || !this.map.has(parentSessionId)) return false;
     entry.parentSession = parentSessionId;
-    // "New child sessions show full view by default" (the settings copy) means
-    // NEW — a creation-time snapshot, not a live rule every untouched child
-    // keeps following forever. Stamp it in now, once, so a later flip of the
-    // global default never retroactively changes an already-nested child.
-    // Only when unset: a session re-attached after being detached (or moved to
-    // a different parent) already carries a stamp from its earlier nesting
-    // (explicit or default-derived) and keeps it unchanged.
-    if (entry.childFullView === undefined) entry.childFullView = childFullViewByDefault();
     this._save();
     return true;
   }
@@ -975,12 +967,9 @@ export class SessionManager {
 
   // Per-CHILD (parentSession set) override for whether it renders as a full card
   // instead of the default compact `.worker-row` — the card menu's "Full view"
-  // toggle. Unset (never nested through attachSession/dispatch, which stamp a
-  // boolean at creation time — see there) reads as compact on the client (NOT
-  // a live read of config.json childFullViewByDefault; that setting only ever
-  // seeds the creation-time stamp, never overrides an already-stamped or
-  // never-stamped child later). Adopts an externally-discovered session first
-  // (like setAutoFixPrChecks) so the override persists. Keyed on the card id.
+  // toggle. Unset follows the board's own default. Adopts an externally-discovered
+  // session first (like setAutoFixPrChecks) so the override persists. Keyed on
+  // the card id.
   setChildFullView(sessionId, enabled, snapshot = {}) {
     let entry = this.map.get(sessionId);
     if (!entry) {
@@ -2138,13 +2127,6 @@ export class SessionManager {
     // one so a pre-launch phase report isn't clobbered for a non-workflow dispatch.
     const existing = this.map.get(sessionId);
     const nestedParent = parentSession || existing?.parentSession;
-    // A `nest:true` spawn (spawn_session) sets `parentSession` here directly —
-    // the session is a CHILD from the moment it's created, so this is the
-    // creation-time "new child" snapshot the settings copy promises (see
-    // attachSession's matching comment). Only when unset: a pre-adopted entry
-    // (an early setWorkflowPhase report landing before this map.set) may
-    // already carry one.
-    const childFullView = nestedParent && existing?.childFullView === undefined ? childFullViewByDefault() : existing?.childFullView;
     // `runtimeExt` names the extension a runtime came from, so a resume after it
     // is uninstalled can still say which one to re-enable (relaunchRefusal).
     // `mailCapable: false` for a buildLaunch runtime (its command has no
@@ -2152,7 +2134,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, childFullView, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
     await this._fireExtHooks('onDispatch', { sessionId, entry });
