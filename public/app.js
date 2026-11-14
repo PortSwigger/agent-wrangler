@@ -997,6 +997,9 @@ function applyGraph(graph) {
   // this banner is the wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  const hadRestartPending = restartPendingExts.length > 0;
+  restartPendingExts = (graph.extensions || []).filter((e) => e.restartPending).map((e) => e.label || e.id);
+  if (hadRestartPending && !restartPendingExts.length && !fdBannerActive) hideSystemBanner();
   // Unlike the quarantine line this one can clear while the page is open (the
   // Restart tmux button), and syncStandingBanner only ever shows, so hide it here.
   const wasStale = staleGuiSession;
@@ -6821,6 +6824,7 @@ applyChatFontSize(chatFontSize());
 // namespace of its own, though system-banner.js now has one for the producers
 // that do.
 let quarantinedBuiltins = [];
+let restartPendingExts = [];
 // #system-banner is one slot and the fd watchdog is the more urgent producer, so
 // it wins while active and this line is re-asserted when it clears.
 let fdBannerActive = false;
@@ -6863,6 +6867,10 @@ function syncStandingBanner() {
   if (staleGuiSession) {
     if (tmuxRestarting) showSystemBanner('Restarting tmux…');
     else showSystemBanner('⚠ Agents are in an old macOS login session, so windows they open (such as a Playwright browser) can\'t take focus.', { level: 1, kind: 'gui-session', action: { label: 'Restart tmux', onClick: restartTmux } });
+    return;
+  }
+  if (restartPendingExts.length) {
+    showSystemBanner(`⚠ Extension update installed but not loaded (${restartPendingExts.join(', ')}) — restart the wrangler so sessions see its new tools`);
     return;
   }
   const rollback = rolledBackText(rolledBackUpdate);

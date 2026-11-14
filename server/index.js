@@ -17,6 +17,7 @@ import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
+import { readProvenance } from './extensions/provenance.js';
 import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor, themeSources } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
@@ -1214,7 +1215,7 @@ async function rebuildOnce() {
   // back, and what the client mounts/unmounts its slot contributions from. `enabled`
   // is re-read from config here, not taken from ext.list's boot snapshot: see
   // extensionsForGraph.
-  graph.extensions = extensionsForGraph(ext.list);
+  graph.extensions = extensionsForGraph(ext.list, undefined, undefined, readProvenance());
   // Rarely moves — a builtin quarantines at boot, or on a live enable that
   // failed — but carried on the graph
   // rather than the connect announcement so the banner survives a reconnect the

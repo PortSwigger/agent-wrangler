@@ -224,6 +224,17 @@ test('the detail header: name, description, the enable toggle settings.js drives
   });
 });
 
+test('an installed extension whose on-disk commit differs from the running one says to restart', () => {
+  withDom(() => {
+    const stale = { ...INSTALLED, restartPending: true, installedSha: '99999999aaaa' };
+    const all = texts(detailOf(showing(stale)));
+    assert.ok(all.includes('Running') && all.includes('abcdef01'));
+    assert.ok(all.some((t) => t.includes('99999999') && t.includes('restart the wrangler to load it')));
+    assert.ok(texts(showing(stale)).some((t) => t.includes('installed version differs from the running one')));
+    assert.equal(texts(showing(INSTALLED)).some((t) => t.includes('differs from the running one')), false);
+  });
+});
+
 test('the Source section: type, repository with an https-only Open link, and short commit', () => {
   withDom(() => {
     const detail = detailOf(showing(INSTALLED));
