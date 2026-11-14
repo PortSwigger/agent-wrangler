@@ -163,6 +163,7 @@ test('blank task-view menu keeps New task and adds only the tray owner action', 
     slots: { trayBackgroundItem: () => owner ? { label: 'Manage profiles…', run: () => { managed++; } } : null },
     latestGraph: {}, extApi: {}, PLUS_ICON: '',
     mountMenu: (value) => { items = value; }, createTask: () => { created++; },
+    deckEntries: [{ own: true }], newTaskDeckItems: () => [{ label: 'Laptop A' }, { label: 'Laptop B', disabled: true }],
   };
   const open = new Function(...Object.keys(scope), `${declaration('openTaskViewMenu')}; return openTaskViewMenu;`)(...Object.values(scope));
   open(10, 20);
@@ -174,6 +175,9 @@ test('blank task-view menu keeps New task and adds only the tray owner action', 
   owner = false;
   open(10, 20);
   assert.deepEqual(items.map((it) => it.label), ['New task']);
+  scope.deckEntries.push({ own: false });
+  open(10, 20);
+  assert.deepEqual(items[0].submenu.map((it) => [it.label, Boolean(it.disabled)]), [['Laptop A', false], ['Laptop B', true]], 'with two decks, New task asks for a deck');
 });
 
 for (const result of ['cancel', 'ok']) test(`drawer archive ${result} preserves minimisation and uses the live-session confirmation`, async () => {

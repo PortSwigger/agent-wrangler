@@ -299,16 +299,31 @@ ahead of the task, in the deck's colour, and each deck's tasks sit together, thi
 Renaming, reordering, archiving or dragging a session into a task goes to that task's deck; a session
 or task cannot move onto another deck's, and **Unassigned** holds every deck's unassigned sessions.
 **Schedules** lists each deck's schedules under its name, and enabling, running or deleting one goes
-to its deck. Another deck's schedule is edited, and its tasks get new sessions, from that deck's own
-board: new sessions here start on this board's deck. An unreachable deck's tasks and schedules stay
-listed, greyed out, until it is back.
+to its deck. Another deck's schedule is edited from that deck's own board. An unreachable deck's
+tasks and schedules stay listed, greyed out, until it is back.
+
+New tasks and schedules can start on any connected deck too. With more than one deck, **New task**
+(the rail button, or the blank task-view right-click menu) first asks which deck the task goes on,
+and **New schedule** has the same **Deck** picker as the new-session dialog: the tasks, runtimes,
+agents and existing sessions it offers are the picked deck's, and the schedule is saved on that
+deck and listed under its name. A deck that is not connected is listed in both but cannot be
+picked. With only this board's own deck, neither asks for a deck.
+
+New sessions can start on any connected deck. With more than one deck, the new-session dialog has a
+**Deck** picker listing every deck on the board, this board's own first and picked by default. The
+tasks, runtimes and agents it offers are the picked deck's: its runtimes come from the deck's
+`GET /deck`, and a folder left blank becomes a new scratch folder on that deck. A deck that is not
+connected is listed but cannot be picked. Another deck's task tile has its own new-session button,
+and each of its TODOs a start button; either opens the dialog on that deck, in that task, and a TODO
+started this way is used up on that deck once the session launches. While that deck is unreachable
+its tiles offer neither. With only this board's own deck, the dialog has no picker.
 
 **Remove** takes a deck off the board; its sessions keep running on it.
 
 Extensions load once, from the board's own install. A card's checklist is the one its own deck
 keeps, and ticking an item changes it on that deck alone. Another deck's task tile shows that deck's
 TODOs, and its **Task memory** opens that deck's memory; edits go to that deck alone. TODOs move only
-between tasks on the same deck, and another deck's TODO has no start-session button. An extension with a view of its own may
+between tasks on the same deck. An extension with a view of its own may
 show one section for each deck that runs it; a deck running a version of it whose board API does not
 match this board's is shown there as **Incompatible** and is sent nothing.
 

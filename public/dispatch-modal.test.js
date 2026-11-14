@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { createBoardOpen } from './board-open.js';
 import { cardKey, sessionIdOf } from './card-key.js';
+import { scheduleActionForDeck } from './decks.js';
 import { adapterFor, providerMetadata } from '../server/agents/index.js';
 
 const html = readFileSync(join(import.meta.dirname, 'index.html'), 'utf8');
@@ -189,7 +190,7 @@ function runtimeHarness(agent = 'claude') {
   const app = loadApp(
     ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function syncExtRuntimeOptions() {'],
     ['syncExtRuntimeOptions', 'syncRuntimeToggle', 'setExtensions'],
-    'let latestExtensions = []; const setExtensions = (v) => { latestExtensions = v; };',
+    'let latestExtensions = []; let dispatchDeck = null; const setExtensions = (v) => { latestExtensions = v; };',
     { document, additionalFolders },
   );
   return { rt, add, note, ...app };
@@ -258,9 +259,10 @@ test('an extension runtime is offered to each agent its `agents` lists, and only
 
 test('openModal adds the extension runtimes BEFORE restoring a saved runtime, and falls back to local', () => {
   const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
-  const sync = open.indexOf('syncExtRuntimeOptions()');
+  const sync = open.indexOf('syncDispatchRuntimes()');
   const restore = open.indexOf('rtSel.value = wantRuntime;');
-  assert.ok(sync >= 0 && restore > sync, 'syncExtRuntimeOptions must run before the runtime prefill');
+  assert.ok(sync >= 0 && restore > sync, 'the picked deck\'s runtimes must be in place before the runtime prefill');
+  assert.match(appDecl('function syncDispatchRuntimes() {'), /syncExtRuntimeOptions\(\)/, 'the board\'s own deck adds its extension runtimes');
   assert.match(open.slice(restore), /if \(rtSel\.value !== wantRuntime\) rtSel\.value = 'local';/);
   assert.match(appDecl('function syncClientExtensions() {'), /syncExtRuntimeOptions\(\);/);
 });
@@ -540,21 +542,22 @@ test('the Codex sandbox/approval row shows for a Codex draft only, prefilled fro
   assert.deepEqual(h.readCoreDispatchFields().codexPolicy, { bypass: true });
 });
 
-function scheduleHarness(kind = 'dispatch', editing = false) {
+function scheduleHarness(kind = 'dispatch', editing = false, { deck = null, refuse = false } = {}) {
   const sent = [];
   const state = { invalid: true, closed: false };
   const go = { disabled: false };
   const document = { getElementById: (id) => id === 'm-go' ? go : { value: id === 'm-sch-target' ? 'S1' : 'Example' } };
-  const action = kind === 'dispatch' ? { kind, dispatch: { cwd: '/repo', addDirs: ['/extra'] } } : { kind: 'session', sessionId: 'S1' };
+  const action = kind === 'dispatch' ? { kind, dispatch: { cwd: '/repo', addDirs: ['/extra'], ...(deck ? { taskId: `${deck}/t1` } : {}) } } : { kind: 'session', sessionId: 'S1' };
   const app = loadApp(
     ['function scheduleActionValid() {', 'function syncScheduleGo() {', 'function submitSchedule() {'],
     ['submitSchedule', 'syncScheduleGo'],
-    `const scheduleAction = ${JSON.stringify(kind)}; const modalMode = ${JSON.stringify(editing ? 'schedule-edit' : 'schedule-create')}; const editingScheduleId = 'SCH1';`,
+    `const scheduleAction = ${JSON.stringify(kind)}; const modalMode = ${JSON.stringify(editing ? 'schedule-edit' : 'schedule-create')}; const editingScheduleId = 'SCH1'; const dispatchDeck = ${JSON.stringify(deck)};`,
     {
       document, additionalFolders: { invalid: () => state.invalid },
       scheduleMode: () => true, readPicker: () => ({}), whenValid: () => true,
       compileWhen: () => '2027-01-01T09:00:00Z', readScheduleAction: () => action,
-      send: (msg) => sent.push(msg), closeModal: () => { state.closed = true; },
+      remoteBoard: { tasks: deck ? [{ id: `${deck}/t1`, localId: 't1' }] : [] }, scheduleActionForDeck,
+      send: (msg) => (refuse ? false : sent.push(msg) > 0), closeModal: () => { state.closed = true; },
       openSchedulesPanel() {}, toast() {},
     },
   );
@@ -578,6 +581,23 @@ for (const editing of [false, true]) {
     assert.equal(state.closed, true);
   });
 }
+
+test('a schedule created on another deck goes to that deck, naming its task by that deck\'s id', () => {
+  const { submitSchedule, sent, state } = scheduleHarness('dispatch', false, { deck: 'deckb' });
+  state.invalid = false;
+  submitSchedule();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].deck, 'deckb');
+  assert.equal(sent[0].action.dispatch.taskId, 't1');
+  assert.equal(state.closed, true);
+});
+
+test('a schedule the board could not send keeps the dialog open', () => {
+  const { submitSchedule, state } = scheduleHarness('dispatch', false, { deck: 'deckb', refuse: true });
+  state.invalid = false;
+  submitSchedule();
+  assert.equal(state.closed, false);
+});
 
 test('session schedules ignore folder errors in the unused dispatch fields', () => {
   const { submitSchedule, sent, go } = scheduleHarness('session');
@@ -972,12 +992,14 @@ function extSubmitHarness({ mode = 'launch', hidden = false, images = [], images
   const document = { getElementById: (id) => els[id] || { classList: { remove() {}, add() {} } } };
   const app = loadApp(
     ['function scheduleMode() {', 'function readDispatchFields() {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function submitDispatch(over) {', 'function submitDispatchFromExt({ model, effort, runtime } = {}) {', 'function runtimeOwnsModel(extId, runtimeId) {'],
-    ['submitDispatch', 'submitDispatchFromExt', 'flags'],
+    ['submitDispatch', 'submitDispatchFromExt', 'flags', 'pickDeck'],
     `let modalMode = ${JSON.stringify(mode)}; let modelEdited = false; let effortEdited = false;
+     let dispatchDeck = null; const pickDeck = (id) => { dispatchDeck = id; };
+     const findTask = (id) => (id === 'deck-b/t_1' ? { id, deckId: 'deck-b', localId: 't_1' } : null);
      let wtPending = false; const dispatchMode = 'standard'; const wtValidation = null; const availableAgents = [];
      const flags = () => ({ modelEdited, effortEdited });
      const latestExtensions = [{ id: 'bifrost', runtimes: [{ id: 'bifrost', ownsModel: true }] }, { id: 'toy', runtimes: [{ id: 'toy', ownsModel: false }] }];
-     const readCoreDispatchFields = () => { const rt = document.getElementById('m-runtime').value; return { model: document.getElementById('m-model').value, effort: document.getElementById('m-effort').value || undefined, worktree: false, addDirs: [], runtime: rt !== 'local' ? rt : undefined }; };
+     const readCoreDispatchFields = () => { const rt = document.getElementById('m-runtime').value; return { model: document.getElementById('m-model').value, effort: document.getElementById('m-effort').value || undefined, worktree: false, addDirs: [], runtime: rt !== 'local' ? rt : undefined, taskId: state.taskId }; };
      const syncRuntimeToggle = () => { calls.push('syncRuntimeToggle'); if (state.snapRuntime) document.getElementById('m-runtime').value = 'local'; };
      const syncDispatchExtFields = () => calls.push('syncDispatchExtFields');
      const populateEffortSelect = () => { calls.push('populateEffortSelect'); if (state.effortsAfterModel) { const e = document.getElementById('m-effort'); e.options.length = 0; for (const v of state.effortsAfterModel) e.appendChild(stubOption(v)); } };`,
@@ -987,7 +1009,7 @@ function extSubmitHarness({ mode = 'launch', hidden = false, images = [], images
       slots: slotRegistry || { dispatchFields: () => (state.extSlices ? { extra: 1, ext: state.extSlices } : { extra: 1 }), validateDispatch: () => null },
       cwdBlocked: () => state.cwdBlocked, renderCwdState() {},
       additionalFolders: { invalid: () => false },
-      send: (m) => sent.push(m), dispatchWaiter: { submit() {} }, toast: (message) => notices.push(message),
+      send: (m) => !state.refuseSend && sent.push(m), dispatchWaiter: { submit() {} }, toast: (message) => notices.push(message),
       submitSchedule: () => calls.push('submitSchedule'), worktreeStatusMsg: () => null, setDispatchPending() {},
       intentImages: { busy: () => imagesBusy, names: () => images.slice(), reset: () => { state.imageResets = (state.imageResets || 0) + 1; } },
     },
@@ -1022,6 +1044,29 @@ test('dispatch.submit with no options launches whatever the modal holds', () => 
   app.submitDispatchFromExt();
   assert.equal(sent[0].model, 'opus');
   assert.deepEqual(app.flags(), { modelEdited: false, effortEdited: false });
+});
+
+test('a launch on another deck goes to that deck alone, naming its task by the id it has there', () => {
+  const { app, sent, modalClasses } = extSubmitHarness();
+  app.pickDeck('deck-b');
+  assert.equal(app.submitDispatch(), true);
+  assert.equal(sent[0].deck, 'deck-b');
+  assert.equal(sent[0].type, 'dispatch');
+  assert.ok(modalClasses.has('hidden'));
+  const withTask = extSubmitHarness();
+  withTask.app.pickDeck('deck-b');
+  withTask.state.taskId = 'deck-b/t_1';
+  withTask.app.submitDispatch();
+  assert.equal(withTask.sent[0].taskId, 't_1');
+  assert.equal(withTask.sent[0].deck, 'deck-b');
+});
+
+test('a launch the board could not send keeps the dialog open', () => {
+  const h = extSubmitHarness();
+  h.app.pickDeck('deck-b');
+  h.state.refuseSend = true;
+  assert.equal(h.app.submitDispatch(), false);
+  assert.equal(h.modalClasses.has('hidden'), false);
 });
 
 test('dispatch.submit rejects a model or effort the modal does not offer', () => {
@@ -1102,7 +1147,7 @@ test('dispatch waits while an intent image is still uploading', () => {
 // extension's folder and images land AFTER them.
 function openDispatchHarness() {
   const log = [];
-  const els = { 'm-task': { disabled: false }, 'm-cwd': { value: '' }, 'm-intent': { value: '' } };
+  const els = { 'm-task': { disabled: false }, 'm-deck': { disabled: false }, 'm-cwd': { value: '' }, 'm-intent': { value: '' } };
   const document = { getElementById: (id) => els[id] };
   const intentImages = { reset: () => log.push('reset'), adopt: (names) => log.push(['adopt', names]) };
   const dispatchWaiter = { open: (show) => { show(); return Promise.resolve(null); } };
@@ -1111,6 +1156,7 @@ function openDispatchHarness() {
     ['openDispatchAcked'],
     `const openModal = ({ taskId }) => { log.push(['openModal', taskId]); document.getElementById('m-cwd').value = '/task/default'; intentImages.reset(); };
      const additionalFolders = { reset: () => {} };
+     const taskDeckUnpickable = () => null;
      let parentSessionId = null; let reviewMode = false;
      const refreshWorktreeDefaults = () => log.push('refreshWorktreeDefaults');
      const syncWorktreeFields = () => log.push('syncWorktreeFields');

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
+import fs from 'node:fs';
 import { deliverMailNotification, deliverNotice } from './mailbox-delivery.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { composeMailNotification } from './mail-notification.js';
@@ -556,4 +557,15 @@ test('status notices do not wake dormant subscribers when the setting is absent'
   assert.equal((await deliverNotice('CARD1', 'notice', d)).mode, 'skip');
   assert.deepEqual(d.resumed, []);
   assert.deepEqual(d.sent, []);
+});
+
+test('captured modern Codex approval continues to hold mail without pasting into the selector', async () => {
+  const pane = fs.readFileSync(new URL('./fixtures/codex-approval/mcp-modern.txt', import.meta.url), 'utf8');
+  const d = paneDeps({ pane, status: 'working' });
+  const result = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.equal(result.mode, 'deferred');
+  assert.match(result.reason, /^pane classified needs-you: /);
+  assert.match(result.reason, /"check":"approval-selector"/);
+  assert.deepEqual(d.sent, []);
+  assert.deepEqual(d.paneDeferral.pending('CARD1'), [], 'mail remains on the durable retry path');
 });

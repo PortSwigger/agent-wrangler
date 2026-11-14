@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDeckClient } from './deck-client.js';
 import { deckIdOf, stampDeck } from './card-key.js';
-import { createDeckList, createRemoteDecks, deckLabel, extensionDecks, mergeDeckGraphs, originOfUrl, remoteTaskView, routeDeck, scopeCall, scopeReply } from './decks.js';
+import { createDeckList, createRemoteDecks, deckLabel, deckPickerOptions, deckRunsAgent, deckRuntimes, extensionDecks, mergeDeckGraphs, originOfUrl, remoteTaskView, routeDeck, scheduleActionForDeck, scopeCall, scopeReply, sessionsOnDeck } from './decks.js';
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -262,4 +262,55 @@ test('a task or schedule call goes to the deck its id names, bare; naming two de
   assert.equal(scopeCall({ type: 'launch', taskId: 'deck-b/t_1' }).deckId, undefined, 'only task and schedule calls are scoped');
   assert.deepEqual(scopeReply({ type: 'task-created', taskId: 't_9' }, 'deck-b'), { type: 'task-created', taskId: 'deck-b/t_9' });
   assert.deepEqual(scopeReply({ type: 'task-created', taskId: 't_9' }, null), { type: 'task-created', taskId: 't_9' });
+});
+
+test('the deck picker lists every deck, own first; only a connected deck can be picked', () => {
+  const opts = deckPickerOptions([
+    { id: 'own', own: true, deckId: 'A', status: 'ready', name: 'Laptop', colour: '#112233' },
+    { id: 'e1', deckId: 'B', status: 'ready', name: 'Desktop' },
+    { id: 'e2', deckId: 'C', status: 'unreachable', name: 'Server' },
+    { id: 'e3', deckId: null, status: 'connecting', name: 'new.example.com' },
+    { id: 'e4', deckId: null, status: 'incompatible', duplicate: 'own', name: 'Laptop again' },
+  ]);
+  assert.deepEqual(opts.map((o) => [o.value, o.label, o.disabled]), [
+    ['', 'Laptop', false],
+    ['B', 'Desktop', false],
+    ['C', 'Server (unreachable)', true],
+    ['entry:e3', 'new.example.com (unreachable)', true],
+    ['entry:e4', 'Laptop again (incompatible)', true],
+  ]);
+  assert.equal(opts[0].colour, '#112233');
+});
+
+test('a deck offers the runtimes its descriptor lists, each with the agents it runs', () => {
+  const rts = deckRuntimes({ runtimes: [
+    { id: 'local', label: 'Local (host)', agents: null },
+    { id: 'sandbox', label: 'Sandbox', agents: ['claude'] },
+    { id: 'sandbox', label: 'Duplicate' },
+    { label: 'no id' },
+  ] });
+  assert.deepEqual(rts, [
+    { id: 'local', label: 'Local (host)', agents: null },
+    { id: 'sandbox', label: 'Sandbox', agents: ['claude'] },
+  ]);
+  assert.deepEqual(deckRuntimes(null), [{ id: 'local', label: 'Local (host)', agents: null }]);
+  assert.equal(deckRunsAgent(rts, 'codex'), true);
+  assert.equal(deckRunsAgent([{ id: 'sandbox', label: 'Sandbox', agents: ['claude'] }], 'codex'), false);
+});
+
+test('a deck holds its own sessions; the board’s own deck also those with no deck id', () => {
+  const sessions = [{ sessionId: 'a', deckId: 'own' }, { sessionId: 'b', deckId: 'deckb' }, { sessionId: 'c' }];
+  assert.deepEqual(sessionsOnDeck(sessions, null, 'own').map((s) => s.sessionId), ['a', 'c']);
+  assert.deepEqual(sessionsOnDeck(sessions, 'deckb', 'own').map((s) => s.sessionId), ['b']);
+});
+
+test('a schedule for another deck names its task by that deck’s own id', () => {
+  const tasks = [{ id: 'deckb/t1', localId: 't1' }];
+  const action = { kind: 'dispatch', dispatch: { intent: 'x', taskId: 'deckb/t1' } };
+  assert.deepEqual(scheduleActionForDeck(action, tasks), { kind: 'dispatch', dispatch: { intent: 'x', taskId: 't1' } });
+  assert.equal(action.dispatch.taskId, 'deckb/t1');
+  const unassigned = { kind: 'dispatch', dispatch: { intent: 'x' } };
+  assert.equal(scheduleActionForDeck(unassigned, tasks), unassigned);
+  const session = { kind: 'session', sessionId: 's1', message: '' };
+  assert.equal(scheduleActionForDeck(session, tasks), session);
 });

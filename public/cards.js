@@ -735,10 +735,9 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   const active = tile.sessions.filter((s) => ctx.phaseOf(s) !== 'asleep');
   const asleep = listedAsleep(tile.sessions, ctx.phaseOf);
   const tileKey = tile.kind === 'notask' ? ctx.ADHOC_ID : tile.task.id;
-  // Another deck's task: its sessions are started on that deck, so the tile
-  // offers no new session; its body host serves only extensions that follow
-  // a task's deck (slots `decks: true`).
-  const remoteTask = tile.kind === 'task' && !onOwnDeck(tile.task, ctx);
+  // Another deck's task starts its sessions on that deck, so while that deck is
+  // unreachable the tile offers no new session.
+  const noNewSession = tile.kind === 'task' && !onOwnDeck(tile.task, ctx) && Boolean(tile.task.deckUnreachable);
   const snoozedCollapsed = ctx.collapsedSnoozed.has(tileKey);
   const snoozePill = `<button class="snooze-label snooze-toggle" data-tile="${esc(tileKey)}" title="${snoozedCollapsed ? 'Show snoozed' : 'Hide snoozed'}">snoozed ${asleep.length}<span class="snooze-toggle-icon">${snoozedCollapsed ? PLUS_ICON : MINUS_ICON}</span></button>`;
   const cards = renderTileCards(active, ctx, { focusMode })
@@ -751,9 +750,9 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   // affordance: ringing it read as nothing, since it sits at the top, not the end).
   const showEmpty = !cards;
   const slotSel = ctx.selectedNewSlot === tileKey;
-  const newSess = remoteTask ? '' : `<button class="task-new-sess" title="New session in this task">${ROBOT_ICON}</button>`;
+  const newSess = noNewSession ? '' : `<button class="task-new-sess" title="New session in this task">${ROBOT_ICON}</button>`;
   const emptyBody = (hint) =>
-    `<div class="cell-empty-body"><button class="empty-new-sess${slotSel ? ' selected' : ''}">${ROBOT_ICON}<span>New session</span></button><span class="empty-hint">${hint}</span></div>`;
+    `<div class="cell-empty-body">${noNewSession ? '' : `<button class="empty-new-sess${slotSel ? ' selected' : ''}">${ROBOT_ICON}<span>New session</span></button>`}<span class="empty-hint">${hint}</span></div>`;
   const slotRow = slotSel && !showEmpty
     ? `<button class="new-sess-row selected" title="New session in this task">${ROBOT_ICON}<span>New session</span></button>`
     : '';
