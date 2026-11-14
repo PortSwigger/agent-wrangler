@@ -1,3 +1,4 @@
+export { isTestProcess } from './test-environment.js';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -11,20 +12,6 @@ function expandTilde(p) {
   if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
   return p;
 }
-
-// A test run that skipped `--import ./server/test-setup.js` (a bare `node --test
-// server/x.test.js`, which agents run constantly) would otherwise resolve the
-// REAL data dir, CODEX_HOME, GEMINI_CLI_HOME and CLAUDE_CONFIG_DIR, and suites
-// like extensions-install.test.js wipe `extensions/` and `extensions.json` in
-// their reset(): that is how a live board once lost every installed extension.
-// So a test process runs the setup itself, before DATA_DIR is computed below.
-export function isTestProcess({ env = process.env, execArgv = process.execArgv, argv = process.argv } = {}) {
-  return Boolean(env.NODE_TEST_CONTEXT)
-    || execArgv.some((a) => a === '--test' || a.startsWith('--test-'))
-    || /\.test\.[cm]?js$/.test(argv[1] || '');
-}
-
-if (isTestProcess() && !process.env.AW_TEST_SETUP) await import('./test-setup.js');
 
 export const DATA_DIR = process.env.AW_DATA_DIR
   ? path.resolve(expandTilde(process.env.AW_DATA_DIR))

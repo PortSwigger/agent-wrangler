@@ -1,3 +1,4 @@
+import './test-environment.js';
 import { adapterFor } from './agents/index.js';
 // Time-bucketed spend/usage aggregation for the Usage dashboard. Recomputes from
 // the on-disk Claude/Codex transcripts (never the board's cached per-session
