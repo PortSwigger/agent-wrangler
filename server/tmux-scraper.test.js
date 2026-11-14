@@ -838,3 +838,31 @@ test('codexApprovalState ignores prose and an answered prompt', () => {
   // The Claude trust fallback and Codex's own trust dialog keep their own labels.
   assert.equal(classify('  1. Yes, continue\n  2. No, quit\n  Press enter to continue').waitingFor, 'Codex is asking whether to trust this folder');
 });
+
+
+test('classify: the captured modern Codex MCP selector needs approval', () => {
+  const pane = codexApproval('mcp-modern');
+  for (const text of [pane, `• Working (2s • esc to interrupt)\n${pane}`]) {
+    assert.deepEqual(classify(text), {
+      status: 'needs-you', waitingFor: 'Codex is asking for approval', waitingReason: 'permission',
+    });
+  }
+});
+
+test('classify: modern Codex approval survives a scrolled-away question and another selected option', () => {
+  const pane = codexApproval('mcp-modern');
+  const menu = pane.slice(pane.indexOf('  \x1b[1;7m› 1.'));
+  assert.equal(classify(menu).waitingReason, 'permission');
+  const selectedSession = pane.replace('› 1. Allow', '  1. Allow').replace('2. Allow for this session', '› 2. Allow for this session');
+  assert.equal(classify(selectedSession).waitingReason, 'permission');
+});
+
+test('classify: modern Codex approval requires the menu and live submit footer', () => {
+  const pane = codexApproval('mcp-modern');
+  for (const text of [
+    'The menu says "Allow for this session", "Always allow", and "enter to submit | esc to cancel".',
+    pane.replace('4. Cancel', '4. Something else'),
+    pane.replace('enter', 'space'),
+    `${pane}\n• Tool finished\n› Ask Codex to do anything\n  ? for shortcuts`,
+  ]) assert.equal(classify(text).status, 'idle');
+});
