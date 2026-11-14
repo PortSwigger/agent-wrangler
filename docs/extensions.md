@@ -2145,7 +2145,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
   `hasBackgroundShell` from the latest board graph. Without a graph node, status
   and waitingReason are `null`, and the booleans are `false`. Conversation ids
-  (`liveSessionId` and `priorLiveSessionIds`) remain omitted. `lastActivity` uses
+  (`liveSessionId` and `priorLiveSessionIds`) remain omitted. `lastActivity` (1.89.0) uses
   the latest graph's transcript activity, falling back to the stored mapping
   value, then `null`. `createdAt` and `relaunchedAt` come from the mapping and
   are `null` when absent. These timestamps are Unix milliseconds. `waitingReason`

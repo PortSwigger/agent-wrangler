@@ -631,7 +631,10 @@ import semver from 'semver';
 // spawner holds; the rest are withheld (`withheldRepos` on the dispatch result)
 // until the human allows a request. A runtime that reads `phase: 'repos'`
 // declares `^1.88.0`.
-export const HOST_API_VERSION = '1.88.0';
+//
+// 1.89.0 session projections expose `relaunchedAt` and take `lastActivity`
+// from live graph activity. Extensions relying on these declare `^1.89.0`.
+export const HOST_API_VERSION = '1.89.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
