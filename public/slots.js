@@ -73,7 +73,7 @@ import { warnLegacy } from './legacy-surface.js';
 // A contribution may carry `weight(taskId, graph)`: the px of tile height its
 // content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
 // it. It must be cheap and synchronous; a throwing weight counts as 0.
-// Another deck's task tile (1.78.0) gets only the `task.body` and `task.action`
+// Another deck's task tile (1.81.0) gets only the `task.body` and `task.action`
 // contributions registered with `decks: true`; its subject also carries
 // `deckId` and `deckTaskId`, the task's id on its own deck (see deckTask()).
 // `session.inputGate` (1.52.0) is a VALUE slot that can stop the human typing
@@ -599,7 +599,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             onError(`[ext:${extId}] send refused: "${type}" is not one of this extension's control handlers (${allowed.join(', ') || 'none'})`);
             return;
           }
-          // `deck` (1.78.0) sends the frame to that deck alone, which must
+          // `deck` (1.81.0) sends the frame to that deck alone, which must
           // report this extension with a boardApi this half pairs with.
           if (Object.hasOwn(frame, 'deck')) {
             const row = typeof frame.deck === 'string' ? (extDecks.get(extId) || []).find((r) => r.deckId === frame.deck) : null;
@@ -614,12 +614,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         // This extension's own `ext.<id>` state from the deck's state frame
         // (1.74.0): what its graph contributor returned, as a frozen copy, or
         // null before the first frame. `onState(fn)` hears each new one.
-        // With `{ deck }` (1.78.0), that deck's copy of it instead.
+        // With `{ deck }` (1.81.0), that deck's copy of it instead.
         state: (opts) => {
           const deckId = isPlainObject(opts) && typeof opts.deck === 'string' && opts.deck ? opts.deck : null;
           return deckId ? deckStateOf(extId, deckId) : stateOf(extId);
         },
-        // The decks on the board that report this extension (1.78.0), the own
+        // The decks on the board that report this extension (1.81.0), the own
         // deck first: `[{ deckId, name, colour, own, status, boardApi }]`, where
         // `status` is 'ready', 'incompatible' (the deck lists it with another
         // boardApi than this half's, so it is never sent an action) or
@@ -653,7 +653,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           if (args != null && !isPlainObject(args)) return Promise.resolve({ ok: false, data: null, error: { code: 'invalid', message: 'act args must be an object' } });
           if (typeof baseApi.act !== 'function') return Promise.resolve({ ok: false, data: null, error: { code: 'unsupported', message: 'act is not available' } });
           const session = isPlainObject(opts) && typeof opts.session === 'string' && opts.session ? opts.session : null;
-          // `deck` (1.78.0) sends it to that deck alone, which must report this
+          // `deck` (1.81.0) sends it to that deck alone, which must report this
           // extension with a boardApi this half pairs with.
           const deckId = isPlainObject(opts) && typeof opts.deck === 'string' && opts.deck ? opts.deck : null;
           if (deckId) {
@@ -1598,7 +1598,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // an extension for the life of the page over one bad frame is the worse
     // failure. Returns how many listeners were called.
     // `deck` names the deck whose server half sent it when that is not the
-    // board's own (1.78.0): the frame reaches the listeners only while that deck
+    // board's own (1.81.0): the frame reaches the listeners only while that deck
     // reports the extension with a boardApi this half pairs with, and carries
     // `fromDeck`. A frame from the own deck never carries `fromDeck`.
     dispatchMessage(frame, { deck = null } = {}) {
@@ -1846,7 +1846,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // The `task.action` items for one task tile's right-click menu — the same
     // item shape and the same guards as menuItems(), with the TILE as subject:
     // `items(task, graph, api)` where `task` is `{ id, name, adhoc }`, plus
-    // `deckId`/`deckTaskId` for another deck's task (1.78.0).
+    // `deckId`/`deckTaskId` for another deck's task (1.81.0).
     taskMenuItems(task, graph, baseApi) {
       return valueMenuItems('task.action', task, graph, baseApi);
     },

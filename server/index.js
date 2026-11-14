@@ -46,11 +46,11 @@ import { createMcpRequestHandler } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
 import { bindHost, deckPort, deckOnly, sessionApiPort } from './runtime.js';
-import { createSessionApi } from './session-api/index.js';
+import { createSessionApi, carriesSessionCredential } from './session-api/index.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createBoardServer } from './http-handler.js';
 import { createBoardDecks } from './board-decks.js';
-import { createDeckServer } from './deck/http.js';
+import { createDeckServer, refuseSessionCredentialUpgrade } from './deck/http.js';
 import { resolveMarkdownPath } from './file-preview.js';
 import { createExtFiles } from './ext-files.js';
 import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
@@ -78,6 +78,7 @@ import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
 import { collectPrepare } from './session-prepare.js';
+import { collectBeforeSpawn, notifySpawned } from './session-spawn.js';
 import { createLinkNormaliser } from './mcp/links.js';
 import { createExtDeliver } from './ext-deliver.js';
 import { sweepStaging } from './extensions/external.js';
@@ -285,6 +286,8 @@ sessionManager._launchContext = (ctx) => {
   return collectLaunchContext(ctx, { ext, hostApiFor, onError: logError });
 };
 sessionManager._taskFor = (sid) => taskStore.taskFor(sid);
+sessionManager._beforeSpawn = (payload) => collectBeforeSpawn(payload, { ext, hostApiFor, onError: logError });
+sessionManager._spawned = (payload, data) => notifySpawned(payload, data, { ext, hostApiFor, onError: logError });
 // `session.prepare` (server/session-prepare.js): runs before a new dispatch's
 // worktree exists; its warnings are toasted, an abort is thrown by dispatch.
 sessionManager._prepare = async (payload) => {
@@ -855,9 +858,9 @@ function removePrLink(store, ownerId, url) {
 // scheduled dispatch can't drift from a manual one); the `session` kind acts on an
 // EXISTING session via runSessionAction (resume if dormant, message if live).
 // Throws on a gone target — the caller turns that into a schedule-error.
-function performScheduleAction(action, now) {
+function performScheduleAction(action, now, scheduledBy) {
   if (!action || action.kind === 'dispatch') {
-    return runDispatch(action?.dispatch || {}, { sessionManager, taskStore, launchSource: 'schedule' }, now);
+    return runDispatch(action?.dispatch || {}, { sessionManager, taskStore, launchSource: 'schedule', scheduledBy }, now);
   }
   return runSessionAction(action, { sessionManager, tmuxFor, socketFor });
 }
@@ -875,7 +878,7 @@ async function fireSchedule(id, { manual = false } = {}) {
   const now = Date.now();
   const at = new Date(now).toISOString();
   try {
-    const { sessionId } = await performScheduleAction(snap.action, now);
+    const { sessionId } = await performScheduleAction(snap.action, now, snap.scheduledBy);
     scheduleStore.markFired(id, { at, sessionId }, now, { advance: !manual });
     // A one-off that fired cleanly has nothing left to show; delete it so agents'
     // self-scheduled wake-ups don't pile up as dead rows. A failed one stays (below).
@@ -1095,7 +1098,8 @@ function deckHandler(req, res) {
 
 // The session API (server/session-api): /mcp, /pr-attach and /pr-model behind
 // the per-card token check, on a port of its own. The deck keeps the same routes
-// for sessions launched before tokens, whose URLs name the board's port.
+// as an adapter onto it (same check, one deprecation warning) for sessions
+// launched before it had its own port, whose URLs name the board's port.
 const sessionApi = createSessionApi({
   dataDir: DATA_DIR,
   cardState: (id) => {
@@ -1144,6 +1148,10 @@ deckServer.on('upgrade', (req, socket, head) => {
     return;
   }
   const { pathname, search } = new URL(req.url, 'http://localhost');
+  if ((pathname === '/ws' || pathname === '/pty') && carriesSessionCredential(req)) {
+    refuseSessionCredentialUpgrade(socket);
+    return;
+  }
   if (pathname === '/ws') {
     const mode = wsApiMode(search);
     if (!mode) {

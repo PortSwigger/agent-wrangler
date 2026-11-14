@@ -18,7 +18,7 @@ export const listMailTool = {
   inputSchema: {},
   async handler({ deps, caller }) {
     if (caller == null) return errorResult('This request carried no session identity, so there is no mailbox to list.');
-    const structuredContent = { messages: deps.mailStore.list(caller).map(formatMailMeta) };
+    const structuredContent = { messages: deps.mailStore.listWithExcerpts(caller).map(formatMailMeta) };
     return {
       content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
       structuredContent,

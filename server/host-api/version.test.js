@@ -80,13 +80,16 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.74.0 split manifests and the board half's state, onState, act and styles,
 // and 1.75.0 `deckId` and `cardKey` on the board's session rows,
 // and 1.76.0 `deckName`, `deckColour` and `deckUnreachable` on them,
-// and 1.77.0 every deck's tasks, with `deckName`, in the `board.tray` context,
-// and 1.78.0 the board half's per-deck `decks`, `state({ deck })`, `act`'s and `send`'s `deck`, `fromDeck` and `decks: true` task contributions,
+// 1.77.0 every deck's tasks, with `deckName`, in the `board.tray` context,
+// 1.78.0 the beforeSpawn and spawned hooks
+// 1.79.0 metadata-only extension mail lists
+// 1.80.0 Codex approvalPolicy in sessions.spawn
+// 1.81.0 the board half's per-deck `decks`, `state({ deck })`, `act`'s and `send`'s `deck`, `fromDeck` and `decks: true` task contributions,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.78.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.78.0');
+test('the served version is 1.81.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.81.0');
   assert.equal(servesRange('^1.47.0'), true);
   assert.equal(servesRange('^1.48.0'), true);
   assert.equal(servesRange('^1.49.0'), true);
@@ -119,7 +122,10 @@ test('the served version is 1.78.0, and every 1.x manifest range it can honour p
   assert.equal(servesRange('^1.76.0'), true);
   assert.equal(servesRange('^1.77.0'), true);
   assert.equal(servesRange('^1.78.0'), true);
-  assert.equal(servesRange('^1.79.0'), false);
+  assert.equal(servesRange('^1.79.0'), true);
+  assert.equal(servesRange('^1.80.0'), true);
+  assert.equal(servesRange('^1.81.0'), true);
+  assert.equal(servesRange('^1.82.0'), false);
   assert.equal(servesRange('^1.46.0'), true);
   assert.equal(servesRange('^1.45.0'), true);
   assert.equal(servesRange('^1.44.0'), true);

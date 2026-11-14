@@ -66,3 +66,23 @@ test('successful schedule remains successful when its stored agent cannot supply
   assert.equal(messages[0].label, '12345678');
   assert.equal(scheduleStore.snapshot().schedules[0].lastSessionId, '12345678-abcd');
 });
+
+test('schedule firing forwards only store-owned creator provenance to the runner', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-schedule-source-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const scheduleStore = new ScheduleStore(path.join(dir, 'schedules.json'));
+  const schedule = scheduleStore.create({ when: { kind: 'cron', cron: '0 9 * * *' },
+    dispatch: { intent: 'do it', spawnedBy: 'FORGED', scheduledBy: 'FORGED' } }, Date.now(), { caller: 'CREATOR' });
+  const begin = source.indexOf('function performScheduleAction(');
+  const finish = source.indexOf('\n}\n', begin) + 2;
+  let received;
+  const perform = new Function('runDispatch', 'sessionManager', 'taskStore',
+    `${source.slice(begin, finish)}; return performScheduleAction;`)(
+    async (_opts, deps) => { received = deps; return { sessionId: 'NEW' }; }, {}, {},
+  );
+  const fire = new Function('scheduleStore', 'performScheduleAction', 'broadcast', 'sessionManager', 'sessionLabel',
+    `${declaration}; return fireSchedule;`)(scheduleStore, perform, () => {}, { entryFor: () => null }, sessionLabel);
+  await fire(schedule.id);
+  assert.equal(received.launchSource, 'schedule');
+  assert.equal(received.scheduledBy, 'CREATOR');
+});

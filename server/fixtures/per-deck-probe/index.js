@@ -13,7 +13,7 @@ export default {
   version: '0.1.0',
   defaultEnabled: true,
   requires: ['board:rebuild'],
-  boardApi: '^1.78.0',
+  boardApi: '^1.81.0',
   handlers: [{
     type: 'per-deck-probe-bump',
     async handler(_msg, host, reply) {

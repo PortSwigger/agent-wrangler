@@ -2431,8 +2431,8 @@ test('api.decks lists each deck reporting this extension, state({ deck }) reads 
   const heard = [];
   const off = api.decks.onChange((list) => heard.push(list.map((d) => [d.deckId, d.status])));
   const rows = [
-    { deckId: 'deck-a', name: 'A', colour: null, own: true, status: 'ready', boardApi: '^1.78.0', state: { count: 1 } },
-    { deckId: 'deck-b', name: 'B', colour: '#3fae6a', own: false, status: 'ready', boardApi: '^1.78.0', state: { count: 5 } },
+    { deckId: 'deck-a', name: 'A', colour: null, own: true, status: 'ready', boardApi: '^1.81.0', state: { count: 1 } },
+    { deckId: 'deck-b', name: 'B', colour: '#3fae6a', own: false, status: 'ready', boardApi: '^1.81.0', state: { count: 5 } },
     { deckId: 'deck-c', name: 'C', colour: null, own: false, status: 'incompatible', boardApi: '^1.76.0', state: null },
   ];
   slots.setExtDecks(new Map([['probe', rows], ['other', [{ deckId: 'deck-a', status: 'ready', state: { secret: 1 } }]]]));

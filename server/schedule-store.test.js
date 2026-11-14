@@ -254,3 +254,21 @@ test('session focus survives saving, reloading, and unrelated edits, and can be 
   assert.equal(reloaded.update(s.id, { name: 'Renamed' }, NOW).action.focus, true);
   assert.equal(reloaded.update(s.id, { action: { ...s.action, focus: false } }, NOW).action.focus, undefined);
 });
+
+test('store owns schedule provenance and strips forged dispatch fields', () => {
+  const store = new ScheduleStore(tmpFile());
+  const forged = { spawnedBy: 'FORGED', scheduledBy: 'FORGED', intent: 'do it' };
+  const created = store.create({ when: DAILY, scheduledBy: 'FORGED', dispatch: forged }, NOW, { caller: 'CREATOR' });
+  assert.equal(created.scheduledBy, 'CREATOR');
+  assert.equal(created.action.dispatch.spawnedBy, undefined);
+  assert.equal(created.action.dispatch.scheduledBy, undefined);
+  assert.equal(new ScheduleStore(store.file).schedules[0].scheduledBy, 'CREATOR');
+  const renamed = store.update(created.id, { name: 'renamed', scheduledBy: 'FORGED' }, NOW);
+  assert.equal(renamed.scheduledBy, 'CREATOR');
+  const edited = store.update(created.id, { dispatch: forged, scheduledBy: 'FORGED' }, NOW, { caller: 'EDITOR' });
+  assert.equal(edited.scheduledBy, 'EDITOR');
+  assert.equal(edited.action.dispatch.spawnedBy, undefined);
+  const board = store.update(created.id, { dispatch: forged, scheduledBy: 'FORGED' }, NOW);
+  assert.equal(board.scheduledBy, undefined);
+  assert.equal(board.action.dispatch.scheduledBy, undefined);
+});

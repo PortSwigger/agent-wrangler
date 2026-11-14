@@ -207,17 +207,17 @@ test('a deck that is down when the page loads still shows its last cards, unreac
 test('each extension is listed with every deck reporting it: ready, incompatible on another boardApi, or unreachable', () => {
   const descriptor = (exts) => ({ extensions: exts.map(([id, boardApi]) => ({ id, version: null, boardApi })) });
   const decks = [
-    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', descriptor: descriptor([['probe', '^1.78.0'], ['todos', '^1.74.0']]), ext: { probe: { count: 1 } } },
+    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', descriptor: descriptor([['probe', '^1.81.0'], ['todos', '^1.74.0']]), ext: { probe: { count: 1 } } },
     { deckId: 'deck-b', name: 'Laptop B', colour: null, status: 'ready', descriptor: descriptor([['probe', '^1.76.0']]), ext: { probe: { count: 9 } } },
-    { deckId: 'deck-c', name: 'Laptop C', colour: null, status: 'unreachable', descriptor: descriptor([['probe', '^1.78.0']]), ext: { probe: { count: 4 } } },
-    { deckId: 'deck-d', name: 'Copy of A', status: 'incompatible', duplicate: 'own', descriptor: descriptor([['probe', '^1.78.0']]) },
+    { deckId: 'deck-c', name: 'Laptop C', colour: null, status: 'unreachable', descriptor: descriptor([['probe', '^1.81.0']]), ext: { probe: { count: 4 } } },
+    { deckId: 'deck-d', name: 'Copy of A', status: 'incompatible', duplicate: 'own', descriptor: descriptor([['probe', '^1.81.0']]) },
     { deckId: 'deck-e', name: 'Not yet', status: 'connecting', descriptor: null },
   ];
-  const got = extensionDecks(decks, (id) => ({ probe: '^1.78.0' })[id] ?? null);
+  const got = extensionDecks(decks, (id) => ({ probe: '^1.81.0' })[id] ?? null);
   assert.deepEqual(got.get('probe'), [
-    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', boardApi: '^1.78.0', state: { count: 1 } },
+    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', boardApi: '^1.81.0', state: { count: 1 } },
     { deckId: 'deck-b', name: 'Laptop B', colour: null, own: false, status: 'incompatible', boardApi: '^1.76.0', state: null },
-    { deckId: 'deck-c', name: 'Laptop C', colour: null, own: false, status: 'unreachable', boardApi: '^1.78.0', state: { count: 4 } },
+    { deckId: 'deck-c', name: 'Laptop C', colour: null, own: false, status: 'unreachable', boardApi: '^1.81.0', state: { count: 4 } },
   ]);
   assert.deepEqual(got.get('todos').map((r) => [r.deckId, r.status]), [['deck-a', 'ready']], 'an extension with no board half here pairs with any deck');
 });
