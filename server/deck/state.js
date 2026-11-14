@@ -65,7 +65,7 @@ export const SETTINGS_KEYS = [
   'extensions',
 ];
 
-export const STATUS_KEYS = ['codeVersion', 'quarantinedBuiltins', 'staleGuiSession'];
+export const STATUS_KEYS = ['codeVersion', 'quarantinedBuiltins', 'staleGuiSession', 'missingExtensionFiles'];
 
 const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => k in obj).map((k) => [k, obj[k]]));
 
