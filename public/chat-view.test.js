@@ -173,6 +173,7 @@ async function mountView({ onSend, cwd = null, onGoTerminal, platform = 'MacInte
   const openedFor = [];
   const view = initChatView({
     send: (m) => { sent.push(m); return onSend?.(m) ?? true; },
+    cardOf: (sid) => `d1/${sid}`,
     onSubagentClick() {},
     onOpenDiff() {},
     onGoTerminal: (id) => onGoTerminal?.(id),
@@ -193,7 +194,7 @@ async function mountView({ onSend, cwd = null, onGoTerminal, platform = 'MacInte
 
 async function mountSelectedTranscript(options) {
   const state = await mountView(options);
-  state.view.mount('s1');
+  state.view.mount('d1/s1');
   const stream = state.byId.get('chat-stream');
   const anchorNode = stream.appendChild(state.document.createElement('p'));
   const focusNode = stream.appendChild(state.document.createElement('p'));
@@ -270,7 +271,7 @@ for (const scenario of ['handled key', 'composition', 'repeat', 'selected draft'
 
 test('a chat reply with a contextPercent shows the bar, filled and labelled', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 42 });
   const bar = byId.get('chat-context-bar');
   assert.equal(bar.hidden, false);
@@ -282,7 +283,7 @@ test('a chat reply with a contextPercent shows the bar, filled and labelled', as
 
 test('contextPercent thresholds match the terminal statusline (50%/70%)', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   const bar = byId.get('chat-context-bar');
   view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 10 });
   assert.equal(bar.dataset.level, 'ok');
@@ -296,7 +297,7 @@ test('contextPercent thresholds match the terminal statusline (50%/70%)', async 
 // a reply without it must hide the bar rather than leave a stale percentage.
 test('a reply with no contextPercent hides the bar, even after a previous reply showed one', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 30 });
   assert.equal(byId.get('chat-context-bar').hidden, false);
   view.onChatReply({ sessionId: 's1', token: 1, offset: 2, epoch: 0, events: [], contextPercent: null });
@@ -305,10 +306,10 @@ test('a reply with no contextPercent hides the bar, even after a previous reply 
 
 test('mounting a different session hides the previous one\'s context bar until its own reply arrives', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [], contextPercent: 30 });
   assert.equal(byId.get('chat-context-bar').hidden, false);
-  view.mount('s2');
+  view.mount('d1/s2');
   assert.equal(byId.get('chat-context-bar').hidden, true, 'must not carry s1\'s percentage into s2\'s chip');
 });
 
@@ -316,32 +317,32 @@ test('mounting a different session hides the previous one\'s context bar until i
 
 test('a draft does not follow the reader to another session', async () => {
   const { view, byId, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   input.value = 'SESSION-ONE-SECRET-PROMPT';
-  view.mount('sess-2');
+  view.mount('d1/sess-2');
   assert.equal(input.value, '', 'the composer opened for sess-2 must not hold sess-1 text');
   assert.equal(byId.get('chat-send').disabled, true, 'and Send must not be live over it');
 });
 
 test('switching back restores the draft rather than discarding the work', async () => {
   const { view, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   input.value = 'half-written thought';
-  view.mount('sess-2');
+  view.mount('d1/sess-2');
   input.value = 'a different thought';
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   assert.equal(input.value, 'half-written thought');
-  view.mount('sess-2');
+  view.mount('d1/sess-2');
   assert.equal(input.value, 'a different thought');
 });
 
 test('unmount puts the draft away and leaves the shared composer empty', async () => {
   const { view, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   input.value = 'unsent';
   view.unmount();
   assert.equal(input.value, '');
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   assert.equal(input.value, 'unsent');
 });
 
@@ -349,7 +350,7 @@ test('unmount puts the draft away and leaves the shared composer empty', async (
 
 test('Esc asks the server for the prompt and loads nothing on its own', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
   const req = sent.find((m) => m.type === 'interrupt');
@@ -362,7 +363,7 @@ test('Esc asks the server for the prompt and loads nothing on its own', async ()
 
 test('the interrupt reply fills the composer', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
   const { token } = sent.find((m) => m.type === 'interrupt');
@@ -372,7 +373,7 @@ test('the interrupt reply fills the composer', async () => {
 
 test('a reply whose token does not match is ignored', async () => {
   const { view, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
   view.onInterruptRestore({ token: 'someone-elses-token', text: 'WRONG SESSION PROMPT', source: 'pane' });
@@ -381,19 +382,19 @@ test('a reply whose token does not match is ignored', async () => {
 
 test('a reply arriving after the view moved on cannot reach the new session', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
   const { token } = sent.find((m) => m.type === 'interrupt');
   // The reader switches cards while the interrupt is still in flight.
-  view.mount('sess-2');
+  view.mount('d1/sess-2');
   view.onInterruptRestore({ token, text: 'SESSION-ONE PROMPT', source: 'transcript' });
   assert.equal(input.value, '', "sess-1's prompt must not land in sess-2's composer");
 });
 
 test('a restore never overwrites something typed since Esc was pressed', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.value = 'I already started typing this';
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
@@ -404,7 +405,7 @@ test('a restore never overwrites something typed since Esc was pressed', async (
 
 test('an empty reply leaves the composer alone', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
   const { token } = sent.find((m) => m.type === 'interrupt');
@@ -414,7 +415,7 @@ test('an empty reply leaves the composer alone', async () => {
 
 test('Esc does nothing unless the session is actually working', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
   assert.equal(sent.some((m) => m.type === 'interrupt'), false);
@@ -424,7 +425,7 @@ test('Esc does nothing unless the session is actually working', async () => {
 
 test('the send after an interrupt asks for the pane composer to be cleared', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
   const { token } = sent.find((m) => m.type === 'interrupt');
@@ -441,7 +442,7 @@ test('the send after an interrupt asks for the pane composer to be cleared', asy
 
 test('an ordinary send does NOT ask for a clear — a pane draft is the human\'s', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'just a prompt';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, preventDefault() {} });
@@ -451,7 +452,7 @@ test('an ordinary send does NOT ask for a clear — a pane draft is the human\'s
 
 test('the clear is consumed by one send, not carried into the next', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
   view.setStatus('idle');
@@ -468,10 +469,10 @@ test('the clear is consumed by one send, not carried into the next', async () =>
 
 test('switching sessions disarms the clear, so another session\'s pane is never wiped', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
-  view.mount('sess-2');
+  view.mount('d1/sess-2');
   view.setStatus('idle');
   input.value = 'a prompt for the other session';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, preventDefault() {} });
@@ -484,7 +485,7 @@ test('switching sessions disarms the clear, so another session\'s pane is never 
 
 test('Shift+Enter does not send — it is how a multi-line prompt is written', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'line one';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: true, preventDefault() {} });
@@ -496,7 +497,7 @@ test('an IME composition Enter does not send', async () => {
   // Pressing Enter to confirm a composition is not a submit; without the guard it
   // fires before the composed text has even landed in the field.
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'にほんご';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, isComposing: true, preventDefault() {} });
@@ -505,7 +506,7 @@ test('an IME composition Enter does not send', async () => {
 
 test('an empty composer sends nothing', async () => {
   const { view, sent, input } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = '   ';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, preventDefault() {} });
@@ -514,7 +515,7 @@ test('an empty composer sends nothing', async () => {
 
 test('sending empties the composer at once and keeps it locked until the matching acknowledgement', async () => {
   const { view, input, sent } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'once';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', shiftKey: false, preventDefault() {} });
@@ -530,7 +531,7 @@ test('sending empties the composer at once and keeps it locked until the matchin
 
 test('a rejected delivery retains and re-enables the composer', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'do not lose this';
   send(input);
@@ -543,7 +544,7 @@ test('a rejected delivery retains and re-enables the composer', async () => {
 
 test('a dropped websocket message leaves the composer editable', async () => {
   const { view, input, sent, byId } = await mountView({ onSend: () => false });
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'keep me';
   send(input);
@@ -555,7 +556,7 @@ test('a dropped websocket message leaves the composer editable', async () => {
 
 test('a connection close releases an unacknowledged delivery and retains its draft', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'keep me after reconnect';
   send(input);
@@ -568,7 +569,7 @@ test('a connection close releases an unacknowledged delivery and retains its dra
 
 test('an unknown delivery does not clear a terminal draft on a later send', async () => {
   const { view, input, sent } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'first';
   send(input);
@@ -581,7 +582,7 @@ test('an unknown delivery does not clear a terminal draft on a later send', asyn
 test('a failed Esc-then-edit send keeps the pane-clear flag for its retry', async () => {
   let accepted = false;
   const { view, input, sent } = await mountView({ onSend: (m) => m.type === 'message' ? accepted : true });
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('working');
   input.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
   view.setStatus('idle');
@@ -594,7 +595,7 @@ test('a failed Esc-then-edit send keeps the pane-clear flag for its retry', asyn
 
 test('a second Enter while delivery is pending sends only one frame', async () => {
   const { view, input, sent } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'once only';
   send(input);
@@ -604,12 +605,12 @@ test('a second Enter while delivery is pending sends only one frame', async () =
 
 test('pending delivery in one session does not block another session', async () => {
   const { view, input, sent } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'first';
   send(input);
   const first = sent.find((m) => m.type === 'message');
-  view.mount('sess-2');
+  view.mount('d1/sess-2');
   view.setStatus('idle');
   input.value = 'second';
   send(input);
@@ -626,7 +627,7 @@ const echoNodes = (byId) => [...new Set(byId.get('chat-stream').children.flatMap
 
 test('a sent prompt appears at once as a dashed bubble, queued once delivered, until the transcript has it', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'hello there';
   send(input);
@@ -640,7 +641,7 @@ test('a sent prompt appears at once as a dashed bubble, queued once delivered, u
 
 test('the transcript copy of a prompt replaces its local echo', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'hello there';
   send(input);
@@ -654,7 +655,7 @@ test('the transcript copy of a prompt replaces its local echo', async () => {
 
 test('a failed delivery removes the echo and restores the draft', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'keep me';
   send(input);
@@ -671,20 +672,20 @@ test('a failed delivery removes the echo and restores the draft', async () => {
 
 test('a click on a markdown-file control opens the preview at its resolved path, for the session on screen', async () => {
   const { view, byId, opened, openedFor, document } = await mountView({ cwd: '/repo' });
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   const btn = document.createElement('button');
   btn.dataset.mdPath = '/repo/docs/plan.md';
   byId.get('chat-stream').appendChild(btn);
   let prevented = false;
   byId.get('chat-stream').dispatchEvent({ type: 'click', target: btn, preventDefault: () => { prevented = true; } });
   assert.deepEqual(opened, ['/repo/docs/plan.md']);
-  assert.deepEqual(openedFor, ['sess-1']);
+  assert.deepEqual(openedFor, ['d1/sess-1']);
   assert.equal(prevented, true);
 });
 
 test('a click on ordinary stream content opens nothing', async () => {
   const { view, byId, opened, document } = await mountView({ cwd: '/repo' });
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   const plain = document.createElement('div');
   byId.get('chat-stream').appendChild(plain);
   byId.get('chat-stream').dispatchEvent({ type: 'click', target: plain, preventDefault() {} });
@@ -693,7 +694,7 @@ test('a click on ordinary stream content opens nothing', async () => {
 
 test('Enter and Space activate a markdown-file control — it has no href to do it for us', async () => {
   const { view, byId, opened, document } = await mountView({ cwd: '/repo' });
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   const link = document.createElement('a');
   link.dataset.mdPath = '/repo/docs/plan.md';
   byId.get('chat-stream').appendChild(link);
@@ -720,7 +721,7 @@ test('a measurement taken while unrendered never becomes the composer height', a
   fire(input, 'input');
   assert.equal(input.style.height, '54px');
   input.scrollHeight = 0; // what a display:none ancestor makes the browser report
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   assert.equal(input.style.height, 'auto', 'mount must reset the stale height and never pin 0px');
   input.value = 'typed while the pane happened to be hidden';
   fire(input, 'input');
@@ -760,7 +761,7 @@ test('the burst schedule brackets the write without outliving one poll period', 
 test('sending brings the next polls forward instead of waiting for the tick', async () => {
   const { view, sent, input, timers, runTimers } = await mountView();
   const { SEND_BURST_MS } = await import('./chat-view.js');
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('idle');
   const before = sent.filter((m) => m.type === 'chat').length;
   input.value = 'hello';
@@ -774,7 +775,7 @@ test('sending brings the next polls forward instead of waiting for the tick', as
 
 test('a burst poll carries the current token, so a stale one is still dropped', async () => {
   const { view, sent, input, runTimers } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('idle');
   input.value = 'hello';
   send(input);
@@ -787,11 +788,11 @@ test('a burst poll carries the current token, so a stale one is still dropped', 
 
 test('switching session calls the burst off — it would poll the wrong card', async () => {
   const { view, sent, input, runTimers } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('idle');
   input.value = 'hello';
   send(input);
-  view.mount('s2');
+  view.mount('d1/s2');
   const before = sent.filter((m) => m.type === 'chat').length;
   runTimers();
   assert.equal(sent.filter((m) => m.type === 'chat').length, before, 'nothing left armed after the remount');
@@ -799,7 +800,7 @@ test('switching session calls the burst off — it would poll the wrong card', a
 
 test('closing the view calls the burst off', async () => {
   const { view, sent, input, runTimers } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('idle');
   input.value = 'hello';
   send(input);
@@ -817,13 +818,13 @@ function userReply(view, offset, text) {
 
 test('the navigator stays hidden with no user message to jump to', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   assert.equal(byId.get('chat-jump-nav').hidden, true);
 });
 
 test('the navigator shows only once a user message scrolls out of view', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   const streamEl = byId.get('chat-stream');
   streamEl._rect = { top: 0, bottom: 400 };
   userReply(view, 1, 'hi');
@@ -840,7 +841,7 @@ test('the navigator shows only once a user message scrolls out of view', async (
 
 test('prev and next step between user messages relative to the scroll position', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   const streamEl = byId.get('chat-stream');
   streamEl._rect = { top: 0, bottom: 400 };
   streamEl.scrollHeight = 1000;
@@ -864,7 +865,7 @@ test('prev and next step between user messages relative to the scroll position',
 
 test('a message a jump just landed on is not the next target', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   const streamEl = byId.get('chat-stream');
   streamEl._rect = { top: 0, bottom: 400 };
   streamEl.scrollHeight = 1000;
@@ -882,7 +883,7 @@ test('a message a jump just landed on is not the next target', async () => {
 
 test('next is disabled when the stream is scrolled to the bottom', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   const streamEl = byId.get('chat-stream');
   streamEl._rect = { top: 0, bottom: 400 };
   streamEl.scrollHeight = 1000;
@@ -900,7 +901,7 @@ test('next is disabled when the stream is scrolled to the bottom', async () => {
 
 test('next stays enabled just short of the bottom, where a jump can still move', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   const streamEl = byId.get('chat-stream');
   streamEl._rect = { top: 0, bottom: 400 };
   userReply(view, 1, 'one');
@@ -917,7 +918,7 @@ test('next stays enabled just short of the bottom, where a jump can still move',
 
 test('next from the last user message scrolls to the bottom', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   const streamEl = byId.get('chat-stream');
   streamEl._rect = { top: 0, bottom: 400 };
   userReply(view, 1, 'one');
@@ -935,7 +936,7 @@ test('next from the last user message scrolls to the bottom', async () => {
 
 test('the jump highlight only ever clears the bubble it was actually pulsing', async () => {
   const { view, byId, runTimers } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   const streamEl = byId.get('chat-stream');
   streamEl._rect = { top: 0, bottom: 400 };
   userReply(view, 1, 'first');
@@ -963,7 +964,7 @@ test('isHumanTypedUserItem rejects Agent-Wrangler-authored notices, accepts ever
 
 test('a mail/PR-nudge bubble is never the jump target, even as the newest one', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   const streamEl = byId.get('chat-stream');
   streamEl._rect = { top: 0, bottom: 400 };
   view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [{ kind: 'user', text: 'a real question' }] });
@@ -984,13 +985,13 @@ test('a mail/PR-nudge bubble is never the jump target, even as the newest one', 
 
 test('mounting a different session resets the jump navigator', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.onChatReply({ sessionId: 's1', token: 1, offset: 1, epoch: 0, events: [{ kind: 'user', text: 'hi' }] });
   const streamEl = byId.get('chat-stream');
   streamEl.children.find((c) => c.className === 'chat-user')._rect = { top: -100, bottom: -20 };
   streamEl.dispatchEvent({ type: 'scroll' });
   assert.equal(byId.get('chat-jump-nav').hidden, false);
-  view.mount('s2');
+  view.mount('d1/s2');
   assert.equal(byId.get('chat-jump-nav').hidden, true, 'a fresh session has nothing yet to jump to');
 });
 
@@ -998,7 +999,7 @@ test('mounting a different session resets the jump navigator', async () => {
 
 test('setExitNotice renders a labelled block with the exact captured text', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setExitNotice('boom: process exited 1\nAW_VERIFY_MARKER');
   const el = byId.get('chat-exit-notice');
   assert.equal(el.hidden, false);
@@ -1009,7 +1010,7 @@ test('setExitNotice renders a labelled block with the exact captured text', asyn
 
 test('setExitNotice(null) hides the block and clears its content', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setExitNotice('some output');
   view.setExitNotice(null);
   const el = byId.get('chat-exit-notice');
@@ -1019,9 +1020,9 @@ test('setExitNotice(null) hides the block and clears its content', async () => {
 
 test('mounting a different session clears the previous one\'s exit notice', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setExitNotice('s1 died here');
-  view.mount('s2');
+  view.mount('d1/s2');
   const el = byId.get('chat-exit-notice');
   assert.equal(el.hidden, true, 's2 has not died — must not inherit s1\'s banner');
   assert.equal(el.children.length, 0);
@@ -1029,7 +1030,7 @@ test('mounting a different session clears the previous one\'s exit notice', asyn
 
 test('unmount clears the exit notice too', async () => {
   const { view, byId } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setExitNotice('s1 died here');
   view.unmount();
   const el = byId.get('chat-exit-notice');
@@ -1040,7 +1041,7 @@ test('unmount clears the exit notice too', async () => {
 
 test('setStatus(needs-you) with no waitingFor shows the generic line and blocks the composer', async () => {
   const { view, byId, input } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('needs-you');
   const bar = byId.get('chat-notice-bar');
   assert.equal(bar.hidden, false);
@@ -1051,7 +1052,7 @@ test('setStatus(needs-you) with no waitingFor shows the generic line and blocks 
 
 test('setStatus(needs-you, waitingFor) shows the specific reason, not "this needs the terminal" verbatim for an unrelated cause', async () => {
   const { view, byId, input } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('needs-you', 'Codex has a CLI update available');
   const bar = byId.get('chat-notice-bar');
   assert.equal(bar.hidden, false);
@@ -1069,16 +1070,16 @@ test('setStatus(needs-you, waitingFor) shows the specific reason, not "this need
 test('a "Terminal →" button is offered and calls onGoTerminal for the mounted session', async () => {
   const goTo = [];
   const { view, byId } = await mountView({ onGoTerminal: (id) => goTo.push(id) });
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('needs-you', 'Codex has a CLI update available');
   const bar = byId.get('chat-notice-bar');
   bar.children[1].dispatchEvent({ type: 'click' });
-  assert.deepEqual(goTo, ['s1']);
+  assert.deepEqual(goTo, ['d1/s1']);
 });
 
 test('setStatus(needs-you, waitingFor, "api-error") shows a non-blocking notice with no Terminal button', async () => {
   const { view, byId, input } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('needs-you', 'API error — connection closed mid-response', 'api-error');
   const bar = byId.get('chat-notice-bar');
   assert.equal(bar.hidden, false);
@@ -1091,7 +1092,7 @@ test('setStatus(needs-you, waitingFor, "api-error") shows a non-blocking notice 
 
 test('an api-error needs-you does not block Send once the composer has text', async () => {
   const { view, byId, input } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('needs-you', 'API error — connection closed mid-response', 'api-error');
   input.value = 'try again';
   input.dispatchEvent({ type: 'input' });
@@ -1100,7 +1101,7 @@ test('an api-error needs-you does not block Send once the composer has text', as
 
 test('clearing needs-you re-enables the composer and hides the bar', async () => {
   const { view, byId, input } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('needs-you', 'Codex has a CLI update available');
   view.setStatus('idle');
   const bar = byId.get('chat-notice-bar');
@@ -1110,7 +1111,7 @@ test('clearing needs-you re-enables the composer and hides the bar', async () =>
 
 test('an input gate disables the composer with its reason, refuses a send and lifts cleanly', async () => {
   const { view, byId, input, sent } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('idle');
   input.value = 'hello';
   input.dispatchEvent({ type: 'input' });
@@ -1132,7 +1133,7 @@ test('an input gate disables the composer with its reason, refuses a send and li
 
 test('the suggested prompt stays hidden while a sent prompt is still echoed locally', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   const chat = sent.find((m) => m.type === 'chat');
   view.onChatReply({ sessionId: 'sess-1', token: chat.token, offset: 1, events: [], suggestion: 'commit and open a PR' });
@@ -1148,7 +1149,7 @@ test('the suggested prompt stays hidden while a sent prompt is still echoed loca
 
 test('a queued prompt stays below output that arrives after it was sent', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'later';
   send(input);
@@ -1162,14 +1163,14 @@ test('a queued prompt stays below output that arrives after it was sent', async 
 
 test('queued prompts survive leaving the view and coming back', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = 'wait for me';
   send(input);
   view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
   view.unmount();
   assert.equal(echoNodes(byId).length, 0);
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   assert.equal(echoNodes(byId).length, 1);
   const [bubble] = echoNodes(byId);
   assert.equal(bubble.dataset.pending, 'queued');
@@ -1183,7 +1184,7 @@ test('queued prompts survive leaving the view and coming back', async () => {
 
 test('several queued prompts share one tray with a single heading', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   for (const text of ['abc', 'foobar']) {
     input.value = text;
@@ -1198,7 +1199,7 @@ test('several queued prompts share one tray with a single heading', async () => 
 
 test('a send hands focus back to the composer once delivery is acknowledged', async () => {
   const { view, input, sent, document } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   let focused = 0;
   input.focus = () => { focused += 1; };
@@ -1228,7 +1229,7 @@ test('a prompt with an attachment is matched through the TUI image marker', asyn
 test('a shell command sent with a space after ! leaves the pending tray once recorded', async () => {
   const { scanChatText } = await import('../server/chat-events.js');
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   input.value = '! gh pr view 123 --repo acme/widgets';
   send(input);
@@ -1279,7 +1280,7 @@ test('prompts the agent folded into one message are all matched by it', async ()
 
 test('history replayed by a remount cannot acknowledge a newer identical prompt', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   const sendOnce = () => {
     input.value = 'continue';
@@ -1295,14 +1296,14 @@ test('history replayed by a remount cannot acknowledge a newer identical prompt'
   reply();
   sendOnce();
   view.unmount();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   reply();
   assert.equal(echoNodes(byId).filter((n) => n.dataset.pending).length, 1);
 });
 
 test('a terminal-origin prompt already shown cannot acknowledge a later identical send', async () => {
   const { view, input, sent, byId } = await mountView();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   view.setStatus('idle');
   const ts = Date.now();
   const reply = () => {
@@ -1314,7 +1315,7 @@ test('a terminal-origin prompt already shown cannot acknowledge a later identica
   send(input);
   view.onMessageResult({ requestId: sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
   view.unmount();
-  view.mount('sess-1');
+  view.mount('d1/sess-1');
   reply();
   assert.equal(echoNodes(byId).filter((n) => n.dataset.pending).length, 1);
 });
@@ -1329,14 +1330,14 @@ test('queued prompts survive a reload and are dropped once the transcript record
   stubLocalStorage();
   try {
     const first = await mountView();
-    first.view.mount('sess-1');
+    first.view.mount('d1/sess-1');
     first.view.setStatus('idle');
     first.input.value = 'still waiting';
     send(first.input);
     first.view.onMessageResult({ requestId: first.sent.find((m) => m.type === 'message').requestId, sessionId: 'sess-1', ok: true });
 
     const reloaded = await mountView();
-    reloaded.view.mount('sess-1');
+    reloaded.view.mount('d1/sess-1');
     const [bubble] = echoNodes(reloaded.byId);
     assert.equal(bubble.children.map((c) => c.textContent ?? c.data ?? c.nodeValue).join(''), 'still waiting');
     assert.equal(bubble.dataset.pending, 'queued');
@@ -1346,7 +1347,7 @@ test('queued prompts survive a reload and are dropped once the transcript record
     assert.equal(echoNodes(reloaded.byId)[0].dataset.pending, undefined);
 
     const afterRecorded = await mountView();
-    afterRecorded.view.mount('sess-1');
+    afterRecorded.view.mount('d1/sess-1');
     assert.equal(echoNodes(afterRecorded.byId).length, 0);
   } finally {
     delete globalThis.localStorage;
@@ -1357,7 +1358,7 @@ test('a failed delivery is not persisted', async () => {
   const store = stubLocalStorage();
   try {
     const { view, input, sent } = await mountView();
-    view.mount('sess-1');
+    view.mount('d1/sess-1');
     view.setStatus('idle');
     input.value = 'nope';
     send(input);
@@ -1389,7 +1390,7 @@ test('parseStoredEchoes drops expired and malformed entries and marks the rest q
 
 test('blocking API errors keep the terminal action and disabled composer until recovery', async () => {
   const { view, byId, input } = await mountView();
-  view.mount('s1');
+  view.mount('d1/s1');
   view.setStatus('needs-you', 'Login expired · Please run /login', 'api-error-blocking');
   const bar = byId.get('chat-notice-bar');
   assert.equal(bar.hidden, false);

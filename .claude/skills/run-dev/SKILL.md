@@ -16,9 +16,9 @@ Run a clean-slate instance fully isolated from the live board: its own data dir,
 # it before we bind. Port 0 collisions between the probe and the actual bind are
 # not possible in practice: the OS won't re-issue a port immediately.
 FREE_PORT='const net=require("net");const s=net.createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})'
-AW_PORT=$(node -e "$FREE_PORT"); AW_DECK_PORT=$(node -e "$FREE_PORT")
+AW_PORT=$(node -e "$FREE_PORT"); AW_DECK_PORT=$(node -e "$FREE_PORT"); AW_SESSION_API_PORT=$(node -e "$FREE_PORT")
 AWDIR=$(mktemp -d /tmp/aw-dev-XXXXX)
-AW_DEV=1 AW_DATA_DIR=$AWDIR AW_PORT=$AW_PORT AW_DECK_PORT=$AW_DECK_PORT node server/index.js >"$AWDIR/server.log" 2>&1 &
+AW_DEV=1 AW_DATA_DIR=$AWDIR AW_PORT=$AW_PORT AW_DECK_PORT=$AW_DECK_PORT AW_SESSION_API_PORT=$AW_SESSION_API_PORT node server/index.js >"$AWDIR/server.log" 2>&1 &
 SERVER_PID=$!                                              # needed for teardown
 until curl -s -o /dev/null -w "%{http_code}" "http://localhost:$AW_PORT/" | grep -q 200; do sleep 0.5; done
 echo "Dev board at http://localhost:$AW_PORT, deck at http://127.0.0.1:$AW_DECK_PORT  (data: $AWDIR)"
@@ -27,8 +27,23 @@ echo "Dev board at http://localhost:$AW_PORT, deck at http://127.0.0.1:$AW_DECK_
 - `AW_DATA_DIR` — isolated state (mappings, memory, config). **`mktemp` ensures a fresh, unique dir with no legacy entries** so the instance never scans the live board's default tmux socket. **Always let `mktemp` mint a unique path — never substitute a fixed, memorable name (`/tmp/aw-dev-todo`) you reuse across runs** (see the lock-blind-spot gotcha).
 - `AW_PORT` — the board's port, the URL you open; the board doesn't auto-open a browser (default off; `AW_OPEN_BROWSER=1` to open one).
 - `AW_DECK_PORT` — the deck's loopback port. The board page talks to it cross-origin (`<meta name="aw-deck-port">` names it); left unset it is `AW_PORT` + 1, or a free port if that is taken. The server log's `deck API at …` line says which.
+- `AW_SESSION_API_PORT` — where the instance's sessions reach `/mcp` and the PR hooks, each with its own token ([docs/session-api.md](../../../docs/session-api.md)). Set it explicitly so a dev instance never takes the live board's (by default the deck port + 1).
 - The instance generates its socket into `<AW_DATA_DIR>/config.json` (`tmuxSocket`); all its sessions run there.
 - `AW_DEV=1` — opts the instance into **self-shutdown** so a forgotten teardown can't leave it running forever (reparented to launchd). It exits when its data dir is wiped out from under it, or after ~30 min idle with no control-WS client connected (`AW_DEV_IDLE_SHUTDOWN_MIN` to tune, `0` to disable the idle timer). The production service never sets `AW_DEV`, so it's unaffected. It exits cleanly (lock released) but does **not** delete its data dir — teardown still owns that.
+
+### A second, deck-only instance
+
+To try a board against a second deck, start a deck-only instance with its own `mktemp` data dir and free port, allowlisting the dev board's origins:
+
+```bash
+AWDIR2=$(mktemp -d /tmp/aw-dev-XXXXX); DECK2_PORT=$(node -e "$FREE_PORT")
+AW_DEV=1 node server/cli.js --deck-only --data-dir "$AWDIR2" --port "$DECK2_PORT" \
+  --allowed-origins "http://localhost:$AW_PORT,http://127.0.0.1:$AW_PORT" >"$AWDIR2/server.log" 2>&1 &
+DECK2_PID=$!
+until curl -sf "http://127.0.0.1:$DECK2_PORT/deck" >/dev/null; do sleep 0.5; done
+```
+
+It serves only the deck API (`/deck`, `/ws?api=1`, `/pty`, `/mcp`) and 404s board pages. Tear it down like the first: kill `$DECK2_PID`, then remove `$AWDIR2`.
 
 ## Safety — why it can't touch the live board
 

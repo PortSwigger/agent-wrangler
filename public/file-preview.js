@@ -12,6 +12,7 @@ const titleEl = document.getElementById('file-title');
 const pathEl = document.getElementById('file-path');
 const bodyEl = document.getElementById('file-body');
 let currentPath = null;
+let currentCard = null;
 
 // Lazy + memoized: window.markdownit is read on first render, by which point the
 // vendored classic <script> has run (same trick as modals.js).
@@ -23,7 +24,7 @@ function close() { modal.classList.add('hidden'); currentPath = null; }
 async function load(p) {
   bodyEl.innerHTML = '<div class="file-loading">Loading…</div>';
   try {
-    const res = await deckAct('session.file', { args: { path: p } });
+    const res = await deckAct('session.file', { args: { path: p }, card: currentCard });
     if (!res.ok) throw new Error(res.error?.message || 'read error');
     const data = res.data;
     if (currentPath !== p) return; // superseded
@@ -36,8 +37,10 @@ async function load(p) {
   }
 }
 
-export function openFilePreview(p) {
+// `card` is the card the path was clicked in: its deck reads the file.
+export function openFilePreview(p, { card = null } = {}) {
   currentPath = p;
+  currentCard = card;
   titleEl.textContent = p.split('/').pop() || p;
   pathEl.textContent = p;
   modal.classList.remove('hidden');

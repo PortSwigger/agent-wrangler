@@ -122,6 +122,13 @@ export function autoFixPrChecksDefault(cfg = readConfig()) {
   return cfg.autoFixPrChecksDefault !== false;
 }
 
+// Whether the board skips a PR status toast when the owning session already got
+// the same notice in its pane. Default on; the toast still shows when the
+// session did not get the nudge. Takes cfg so tests never write config.json.
+export function suppressNudgedPrToasts(cfg = readConfig()) {
+  return cfg.suppressNudgedPrToasts !== false;
+}
+
 
 // The Codex sandbox/approval policy a new Codex session starts from: what the
 // dispatch dialog's Advanced options prefill, and what a dispatch with no dialog

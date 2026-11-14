@@ -176,7 +176,7 @@ export function buildInnerCommand({ args, intent = '', sessionId, worktree = nul
   ];
   if (appendPrompt) full.push('--append-system-prompt', appendPrompt);
   full.push(
-    '--mcp-config', claudeMcpConfigArg(sessionId),
+    '--mcp-config', claudeMcpConfigArg(),
     '--allowedTools', allowedToolsArg(),
     '--settings', launchSettings(launchContext),
     // The wrangler-meta skills (task-memory, links, spawn-session) load on every

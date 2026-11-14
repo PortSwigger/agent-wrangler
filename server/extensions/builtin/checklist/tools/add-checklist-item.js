@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 // Append one item to THIS session's visible checklist — the list the human sees
 // on the board card's panel. The target session is the caller's own card id
-// (extractCaller), never an argument: a `session` parameter would let a launched
+// (resolved from its session token), never an argument: a `session` parameter would let a launched
 // agent write into a sibling's checklist by hallucinating an id or lifting one
 // off list_sessions.
 export const addChecklistItemTool = {

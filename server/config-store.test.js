@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, CODEX_POLICY_DEFAULTS, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, CODEX_POLICY_DEFAULTS, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -90,6 +90,12 @@ test('prModelFooterEnabled defaults to on; only an explicit false disables', () 
   assert.equal(prModelFooterEnabled({ prModelFooter: true }), true);
   assert.equal(prModelFooterEnabled({ prModelFooter: false }), false);
   assert.equal(prModelFooterEnabled({ autoAttachPr: false }), true, 'independent of autoAttachPr');
+});
+
+test('suppressNudgedPrToasts defaults to on; only an explicit false disables', () => {
+  assert.equal(suppressNudgedPrToasts({}), true);
+  assert.equal(suppressNudgedPrToasts({ suppressNudgedPrToasts: true }), true);
+  assert.equal(suppressNudgedPrToasts({ suppressNudgedPrToasts: false }), false);
 });
 
 test('mailWakesDormant defaults to off; only an explicit true enables', () => {

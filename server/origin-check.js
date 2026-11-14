@@ -1,3 +1,5 @@
+import { readConfig } from './config-store.js';
+
 // The deck API's origin gate: it accepts only the board origins in its
 // allowlist. Shared by every browser-reachable deck surface: the WebSocket
 // upgrade (/ws + /pty), POST /mcp and the CORS answer on GET /deck. WebSockets
@@ -12,14 +14,19 @@
 // cross-origin POST — so a real attacker (a browser page) cannot suppress it.
 // Rejecting absent-Origin would break legitimate CLI/MCP callers and buys no CSRF
 // protection. The allowlist is the board's own loopback origins on the board
-// port; AW_ALLOWED_ORIGINS (comma list) widens it.
-export function allowedOriginSet(port) {
-  const base = [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
-  const extra = (process.env.AW_ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((o) => o.trim())
+// port (none for a deck-only instance, which passes a null port), widened by
+// AW_ALLOWED_ORIGINS (comma list) and config.json `allowedOrigins`.
+export function configuredOrigins(env = process.env, cfg = readConfig()) {
+  const fromCfg = Array.isArray(cfg.allowedOrigins) ? cfg.allowedOrigins : String(cfg.allowedOrigins || '').split(',');
+  return [...(env.AW_ALLOWED_ORIGINS || '').split(','), ...fromCfg]
+    .filter((o) => typeof o === 'string')
+    .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean);
-  return new Set([...base, ...extra]);
+}
+
+export function allowedOriginSet(port) {
+  const base = port == null ? [] : [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
+  return new Set([...base, ...configuredOrigins()]);
 }
 
 export function isAllowedOrigin(originHeader, port) {
@@ -39,11 +46,8 @@ export function isAllowedOrigin(originHeader, port) {
 // `port` may be a list: the deck answers on its own port and, through the
 // board server's forwarders, under the board's authority too.
 export function allowedHostSet(port) {
-  const base = [port].flat().flatMap((p) => [`localhost:${p}`, `127.0.0.1:${p}`, `[::1]:${p}`]);
-  const extra = (process.env.AW_ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean)
+  const base = [port].flat().filter((p) => p != null).flatMap((p) => [`localhost:${p}`, `127.0.0.1:${p}`, `[::1]:${p}`]);
+  const extra = configuredOrigins()
     .map((o) => { try { return new URL(o).host.toLowerCase(); } catch { return null; } })
     .filter(Boolean);
   return new Set([...base, ...extra]);

@@ -136,6 +136,9 @@ bin/agent-wrangler --port 7999 --data-dir ~/aw-scratch --open
 - `--data-dir <path>` — same as `AW_DATA_DIR`
 - `--open` — same as `AW_OPEN_BROWSER=1`
 - `--host <addr>` — same as `AW_BIND_HOST` (see the exposure warning below)
+- `--deck-only` — same as `AW_DECK_ONLY=1`: serve only the deck API, with no board (see
+  [Running a second deck](#running-a-second-deck)); `--port` is then the deck's port
+- `--allowed-origins <list>` — same as `AW_ALLOWED_ORIGINS`
 - `-v`/`--version`, `-h`/`--help`
 
 A flag overrides its environment variable. Running the launcher directly never auto-installs
@@ -152,9 +155,12 @@ Environment variables:
 
 - `AW_PORT` (or legacy `PORT`) — port the board listens on, the address you open (default `7878`)
 - `AW_DECK_PORT` — loopback port the deck, which runs sessions, listens on (default `AW_PORT` + 1).
+- `AW_SESSION_API_PORT` — port launched sessions reach `/mcp` and the PR hooks on, each with its own
+  session token (default the deck's port + 1, so `AW_PORT` + 2 with a board; see [docs/session-api.md](docs/session-api.md)).
   The board talks to it cross-origin; if the default is taken the deck takes a free port instead
 - `AW_ALLOWED_ORIGINS` — comma-separated extra board origins the deck accepts, beside the board's
-  own loopback origins
+  own loopback origins. `allowedOrigins` in the data dir's `config.json` (a list) adds more
+- `AW_DECK_ONLY=1` — start the deck alone, with no board server (see below)
 - `AW_DATA_DIR` — state directory (default `~/.agent-wrangler`); set it with a distinct `AW_PORT` to run an isolated instance
 - `AW_OPEN_BROWSER=1` — auto-open the board in a browser on startup (default: off; the legacy `AW_NO_OPEN=1` still suppresses)
 - `AW_DEFAULT_MODEL` — model pre-selected in the dispatch dialog, by value (e.g. `fable`, `opus`, `opusplan`, `sonnet`, `sonnet[1m]`, `haiku`); unset or unrecognised leaves the built-in default (`opus`)
@@ -166,13 +172,13 @@ Environment variables:
   with `--add-host=host.docker.internal:host-gateway` so the default still resolves, or set this
   to a host address the container can reach (e.g. the `docker0` bridge IP). Either way, this alone
   isn't enough on Linux: the server also binds loopback-only by default, so pair it with
-  `AW_BIND_HOST=0.0.0.0` (below) or the container still can't reach `/mcp` even once it's dialing
-  the right address
-- `AW_BIND_HOST` — interface the board server listens on (default `127.0.0.1`, loopback-only; the
-  deck itself always stays on loopback, and the board server forwards `/mcp` to it); set to
-  `0.0.0.0` when a devcontainer session needs to reach this server's `/mcp` from inside its
-  container. Widens exposure on a shared machine (the control/MCP posture is localhost-advisory),
-  so treat it as a deliberate opt-in, not a default
+  `AW_BIND_HOST=0.0.0.0` (below) or the container still can't reach the session API even once
+  it's dialing the right address
+- `AW_BIND_HOST` — interface the board server and the session API listen on (default `127.0.0.1`,
+  loopback-only; the deck itself always stays on loopback); set to `0.0.0.0` when a devcontainer
+  session needs to reach the session API from inside its container. Every session API request needs
+  a session token, but the board's own control channel is localhost-advisory, so treat this as a
+  deliberate opt-in, not a default
 - `AW_UPDATE_CHECK_MINUTES` — how often the board checks `origin/main` for updates when Settings ›
   Updates is on Notify or Auto (default `60`)
 - `AW_ROLLBACK_AFTER_STARTS` — how many starts an update gets to come up healthy before
@@ -181,6 +187,29 @@ Environment variables:
 Start scripts and package wrappers set a few more variables (`AW_SUPERVISED`, `AW_GIT_UPDATES`,
 `AW_INSTALL_MANAGER`, `AW_NODE`, `AW_INSTALL_ROOT`) to describe how the install runs. They're
 documented in [Install signals](docs/install-signals.md), and sessions never inherit them.
+
+### Running a second deck
+
+The deck is the half that runs sessions; the board is the page you open. `--deck-only` starts a
+deck with no board server: it serves the [deck API](docs/extensions.md#ports-and-origins)
+(`GET /deck`, `/ws?api=1`, `/pty`, and `/mcp` for its own sessions) on one loopback port and
+answers 404 to board pages. To run one beside your usual instance, give it its own data dir and
+port, and name the boards allowed to use it:
+
+```bash
+bin/agent-wrangler --deck-only --data-dir ~/aw-deck-2 --port 7890 \
+  --allowed-origins http://localhost:7878,http://127.0.0.1:7878
+```
+
+Its own data dir is what keeps it apart: its own tmux socket, sessions, tasks and `deckId`. One
+instance runs per data dir, so reusing your usual one is refused. A deck-only instance trusts no
+board by default: a browser page is let in only from an origin in `--allowed-origins`,
+`AW_ALLOWED_ORIGINS`, or `allowedOrigins` in its `config.json`, e.g.
+`{"allowedOrigins": ["http://localhost:7878"]}`. Non-browser clients, which send no `Origin`, are
+always let in, as on any deck. `curl http://127.0.0.1:7890/deck` shows its descriptor.
+
+To show its sessions on your board, add it under **Settings › Decks** (see
+[Add a deck to the board](docs/board-and-sessions.md#add-a-deck-to-the-board)).
 
 ### Run as a background service
 

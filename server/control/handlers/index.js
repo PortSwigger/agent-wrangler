@@ -17,6 +17,7 @@ import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { trustClaudeLaunchCwdHandler } from './trust-claude-launch-cwd.js';
 import { mailWakesDormantHandler } from './mail-wakes-dormant.js';
+import { suppressNudgedPrToastsHandler } from './suppress-nudged-pr-toasts.js';
 import { prModelFooterHandler } from './pr-model-footer.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { defaultSessionCwdHandler } from './default-session-cwd.js';
@@ -89,6 +90,7 @@ export const CONTROL_HANDLERS = [
   trustCodexLaunchCwdHandler,
   trustClaudeLaunchCwdHandler,
   mailWakesDormantHandler,
+  suppressNudgedPrToastsHandler,
   prModelFooterHandler,
   childFullViewHandler,
   defaultSessionCwdHandler,
