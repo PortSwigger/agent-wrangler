@@ -1,35 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { extractCaller, buildMcpServer, createMcpRequestHandler } from './server.js';
+import { buildMcpServer, createMcpRequestHandler } from './server.js';
+import { createSessionApiServer } from '../session-api/server.js';
 import { activeTools } from './tools/index.js';
 import { mcpSeenAt } from '../mcp-activity.js';
 // No extension contributes a tool today; pinned rather than inherited so these
 // assert the core registry itself.
 const NO_EXT = { tools: [], allowedToolNames: [] };
-
-test('extractCaller reads X-AW-Session header', () => {
-  assert.equal(extractCaller({ headers: { 'x-aw-session': 'CARD1' } }), 'CARD1');
-});
-
-test('extractCaller falls back to Authorization: Bearer', () => {
-  assert.equal(extractCaller({ headers: { authorization: 'Bearer CARD2' } }), 'CARD2');
-});
-
-test('extractCaller prefers the header over the bearer token', () => {
-  assert.equal(
-    extractCaller({ headers: { 'x-aw-session': 'CARD1', authorization: 'Bearer CARD2' } }),
-    'CARD1',
-  );
-});
-
-test('extractCaller returns null when neither is present or parseable', () => {
-  assert.equal(extractCaller({ headers: {} }), null);
-  assert.equal(extractCaller({ headers: { authorization: 'Basic abc' } }), null);
-  assert.equal(extractCaller({ headers: { 'x-aw-session': '' } }), null);
-});
 
 function fakeDeps() {
   return {
@@ -126,12 +105,15 @@ test('buildMcpServer runs spawn_session through the SDK schema boundary', async 
   await server.close();
 });
 
+// The handler behind the session API's own listener, with a check that maps
+// `Bearer tok-<card>` to that card.
+const tokenCheck = (req) => {
+  const m = /^Bearer tok-(\S+)$/.exec(req.headers.authorization || '');
+  return m ? { cardId: m[1] } : { refuse: 'missing-token', reason: 'missing token' };
+};
+
 async function withServer(deps, fn) {
-  const handler = createMcpRequestHandler(deps);
-  const srv = http.createServer((req, res) => {
-    if (req.method === 'POST' && req.url === '/mcp') return void handler(req, res);
-    res.writeHead(404).end();
-  });
+  const srv = createSessionApiServer({ resolve: tokenCheck, handlers: { '/mcp': createMcpRequestHandler(deps) } });
   await new Promise((r) => srv.listen(0, r));
   try { return await fn(srv.address().port); }
   finally { srv.close(); }
@@ -146,18 +128,11 @@ async function rpc(port, method, params, id, headers = {}) {
   return r.json();
 }
 
-test('POST /mcp tools/call attributes the caller from X-AW-Session', async () => {
+test('POST /mcp tools/call acts as the card the check resolved', async () => {
   await withServer(fakeDeps(), async (port) => {
-    const res = await rpc(port, 'tools/call', { name: 'list_sessions', arguments: {} }, 1, { 'X-AW-Session': 'CARD1' });
+    const res = await rpc(port, 'tools/call', { name: 'list_sessions', arguments: {} }, 1, { Authorization: 'Bearer tok-CARD1' });
     assert.equal(res.result.structuredContent.caller.sessionId, 'CARD1');
     assert.equal(res.result.structuredContent.sessions[0].isCaller, true);
-  });
-});
-
-test('POST /mcp tools/call attributes the caller from a bearer token', async () => {
-  await withServer(fakeDeps(), async (port) => {
-    const res = await rpc(port, 'tools/call', { name: 'list_sessions', arguments: {} }, 2, { Authorization: 'Bearer CARD1' });
-    assert.equal(res.result.structuredContent.caller.sessionId, 'CARD1');
   });
 });
 
@@ -169,15 +144,8 @@ test('POST /mcp records the caller at its initialize handshake, before any tool 
     const before = mcpSeenAt('CARD-BOOT');
     await rpc(port, 'initialize', {
       protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '0' },
-    }, 3, { 'X-AW-Session': 'CARD-BOOT' });
+    }, 3, { Authorization: 'Bearer tok-CARD-BOOT' });
     assert.ok(mcpSeenAt('CARD-BOOT') > before, 'initialize must stamp the caller');
-  });
-});
-
-test('POST /mcp records a Codex caller from its bearer token too', async () => {
-  await withServer(fakeDeps(), async (port) => {
-    await rpc(port, 'tools/call', { name: 'list_sessions', arguments: {} }, 4, { Authorization: 'Bearer CARD-CX' });
-    assert.ok(mcpSeenAt('CARD-CX') > 0);
   });
 });
 

@@ -5,23 +5,6 @@ import { activeTools } from './tools/index.js';
 import { noteMcpCaller } from '../mcp-activity.js';
 import { logError } from '../log.js';
 
-// Resolve the calling session's CARD ID from an MCP request. Claude sends it as
-// a custom header (X-AW-Session); Codex can't send arbitrary headers, so it
-// carries the same id as an Authorization bearer token. Either way the value is
-// the card id — the stable mapping key, NEVER the liveSessionId. Advisory only
-// (localhost, same posture as /ws); not authentication.
-export function extractCaller(req) {
-  const headers = req?.headers || {};
-  const fromHeader = headers['x-aw-session'];
-  if (typeof fromHeader === 'string' && fromHeader.length) return fromHeader;
-  const auth = headers['authorization'];
-  if (typeof auth === 'string') {
-    const m = auth.match(/^Bearer\s+(.+)$/);
-    if (m && m[1].length) return m[1];
-  }
-  return null;
-}
-
 // Build a fresh MCP server bound to one caller. Stateless: a new server per
 // request, so each request's tools act as that request's caller. Tool handlers
 // are closed over { deps, caller }; the SDK passes parsed args as the first
@@ -35,8 +18,8 @@ export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
   // not be offered spawning tools. Bound in server/index.js from the enabled
   // manifests' `hideTool` vetoes (createToolFilter) and absent when none
   // declares one — so the common case is the unfiltered list, by identity.
-  // Fails open: see createToolFilter. Never authorization — extractCaller is
-  // advisory, and the origin gate is what actually accepts the request.
+  // Fails open: see createToolFilter. Never authorization: the session API's
+  // caller check (server/session-api/check.js) already decided who the caller is.
   const hide = deps?.ext?.hideTool;
   const visible = hide ? tools.filter((t) => !hide(caller, t.name)) : tools;
   for (const tool of visible) {
@@ -55,14 +38,14 @@ export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
   return server;
 }
 
-// An (req,res) handler for POST /mcp, mounted on the existing http server.
-// Stateless streamable-HTTP: read identity + body, build a per-request server,
-// hand the request to the transport. enableJsonResponse returns a single JSON
-// body (no SSE) which is all our request/response tools need.
+// A (req, res, caller) handler for POST /mcp, where `caller` is the card id the
+// session API's check resolved (server/session-api). Stateless streamable-HTTP:
+// read the body, build a per-request server, hand the request to the transport.
+// enableJsonResponse returns a single JSON body (no SSE) which is all our
+// request/response tools need.
 export function createMcpRequestHandler(deps) {
-  return async function handleMcp(req, res) {
+  return async function handleMcp(req, res, caller) {
     try {
-      const caller = extractCaller(req);
       // Stamp the caller on EVERY request, boot handshake included: an agent's
       // client connects as part of its own startup and makes no tool call
       // unprompted, so a recently resumed session can wait for this handshake
