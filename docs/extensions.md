@@ -34,6 +34,17 @@ Select an extension to see its **Enabled** switch, **Uninstall…** (installed
 only), its **Auto-update** switch (installed from a git URL only), its **Source** (type, repository and
 commit) and its **Settings**.
 
+When a Claude or Codex session resumes, Wrangler compares the enabled extension tools with the
+schemas recorded at its last launch. If they differ, it adds a reminder to re-run ToolSearch and
+disregard earlier schema results. For Claude, the reminder precedes an existing resume prompt, or
+appears in the system instructions when there is no prompt. Codex receives it in the developer
+instructions. The reminder never starts a new turn by itself. Fresh sessions, unchanged resumes,
+and sessions without a previous schema record receive no reminder.
+
+This reminder is advisory: re-running ToolSearch does not guarantee that a resumed agent recognises
+or uses the current schema. Check the tool's current parameters when a resumed agent reports that a
+new parameter is unavailable.
+
 ### Auto-update an extension
 
 **Auto-update** is off for every extension until you turn it on in that extension's detail pane, and

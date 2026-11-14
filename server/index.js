@@ -18,6 +18,7 @@ import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { readProvenance } from './extensions/provenance.js';
+import { extensionToolFingerprint } from './extensions/tool-fingerprint.js';
 import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor, themeSources } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
@@ -269,6 +270,7 @@ const storesFor = (id) => Object.fromEntries(
 // Per-launch skill gating (the _extLaunchSkills seam): consulted by
 // dispatch/resume/fork before the adapter builds the command, so an extension
 // can answer "not this session" for a skill its manifest declares.
+sessionManager._extensionToolFingerprint = () => extensionToolFingerprint(ext.tools);
 sessionManager._extLaunchSkills = createSkillGate(ext, hostApiFor, logError);
 // Per-launch Codex sandbox/approval policy (the _extCodexPolicy seam).
 sessionManager._extCodexPolicy = createCodexPolicyResolver(ext, hostApiFor, logError);
