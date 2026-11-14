@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { createBoardOpen } from './board-open.js';
+import { cardKey, sessionIdOf } from './card-key.js';
 import { adapterFor, providerMetadata } from '../server/agents/index.js';
 
 const html = readFileSync(join(import.meta.dirname, 'index.html'), 'utf8');
@@ -601,6 +602,10 @@ test('session schedule includes focus only when checked; dispatch ignores it', (
   assert.deepEqual(dispatchApp.readScheduleAction(), { kind: 'dispatch', dispatch: { intent: 'launch' } });
 });
 
+// Card keys as app.js makes them, for the deck 'd1'. `latestSessions` is
+// stamped the way onState stamps a graph.
+const CARD_PRELUDE = "let boardDeckId = 'd1'; let pendingLink = null; const cardOf = (sid) => cardKey(boardDeckId, sid); const stamp = (list) => list.map((x) => ({ ...x, cardKey: cardOf(x.sessionId) })); const sessionByCard = (c) => (c ? latestSessions.find((x) => x.cardKey === c) || null : null);";
+
 function scheduledFocusHarness(sessions = []) {
   const selected = [], landed = [], views = {}, notices = [];
   const diff = { open: false };
@@ -609,8 +614,8 @@ function scheduledFocusHarness(sessions = []) {
   const app = loadApp(
     ['function onScheduleFired(msg) {', 'function tryFulfillScheduledFocus() {', 'function tryFulfillPending() {'],
     ['onScheduleFired', 'tryFulfillScheduledFocus', 'state'],
-    "let selectionBeforeView = null; let pendingSelect = null; let pendingScheduledFocus = null; let scheduleNotificationId = 0; let latestSessions = []; let currentView = 'search'; let maximized = false; const state = { set sessions(value) { latestSessions = value; }, get pending() { return pendingScheduledFocus?.sessionId ?? pendingScheduledFocus; }, get view() { return currentView; }, get pendingSelect() { return pendingSelect; }, set pendingSelect(v) { pendingSelect = v; } };",
-    { Date: { now: () => clock.now }, toast() {}, notifications: { show: (owner, opts) => new Promise((resolve) => notices.push({ owner, opts, answer: resolve })) }, selectSession: (id) => selected.push(id), setView: () => {}, setMaximized: () => {},
+    `let selectionBeforeView = null; let pendingSelect = null; let pendingScheduledFocus = null; let scheduleNotificationId = 0; let latestSessions = []; let currentView = 'search'; let maximized = false; ${CARD_PRELUDE} const state = { set sessions(value) { latestSessions = stamp(value); }, get pending() { return pendingScheduledFocus?.card ?? pendingScheduledFocus; }, get view() { return currentView; }, get pendingSelect() { return pendingSelect; }, set pendingSelect(v) { pendingSelect = v; } };`,
+    { cardKey, Date: { now: () => clock.now }, toast() {}, notifications: { show: (owner, opts) => new Promise((resolve) => notices.push({ owner, opts, answer: resolve })) }, selectSession: (id) => selected.push(id), setView: () => {}, setMaximized: () => {},
       landOnCard: (id, opts, select) => { landed.push(id); select(id); },
       setSessionView: (id, view) => { views[id] = view; }, disarmChatHandoff() {},
       isDiffPanelOpen: () => diff.open, closeDiffPanel: () => { diff.open = false; }, boardOpen },
@@ -628,8 +633,8 @@ test('persistent schedule notification navigates only when View session is click
   assert.equal(app.state.view, 'search');
   app.notices[0].answer('view');
   await Promise.resolve();
-  assert.deepEqual(app.landed, ['CARD1']);
-  assert.equal(app.views.CARD1, 'terminal');
+  assert.deepEqual(app.landed, ['d1/CARD1']);
+  assert.equal(app.views['d1/CARD1'], 'terminal');
 });
 
 for (const name of [undefined, '', 'Untitled schedule']) {
@@ -682,7 +687,7 @@ for (const [label, sessions] of [
     assert.deepEqual(app.selected, []);
     app.state.sessions = [{ sessionId: 'NEW1', managed: true }];
     app.tryFulfillScheduledFocus();
-    assert.deepEqual(app.landed, ['NEW1']);
+    assert.deepEqual(app.landed, ['d1/NEW1']);
   });
 }
 
@@ -692,7 +697,7 @@ test('View session expires for a missing target and starts its wait at click tim
   app.clock.now = 10000;
   app.notices[0].answer('view');
   await Promise.resolve();
-  assert.equal(app.state.pending, 'GONE');
+  assert.equal(app.state.pending, 'd1/GONE');
   app.clock.now = 18000;
   app.state.sessions = [{ sessionId: 'GONE', managed: true }];
   app.tryFulfillScheduledFocus();
@@ -721,9 +726,9 @@ test('focused schedule opens the terminal without another notification', () => {
   app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1' });
   assert.deepEqual(app.selected, []);
   app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1', focus: true });
-  assert.deepEqual(app.selected, ['CARD1']);
-  assert.equal(app.views.CARD1, 'terminal');
-  assert.deepEqual(app.landed, ['CARD1']);
+  assert.deepEqual(app.selected, ['d1/CARD1']);
+  assert.equal(app.views['d1/CARD1'], 'terminal');
+  assert.deepEqual(app.landed, ['d1/CARD1']);
   assert.equal(app.state.pending, null);
   assert.equal(app.notices.length, 1);
 });
@@ -734,11 +739,11 @@ test('focused schedule waits for resumed target to be live without requesting an
   assert.deepEqual(app.notices, []);
   app.tryFulfillScheduledFocus();
   assert.deepEqual(app.selected, []);
-  assert.equal(app.state.pending, 'CARD1');
+  assert.equal(app.state.pending, 'd1/CARD1');
   app.state.sessions = [{ sessionId: 'CARD1', managed: true }];
   app.tryFulfillScheduledFocus();
-  assert.deepEqual(app.selected, ['CARD1']);
-  assert.equal(app.views.CARD1, 'terminal');
+  assert.deepEqual(app.selected, ['d1/CARD1']);
+  assert.equal(app.views['d1/CARD1'], 'terminal');
 });
 
 
@@ -747,17 +752,17 @@ test('scheduled focus dismisses a diff panel so the target terminal is visible',
   app.diff.open = true;
   app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1', focus: true });
   assert.equal(app.diff.open, false);
-  assert.deepEqual(app.selected, ['CARD1']);
+  assert.deepEqual(app.selected, ['d1/CARD1']);
 });
 
 
 test('scheduled focus discards an older pending select and board-open request', () => {
   const app = scheduledFocusHarness([{ sessionId: 'CARD1', managed: true }]);
-  app.state.pendingSelect = 'OLD';
-  app.boardOpen.request('OLD', { diff: true, onClose: null });
+  app.state.pendingSelect = 'd1/OLD';
+  app.boardOpen.request('d1/OLD', { diff: true, onClose: null });
   app.onScheduleFired({ name: 'Ping', sessionId: 'CARD1', focus: true });
   assert.equal(app.state.pendingSelect, null);
-  assert.equal(app.boardOpen.claim('OLD'), null);
+  assert.equal(app.boardOpen.claim('d1/OLD'), null);
 });
 
 test('scheduled focus expires after a failed resume instead of jumping to a later wake', () => {
@@ -779,20 +784,20 @@ function boardOpenHarness(sessions = [], { minimised = [], tiles = {}, embed = n
   const boardOpen = createBoardOpen();
   const minimisedIds = new Set(minimised);
   const app = loadApp(
-    ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(sessionId, { diff, onClose }, select) {', 'function tryFulfillPending() {', 'function applyEmbedView(o) {', 'function setPendingSelect(id) {'],
+    ['function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {', 'function landOnCard(card, { diff, onClose }, select) {', 'function tryFulfillPending() {', 'function applyEmbedView(o) {', 'function setPendingSelect(card) {', 'function setPendingLink(sessionId) {'],
     ['openSessionInBoard', 'tryFulfillPending', 'state'],
-    "let selectionBeforeView = null; let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; const state = { set sessions(v) { latestSessions = v; }, get pending() { return pendingSelect; }, set pending(v) { pendingSelect = v; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };",
+    `let selectionBeforeView = null; let pendingSelect = null; let latestSessions = []; let currentView = 'ext:jobs:board'; let maximized = false; const ADHOC_ID = 'adhoc'; ${CARD_PRELUDE} const state = { set sessions(v) { latestSessions = stamp(v); }, get pending() { return pendingSelect; }, set pending(v) { pendingSelect = v; }, set maximized(v) { maximized = v; }, set view(v) { currentView = v; } };`,
     {
-      boardOpen, minimisedIds, CSS: { escape: (x) => x },
+      cardKey, sessionIdOf, boardOpen, minimisedIds, CSS: { escape: (x) => x },
       sessionEmbed: { active: () => embed },
       setView: (v) => { log.push(`view:${v}`); app.state.view = v; },
       send: (f) => log.push(`send:${f.type}:${f.sessionId}`),
       toast: () => {},
-      assignedTaskId: (sid) => tiles[sid] || null,
+      assignedTaskId: (ref) => tiles[typeof ref === 'object' ? ref.sessionId : ref] || null,
       unminimise: (id) => { minimisedIds.delete(id); log.push(`unminimise:${id}`); },
       focusSession: (sid) => log.push(`focus:${sid}`),
       selectSession: (sid) => log.push(`select:${sid}`),
-      document: { querySelector: (sel) => ({ scrollIntoView: () => log.push(`scroll:${sel.match(/data-sid="([^"]+)"/)[1]}`) }) },
+      document: { querySelector: (sel) => ({ scrollIntoView: () => log.push(`scroll:${sel.match(/data-card="([^"]+)"/)[1]}`) }) },
       setMaximized: (on) => log.push(`maximized:${on}`),
       openDiffPanel: (sid) => log.push(`diff:${sid}`),
       renderPanel: (sid) => log.push(`render:${sid}`),
@@ -805,45 +810,45 @@ function boardOpenHarness(sessions = [], { minimised = [], tiles = {}, embed = n
 test('openSession on a live card shows the grid, restores its tile from the tray and scrolls to it', () => {
   const app = boardOpenHarness([{ sessionId: 'S1' }], { minimised: ['T1'], tiles: { S1: 'T1' } });
   app.openSessionInBoard('S1');
-  assert.deepEqual(app.log, ['view:grid', 'unminimise:T1', 'focus:S1', 'scroll:S1']);
+  assert.deepEqual(app.log, ['view:grid', 'unminimise:T1', 'focus:d1/S1', 'scroll:d1/S1']);
 });
 
 test('openSession on an archived card restores it, then lands on it when the graph brings it back', () => {
   const app = boardOpenHarness([], { minimised: ['adhoc'] });
   app.openSessionInBoard('S1');
   assert.deepEqual(app.log, ['view:grid', 'send:resume:S1']);
-  assert.equal(app.state.pending, 'S1');
+  assert.equal(app.state.pending, 'd1/S1');
   app.tryFulfillPending();
   assert.equal(app.log.length, 2, 'nothing to land on until the card is back');
   app.state.sessions = [{ sessionId: 'S1' }];
   app.tryFulfillPending();
   // selectSession, not focusSession: the card has just been resumed, so it must
   // not be resumed again.
-  assert.deepEqual(app.log.slice(2), ['unminimise:adhoc', 'select:S1', 'scroll:S1']);
+  assert.deepEqual(app.log.slice(2), ['unminimise:adhoc', 'select:d1/S1', 'scroll:d1/S1']);
 });
 
 // api.mountSession restoring an archived session: it lands in the embed, in the
 // extension's own view, and never sends the reader to the board.
 test('a restore an embedded panel asked for lands in the embed, not on the board', () => {
   const removed = [];
-  const app = boardOpenHarness([], { embed: { sessionId: 'S1', wrap: { classList: { remove: (c) => removed.push(c) } } } });
-  app.state.pending = 'S1';
+  const app = boardOpenHarness([], { embed: { sessionId: 'S1', card: 'd1/S1', wrap: { classList: { remove: (c) => removed.push(c) } } } });
+  app.state.pending = 'd1/S1';
   app.state.sessions = [{ sessionId: 'S1' }];
   app.tryFulfillPending();
-  assert.deepEqual(app.log, ['select:S1']);
+  assert.deepEqual(app.log, ['select:d1/S1']);
   assert.deepEqual(removed, ['pending']);
   assert.equal(app.state.pending, null);
 });
 
 test('a restore an embedded panel asked to open on its diff lands on the diff, once', () => {
-  const embed = { sessionId: 'S1', view: 'diff', wrap: null };
+  const embed = { sessionId: 'S1', card: 'd1/S1', view: 'diff', wrap: null };
   const app = boardOpenHarness([], { embed });
-  app.state.pending = 'S1';
+  app.state.pending = 'd1/S1';
   app.tryFulfillPending();
   assert.deepEqual(app.log, [], 'nothing until the card is back');
   app.state.sessions = [{ sessionId: 'S1' }];
   app.tryFulfillPending();
-  assert.deepEqual(app.log, ['select:S1', 'diff:S1', 'render:S1']);
+  assert.deepEqual(app.log, ['select:d1/S1', 'diff:d1/S1', 'render:d1/S1']);
   assert.equal(embed.view, null);
 });
 
@@ -851,11 +856,11 @@ test('a restore an embedded panel asked to open on its diff lands on the diff, o
 function embedShowHarness(sessions) {
   const log = [];
   const app = loadApp(
-    ['function showEmbeddedSession(sessionId, o) {', 'function applyEmbedView(o) {', 'function setPendingSelect(id) {'],
+    ['function showEmbeddedSession(card, o) {', 'function applyEmbedView(o) {', 'function setPendingSelect(card) {', 'function setPendingLink(sessionId) {'],
     ['showEmbeddedSession'],
-    'let selectionBeforeView = null; let pendingSelect = null; let selectedSessionId = null;',
+    `let selectionBeforeView = null; let pendingSelect = null; let selectedCard = null; let latestSessions = []; ${CARD_PRELUDE} latestSessions = stamp(sessions);`,
     {
-      latestSessions: sessions,
+      cardKey, sessionIdOf, sessions,
       document: { querySelector: () => ({ classList: { add() {} } }), getElementById: () => ({}) },
       resumeDormant: (sid) => log.push(`resume:${sid}`),
       selectSession: (sid) => log.push(`select:${sid}`),
@@ -873,16 +878,16 @@ function embedShowHarness(sessions) {
 
 test('an embedded show with view: diff opens a live or dormant session on its diff, and without it on the session\'s own view', () => {
   const app = embedShowHarness([{ sessionId: 'L', managed: true }, { sessionId: 'D', managed: false }]);
-  const o = { sessionId: 'L', view: 'diff', wrap: null };
-  app.showEmbeddedSession('L', o);
-  assert.deepEqual(app.log, ['select:L', 'diff:L', 'render:L']);
+  const o = { sessionId: 'L', card: 'd1/L', view: 'diff', wrap: null };
+  app.showEmbeddedSession('d1/L', o);
+  assert.deepEqual(app.log, ['select:d1/L', 'diff:d1/L', 'render:d1/L']);
   assert.equal(o.view, null, 'applied once');
   app.log.length = 0;
-  app.showEmbeddedSession('L', o);
-  assert.deepEqual(app.log, ['select:L'], 'no view: Chat/Terminal as the session last had it');
+  app.showEmbeddedSession('d1/L', o);
+  assert.deepEqual(app.log, ['select:d1/L'], 'no view: Chat/Terminal as the session last had it');
   app.log.length = 0;
-  app.showEmbeddedSession('D', { sessionId: 'D', view: 'diff', wrap: null });
-  assert.deepEqual(app.log, ['resume:D', 'diff:D', 'render:D']);
+  app.showEmbeddedSession('d1/D', { sessionId: 'D', card: 'd1/D', view: 'diff', wrap: null });
+  assert.deepEqual(app.log, ['resume:d1/D', 'diff:d1/D', 'render:d1/D']);
 });
 
 test('openDiff on a live card lands on it, then opens its diff panel and reports the close', () => {
@@ -890,8 +895,8 @@ test('openDiff on a live card lands on it, then opens its diff panel and reports
   app.state.maximized = true;
   let closed = 0;
   app.openSessionInBoard('S1', { diff: true, onClose: () => { closed += 1; } });
-  assert.deepEqual(app.log, ['view:grid', 'focus:S1', 'scroll:S1', 'maximized:false', 'diff:S1']);
-  app.boardOpen.diffClosed('S1');
+  assert.deepEqual(app.log, ['view:grid', 'focus:d1/S1', 'scroll:d1/S1', 'maximized:false', 'diff:d1/S1']);
+  app.boardOpen.diffClosed('d1/S1');
   assert.equal(closed, 1);
 });
 
@@ -899,11 +904,11 @@ test('openDiff on an archived card opens the diff only once the restored card is
   const app = boardOpenHarness([]);
   let closed = 0;
   app.openSessionInBoard('S1', { diff: true, onClose: () => { closed += 1; } });
-  assert.ok(!app.log.includes('diff:S1'));
+  assert.ok(!app.log.includes('diff:d1/S1'));
   app.state.sessions = [{ sessionId: 'S1' }];
   app.tryFulfillPending();
-  assert.deepEqual(app.log.slice(-3), ['select:S1', 'scroll:S1', 'diff:S1']);
-  app.boardOpen.diffClosed('S1');
+  assert.deepEqual(app.log.slice(-3), ['select:d1/S1', 'scroll:d1/S1', 'diff:d1/S1']);
+  app.boardOpen.diffClosed('d1/S1');
   assert.equal(closed, 1);
 });
 
@@ -914,7 +919,7 @@ test('a live card asked for while another is restoring drops the restore\'s pend
   assert.equal(app.state.pending, null);
   app.state.sessions = [{ sessionId: 'S1' }, { sessionId: 'S2' }];
   app.tryFulfillPending();
-  assert.ok(!app.log.includes('select:S1') && !app.log.includes('diff:S1'), 'S1 coming back does not steal the board');
+  assert.ok(!app.log.includes('select:d1/S1') && !app.log.includes('diff:d1/S1'), 'S1 coming back does not steal the board');
 });
 
 // ── quickLaunch as a hideable field (1.28.0) ───────────────────────────────

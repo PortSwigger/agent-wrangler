@@ -7,6 +7,7 @@
 // continuously, so each reply appends nodes for its new events only.
 
 import { groupChatEvents } from './chat-group.js';
+import { sessionIdOf } from './card-key.js';
 import { createChatDom } from './chat-dom.js';
 import { createRenderer } from './markdown-preview.js';
 import { imageSources, imageMimeOf, sourceToFrame, MAX_IMAGES_PER_PASTE } from './clipboard-images.js';
@@ -129,7 +130,10 @@ export function serializeEchoes(store) {
   ]));
 }
 
-export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
+// The view shows one card at a time and holds it by card key (card-key.js);
+// `cardOf` keys a session id from a deck reply. Drafts and echoes are stored by
+// session id, as they always were.
+export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
   // The base directory a relative `.md` path linkifies against — read through
@@ -137,7 +141,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // screen right now and there is no per-session field to keep in step. The same
   // getter serves both halves of the view, because the human's plain-text bubble
   // and the agent's rendered markdown must linkify identically.
-  const baseDir = () => (sessionId ? cwdFor?.(sessionId) : null) || null;
+  const baseDir = () => (card ? cwdFor?.(card) : null) || null;
   const dom = createChatDom({
     renderMarkdown: createRenderer(window.markdownit, { mdPathBase: baseDir, boardOrigin: window.location?.origin }),
     baseDir,
@@ -153,14 +157,14 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     const hit = e.target?.closest?.('[data-md-path]');
     if (!hit) return;
     e.preventDefault();
-    onOpenFile?.(hit.dataset.mdPath, sessionId);
+    onOpenFile?.(hit.dataset.mdPath, card);
   };
   stream.addEventListener('click', openMdPath);
   stream.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') openMdPath(e);
   });
 
-  let sessionId = null;
+  let card = null;
   let offset = null;
   let timer = null;
   // The pending burst, cancelled by anything that puts `offset` back to null —
@@ -205,7 +209,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   const input = document.getElementById('chat-input');
   const isMac = /Mac/i.test(window.navigator?.userAgentData?.platform || window.navigator?.platform || '');
   document.addEventListener('keydown', (e) => {
-    if (!isMac || !sessionId || wrap.hidden || e.defaultPrevented || e.isComposing || e.repeat) return;
+    if (!isMac || !card || wrap.hidden || e.defaultPrevented || e.isComposing || e.repeat) return;
     if (e.key.toLowerCase() !== 'c' || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
     const active = document.activeElement;
     if (active !== document.body && !wrap.contains(active)) return;
@@ -420,7 +424,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   function persistEchoes() {
     try { localStorage.setItem(ECHOES_KEY, serializeEchoes(echoStore)); } catch {}
   }
-  const echoList = () => echoStore.get(sessionId) || [];
+  const echoList = () => echoStore.get(sessionIdOf(card)) || [];
 
   function detachEchoNodes() {
     for (const list of echoStore.values()) {
@@ -437,7 +441,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     if (list.length) echoStore.set(echo.sessionId, list);
     else echoStore.delete(echo.sessionId);
     persistEchoes();
-    if (echo.sessionId === sessionId) pinTail();
+    if (echo.sessionId === sessionIdOf(card)) pinTail();
   }
 
   function pruneEchoes() {
@@ -481,31 +485,33 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   }
 
   const eventKey = (event) => `${event.ts}|${event.text}`;
-  // Events that have already acknowledged a send, per session, so history replayed
+  // Events that have already acknowledged a send, per card, so history replayed
   // by a remount cannot acknowledge a newer identical prompt.
   const ackedEvents = new Map();
   const ACKED_MAX = 200;
 
   function echoMatches(echo, item) {
-    if (ackedEvents.get(echo.sessionId)?.has(eventKey(item.event || {}))) return false;
+    if (ackedEvents.get(card)?.has(eventKey(item.event || {}))) return false;
     return echoMatchesEvent(echo, item.event || {});
   }
 
-  function noteAcked(sessionId, event) {
-    const set = ackedEvents.get(sessionId) || new Set();
+  function noteAcked(card, event) {
+    const set = ackedEvents.get(card) || new Set();
     set.add(eventKey(event));
     if (set.size > ACKED_MAX) set.delete(set.values().next().value);
-    ackedEvents.set(sessionId, set);
+    ackedEvents.set(card, set);
   }
 
-  function saveDraft(id) {
+  function saveDraft(of) {
+    const id = sessionIdOf(of);
     if (!id) return;
     const text = input.value;
     if (text.trim() || attachments.length) drafts.set(id, { text, attachments: attachments.slice() });
     else drafts.delete(id);
   }
 
-  function loadDraft(id) {
+  function loadDraft(of) {
+    const id = sessionIdOf(of);
     const d = (id && drafts.get(id)) || null;
     input.value = d?.text ?? '';
     attachments = d?.attachments ? d.attachments.slice() : [];
@@ -701,7 +707,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   let refocusInput = false;
 
   function renderSendability() {
-    if (sessionId && pendingMessages.has(sessionId)) {
+    if (card && pendingMessages.has(card)) {
       // Disabling a focused field blurs it for good, so note it to hand focus back.
       if (document.activeElement === input) refocusInput = true;
       input.disabled = true;
@@ -721,27 +727,27 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // True when the prompt went out (api.sessionPanel.type reports it).
   function submit() {
     const text = input.value.trim();
-    if (!sessionId || lastGate || pendingMessages.has(sessionId) || (!text && !attachments.length)) return false;
+    if (!card || lastGate || pendingMessages.has(card) || (!text && !attachments.length)) return false;
     // The EXISTING human message path: live → paste into the pane, dormant →
     // wake and deliver, archived → refuse. Deliberately not the mailbox, which
     // is peer-only. Only NAMES go over the wire — the server resolves them back
     // to paths inside this session's own pastes folder.
     const requestId = `${requestEra}#${++messageSeq}`;
-    const pending = { requestId, sessionId, clearComposer: paneRestoreArmed, draft: { text: input.value, attachments: attachments.slice() } };
-    pendingMessages.set(sessionId, pending);
+    const pending = { requestId, card, sessionId: sessionIdOf(card), clearComposer: paneRestoreArmed, draft: { text: input.value, attachments: attachments.slice() } };
+    pendingMessages.set(card, pending);
     if (pending.clearComposer) {
       paneRestoreArmed = false;
       restoreToken = null;
     }
     const sentAttachments = attachments;
     const accepted = send({
-      type: 'message', sessionId, text,
+      type: 'message', sessionId: pending.sessionId, text, card: pending.card,
       requestId,
       ...(attachments.length ? { imageNames: attachments.map((a) => a.name) } : {}),
       ...(pending.clearComposer ? { clearComposer: true } : {}),
     });
     if (!accepted) {
-      pendingMessages.delete(sessionId);
+      pendingMessages.delete(card);
       if (pending.clearComposer) paneRestoreArmed = true;
       setPasteNote('Not sent: connection unavailable.');
     } else {
@@ -759,7 +765,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // api.sessionPanel.type (1.68.0): `text` at the end of the composer, as if
   // typed there. False while the composer takes nothing (a gate, a needs-you).
   function appendText(text) {
-    if (!sessionId || lastGate || input.disabled) return false;
+    if (!card || lastGate || input.disabled) return false;
     if (!text) return true;
     input.value += text;
     input.dispatchEvent(new Event('input'));
@@ -789,7 +795,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // server gives Claude Code a short window to restore the prompt into the pane,
   // which is the one source that can reflect an edit made in the terminal.
   function interruptAndRestore() {
-    if (!sessionId) return;
+    if (!card) return;
     // Interrupting is what makes Claude Code restore the prompt into the PANE's
     // composer, and every send is a paste at the pane's cursor — so the next send
     // has to clear it first or the edited prompt fuses onto the original.
@@ -804,7 +810,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
     // and a prompt they are part-way through must not be overwritten by a restore
     // they asked for a moment earlier.
     restoreOverDraft = Boolean(input.value.trim());
-    send({ type: 'interrupt', sessionId, token: restoreToken });
+    send({ type: 'interrupt', sessionId: sessionIdOf(card), token: restoreToken, card });
     renderSuggestion();
   }
 
@@ -828,11 +834,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // a synthetic input, and treating that hydration as an edit would file one
   // card's draft under another.
   function scheduleDraftSave() {
-    if (!sessionId) return;
+    if (!card) return;
     clearTimeout(draftTimer);
-    const id = sessionId;
+    const id = card;
     const era = requestEra;
-    draftTimer = setTimeout(() => { if (sessionId === id && requestEra === era && !pendingMessages.has(id)) saveDraft(id); }, 400);
+    draftTimer = setTimeout(() => { if (card === id && requestEra === era && !pendingMessages.has(id)) saveDraft(id); }, 400);
   }
   input.addEventListener('input', (e) => {
     if (e.isTrusted) scheduleDraftSave();
@@ -908,7 +914,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // source puts in it (see clipboard-images.js) does not depend on which gesture
   // delivered it.
   function attachFrom(e, dt) {
-    if (!sessionId) return;
+    if (!card) return;
     const { sources, text } = imageSources(dt);
     // No image means an ordinary text paste or drop, which must fall through
     // untouched — preventDefault here would break pasting text.
@@ -936,7 +942,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
         (frame) => {
           // Gone stale while the image was being read or converted.
           if (!pendingPastes.has(token)) return;
-          send({ type: 'paste-image', sessionId, token, ...frame });
+          send({ type: 'paste-image', sessionId: sessionIdOf(card), token, ...frame, card });
         },
         (err) => {
           if (!pendingPastes.delete(token)) return;
@@ -950,12 +956,12 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // Ctrl+V is the terminal's paste key, and on macOS the browser fires no paste
   // event for it, so muscle memory from the terminal pasted nothing here.
   input.addEventListener('keydown', (e) => {
-    if (!isMac || !sessionId || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'v') return;
+    if (!isMac || !card || !e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'v') return;
     if (!navigator.clipboard?.read) return;
     e.preventDefault();
-    const id = sessionId;
+    const id = card;
     const era = requestEra;
-    const current = () => sessionId === id && requestEra === era && !pendingMessages.has(id);
+    const current = () => card === id && requestEra === era && !pendingMessages.has(id);
     navigator.clipboard.read().then(async (clipItems) => {
       if (!current()) return;
       const files = [];
@@ -981,16 +987,16 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   // for the drop to fire at all, but only when files are coming, so dragging
   // text around the composer keeps its native behaviour.
   wrap.addEventListener('dragover', (e) => {
-    if (sessionId && Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault();
+    if (card && Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault();
   });
   wrap.addEventListener('drop', (e) => attachFrom(e, e.dataTransfer));
 
   modelEl.addEventListener('click', () => {
-    if (!sessionId || modelEl.disabled) return;
+    if (!card || modelEl.disabled) return;
     // The menu is app.js's business (it owns mountMenu and the agent registry);
     // this module only says where to put it, the same way the sub-agent and diff
     // hooks hand off rather than reach out.
-    onPickModel?.(sessionId, modelEl.getBoundingClientRect());
+    onPickModel?.(card, modelEl.getBoundingClientRect());
   });
   suggestionBtn.addEventListener('click', () => {
     if (lastSuggestion) loadComposer(lastSuggestion);
@@ -1032,17 +1038,17 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       if (item.type === 'user' && isHumanTypedUserItem(item)) {
         userEls.push(node);
         const hit = echoList().find((e) => echoMatches(e, item));
-        const folded = hit ? [] : ackedEvents.get(sessionId)?.has(eventKey(item.event || {})) ? [] : echoRunMatchingEvent(echoList(), item.event || {});
-        noteAcked(sessionId, item.event);
+        const folded = hit ? [] : ackedEvents.get(card)?.has(eventKey(item.event || {})) ? [] : echoRunMatchingEvent(echoList(), item.event || {});
+        noteAcked(card, item.event);
         const hits = hit ? [hit] : folded;
         for (const h of hits) removeEcho(h);
         if (hits.length) renderSuggestion();
       }
       if (item.type === 'subagent') {
-        node.addEventListener('click', () => onSubagentClick?.(sessionId, item.event.id));
+        node.addEventListener('click', () => onSubagentClick?.(card, item.event.id));
       }
       if (item.type === 'activity' && item.adds + item.dels > 0) {
-        node.querySelector('.chat-activity-chip')?.addEventListener('dblclick', () => onOpenDiff?.(sessionId));
+        node.querySelector('.chat-activity-chip')?.addEventListener('dblclick', () => onOpenDiff?.(card));
       }
       // Activity and thinking are the same disclosure control, so they are wired
       // by the same code — a thinking body with text was previously rendered
@@ -1068,8 +1074,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
   }
 
   function poll() {
-    if (!sessionId) return;
-    send({ type: 'chat', sessionId, token: generation, ...(offset == null ? {} : { sinceOffset: offset }) });
+    if (!card) return;
+    send({ type: 'chat', sessionId: sessionIdOf(card), token: generation, ...(offset == null ? {} : { sinceOffset: offset }), card });
   }
 
   function clearBurst() {
@@ -1125,10 +1131,11 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
 
   return {
     onMessageResult(msg) {
-      const pending = pendingMessages.get(msg.sessionId);
+      const from = cardOf(msg.sessionId);
+      const pending = pendingMessages.get(from);
       if (!pending || msg.requestId !== pending.requestId) return;
-      const current = sessionId === msg.sessionId;
-      pendingMessages.delete(msg.sessionId);
+      const current = card === from;
+      pendingMessages.delete(from);
       if (!msg.ok) {
         if (pending.echo) {
           removeEcho(pending.echo);
@@ -1140,7 +1147,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
           attachments = pending.draft.attachments.slice();
           input.dispatchEvent(new Event('input'));
           renderAttachments();
-          saveDraft(msg.sessionId);
+          saveDraft(from);
           const prefix = msg.outcome === 'unknown' ? 'Delivery status unknown' : 'Not sent';
           setPasteNote(`${prefix}: ${msg.error || 'check the terminal before sending again'}`);
           renderSendability();
@@ -1205,9 +1212,9 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       setPasteNote(pendingPastes.size ? `Attaching ${pendingPastes.size} more…` : null);
     },
     mount(id) {
-      if (sessionId === id) return;
-      const leaving = sessionId;
-      sessionId = id;
+      if (card === id) return;
+      const leaving = card;
+      card = id;
       offset = null;
       epoch = null;
       // A burst armed against the card being left would poll this one instead,
@@ -1277,8 +1284,8 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       clearInterval(timer);
       timer = null;
       clearBurst();
-      const leaving = sessionId;
-      sessionId = null;
+      const leaving = card;
+      card = null;
       epoch = null;
       generation += 1;
       requestEra += 1;
@@ -1320,7 +1327,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       renderExitNotice(null);
     },
     onChatReply(msg) {
-      if (!sessionId || msg.sessionId !== sessionId) return;
+      if (!card || cardOf(msg.sessionId) !== card) return;
       // Drop the whole reply if it was sent under an earlier era than the one
       // showing now — a remount already reset offset and the stream locally, so
       // nothing in a stale-era reply (events, offset, or pending) can be trusted.
@@ -1442,7 +1449,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
           go.type = 'button';
           go.className = 'chat-notice-go';
           go.textContent = 'Terminal →';
-          go.addEventListener('click', () => onGoTerminal?.(sessionId));
+          go.addEventListener('click', () => onGoTerminal?.(card));
           bar.appendChild(go);
         }
       }
@@ -1473,7 +1480,7 @@ export function initChatView({ send, onSubagentClick, onOpenDiff, onGoTerminal, 
       const next = gate?.reason ? { reason: gate.reason } : null;
       if ((next?.reason || null) === (lastGate?.reason || null)) return;
       lastGate = next;
-      if (sessionId) this.setStatus(lastStatus, lastWaitingFor, lastWaitingReason);
+      if (card) this.setStatus(lastStatus, lastWaitingFor, lastWaitingReason);
     },
   };
 }

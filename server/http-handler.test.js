@@ -7,6 +7,7 @@ import { createConnection } from 'node:net';
 import WebSocket, { WebSocketServer } from 'ws';
 import { createBoardServer, BOARD_CSP } from './http-handler.js';
 import { createDeckServer } from './deck/http.js';
+import { createBoardDecks } from './board-decks.js';
 
 // The /ext/<id>/ route serves an extension's client module out of its own
 // public/ subdir. Two things are asserted here because both fail silently in the
@@ -165,4 +166,47 @@ test('a theme its extension has switched off is neither listed nor served', asyn
   assert.equal(styles.some((s) => s.id === 'route-sky'), false);
   assert.equal((await fetch(`${base}/styles/route-sky/w.svg`)).status, 404);
   themeDirs = [];
+});
+
+// The board's deck list lives in the board server, so every browser on the
+// board reads one list: GET reads it, POST changes it (JSON from a board
+// origin only), and the stream tells every open page about each change.
+test('the deck list is read, changed from a board page, and streamed to every page', async (t) => {
+  let decksBoard = null;
+  const store = createBoardDecks({ file: path.join(tmp, 'board-decks.json'), onChange: (snap) => decksBoard.announceDecks(snap) });
+  let port = 0;
+  decksBoard = createBoardServer({ boardPort: () => port, deckPort: () => deck.address().port, decks: store });
+  await new Promise((resolve) => decksBoard.listen(0, '127.0.0.1', resolve));
+  port = decksBoard.address().port;
+  t.after(() => decksBoard.close());
+  const at = `http://127.0.0.1:${port}`;
+  const post = (body, headers = {}) => fetch(`${at}/api/decks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: at, ...headers }, body: JSON.stringify(body) });
+
+  assert.deepEqual((await (await fetch(`${at}/api/decks`)).json()).decks.map((d) => d.id), ['own']);
+
+  const streams = [new AbortController(), new AbortController()];
+  const frames = streams.map(() => []);
+  await Promise.all(streams.map(async (c, i) => {
+    const res = await fetch(`${at}/api/decks/stream`, { signal: c.signal });
+    assert.equal(res.headers.get('content-type'), 'text/event-stream');
+    const reader = res.body.getReader();
+    (async () => {
+      const dec = new TextDecoder();
+      try { for (;;) { const { value, done } = await reader.read(); if (done) break; frames[i].push(...dec.decode(value).split('\n\n').filter(Boolean).map((f) => JSON.parse(f.replace(/^data: /, '')))); } } catch {}
+    })();
+  }));
+  t.after(() => streams.forEach((c) => c.abort()));
+
+  assert.equal((await post({ op: 'add', url: 'http://127.0.0.1:7890' }, { Origin: 'https://evil.example' })).status, 403);
+  assert.equal((await fetch(`${at}/api/decks`, { method: 'POST', headers: { Origin: at, 'Content-Type': 'text/plain' }, body: '{"op":"add","url":"http://127.0.0.1:7890"}' })).status, 403);
+  const bad = await post({ op: 'add', url: 'ftp://x' });
+  assert.equal(bad.status, 400);
+  assert.match((await bad.json()).error, /URL/);
+
+  const added = await post({ op: 'add', url: 'http://127.0.0.1:7890', name: 'Laptop B' });
+  assert.equal(added.status, 200);
+  assert.deepEqual((await added.json()).decks.map((d) => d.name), ['', 'Laptop B']);
+  for (let i = 0; i < 40 && frames.some((f) => f.length < 2); i++) await new Promise((r) => setTimeout(r, 25));
+  assert.deepEqual(frames[0].at(-1), frames[1].at(-1), 'both pages hold the same list');
+  assert.deepEqual(frames[1].at(-1).decks.map((d) => d.url ?? 'own'), ['own', 'http://127.0.0.1:7890']);
 });

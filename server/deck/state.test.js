@@ -53,3 +53,11 @@ test('rev only rises, an unchanged rebuild sends nothing, and history rides only
   assert.equal(snap.rev, 103);
   assert.deepEqual(snap.history, [], 'a snapshot always carries history');
 });
+
+test('PR toast suppression follows server settings through deck state updates', () => {
+  const stream = createStateStream({ startRev: 100 });
+  stream.observe(graph({ suppressNudgedPrToasts: true }));
+  assert.equal(JSON.parse(stream.next()).settings.suppressNudgedPrToasts, true);
+  stream.observe(graph({ suppressNudgedPrToasts: false }));
+  assert.equal(JSON.parse(stream.next()).settings.suppressNudgedPrToasts, false);
+});

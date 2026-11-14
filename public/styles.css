@@ -3818,3 +3818,30 @@ a.ext-row-origin { color: var(--blue-fg); }
   font: 600 11px/1.35 var(--font, system-ui), system-ui, sans-serif; white-space: nowrap;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
 }
+
+/* Cards from several decks (public/decks.js): drawn only while the board shows
+   more than one deck. The deck's colour runs down the card's right edge and
+   fills its badge; a card whose deck is not connected is greyed and inert. */
+.session-card.on-deck { box-shadow: inset -3px 0 0 var(--deck-colour, var(--border)); }
+.deck-badge {
+  flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10px; font-weight: 600; line-height: 16px; padding: 0 6px; border-radius: 8px;
+  color: #fff; background: var(--deck-colour, var(--fg-subtle));
+}
+.deck-unreachable { opacity: 0.5; filter: grayscale(0.8); }
+.deck-unreachable, .deck-unreachable * { cursor: not-allowed; }
+.deck-unreachable .deck-badge { background: var(--fg-subtle); }
+
+.decks-panel { display: flex; flex-direction: column; gap: 10px; }
+.decks-panel .setting-help { margin-bottom: 4px; }
+.deck-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border-muted); border-radius: 8px; }
+.deck-row input[type="color"] { width: 28px; height: 24px; padding: 0; border: none; background: none; cursor: pointer; flex: 0 0 auto; }
+.deck-row .deck-name-input { flex: 0 1 200px; min-width: 0; }
+.deck-row .deck-url { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-status { flex: 0 0 auto; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-muted); }
+.deck-status.ready { color: #3fae6a; border-color: #3fae6a; }
+.deck-status.incompatible, .deck-status.unreachable { color: #d64f6a; border-color: #d64f6a; }
+.deck-add { display: flex; gap: 8px; align-items: center; }
+.deck-add input[type="text"] { flex: 1 1 auto; min-width: 0; }
+.deck-add button, .deck-row button { flex: 0 0 auto; white-space: nowrap; }
+.deck-add-error { color: #d64f6a; font-size: 12px; }

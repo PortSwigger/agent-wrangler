@@ -83,6 +83,17 @@ test('an alert with no level offers no dismiss control and is never suppressed',
   assert.equal(env.banner.children.some((c) => c.className === 'system-banner-dismiss'), false);
 });
 
+test('a standing banner shows again for a later update even with a stale forever dismissal in shared storage', () => {
+  const env = stubEnv();
+  env.store.set('aw-system-banner-dismiss', JSON.stringify({ 'ext-restart-pending': { level: 1, until: Number.MAX_SAFE_INTEGER } }));
+  showSystemBanner('⚠ Extension update installed but not loaded (a)');
+  assert.equal(env.visible(), true);
+  assert.equal(env.banner.children.some((c) => c.className === 'system-banner-dismiss'), false);
+  hideSystemBanner();
+  showSystemBanner('⚠ Extension update installed but not loaded (b)');
+  assert.equal(env.visible(), true);
+});
+
 test('a forever dismissal outlasts today', () => {
   const env = stubEnv();
   showSystemBanner('rolled back', { level: 1, kind: 'update-rollback:abc', forever: true });
