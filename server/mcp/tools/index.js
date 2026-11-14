@@ -16,6 +16,7 @@ import { nameBranchTool } from './name-branch.js';
 import { sendMessageTool } from './send-message.js';
 import { archiveSessionTool } from './archive-session.js';
 import { detachSessionTool } from './detach-session.js';
+import { stopStatusNoticesTool } from './stop-status-notices.js';
 import { attachSessionTool } from './attach-session.js';
 import { renameSessionTool } from './rename-session.js';
 import { scheduleSessionTool } from './schedule-session.js';
@@ -37,7 +38,7 @@ import { getExtensions } from '../../extensions/index.js';
 // EXTENSION's tools (server/extensions/*/index.js `tools`) are exempt from that
 // two-place rule: the loader derives their launch grant from the same list it
 // registers, so they exist in exactly one place.
-export const TOOLS = [listSessionsTool, getSessionInfoTool, getSessionCostTool, getModelFrontTool, listTasksTool, assignSessionTool, getSessionActivityTool, readSessionTranscriptTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, restoreSessionTool, restoreTaskTool, detachSessionTool, attachSessionTool, renameSessionTool, scheduleSessionTool, updateScheduleTool, cancelScheduleTool, createTerminalTool, readMailTool, listMailTool];
+export const TOOLS = [listSessionsTool, getSessionInfoTool, getSessionCostTool, getModelFrontTool, listTasksTool, assignSessionTool, getSessionActivityTool, readSessionTranscriptTool, spawnSessionTool, spawnWorkflowTool, getLinksTool, setLinksTool, removeLinksTool, workflowPhaseTool, nameBranchTool, sendMessageTool, archiveSessionTool, restoreSessionTool, restoreTaskTool, detachSessionTool, attachSessionTool, stopStatusNoticesTool, renameSessionTool, scheduleSessionTool, updateScheduleTool, cancelScheduleTool, createTerminalTool, readMailTool, listMailTool];
 
 // The tools a request actually gets: the core set plus every ENABLED extension's
 // tools. A disabled extension's tools are genuinely unregistered, not merely

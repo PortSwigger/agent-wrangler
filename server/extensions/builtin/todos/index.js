@@ -60,6 +60,6 @@ export default {
     host.stores.todos.dropBucket(taskId);
   },
   skills: ['archive-to-todo'],
-  client: 'public/client.js',
-  styles: 'public/styles.css',
+  boardApi: '^1.74.0',
+  board: { client: 'public/client.js', styles: 'public/styles.css' },
 };

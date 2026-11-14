@@ -1,0 +1,4 @@
+.ext-api-probe table { border-collapse: collapse; font: 13px/1.4 system-ui, sans-serif; }
+.ext-api-probe th, .ext-api-probe td { text-align: left; padding: 3px 12px 3px 0; vertical-align: top; }
+.ext-api-probe .ok { color: #3fb950; }
+.ext-api-probe .bad { color: #f85149; }
