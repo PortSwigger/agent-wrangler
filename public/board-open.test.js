@@ -6,7 +6,7 @@ test('a pending request is claimed once, by the card it was for', () => {
   const b = createBoardOpen();
   const onClose = () => {};
   b.request('s1', { diff: true, onClose });
-  assert.deepEqual(b.claim('s1'), { sessionId: 's1', diff: true, onClose });
+  assert.deepEqual(b.claim('s1'), { card: 's1', diff: true, onClose });
   assert.equal(b.claim('s1'), null, 'already claimed');
 });
 

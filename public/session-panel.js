@@ -53,7 +53,7 @@ export function terminalNotches(plan, rows) {
 }
 
 // `view()` 'chat' | 'terminal' | null for the panel on screen now, `session()`
-// its session row (or null), `gateFor(sessionId)` its input gate (or null).
+// its session row (or null), `gateFor(cardKey)` its input gate (or null).
 // `chat` is { stream, append(text), submit() → bool }; `terminal` is
 // { rows, wheel(dir, notches) → bool, paste(text), enter() → bool }; `sendMessage`
 // is the composer's own `message` send for a Terminal submit with text.
@@ -85,7 +85,7 @@ export function createSessionPanel({ view, session, gateFor, chat, terminal, sen
       const s = session();
       const v = view();
       if (!s || !v) return refuse('no-panel');
-      if (gateFor(s.sessionId)) return refuse('gated');
+      if (gateFor(s.cardKey)) return refuse('gated');
       if (!text && !submit) return { ok: true, view: v, submitted: false };
       if (v === 'chat') {
         const c = chat();

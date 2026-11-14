@@ -1,5 +1,6 @@
 import { DiffSyntax } from './diff-syntax-client.js';
-import { send, latestSessions, setMaximized, renderGridIfVisible, taskForSession } from './app.js';
+import { send, setMaximized, renderGridIfVisible, taskForSession, cardOf, sessionByCard } from './app.js';
+import { sessionIdOf } from './card-key.js';
 import { toast } from './toast.js';
 import { anyModalOpen } from './util.js';
 import { X_ICON, MAXIMIZE_ICON, MINIMIZE_ICON } from './icons.js';
@@ -54,7 +55,7 @@ closeBtn.innerHTML = X_ICON;
 fullscreenBtn.innerHTML = MAXIMIZE_ICON;
 sendBtn.title = 'Send to agent (⌘/Ctrl + Enter)';
 
-let openSid = null;        // session whose diff is shown, or null when closed
+let openCard = null;       // card key whose diff is shown, or null when closed
 let diffFullscreen = false; // the diff panel's own fullscreen (hides #sidebar); reset on close
 let diffPanelWidth = '';
 let sessionLabel = '';     // the session label shown in diff-sub, before any baseRef suffix
@@ -85,7 +86,7 @@ let lastReqId = 0;         // highest request id sent, for stale-reply drop (Fix
 let inFlight = false;      // a view-diff request is outstanding (poll skips while set)
 let inFlightTimer = null;  // defensive clear so a lost reply can't wedge polling
 let submitTimer = null;    // bounds a diff-comments submit (Fix C)
-let submitSid = null;      // the session a still-outstanding submit belongs to
+let submitCard = null;     // the card a still-outstanding submit belongs to
 let submitSourceKey = null;// localStorage draft key submitted with the outstanding send
 let submitLegacyKey = null;// legacy localStorage draft key claimed by the outstanding send
 let draftsLoadedFromLegacyKey = null;
@@ -104,34 +105,34 @@ function reducedMotion() {
   return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-export function isDiffPanelOpen() { return openSid !== null; }
+export function isDiffPanelOpen() { return openCard !== null; }
 
-// The session the panel is currently showing (null when closed). Lets app.js
+// The card key the panel is currently showing (null when closed). Lets app.js
 // couple the panel to the session: close it on session-close, or when the board
 // selection moves to a *different* session (the diff is a supporting view of one
 // session's terminal, so a stale diff shouldn't linger over another).
-export function diffPanelSessionId() { return openSid; }
+export function diffPanelCard() { return openCard; }
 
-// Told the session id of every panel that closes — by closeDiffPanel, or by
+// Told the card key of every panel that closes — by closeDiffPanel, or by
 // openDiffPanel switching to another session, which closes the first one's panel
 // just as surely. app.js uses it to call an extension's openDiff onClose.
 const closeListeners = new Set();
 export function onDiffPanelClosed(fn) { closeListeners.add(fn); }
-function notifyClosed(sessionId) {
+function notifyClosed(card) {
   for (const fn of closeListeners) {
-    try { fn(sessionId); } catch (err) { console.error('diff panel close listener threw', err); }
+    try { fn(card); } catch (err) { console.error('diff panel close listener threw', err); }
   }
 }
 
 // Menu / shortcut entry point. Opens the panel for a session (switching if it was
 // showing a different one) and kicks off the first diff request. Idempotent for
 // the same session — a re-request just refreshes.
-export function openDiffPanel(sessionId) {
-  if (!sessionId) return;
-  const alreadyOpenSame = openSid === sessionId;
-  const switching = openSid && openSid !== sessionId;
-  const previous = openSid;
-  openSid = sessionId;
+export function openDiffPanel(card) {
+  if (!card) return;
+  const alreadyOpenSame = openCard === card;
+  const switching = openCard && openCard !== card;
+  const previous = openCard;
+  openCard = card;
   if (switching) { cancelDrag(); resetSessionState(); clearSubmit(); }
   // Reset the mode toggle back to the default on every genuinely fresh open (a new
   // session, or reopening after a close) — but NOT on a redundant re-invoke for the
@@ -143,12 +144,12 @@ export function openDiffPanel(sessionId) {
   // genuinely outstanding — otherwise the reopened panel would re-enable Send and
   // allow a duplicate delivery before the first result lands (Fix C). A switch above
   // already settled any old-session submit via clearSubmit.
-  if (!(sending && submitSid === sessionId)) sending = false;
+  if (!(sending && submitCard === card)) sending = false;
   sendError = null; persistError = null; activeKey = null;
   pendingDiff = null; inFlight = false; clearTimeout(inFlightTimer);
-  const s = latestSessions.find((x) => x.sessionId === sessionId);
-  sessionLabel = s ? s.label : sessionId;
-  prLinks = diffPrLinks(s, taskForSession(sessionId));
+  const s = sessionByCard(card);
+  sessionLabel = s ? s.label : sessionIdOf(card);
+  prLinks = diffPrLinks(s, taskForSession(sessionIdOf(card)));
   renderPrModeButtons();
   applyMode(diffMode);
   updateSubText();
@@ -162,16 +163,16 @@ export function openDiffPanel(sessionId) {
 }
 
 // Ctrl+Cmd+D: a toggle — close if already showing this session, else open.
-export function toggleDiffPanel(sessionId) {
-  if (openSid && openSid === sessionId) { closeDiffPanel(); return; }
-  openDiffPanel(sessionId);
+export function toggleDiffPanel(card) {
+  if (openCard && openCard === card) { closeDiffPanel(); return; }
+  openDiffPanel(card);
 }
 
 export function closeDiffPanel() {
-  if (openSid === null) return;
+  if (openCard === null) return;
   diffSyntax.cancel();
-  const closed = openSid;
-  openSid = null;
+  const closed = openCard;
+  openCard = null;
   stopPolling();
   cancelDrag();
   activeKey = null;
@@ -252,11 +253,11 @@ function resetSessionState() {
 
 // Settle an outstanding diff-comments submit (used when switching sessions): cancel
 // its timeout and clear the sending flag so the new session starts clean. The old
-// session's diff-comments-result, if it still arrives, is ignored (sessionId gate).
+// session's diff-comments-result, if it still arrives, is ignored (card gate).
 function clearSubmit() {
   clearTimeout(submitTimer);
   sending = false;
-  submitSid = null;
+  submitCard = null;
   submitSourceKey = null;
   submitLegacyKey = null;
 }
@@ -299,14 +300,14 @@ function persistDrafts() {
 // timer so a lost reply can't wedge the in-flight guard forever. Called directly on
 // open/switch/mode-change (bypasses the poll's in-flight gate — those must always go).
 function requestDiff() {
-  if (!openSid) return;
+  if (!openCard) return;
   refreshPrLinks();
   reqSeq += 1;
   lastReqId = reqSeq;
   inFlight = true;
   clearTimeout(inFlightTimer);
   inFlightTimer = setTimeout(() => { inFlight = false; }, INFLIGHT_TIMEOUT_MS);
-  const msg = { type: 'view-diff', sessionId: openSid, reqId: reqSeq, mode: diffMode };
+  const msg = { type: 'view-diff', sessionId: sessionIdOf(openCard), reqId: reqSeq, mode: diffMode };
   if (diffMode === 'pr' && selectedPr) {
     msg.prUrl = selectedPr.url;
     lastPrRequestAtByKey.set(prRequestKey(), Date.now());
@@ -367,7 +368,7 @@ function setLayout(layout) {
 // bypass-the-in-flight-gate treatment as the initial open, since the user is waiting
 // on this specific change.
 function setMode(mode) {
-  if (mode === diffMode || !openSid) return;
+  if (mode === diffMode || !openCard) return;
   if (activeKey) closeEditor();
   cancelDrag();
   applyMode(mode);
@@ -382,7 +383,7 @@ function setMode(mode) {
 
 function setPrMode(url) {
   const pr = prLinks.find((l) => l.url === url);
-  if (!pr || (diffMode === 'pr' && selectedPr?.url === url) || !openSid) return;
+  if (!pr || (diffMode === 'pr' && selectedPr?.url === url) || !openCard) return;
   if (activeKey) closeEditor();
   cancelDrag();
   selectedPr = pr;
@@ -402,16 +403,16 @@ function prDraftKey(pr = selectedPr) {
 }
 
 function draftKeysForCurrentSource() {
-  return draftStorageKeysForSource(openSid, diffMode, diffMode === 'pr' ? prDraftKey() : null);
+  return draftStorageKeysForSource(sessionIdOf(openCard), diffMode, diffMode === 'pr' ? prDraftKey() : null);
 }
 
 function prRequestKey() {
-  return `${openSid}:${selectedPr?.url || ''}`;
+  return `${openCard}:${selectedPr?.url || ''}`;
 }
 
 function refreshPrLinks() {
-  const s = latestSessions.find((x) => x.sessionId === openSid);
-  const nextLinks = diffPrLinks(s, taskForSession(openSid));
+  const s = sessionByCard(openCard);
+  const nextLinks = diffPrLinks(s, taskForSession(sessionIdOf(openCard)));
   const changed = JSON.stringify(nextLinks) !== JSON.stringify(prLinks);
   prLinks = nextLinks;
   const stillLinked = diffMode === 'pr' && selectedPr
@@ -460,7 +461,7 @@ function renderPrModeButtons() {
 function startPolling() {
   stopPolling();
   pollTimer = setInterval(() => {
-    if (!openSid || activeKey || inFlight || dragSelecting) return;
+    if (!openCard || activeKey || inFlight || dragSelecting) return;
     if (diffMode === 'pr' && Date.now() - (lastPrRequestAtByKey.get(prRequestKey()) || 0) < PR_REFRESH_MS) return;
     requestDiff();
   }, REFRESH_MS);
@@ -476,7 +477,7 @@ function editorOpen() {
 // --- ws replies (routed from app.js) ---
 
 export function onDiff(msg) {
-  if (msg.sessionId !== openSid) return; // a stale reply for a since-closed/switched panel
+  if (cardOf(msg.sessionId) !== openCard) return; // a stale reply for a since-closed/switched panel
   // A reply for THIS session settles the in-flight guard regardless of ordering, so
   // even a stale/out-of-order reply un-blocks the next poll (never wedged).
   inFlight = false;
@@ -495,10 +496,10 @@ export function onDiff(msg) {
 }
 
 export function onDiffCommentsResult(msg) {
-  if (msg.sessionId !== openSid) return;
+  if (cardOf(msg.sessionId) !== openCard) return;
   clearTimeout(submitTimer); // the result arrived — cancel the bounded fallback (Fix C)
   sending = false;
-  submitSid = null;
+  submitCard = null;
   if (msg.ok) {
     const currentKey = draftKeysForCurrentSource().primary;
     const { removeKey, clearCurrent } = clearSubmittedDraftSource({ currentKey, submittedKey: submitSourceKey });
@@ -628,7 +629,7 @@ function renderDiff() {
     const last = job.targets.at(-1)?.el.getBoundingClientRect();
     return { job, visible: first && last && first.top <= viewport.bottom && last.bottom >= viewport.top };
   }).sort((a, b) => Number(Boolean(b.visible)) - Number(Boolean(a.visible))).map(({ job }) => job);
-  void diffSyntax.decorate(prioritizedJobs, () => openSid !== null && !activeKey && !dragSelecting &&
+  void diffSyntax.decorate(prioritizedJobs, () => openCard !== null && !activeKey && !dragSelecting &&
     !document.getSelection()?.toString());
   if (st === 'ok') filelistEl.replaceChildren(fileListEl(lastDiff.files || []));
   else filelistEl.replaceChildren();
@@ -908,9 +909,9 @@ function updateSendBtn() {
 
 function submit() {
   const comments = buildCommentsPayload(drafts);
-  if (sending || comments.length === 0 || !openSid) return;
+  if (sending || comments.length === 0 || !openCard) return;
   sending = true;
-  submitSid = openSid;
+  submitCard = openCard;
   {
     const keys = draftKeysForCurrentSource();
     submitSourceKey = keys.primary;
@@ -925,14 +926,14 @@ function submit() {
   submitTimer = setTimeout(() => {
     if (!sending) return;
     sending = false;
-    submitSid = null;
+    submitCard = null;
     submitSourceKey = null;
     submitLegacyKey = null;
     sendError = "Couldn't confirm delivery — drafts kept, try again.";
     updateSendBtn();
     renderDiff();
   }, SUBMIT_TIMEOUT_MS);
-  const msg = { type: 'diff-comments', sessionId: openSid, comments, mode: diffMode };
+  const msg = { type: 'diff-comments', sessionId: sessionIdOf(openCard), comments, mode: diffMode };
   if (diffMode === 'pr' && selectedPr) {
     msg.prUrl = selectedPr.url;
     msg.prNumber = selectedPr.number;
@@ -1072,7 +1073,7 @@ bodyEl.addEventListener('mousedown', (e) => {
 // not editing → send everything. Capture-phase + stopPropagation so it wins over the
 // board's other Escape/shortcut handlers while the panel is up. Inert when closed.
 document.addEventListener('keydown', (e) => {
-  if (openSid === null) return;
+  if (openCard === null) return;
   // An open context menu or modal dialog (e.g. Ctrl+Cmd+N's dispatch dialog, opened
   // OVER an already-open diff panel) owns both chords first — same gate the board's
   // own Ctrl+Cmd+<key> family uses, so the two agree on what's "on top". Without this

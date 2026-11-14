@@ -15,7 +15,8 @@ export function pointerOnly(data) {
 }
 
 // `gateFor(session)` is slots.inputGate bound to the current graph and api;
-// `notify(session, gate)` is told the first time a locked session drops a
+// gates are held by card key (card-key.js), so `get` and `allow` take one.
+// `notify(card, gate)` is told the first time a locked session drops a
 // keystroke, once per lock (it re-arms when the lock lifts).
 export function createInputGates({ gateFor, notify = () => {} }) {
   let gates = new Map();
@@ -26,7 +27,7 @@ export function createInputGates({ gateFor, notify = () => {} }) {
       const next = new Map();
       for (const s of sessions || []) {
         const g = gateFor(s);
-        if (g) next.set(s.sessionId, g);
+        if (g) next.set(s.cardKey, g);
       }
       let changed = next.size !== gates.size;
       for (const [id, g] of next) {
@@ -37,16 +38,16 @@ export function createInputGates({ gateFor, notify = () => {} }) {
       gates = next;
       return changed;
     },
-    get(sessionId) {
-      return (sessionId && gates.get(sessionId)) || null;
+    get(card) {
+      return (card && gates.get(card)) || null;
     },
-    // May this chunk of terminal input reach the session's pane?
-    allow(sessionId, data) {
-      const g = this.get(sessionId);
+    // May this chunk of terminal input reach the card's pane?
+    allow(card, data) {
+      const g = this.get(card);
       if (!g || pointerOnly(data)) return true;
-      if (!told.has(sessionId)) {
-        told.add(sessionId);
-        notify(sessionId, g);
+      if (!told.has(card)) {
+        told.add(card);
+        notify(card, g);
       }
       return false;
     },

@@ -1,4 +1,4 @@
-import { send, selectedSessionId, deselectSession } from './app.js';
+import { send, selectedCard, cardOf, deselectSession } from './app.js';
 import { toast } from './toast.js';
 import { customSnoozeValid, toDatetimeLocalValue, resolveUntil, parseDatetimeLocal, snoozeSetMessage } from './snooze.js';
 
@@ -60,7 +60,7 @@ function submitCustomSnooze() {
   const sessionId = snoozeTargetId;
   send(snoozeSetMessage(sessionId, parseDatetimeLocal(snWhen.value), snComment.value));
   // Same as the presets: snoozing the open session closes its view.
-  if (sessionId === selectedSessionId) deselectSession();
+  if (cardOf(sessionId) === selectedCard) deselectSession();
   closeCustomSnooze();
 }
 snWhen.addEventListener('input', validateCustomSnooze);

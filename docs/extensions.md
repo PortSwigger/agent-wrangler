@@ -278,6 +278,13 @@ A board half reads only its own state and the session view, and acts only throug
   with the reply arriving through `api.onMessage`.
 - `api.styles()` resolves with the board's contributed styles, the list `/api/styles` serves.
 
+Every session row the board hands a board half carries two fields of the board's own (1.75.0):
+`deckId`, the id of the deck the session is on (from `GET /deck`), and `cardKey`,
+`<deckId>/<sessionId>`. The board names a card by that pair, since two decks can each hold a session
+the other does not know about. The session ids in the API itself (`openSession`, `mountSession`,
+`api.act`'s `session`) are unchanged. An older board leaves both fields out, so a board half that
+reads them declares `^1.75.0`.
+
 ### Ports and origins
 
 The deck and the board listen on separate ports, so the board talks to the deck cross-origin. The
