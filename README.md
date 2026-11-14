@@ -156,7 +156,7 @@ Environment variables:
 - `AW_PORT` (or legacy `PORT`) — port the board listens on, the address you open (default `7878`)
 - `AW_DECK_PORT` — loopback port the deck, which runs sessions, listens on (default `AW_PORT` + 1).
 - `AW_SESSION_API_PORT` — port launched sessions reach `/mcp` and the PR hooks on, each with its own
-  session token (default `AW_PORT` + 2; see [docs/session-api.md](docs/session-api.md)).
+  session token (default the deck's port + 1, so `AW_PORT` + 2 with a board; see [docs/session-api.md](docs/session-api.md)).
   The board talks to it cross-origin; if the default is taken the deck takes a free port instead
 - `AW_ALLOWED_ORIGINS` — comma-separated extra board origins the deck accepts, beside the board's
   own loopback origins. `allowedOrigins` in the data dir's `config.json` (a list) adds more

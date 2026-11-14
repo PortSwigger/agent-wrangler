@@ -2,7 +2,7 @@ import { sessionApiPort } from '../runtime.js';
 import { getExtensions } from '../extensions/index.js';
 
 // Single source of truth for how a launched session's MCP client is pointed back
-// at this server. Imports only serverPort, so the agents layer (a leaf) can use
+// at this server. Imports only sessionApiPort, so the agents layer (a leaf) can use
 // it without pulling in heavy modules. Every URL here is on the session API's
 // own port (server/session-api), and every caller presents the session's token
 // from SESSION_TOKEN_ENV as a bearer (docs/session-api.md).
