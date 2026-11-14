@@ -60,7 +60,7 @@ import { toast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
-import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, OWN_ENTRY } from './decks.js';
+import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, OWN_ENTRY } from './decks.js';
 import { mountDecksPanel } from './decks-panel.js';
 import { withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
@@ -461,6 +461,8 @@ const extApi = {
   send,
   // Backs `api.act`; slots binds the id, so only `ext.<own id>.*` is reachable.
   act: (extId, name, opts) => deckAct(`ext.${extId}.${name}`, opts),
+  // Backs `api.act`'s `deck` option: the call goes to that deck alone.
+  actOnDeck: (deckId, extId, name, opts) => deckActOn(deckId, `ext.${extId}.${name}`, opts),
   // Backs `api.styles()`.
   styles: loadedStyles,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
@@ -694,8 +696,14 @@ function pairsWithDeck(entry) {
   if (!Array.isArray(listed)) return true;
   const mine = listed.find((e) => e?.id === entry.id);
   if (!mine) return null;
-  const want = entry.boardApi ?? hostApiVersion;
+  const want = boardApiWanted(entry.id);
   return want == null || mine.boardApi === want;
+}
+// The boardApi a deck must list an extension with for this board's half of it
+// to pair: the half's own, else the API this board serves.
+function boardApiWanted(extId) {
+  const entry = extClientManifest.find((e) => e?.id === extId);
+  return entry ? (entry.boardApi ?? hostApiVersion) : null;
 }
 // The `extensions` connect message announces which extensions ship a client
 // module and where it lives; `graph.extensions[].enabled` (re-read from config
@@ -7701,6 +7709,8 @@ function armIdleReapply() {
 let deckStatus = 'connecting';
 // The own deck's last graph, before the other decks' sessions join it.
 let ownGraph = null;
+// The own deck's last `ext` state map, for api.decks().
+let ownExt = null;
 // The board server's deck list (decks.js createDeckList); the own deck first.
 let deckEntries = [];
 const deck = createDeckClient({
@@ -7711,10 +7721,12 @@ const deck = createDeckClient({
     syncStandingBanner();
     syncDeckControls();
     if (deckEntries.length > 1) applyDecks();
+    else syncExtDecks();
     remountDecksPanel();
   },
   onState: (frame) => {
     boardDeckId = deck.descriptor()?.deckId || boardDeckId;
+    ownExt = frame.ext && typeof frame.ext === 'object' ? frame.ext : null;
     slots.setExtState(frame.ext);
     ownGraph = stampDeck(stateToGraph(frame, { restore: withCompatFields }), boardDeckId);
     applyDecks();
@@ -7753,15 +7765,20 @@ const ownDeckEntry = () => deckEntries.find((e) => e.own) || { id: OWN_ENTRY, ow
 function boardDecks() {
   const own = ownDeckEntry();
   return [
-    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, descriptor: deck.descriptor(), name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
+    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, descriptor: deck.descriptor(), ext: ownExt, name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
     ...remoteDecks.list(),
   ];
 }
 const deckNameOf = (deckId) => boardDecks().find((d) => d.deckId === deckId)?.name || 'That deck';
 function applyDecks() {
+  syncExtDecks();
   if (!ownGraph) return;
   const [own, ...remotes] = boardDecks();
   applyGraph(mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi: deckEntries.length > 1 }));
+}
+// Hands every board half the decks that report its extension (api.decks()).
+function syncExtDecks() {
+  slots.setExtDecks(extensionDecks(boardDecks(), boardApiWanted));
 }
 function clientForDeck(deckId) {
   return !deckId || deckId === boardDeckId ? deck : remoteDecks.clientFor(deckId);
@@ -7824,6 +7841,12 @@ export function send(obj, extId = null) {
   }));
   return true;
 }
+// An action sent to one deck by its id, whatever session it names.
+export function deckActOn(deckId, action, opts = {}) {
+  const client = clientForDeck(deckId);
+  if (!client) return Promise.resolve({ ok: false, data: null, error: { code: 'failed', message: 'That deck is not on this board' } });
+  return client.act(action, opts);
+}
 export function deckAct(action, { card = null, ...opts } = {}) {
   const client = clientForDeck(deckForCall(opts.session, card));
   if (!client) return Promise.resolve({ ok: false, data: null, error: { code: 'failed', message: 'That deck is not on this board' } });
@@ -7875,7 +7898,7 @@ function onDeckMessage(msg) {
   // extension that fails to load is logged and dropped, never the board's
   // problem. A render is asked for once something new registered, since the
   // first graph may already have been applied while the module was in flight.
-  else if (msg.type === 'extensions') { deck.refresh().then(() => { syncDeckControls(); syncClientExtensions(); }); extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteExtClientFacts(extClientManifest); syncClientExtensions(); }
+  else if (msg.type === 'extensions') { deck.refresh().then(() => { syncDeckControls(); syncClientExtensions(); syncExtDecks(); }); extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteExtClientFacts(extClientManifest); syncClientExtensions(); }
   // An extension's server half talking to its own browser half: host.broadcast
   // FORCES the frame's type to `ext:<its own id>` (host-api/v1.js), so the
   // prefix can never collide with a core type and the id in it is the whole

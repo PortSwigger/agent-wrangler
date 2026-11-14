@@ -2373,6 +2373,53 @@ test('api.act runs ext.<own id>.<name> through the base api and resolves with th
   assert.deepEqual(await throwing.act('x'), { ok: false, data: null, error: { code: 'failed', message: 'gone' } });
 });
 
+test('api.decks lists each deck reporting this extension, state({ deck }) reads that deck\'s copy, and act({ deck }) goes to that deck alone', async () => {
+  const calls = [];
+  const { slots, errors } = harness();
+  const baseApi = {
+    act: async () => { throw new Error('a deck call must not be routed by session'); },
+    actOnDeck: async (deckId, extId, name, opts) => { calls.push([deckId, extId, name, opts]); return { ok: true, data: { deckId }, error: null }; },
+  };
+  const api = slots.forExtension('probe', baseApi).api;
+  assert.equal(api.actOnDeck, undefined, 'the deck-bound base call is not a member');
+  assert.deepEqual(api.decks(), [], 'no decks before the board has heard from one');
+  const heard = [];
+  const off = api.decks.onChange((list) => heard.push(list.map((d) => [d.deckId, d.status])));
+  const rows = [
+    { deckId: 'deck-a', name: 'A', colour: null, own: true, status: 'ready', boardApi: '^1.77.0', state: { count: 1 } },
+    { deckId: 'deck-b', name: 'B', colour: '#3fae6a', own: false, status: 'ready', boardApi: '^1.77.0', state: { count: 5 } },
+    { deckId: 'deck-c', name: 'C', colour: null, own: false, status: 'incompatible', boardApi: '^1.76.0', state: null },
+  ];
+  slots.setExtDecks(new Map([['probe', rows], ['other', [{ deckId: 'deck-a', status: 'ready', state: { secret: 1 } }]]]));
+  const list = api.decks();
+  assert.deepEqual(list.map((d) => [d.deckId, d.status, d.own]), [['deck-a', 'ready', true], ['deck-b', 'ready', false], ['deck-c', 'incompatible', false]]);
+  assert.ok(Object.isFrozen(list) && Object.isFrozen(list[0]));
+  assert.equal(list[0].state, undefined, 'state is read through api.state({ deck })');
+  assert.deepEqual(heard, [[['deck-a', 'ready'], ['deck-b', 'ready'], ['deck-c', 'incompatible']]]);
+  assert.deepEqual(api.state({ deck: 'deck-b' }), { count: 5 });
+  assert.ok(Object.isFrozen(api.state({ deck: 'deck-b' })));
+  assert.equal(api.state({ deck: 'deck-b' }), api.state({ deck: 'deck-b' }), 'the same copy until that deck\'s state moves');
+  assert.equal(api.state({ deck: 'deck-c' }), null, 'an incompatible deck\'s state is not handed over');
+  assert.equal(api.state({ deck: 'nowhere' }), null);
+
+  assert.deepEqual(await api.act('bump', { n: 1 }, { deck: 'deck-b' }), { ok: true, data: { deckId: 'deck-b' }, error: null });
+  assert.deepEqual(calls, [['deck-b', 'probe', 'bump', { session: null, args: { n: 1 } }]]);
+  assert.equal((await api.act('bump', {}, { deck: 'deck-c' })).error.code, 'incompatible');
+  assert.equal((await api.act('bump', {}, { deck: 'nowhere' })).error.code, 'invalid');
+  assert.equal(calls.length, 1, 'refused calls reach no deck');
+
+  slots.setExtDecks(new Map([['probe', rows], ['other', [{ deckId: 'deck-a', status: 'ready', state: { secret: 2 } }]]]));
+  assert.equal(heard.length, 1, 'another extension\'s change is not heard');
+  slots.setExtDecks(new Map([['probe', rows.map((r) => (r.deckId === 'deck-b' ? { ...r, state: { count: 6 } } : r))]]));
+  assert.equal(heard.length, 2, 'a deck\'s state moving is heard');
+  assert.deepEqual(api.state({ deck: 'deck-b' }), { count: 6 });
+  off();
+  slots.setExtDecks(new Map());
+  assert.equal(heard.length, 2);
+  assert.equal(api.decks.onChange('x')(), undefined);
+  assert.match(errors.join('\n'), /decks\.onChange needs a function/);
+});
+
 test('api.styles resolves with a copy of the board\'s style list', async () => {
   const list = [{ id: 'sea', name: 'Sea' }];
   const api = harness().slots.forExtension('themes', { styles: async () => list }).api;

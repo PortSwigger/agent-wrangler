@@ -45,6 +45,6 @@ export default {
     onPurge: ({ sessionId, host }) => { host.stores.checklist.forget(sessionId); },
   },
   skills: ['checklist'],
-  boardApi: '^1.74.0',
+  boardApi: '^1.77.0',
   board: { client: 'public/index.js', styles: 'public/styles.css' },
 };

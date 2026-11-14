@@ -290,6 +290,47 @@ While its deck list holds more than one deck, each session row also carries `dec
 `deckColour` (`#rrggbb`), and `deckUnreachable: true` while that deck is not connected (1.76.0).
 With one deck the rows carry none of them. A board half that reads them declares `^1.76.0`.
 
+A board half is loaded once, from the board's own install, and serves every deck on the board that
+runs its extension (1.77.0):
+
+- `api.decks()` lists each deck whose `GET /deck` lists this extension, the board's own deck first,
+  as `[{ deckId, name, colour, own, status, boardApi }]`. `status` is `ready`, `incompatible` (the
+  deck lists the extension with another `boardApi` than this board half's, so the two do not pair)
+  or `unreachable`. With one deck the list holds just the own deck. `api.decks.onChange(fn)` calls
+  `fn` with the new list each time it, a deck's status, or one of those decks' state for this
+  extension changes, and returns the unsubscribe function.
+- `api.state({ deck })` is that deck's `ext.<id>` state, as a frozen copy; `null` for a deck that is
+  incompatible or does not list the extension. `api.state()` stays the board's own deck's.
+- `api.act(name, args, { deck })` sends the action to that deck alone, whatever session it names. An
+  incompatible deck is refused with error code `incompatible`, and a deck id not in `api.decks()`
+  with `invalid`; neither reaches any deck.
+- `api.send(frame)` may carry `card`, a session row's `cardKey`, to send the frame to that card's
+  deck rather than the deck the bare `sessionId` picks.
+
+A per-session board half reads the open card's deck from its session row:
+
+```js
+const decks = api.decks();
+const row = decks.find((d) => d.deckId === session.deckId);
+if (row?.status === 'incompatible') return showIncompatible(row.name);
+const mine = api.state({ deck: session.deckId });
+```
+
+A board-wide view draws one section per deck, acting on each through its own `deck`:
+
+```js
+api.decks.onChange(render);
+function render() {
+  el.replaceChildren(...api.decks().map((d) => section(d, {
+    state: api.state({ deck: d.deckId }),
+    bump: () => api.act('example-bump', {}, { deck: d.deckId }),
+  })));
+}
+```
+
+A board half that uses any of these declares `^1.77.0`. The builtin checklist does: on a board with
+several decks each card's checklist comes from, and is written to, that card's own deck.
+
 ### Ports and origins
 
 The deck and the board listen on separate ports, so the board talks to the deck cross-origin. The

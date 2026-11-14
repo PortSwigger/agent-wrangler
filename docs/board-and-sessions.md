@@ -296,6 +296,11 @@ is unreachable stays on the board, greyed out and disabled, until the deck is ba
 cards sit in the **Ad hoc** tile: this board's tasks and new sessions belong to its own deck.
 **Remove** takes a deck off the board; its sessions keep running on it.
 
+Extensions load once, from the board's own install. A card's checklist is the one its own deck
+keeps, and ticking an item changes it on that deck alone. An extension with a view of its own may
+show one section for each deck that runs it; a deck running a version of it whose board API does not
+match this board's is shown there as **Incompatible** and is sent nothing.
+
 ## Snooze, suspend, archive, and search
 
 - **Snooze** hides a session until a chosen time. When automatic suspension is enabled, snoozes of at

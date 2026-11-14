@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDeckClient } from './deck-client.js';
 import { deckIdOf, stampDeck } from './card-key.js';
-import { createDeckList, createRemoteDecks, deckLabel, mergeDeckGraphs, originOfUrl, routeDeck } from './decks.js';
+import { createDeckList, createRemoteDecks, deckLabel, extensionDecks, mergeDeckGraphs, originOfUrl, routeDeck } from './decks.js';
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -202,4 +202,31 @@ test('a deck that is down when the page loads still shows its last cards, unreac
   assert.equal(reloaded.list()[0].status, 'unreachable');
   reloaded.sync([]);
   assert.equal(store.size, 0, 'removing the deck forgets its cards');
+});
+
+test('each extension is listed with every deck reporting it: ready, incompatible on another boardApi, or unreachable', () => {
+  const descriptor = (exts) => ({ extensions: exts.map(([id, boardApi]) => ({ id, version: null, boardApi })) });
+  const decks = [
+    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', descriptor: descriptor([['probe', '^1.77.0'], ['todos', '^1.74.0']]), ext: { probe: { count: 1 } } },
+    { deckId: 'deck-b', name: 'Laptop B', colour: null, status: 'ready', descriptor: descriptor([['probe', '^1.76.0']]), ext: { probe: { count: 9 } } },
+    { deckId: 'deck-c', name: 'Laptop C', colour: null, status: 'unreachable', descriptor: descriptor([['probe', '^1.77.0']]), ext: { probe: { count: 4 } } },
+    { deckId: 'deck-d', name: 'Copy of A', status: 'incompatible', duplicate: 'own', descriptor: descriptor([['probe', '^1.77.0']]) },
+    { deckId: 'deck-e', name: 'Not yet', status: 'connecting', descriptor: null },
+  ];
+  const got = extensionDecks(decks, (id) => ({ probe: '^1.77.0' })[id] ?? null);
+  assert.deepEqual(got.get('probe'), [
+    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', boardApi: '^1.77.0', state: { count: 1 } },
+    { deckId: 'deck-b', name: 'Laptop B', colour: null, own: false, status: 'incompatible', boardApi: '^1.76.0', state: null },
+    { deckId: 'deck-c', name: 'Laptop C', colour: null, own: false, status: 'unreachable', boardApi: '^1.77.0', state: { count: 4 } },
+  ]);
+  assert.deepEqual(got.get('todos').map((r) => [r.deckId, r.status]), [['deck-a', 'ready']], 'an extension with no board half here pairs with any deck');
+});
+
+test('a remote deck keeps its own extension state from its state frames', async () => {
+  const net = network({ 'http://127.0.0.1:7001': desc('deck-b', 'B') });
+  const remotes = createRemoteDecks({ makeClient: net.makeClient, ownDeckId: () => 'deck-a' });
+  remotes.sync([{ id: 'own', own: true }, { id: 'b', url: 'http://127.0.0.1:7001', name: 'Laptop B' }]);
+  await flush(); await flush();
+  net.socketOf('http://127.0.0.1:7001').receive({ ...stateFrame([]), ext: { probe: { count: 2 } } });
+  assert.deepEqual(remotes.list()[0].ext, { probe: { count: 2 } });
 });
