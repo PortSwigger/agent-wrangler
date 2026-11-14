@@ -1991,8 +1991,8 @@ function toggleSubagentShown(sessionId) {
   if (currentView === 'grid') renderGrid();
 }
 
-// A child's own full-view choice (card menu, stored on the ranch with the
-// session) wins; a child never toggled follows this board's default.
+// A child's own full-view choice (card menu, stored with the session)
+// wins; a child never toggled follows this board's default.
 function isChildFullView(s) {
   return typeof s.childFullView === 'boolean' ? s.childFullView : getSetting('childFullViewByDefault');
 }
