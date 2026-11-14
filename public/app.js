@@ -57,7 +57,7 @@ import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChips
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
-import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
+import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
 import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, OWN_ENTRY } from './decks.js';
@@ -7701,6 +7701,7 @@ function armIdleReapply() {
 let deckStatus = 'connecting';
 // The own deck's last graph, before the other decks' sessions join it.
 let ownGraph = null;
+let ownCompatFields = null;
 // The board server's deck list (decks.js createDeckList); the own deck first.
 let deckEntries = [];
 const deck = createDeckClient({
@@ -7716,7 +7717,8 @@ const deck = createDeckClient({
   onState: (frame) => {
     boardDeckId = deck.descriptor()?.deckId || boardDeckId;
     slots.setExtState(frame.ext);
-    ownGraph = stampDeck(stateToGraph(frame, { restore: withCompatFields }), boardDeckId);
+    ownGraph = stampDeck(stateToGraph(frame), boardDeckId);
+    ownCompatFields = frame.compat?.sessionFields || null;
     applyDecks();
     armIdleReapply();
   },
@@ -7763,7 +7765,8 @@ const deckNameOf = (deckId) => boardDecks().find((d) => d.deckId === deckId)?.na
 function applyDecks() {
   if (!ownGraph) return;
   const [own, ...remotes] = boardDecks();
-  applyGraph(mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi: deckEntries.length > 1 }));
+  const merged = mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi: deckEntries.length > 1 });
+  applyGraph(restoreCompat(merged, ownCompatFields, withCompatFields, (r) => r.deckId === boardDeckId));
 }
 function clientForDeck(deckId) {
   return !deckId || deckId === boardDeckId ? deck : remoteDecks.clientFor(deckId);

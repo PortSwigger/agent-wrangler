@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stateToGraph } from './deck-client.js';
+import { restoreCompat, stateToGraph } from './deck-client.js';
+import { mergeDeckGraphs } from './decks.js';
 import { actingAs, resetLegacyWarnings, setLegacyReporter, warnLegacy, withCompatFields } from './legacy-surface.js';
 
 const frame = {
@@ -38,6 +39,20 @@ test('without restore the board view stays as the deck sent it', () => {
   const g = stateToGraph(frame);
   assert.ok(!('pid' in g.sessions[0]));
   assert.ok(!('compat' in g));
+});
+
+test('compat fields restored after a multi-deck merge reach only the own deck\'s records, and the merge reads none', () => {
+  resetLegacyWarnings();
+  const reads = [];
+  const restore = (r, f) => withCompatFields(r, f, (surface) => reads.push(surface));
+  const own = { graph: { sessions: [{ sessionId: 'a', deckId: 'own' }] }, status: 'ready' };
+  const remote = { graph: { sessions: [{ sessionId: 'a', deckId: 'other' }] }, status: 'ready' };
+  const merged = mergeDeckGraphs(own, [remote], { multi: true });
+  const g = restoreCompat(merged, { a: { pid: 12 } }, restore, (r) => r.deckId === 'own');
+  assert.deepEqual(reads, [], 'merging and restoring read nothing');
+  assert.equal(g.sessions[0].pid, 12);
+  assert.ok(!('pid' in g.sessions[1]), 'another deck\'s session with the same id is untouched');
+  assert.deepEqual(reads, ['session.pid']);
 });
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
