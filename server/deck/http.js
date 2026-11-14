@@ -3,7 +3,8 @@ import { isAllowedOrigin, corsHeaders } from '../origin-check.js';
 
 // The deck's plain-HTTP surface, on its own loopback port: GET /deck (the API
 // descriptor, readable cross-origin by the board origins in the allowlist),
-// POST /mcp, /pr-attach and /pr-model (MCP and the launch hook's callbacks), and
+// POST /mcp, /pr-attach and /pr-model (the session API's legacy routes, for
+// sessions launched before it had its own port; server/session-api), and
 // the GET /file and /ext-file adapters. It serves no UI. WS upgrades (/ws, /pty)
 // are wired on the returned server in index.js.
 //

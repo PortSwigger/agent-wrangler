@@ -311,6 +311,9 @@ that port in `<meta name="aw-deck-port">`. The deck accepts a browser only from 
 its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS` (or
 `--allowed-origins`, or `allowedOrigins` in `config.json`). A board opened from another host (with
 `AW_BIND_HOST`) reaches the deck through the board server instead.
+Launched sessions reach MCP and the PR hooks on a third port, the session API (`AW_SESSION_API_PORT`,
+default `AW_PORT` + 2), with a token per session; an MCP tool's `caller` is the card that token
+belongs to ([session-api.md](session-api.md)).
 
 A deck started with `--deck-only` has no board server: it serves only the deck API on its own port
 and 404s board pages, and its allowlist is only the origins configured for it. See
@@ -1033,7 +1036,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension does NOT own, and it is a VETO that fails OPEN** — `buildMcpServer`
   filters `activeTools()` per request through `deps.ext.hideTool`, a throwing
   filter hides nothing and is logged, because this is a UX narrowing over an
-  ADVISORY identity (`extractCaller` is not auth) and a bug must degrade to the
+  identity the session API's token check already settled (`server/session-api`), and a bug must degrade to the
   full tool list, never to a session that can do nothing. `--allowedTools` is
   baked into launch argv and unaffected: granting a tool the listing does not
   advertise is inert.

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installPath } from '../install-root.js';
-import { MCP_SERVER_NAME, allowedToolsArg, mcpUrl } from '../mcp/client-config.js';
+import { MCP_SERVER_NAME, SESSION_TOKEN_ENV, allowedToolsArg, mcpUrl } from '../mcp/client-config.js';
 import { PR_HOOK_PATH, shellQuote } from './claude.js';
 import { BOARD_GEMINI_HOME, userGeminiDir } from './gemini-files.js';
 
@@ -17,8 +17,8 @@ import { BOARD_GEMINI_HOME, userGeminiDir } from './gemini-files.js';
 //   - everything else in ~/.gemini (credentials, extensions, skills, commands,
 //     GEMINI.md, .env) is symlinked, so a session signs in and behaves as the
 //     user's own Gemini does.
-// The user's ~/.gemini is never written. One home serves every session: the card
-// id reaches the MCP header and hooks through $AW_SESSION_ID, which Gemini
+// The user's ~/.gemini is never written. One home serves every session: the
+// session token reaches the MCP header through $AW_SESSION_TOKEN, which Gemini
 // expands in settings values.
 
 const CONTEXT_HOOK_PATH = installPath(fileURLToPath(new URL('./gemini-context-hook.js', import.meta.url)));
@@ -43,7 +43,7 @@ function readJsonc(file) {
 const node = (script) => `${shellQuote(process.execPath)} ${shellQuote(script)}`;
 
 // The user's settings with what every board-launched Gemini session needs:
-//   - the board's MCP server, the card id in its X-AW-Session header;
+//   - the board's MCP server, the session token as its bearer;
 //   - the PR-attach hook after each shell command (scripts/pr-attach-hook.mjs
 //     scans the AfterTool payload's command and output as it does Claude's);
 //   - a SessionStart hook that hands Gemini the launch's instructions
@@ -63,7 +63,7 @@ export function geminiSettings({ port, base = {} } = {}) {
     security: { ...(base.security || {}), folderTrust: { ...(base.security?.folderTrust || {}), enabled: false } },
     mcpServers: {
       ...(base.mcpServers || {}),
-      [MCP_SERVER_NAME]: { httpUrl: mcpUrl(port), headers: { 'X-AW-Session': '$AW_SESSION_ID' }, description: 'Agent Wrangler board' },
+      [MCP_SERVER_NAME]: { httpUrl: mcpUrl(port), headers: { Authorization: `Bearer $${SESSION_TOKEN_ENV}` }, description: 'Agent Wrangler board' },
     },
     hooks,
   };

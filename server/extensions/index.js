@@ -1104,8 +1104,8 @@ export function createCodexPolicyResolver(ext, hostApiFor = () => undefined, onE
 // stays listed unless some filter says otherwise.
 //
 // Fails OPEN by design. A throwing filter hides nothing and is logged: this is a
-// UX narrowing on an advisory identity (extractCaller is not authentication —
-// see server/mcp/server.js), so a bug here must degrade to the full tool list
+// UX narrowing, not authorization (the session API's caller check is — see
+// server/session-api/check.js), so a bug here must degrade to the full tool list
 // rather than silently leaving every session unable to do anything.
 export function createToolFilter(ext, hostApiFor = () => undefined, onError = () => {}) {
   if (!ext.toolFilters.length) return null;

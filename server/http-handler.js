@@ -32,7 +32,8 @@ const MIME = {
 // reached on this origin before the deck had a port of its own are forwarded
 // to the deck unchanged, Origin and Host included, so the deck's own gates
 // still decide: GET /file, /ext-file and /deck, POST /mcp, /pr-attach and
-// /pr-model, and the /ws and /pty upgrades.
+// /pr-model (for sessions launched before the session API had its own port),
+// and the /ws and /pty upgrades.
 //
 // `extensionAssets(id)` returns the extension's directory or null. Only a LOADED,
 // ENABLED extension resolves (index.js binds it to the loader's `dirs`, which
