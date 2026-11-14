@@ -58,7 +58,7 @@ import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onT
 import { toast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
-import { withCompatFields } from './legacy-surface.js';
+import { setLegacyReporter, withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
@@ -7608,6 +7608,8 @@ const deck = createDeckClient({
   onOpen: () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); },
   onClose: () => chatView.onConnectionClosed(),
 });
+// An extension's use of a board adapter, reported to the deck as telemetry.
+setLegacyReporter((surface, ext) => deck.act('deck.deprecation', { args: { surface, ext } }).then((r) => r.ok || r.error?.code === 'unsupported' || r.error?.code === 'invalid'));
 // Whether the deck can do `action` for this card: it advertises the action
 // and the card does not list it as unsupported.
 const canAct = (action, s = null) => deck.supports(action, s);

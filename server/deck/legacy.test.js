@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createStateStream } from './state.js';
 import { NATIVE_ACTIONS } from './native-actions.js';
-import { actionForLegacyType, createLegacyFileRoutes, legacyGraphFrame, legacyReply, resetLegacyWarnings, warnLegacy } from './legacy.js';
+import { actionForLegacyType, createLegacyFileRoutes, legacyGraphFrame, legacyReply, reportLegacy, resetLegacyWarnings, routeLegacyMessage, setLegacyReporter, warnLegacy } from './legacy.js';
+import { BOARD_SURFACES } from './surfaces.js';
 
 const graph = {
   generatedAt: 1,
@@ -60,8 +61,8 @@ test('a legacy type finds its action by the handler behind it, core or extension
 test('each surface warns once, naming its replacement', () => {
   resetLegacyWarnings();
   const lines = [];
-  warnLegacy('GET /file', 'the session.file action', (m) => lines.push(m));
-  warnLegacy('GET /file', 'the session.file action', (m) => lines.push(m));
+  warnLegacy('GET /file', 'the session.file action', { log: (m) => lines.push(m) });
+  warnLegacy('GET /file', 'the session.file action', { log: (m) => lines.push(m) });
   assert.equal(lines.length, 1);
   assert.match(lines[0], /GET \/file is deprecated.*use the session\.file action instead/);
 });
@@ -109,4 +110,59 @@ test('GET /file and GET /ext-file run the actions and answer as they always did'
   await routes.extFile(req('/ext-file?path=a.md'), res);
   assert.deepEqual([res.status, res.body], [200, { ok: false, reason: 'not-permitted' }], 'no ext id, as before');
   assert.deepEqual(calls, [['file', '/ok.md'], ['file', '/a.txt'], ['ext', 'todos', 'a.md'], ['ext', 'other', 'a.md']]);
+});
+
+test('every use reports its surface and extension; uses before a reporter is set wait for it', async (t) => {
+  t.after(() => setLegacyReporter(null));
+  setLegacyReporter(null);
+  resetLegacyWarnings();
+  const quiet = { log: () => {} };
+  warnLegacy('An unsplit manifest (old-ext: …)', 'a board half', { ...quiet, use: 'manifest.unsplit', ext: 'old-ext' });
+  const seen = [];
+  setLegacyReporter((use, ext) => seen.push([use, ext]));
+  assert.deepEqual(seen, [['manifest.unsplit', 'old-ext']], 'the boot-time use is reported once a reporter exists');
+
+  warnLegacy('An unsplit manifest (old-ext: …)', 'a board half', { ...quiet, use: 'manifest.unsplit', ext: 'old-ext' });
+  assert.equal(seen.length, 2, 'every use goes to the reporter; it decides what is sent');
+
+  const ctx = { readMarkdownFile: async () => ({ status: 200, path: '/a.md', content: '' }), openExtFile: async () => ({ ok: true }) };
+  const routes = createLegacyFileRoutes({ registry: () => new Map(NATIVE_ACTIONS.map((a) => [a.action, a])), ctx: () => ctx, allowedHost: () => true });
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await routes.file({ url: '/file?path=%2Fa.md', headers: { host: 'localhost:1' } }, response());
+    await routes.extFile({ url: '/ext-file?ext=old-ext&path=a.md', headers: { host: 'localhost:1' } }, response());
+    await routes.extFile({ url: '/ext-file?ext=..%2Fx&path=a.md', headers: { host: 'localhost:1' } }, response());
+    const handlerRegistry = new Map([['ext.old-ext.ping', { action: 'ext.old-ext.ping', handler: { type: 'ping' } }]]);
+    await routeLegacyMessage({ type: 'ping' }, { reply: () => {} }, { registry: handlerRegistry, invoke: async () => {} });
+    await routeLegacyMessage({ type: 'nope' }, { reply: () => {} }, { registry: handlerRegistry, invoke: async () => {} });
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(seen.slice(2), [
+    ['route.file', null],
+    ['route.ext-file', 'old-ext'],
+    ['route.ext-file', null],
+    ['ws.legacy', 'old-ext'],
+    ['ws.legacy', null],
+  ]);
+});
+
+test('a reporter that throws never breaks the adapter', (t) => {
+  t.after(() => setLegacyReporter(null));
+  setLegacyReporter(() => { throw new Error('down'); });
+  assert.doesNotThrow(() => reportLegacy('route.file', null));
+});
+
+test('deck.deprecation reports a board surface and refuses anything else', async (t) => {
+  t.after(() => setLegacyReporter(null));
+  const seen = [];
+  setLegacyReporter((use, ext) => seen.push([use, ext]));
+  const action = NATIVE_ACTIONS.find((a) => a.action === 'deck.deprecation');
+  for (const surface of BOARD_SURFACES) assert.equal(await action.run({ surface, ext: 'old-ext' }, {}), null);
+  await action.run({ surface: 'board.graph-key', ext: null }, {});
+  assert.deepEqual(seen, [...BOARD_SURFACES.map((s) => [s, 'old-ext']), ['board.graph-key', null]]);
+  await assert.rejects(action.run({ surface: 'route.file', ext: null }, {}), { code: 'invalid' }, 'the board cannot report a deck surface');
+  await assert.rejects(action.run({ surface: 'board.graph-key', ext: 'Not An Id' }, {}), { code: 'invalid' });
+  assert.equal(seen.length, BOARD_SURFACES.length + 1);
 });

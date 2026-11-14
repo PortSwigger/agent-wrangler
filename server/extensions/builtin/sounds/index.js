@@ -17,7 +17,7 @@ export default {
   requires: ['board:broadcast'],
   stores: { sounds: () => new SoundStore() },
   handlers: [getSoundsHandler, setSoundsHandler],
-  engines: { wranglerApi: '^1.35.0' },
-  boardApi: '^1.74.0',
+  engines: { wranglerApi: '^2.0.0' },
+  boardApi: '^2.0.0',
   board: { client: 'public/index.js', styles: 'public/style.css' },
 };

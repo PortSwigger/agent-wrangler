@@ -50,7 +50,7 @@ test('the deck API: descriptor, state stream, actions with results; the legacy p
     });
     const deck = await waitFor(async () => { const r = await fetch(`${base}/deck`); return r.ok && r.json(); });
     assert.ok(deck, 'GET /deck never answered');
-    assert.equal(deck.api, '1.0');
+    assert.equal(deck.api, '1.1');
     assert.equal(deck.deckId, JSON.parse(readFileSync(join(dataDir, 'deck.json'), 'utf8')).deckId);
     for (const t of CONTROL_HANDLERS.map((h) => h.type)) assert.ok(deck.actions.includes(CORE_ACTIONS[t]), `${t} advertised`);
     assert.ok(deck.actions.includes('session.file'));

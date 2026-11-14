@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import semver from 'semver';
-import { HOST_API_VERSION, servesRange, isValidRange } from './version.js';
+import { HOST_API_VERSION, V1_SHIM_VERSION, servedVersion, servesRange, isValidRange } from './version.js';
 
 test('HOST_API_VERSION is a real semver version', () => {
   assert.ok(semver.valid(HOST_API_VERSION), HOST_API_VERSION);
@@ -80,9 +80,11 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.74.0 split manifests and the board half's state, onState, act and styles,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
-// minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.74.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.74.0');
+// minor and keeps every ^1.0.0 manifest served by the same builders. 2.0.0 is
+// the deck API major: every 1.x range is still served, on the v1 shim (1.74.0).
+test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '2.0.0');
+  assert.equal(V1_SHIM_VERSION, '1.74.0');
   assert.equal(servesRange('^1.47.0'), true);
   assert.equal(servesRange('^1.48.0'), true);
   assert.equal(servesRange('^1.49.0'), true);
@@ -160,7 +162,19 @@ test('the served version is 1.74.0, and every 1.x manifest range it can honour p
   assert.equal(servesRange('^1.2.0'), true);
   assert.equal(servesRange('^1.1.0'), true);
   assert.equal(servesRange('^1.0.0'), true);
-  assert.equal(servesRange('^2.0.0'), false);
+  assert.equal(servesRange('^2.0.0'), true);
+  assert.equal(servesRange('^2.1.0'), false);
+  assert.equal(servesRange('^3.0.0'), false);
+});
+
+test('a ^1 range is served as the v1 shim, a ^2 range as the current version', () => {
+  assert.equal(servedVersion('^1.15.0'), V1_SHIM_VERSION);
+  assert.equal(servedVersion('^1.74.0'), V1_SHIM_VERSION);
+  assert.equal(servedVersion('>=1.0.0'), HOST_API_VERSION, 'a range the current version meets gets it');
+  assert.equal(servedVersion('^2.0.0'), HOST_API_VERSION);
+  assert.equal(servedVersion(null), HOST_API_VERSION);
+  assert.equal(servedVersion('^1.75.0'), null);
+  assert.equal(servedVersion('not a range'), null);
 });
 
 test('an absent range is no constraint', () => {
@@ -173,7 +187,8 @@ test('servesRange matches the served version', () => {
   assert.equal(servesRange(`^${HOST_API_VERSION}`), true);
   assert.equal(servesRange(`>=${HOST_API_VERSION}`), true);
   assert.equal(servesRange(`>${HOST_API_VERSION}`), false);
-  assert.equal(servesRange(`<${HOST_API_VERSION}`), false);
+  assert.equal(servesRange(`<${HOST_API_VERSION}`), true, 'served on the v1 shim');
+  assert.equal(servesRange('<1.0.0'), false);
 });
 
 test('a malformed range never passes', () => {

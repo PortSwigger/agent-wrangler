@@ -249,7 +249,7 @@ for state frames, actions and events). An extension splits the same way (1.74.0)
   `board`.
 
 The two are paired by `id` and `boardApi`. `boardApi` is the board API range the board half was
-written against, such as `^1.74.0`; an extension whose `boardApi` this Agent Wrangler does not serve
+written against, such as `^2.0.0`; an extension whose `boardApi` this Agent Wrangler does not serve
 is not loaded, exactly as for `engines.wranglerApi`. `GET /deck` lists each enabled extension as
 `{ id, version, boardApi }`, and the board mounts the board half it holds for that id only when the
 two name the same `boardApi`. When the deck and the board start together they share one install, so
@@ -259,7 +259,8 @@ they always pair.
 export default {
   id: 'example',
   label: 'Example',
-  boardApi: '^1.74.0',
+  engines: { wranglerApi: '^2.0.0' },
+  boardApi: '^2.0.0',
   handlers: [{ type: 'example-save', handler: (msg, host, reply) => reply({ saved: true }) }],
   graph: ({ host }) => ({ example: host.stores.example.snapshot() }),
   board: { client: 'public/index.js', styles: 'public/styles.css' },
@@ -277,6 +278,21 @@ A board half reads only its own state and the session view, and acts only throug
 - `api.send(frame)` still sends a frame to one of this extension's own handlers, as the same action,
   with the reply arriving through `api.onMessage`.
 - `api.styles()` resolves with the board's contributed styles, the list `/api/styles` serves.
+
+### Host API 2.0 and the v1 shim
+
+Agent Wrangler serves host API **2.0.0**. Version 2 is the deck API contract: a split manifest, a
+board half that reads `api.state()` and the session view, files through the `session.file` and
+`deck.ext-file` actions, and `GET /deck`, `/ws?api=1` and `/pty` on the deck's own port. No `host`
+method changed shape, so moving to 2.0 is the migration below plus raising your ranges to `^2.0.0`.
+
+A manifest declaring a `^1` range (`engines.wranglerApi` or `boardApi`) still boots, on the **v1
+shim**: its `host.version` reads `1.74.0`, the last 1.x, and every surface 1.x offered keeps working,
+the older ones through the adapters listed under
+[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.74.0` is
+refused, as before. The adapters stay until 3.0, which removes them once their use has gone quiet:
+each use is reported as the [`core.deprecated`](#core-events) telemetry event, so the maintainers can
+see which surfaces are still in use.
 
 ### Ports and origins
 
@@ -306,27 +322,29 @@ board half's `api` keeps working with the same shape. To move to the split form:
 
 1. Move `client`, `styles` and `themes` under `board: { … }`. A manifest that has `board` may not also
    carry them at the top level.
-2. Add `boardApi: '^1.74.0'` (or the lowest version whose board API you use), and raise
-   `engines.wranglerApi` to at least `^1.74.0` so an older Agent Wrangler refuses it rather than
-   loading no board half.
+2. Add `boardApi: '^2.0.0'`, and raise `engines.wranglerApi` to `^2.0.0` so an older Agent Wrangler
+   refuses it rather than loading no board half.
 3. Read your own state with `api.state()` instead of the `graph` argument a contribution is handed.
    Optimistic edits go on a copy, replaced when the next state frame arrives.
 4. Use `api.act` where you need a handler's reply as a result, and `api.styles()` instead of fetching
    `/api/styles`.
 5. Keep board code on the extension `api`: fetch no route and open no socket of your own.
 
-Until then, these older surfaces still work, each through an adapter over the deck API, and each logs
-one console warning on first use naming its replacement:
+Until then, these older surfaces still work, each through an adapter over the deck API (the v1
+shim). Each logs one console warning on first use naming its replacement, and each use is reported as
+a [`core.deprecated`](#core-events) event under the surface id in the last column:
 
-| Old surface | Replacement |
-| --- | --- |
-| An unsplit manifest (deck log) | `board: { client, styles, themes }` beside `boardApi` |
-| An extension's state read off the `graph` a contribution is handed | `api.state()` |
-| A `/ws` connection without `?api=` (deck log) | `GET /deck` and `/ws?api=1` |
-| `GET /file` (deck log) | the `session.file` action |
-| `GET /ext-file` (deck log) | the `deck.ext-file` action, through `api.openFile` |
-| `GET /deck`, `/ws?api=` or `/pty` on the board's port (deck log) | the same route on the deck's port |
-| The session fields the session view leaves out (`pid`, `socket`, `jobId`, `liveSessionId`, `hasTranscript`, `currentModel`, `launchedCodeVersion`, `autoBlockSeconds`, `suspendedAt`) | the fields the session view carries |
+| Old surface | Replacement | `surface` |
+| --- | --- | --- |
+| An unsplit manifest (deck log) | `board: { client, styles, themes }` beside `boardApi` | `manifest.unsplit` |
+| An extension's state read off the `graph` a contribution is handed | `api.state()` | `board.graph-key` |
+| A `/ws` connection without `?api=` (deck log) | `GET /deck` and `/ws?api=1` | `ws.legacy` |
+| `GET /file` (deck log) | the `session.file` action | `route.file` |
+| `GET /ext-file` (deck log) | the `deck.ext-file` action, through `api.openFile` | `route.ext-file` |
+| `GET /deck` on the board's port (deck log) | the same route on the deck's port | `board-port.deck` |
+| `/pty` on the board's port (deck log) | the same route on the deck's port | `board-port.pty` |
+| `/ws?api=` on the board's port (deck log) | the same route on the deck's port | `board-port.ws-api` |
+| The session fields the session view leaves out (`pid`, `socket`, `jobId`, `liveSessionId`, `hasTranscript`, `currentModel`, `launchedCodeVersion`, `autoBlockSeconds`, `suspendedAt`) | the fields the session view carries | `board.session-field` |
 
 ## Authoring rules
 
@@ -345,8 +363,8 @@ one console warning on first use naming its replacement:
 - Declare the board half under `board` with a `boardApi`, and keep board code on the extension `api`
   (`api.state`, `api.act`, `api.send`, `api.openFile`, `api.styles` and the session fields the board
   draws from). The older surfaces listed under
-  [Migrating an unsplit manifest](#migrating-an-unsplit-manifest) still work through adapters, and
-  log one warning on first use naming the replacement.
+  [Migrating an unsplit manifest](#migrating-an-unsplit-manifest) still work through adapters, log
+  one warning on first use naming the replacement, and are reported as `core.deprecated`.
 
 ### Session launch capabilities
 
@@ -924,7 +942,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   to act. Don't "fix" that for symmetry. **Versioning**: `HOST_API_VERSION`
   (`host-api/version.js`) is what the server serves and a breaking reshape adds
   `v2.js` keeping `v1.js` as the shim, selected by the declared range — never
-  edit builders in place. `semver` is a real dependency, so
+  edit builders in place. 2.0.0 reshaped no builder, so both majors still build
+  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.74.0) and its
+  older surfaces through the adapters (see [Host API 2.0 and the v1
+  shim](#host-api-20-and-the-v1-shim)). `semver` is a real dependency, so
   `scripts/sync-deps.sh` means the SERVICE needs a restart for it to land
   (`node server/index.js` directly skips that). The client half mirrors the
   forced-value rule: `slots.apiFor` binds each extension's `send` to its OWN
@@ -2402,6 +2423,19 @@ extension's `sessions.interrupt` while the card works, or a stop the transcript 
 | `peakWorking` | most cards working at once |
 | `jobsEnabled` | the `jobs` extension is on |
 | `os` | `darwin`, `linux` or `other` |
+
+**`core.deprecated`**, when an extension uses a surface the v1 shim keeps working through an
+adapter (see [Migrating an unsplit manifest](#migrating-an-unsplit-manifest)). Sent once per surface
+per extension per local day, however often it is used; the day's sent pairs live in
+`<data dir>/telemetry-core.json`, so a restart does not send them again. The deck reports its own
+adapters' use; the board reports its adapters' use through the `deck.deprecation` action (deck API
+1.1), once per surface per extension each page load:
+
+| Field | Values |
+| --- | --- |
+| `surface` | `manifest.unsplit`, `board.graph-key`, `board.session-field`, `ws.legacy`, `route.file`, `route.ext-file`, `board-port.deck`, `board-port.pty` or `board-port.ws-api` |
+| `extension` | the extension's id when it is a builtin; `installed` for any other; `unknown` when the use names no extension: `GET /file`, a `/ws` connection before it sends a message, a route on the board's port, or a board read outside a contribution's own call |
+| `extensionRef` | for `installed`: a ref of the extension's id; `null` otherwise |
 
 **How prompts are typed.** Each prompt the wrangler delivers (a chat send, a dispatch, mail, an
 extension's delivery, a schedule, a pane paste) leaves a hash of its text and its source in memory

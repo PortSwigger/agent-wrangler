@@ -42,7 +42,7 @@ export default {
   defaultEnabled: true,
   settings: readThemes().map((t) => ({ key: t.key, type: 'toggle', label: t.manifest.name || t.id, theme: t.id, hidden: true })),
   handlers: [listThemesHandler],
-  engines: { wranglerApi: '^1.46.0' },
-  boardApi: '^1.74.0',
+  engines: { wranglerApi: '^2.0.0' },
+  boardApi: '^2.0.0',
   board: { client: 'public/index.js', themes: 'themes' },
 };

@@ -58,7 +58,7 @@ import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
 import { archiveTaskCascade } from './control/handlers/tasks.js';
 import { createTargets } from './control/targets.js';
 import { routeControlMessage, invalidateHandlerMap, deckActions } from './control/router.js';
-import { createLegacyFileRoutes, legacyGraphFrame, legacyReply, warnLegacy } from './deck/legacy.js';
+import { createLegacyFileRoutes, legacyGraphFrame, legacyReply, setLegacyReporter, warnLegacy } from './deck/legacy.js';
 import { loadDeckId } from './deck/deck-id.js';
 import { deckDescriptor, wsApiMode } from './deck/descriptor.js';
 import { deckEvent } from './deck/actions.js';
@@ -210,6 +210,7 @@ const coreTelemetry = createCoreTelemetry({
     return r;
   },
   spawnerIds: () => ext.list.filter((e) => !e.external || e.telemetry?.events).map((e) => e.id),
+  builtinIds: () => ext.list.filter((e) => !e.external).map((e) => e.id),
   entryFor: (sid) => sessionManager.entryFor(sid),
   resolveModel: (agent, model) => {
     try { return resolvedModelId(adapterFor(agent), model); } catch { return null; }
@@ -218,6 +219,9 @@ const coreTelemetry = createCoreTelemetry({
   log: logError,
 });
 coreTelemetry.register();
+// Every deprecated adapter's use (deck/legacy.js, and the board's through the
+// deck.deprecation action) as `core.deprecated`.
+setLegacyReporter((use, extId) => coreTelemetry.deprecated(use, extId));
 sessionManager._onLaunched = (launch) => coreTelemetry.sessionStarted(launch);
 // Not extension hooks (no extId, so a deactivate never drops them): the
 // session-manager fires these for every card.
@@ -1322,7 +1326,7 @@ controlWss.on('connection', (ws) => {
   // Announcements reach the board as events, then the state stream follows. A
   // legacy client is sent each event's payload, and graph frames built from
   // the state frames.
-  if (ws.legacy) warnLegacy('A /ws connection without ?api=', 'GET /deck and /ws?api=1 (action frames)');
+  if (ws.legacy) warnLegacy('A /ws connection without ?api=', 'GET /deck and /ws?api=1 (action frames)', { use: 'ws.legacy' });
   const wire = (obj) => JSON.stringify(ws.legacy ? legacyReply(deckEvent(obj)) : deckEvent(obj));
   const send = (obj) => ws.send(wire(obj));
   send({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() });

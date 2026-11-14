@@ -1,17 +1,37 @@
 import { stateToGraph } from '../../public/deck-client.js';
 import { handleAction } from './actions.js';
+import { EXTENSION_ID_RE } from './surfaces.js';
 
 // Adapters that keep surfaces older extensions use (a /ws connection without
 // ?api=, GET /file, GET /ext-file) working on top of the deck API: each maps
 // onto an action or a state frame and turns the answer back into the old
-// shape. The first use of each logs one warning naming its replacement.
+// shape. The first use of each logs one warning naming its replacement, and
+// every use goes to the reporter (index.js: the `core.deprecated` event, which
+// sends one per surface per extension per day) with the surface id from
+// surfaces.js and the extension behind it, or null when nothing names one.
 const warned = new Set();
-export function warnLegacy(surface, replacement, log = (m) => console.warn(m)) {
+// Uses before a reporter is set (the loader runs before telemetry exists) wait
+// for it.
+let reporter = null;
+let early = [];
+export function setLegacyReporter(fn) {
+  reporter = typeof fn === 'function' ? fn : null;
+  if (reporter) for (const [use, extId] of early.splice(0)) reportLegacy(use, extId);
+}
+export function reportLegacy(use, extId = null) {
+  if (!reporter) {
+    if (early.length < 100) early.push([use, extId]);
+    return;
+  }
+  try { reporter(use, extId); } catch { /* telemetry never breaks an adapter */ }
+}
+export function warnLegacy(surface, replacement, { use = null, ext = null, log = (m) => console.warn(m) } = {}) {
+  if (use) reportLegacy(use, ext);
   if (warned.has(surface)) return;
   warned.add(surface);
   log(`[agent-wrangler] ${surface} is deprecated and kept working through an adapter; use ${replacement} instead.`);
 }
-export const resetLegacyWarnings = () => warned.clear();
+export const resetLegacyWarnings = () => { warned.clear(); early = []; };
 
 const restorePlain = (record, fields) => ({ ...record, ...fields });
 
@@ -42,11 +62,14 @@ export function actionForLegacyType(registry, type) {
   return null;
 }
 
+// The extension whose handler an `ext.<id>.<type>` action runs, else null.
+const extOfAction = (action) => /^ext\.([a-z][a-z0-9-]*)\./.exec(action || '')?.[1] ?? null;
+
 // One legacy control message, run as its action. Replies go out on `ctx.reply`
 // (the raw legacy send) in the old shapes.
 export async function routeLegacyMessage(msg, ctx, { registry, invoke }) {
-  warnLegacy('A /ws connection without ?api=', 'GET /deck and /ws?api=1 (action frames)');
   const action = actionForLegacyType(registry, msg.type);
+  warnLegacy('A /ws connection without ?api=', 'GET /deck and /ws?api=1 (action frames)', { use: 'ws.legacy', ext: extOfAction(action) });
   if (!action) return;
   const { type: _t, ...args } = msg;
   const send = (frame) => {
@@ -67,7 +90,7 @@ const json = (res, status, body) => {
 export function createLegacyFileRoutes({ registry, ctx, allowedHost, logError = () => {} }) {
   const run = (action, args) => registry().get(action).run(args, ctx());
   async function file(req, res) {
-    warnLegacy('GET /file', 'the session.file action');
+    warnLegacy('GET /file', 'the session.file action', { use: 'route.file' });
     try {
       if (!allowedHost(req.headers.host)) return json(res, 403, { error: 'forbidden' });
       const data = await run('session.file', { path: new URL(req.url, 'http://localhost').searchParams.get('path') });
@@ -79,10 +102,10 @@ export function createLegacyFileRoutes({ registry, ctx, allowedHost, logError = 
     }
   }
   async function extFile(req, res) {
-    warnLegacy('GET /ext-file', 'the deck.ext-file action');
+    const q = new URL(req.url, 'http://localhost').searchParams;
+    warnLegacy('GET /ext-file', 'the deck.ext-file action', { use: 'route.ext-file', ext: EXTENSION_ID_RE.test(q.get('ext') || '') ? q.get('ext') : null });
     try {
       if (!allowedHost(req.headers.host)) return json(res, 403, { ok: false, reason: 'forbidden' });
-      const q = new URL(req.url, 'http://localhost').searchParams;
       json(res, 200, await run('deck.ext-file', { ext: q.get('ext'), path: q.get('path') }));
     } catch (err) {
       if (err?.reason) return json(res, 200, { ok: false, reason: err.reason });

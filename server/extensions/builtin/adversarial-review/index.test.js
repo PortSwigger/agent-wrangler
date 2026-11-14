@@ -16,7 +16,7 @@ test('the manifest validates, is on by default, and declares the textarea range 
   assert.equal(adversarialReview.id, 'adversarial-review');
   assert.equal(adversarialReview.defaultEnabled, true);
   assert.deepEqual(adversarialReview.requires, []);
-  assert.equal(adversarialReview.engines.wranglerApi, '^1.16.0');
+  assert.equal(adversarialReview.engines.wranglerApi, '^2.0.0');
   assert.equal(adversarialReview.dir, dir);
 });
 

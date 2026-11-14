@@ -1,6 +1,6 @@
 import { parseCombo } from './keybindings.js';
 import { canOpenPath, fileTypes } from './file-types.js';
-import { warnLegacy } from './legacy-surface.js';
+import { actingAs, warnLegacy } from './legacy-surface.js';
 // The client half of the extensions API: named slots an extension's client
 // module (served from /ext/<id>/, see extensions.js) contributes DOM into, and
 // the one place the board renders those contributions from. A leaf — no DOM at
@@ -245,7 +245,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     if (!view) {
       view = new Proxy(graph, {
         get(target, key, receiver) {
-          if (typeof key === 'string' && extKeys.has(key)) warnLegacy(`graph.${key}`, `api.state() (the ext.${extKeys.get(key)} state)`);
+          if (typeof key === 'string' && extKeys.has(key)) warnLegacy(`graph.${key}`, `api.state() (the ext.${extKeys.get(key)} state)`, { use: 'board.graph-key', ext: extId });
           return Reflect.get(target, key, receiver);
         },
       });
@@ -1342,7 +1342,13 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       if (slotName === 'settings.panel' && contribution.save != null && typeof contribution.save !== 'function') throw new Error(`[ext:${extId}] ${contribution.id} save must be a function`);
       if (slotName === 'file.open' && !(requiresFor(extId) || []).includes(FILES_OPEN_CAPABILITY)) throw new Error(`[ext:${extId}] ${contribution.id} in file.open needs the ${FILES_OPEN_CAPABILITY} capability`);
       if (list.some((c) => c.extId === extId && c.id === contribution.id)) throw new Error(`[ext:${extId}] ${contribution.id} is already registered in ${slotName}`);
-      list.push({ ...contribution, extId, slotName, mounts: new Map() });
+      // Each method runs as its extension, so an adapter it reads through
+      // (legacy-surface.js) names it.
+      const own = { ...contribution };
+      for (const [k, v] of Object.entries(own)) {
+        if (typeof v === 'function') own[k] = function asExt(...args) { return actingAs(extId, () => v.apply(this, args)); };
+      }
+      list.push({ ...own, extId, slotName, mounts: new Map() });
     },
 
     // A registrar bound to one extension id, which is what an extension module's

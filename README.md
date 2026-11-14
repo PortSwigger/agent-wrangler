@@ -453,6 +453,7 @@ its owner starts with `portswigger`; any other repo is `other`.
 | `core.interrupt` | you stop an agent mid-turn | `session`, `duringTool`, `workedMs` |
 | `core.session.ended` | a card is archived or removed | `session`, `end`, `lifeMs`, `workingMs`, `humanPrompts`, `machinePrompts`, `workKind`, `prMerged`, `usd` |
 | `core.daily` | once a day, for the day before | `sessionsActive`, `peakWorking`, `jobsEnabled`, `os` |
+| `core.deprecated` | an extension uses a deprecated surface, once per surface per extension per day | `surface`, `extension` (a builtin's id, else `installed` or `unknown`), `extensionRef` |
 
 Every event also carries `eventId`, `ts`, `type`, `v`, a random `install` id and the version numbers.
 [Core events](docs/extensions.md#core-events) defines every field and its values;

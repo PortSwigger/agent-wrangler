@@ -31,6 +31,7 @@ export default {
   author: 'Agent Wrangler',
   defaultEnabled: true,
   dir: path.dirname(fileURLToPath(import.meta.url)),
+  engines: { wranglerApi: '^2.0.0' },
   requires: ['board:rebuild'],
   stores: { checklist: () => new ChecklistStore() },
   tools: [addChecklistItemTool, updateChecklistItemTool, removeChecklistItemTool, listChecklistTool],
@@ -45,6 +46,6 @@ export default {
     onPurge: ({ sessionId, host }) => { host.stores.checklist.forget(sessionId); },
   },
   skills: ['checklist'],
-  boardApi: '^1.74.0',
+  boardApi: '^2.0.0',
   board: { client: 'public/index.js', styles: 'public/styles.css' },
 };

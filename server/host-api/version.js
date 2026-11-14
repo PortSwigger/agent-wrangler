@@ -532,14 +532,37 @@ import semver from 'semver';
 // resolving with the result) and `api.styles()` (the board's style list). An
 // older server ignores `board` and loads no board half, so a split manifest
 // declares `^1.74.0`.
-export const HOST_API_VERSION = '1.74.0';
+//
+// 2.0.0 is the major the deck API makes. The 2.x contract is what the deck
+// API offers: a board half beside `boardApi` in a split manifest, its state
+// through `api.state()`, the session view without the fields it drops, files
+// through the session.file and deck.ext-file actions, and GET /deck, /ws?api=1
+// and /pty on the deck's own port. Everything 1.x reached beyond that (an
+// unsplit manifest, extension keys on the graph, the dropped session fields,
+// GET /file and /ext-file, /ws without ?api=, the deck's routes on the board's
+// port) is the v1 shim: adapters over the deck API (server/deck/legacy.js,
+// public/legacy-surface.js) that warn once and send `core.deprecated`
+// telemetry, kept until 3.0 removes them. A `^1` manifest boots on the shim
+// and its `host.version` reads V1_SHIM_VERSION. No façade key was reshaped, so
+// both majors build from V1_BUILDERS and no v2.js exists yet.
+export const HOST_API_VERSION = '2.0.0';
 
-// Does this server serve `range`? A null/absent range is "no constraint" and
-// passes — declaring the range is optional, getting it wrong is not.
+// The last 1.x, which every `^1` range this server honours is served as.
+export const V1_SHIM_VERSION = '1.74.0';
+
+// The version this server serves `range` as: HOST_API_VERSION, the v1 shim, or
+// null for neither. A null/absent range is "no constraint" and gets the
+// current version — declaring the range is optional, getting it wrong is not.
+export function servedVersion(range) {
+  if (range == null || range === '') return HOST_API_VERSION;
+  if (!isValidRange(range)) return null;
+  if (semver.satisfies(HOST_API_VERSION, range)) return HOST_API_VERSION;
+  if (semver.satisfies(V1_SHIM_VERSION, range)) return V1_SHIM_VERSION;
+  return null;
+}
+
 export function servesRange(range) {
-  if (range == null || range === '') return true;
-  if (!isValidRange(range)) return false;
-  return semver.satisfies(HOST_API_VERSION, range);
+  return servedVersion(range) != null;
 }
 
 // Deliberately DUPLICATED as a one-liner in server/extensions/index.js: that

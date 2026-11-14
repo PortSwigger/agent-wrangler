@@ -5,6 +5,7 @@ import { execFile as defaultExecFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { takePrompt as defaultTakePrompt, notePrompt as defaultNotePrompt } from './prompt-ledger.js';
 import { MAX_MS, normaliseCatalogue } from './extensions/telemetry-schema.js';
+import { DEPRECATED_SURFACES } from './deck/surfaces.js';
 
 // The wrangler's own telemetry (`core.*` events, docs/extensions.md#core-events):
 // session lifecycle, working and needs-you stretches, every prompt that reaches
@@ -47,11 +48,21 @@ const SAVE_DELAY_MS = 2_000;
 const READ_MAX_BYTES = 4 * 1024 * 1024;
 const INTERRUPT_RE = /^\[Request interrupted by user( for tool use)?\]$/;
 
+const enumIds = (list, reserved, max) => [...new Set((list || []).filter((s) => typeof s === 'string' && ENUM_RE.test(s) && !reserved.includes(s)))].slice(0, max);
+
 // The catalogue core registers as emitter `core`. `spawners` is the closed list
-// of extension ids `spawner` may name (see spawnerIds in index.js).
-export function coreCatalogue({ spawners = [] } = {}) {
-  const ids = [...new Set(spawners.filter((s) => typeof s === 'string' && ENUM_RE.test(s) && s !== 'other'))].slice(0, 59);
+// of extension ids `spawner` may name (see spawnerIds in index.js); `builtins`
+// the builtin extension ids `deprecated` names in clear (any other goes as
+// `installed` with its ref).
+export function coreCatalogue({ spawners = [], builtins = [] } = {}) {
+  const ids = enumIds(spawners, ['other'], 59);
+  const own = enumIds(builtins, ['installed', 'unknown'], 58);
   return {
+    deprecated: { v: 1, fields: {
+      surface: { enum: DEPRECATED_SURFACES },
+      extension: { enum: [...own, 'installed', 'unknown'] },
+      extensionRef: { type: 'ref', nullable: true },
+    } },
     'session.started': { v: 1, fields: {
       session: 'ref',
       source: { enum: START_SOURCES },
@@ -263,6 +274,7 @@ export function createCoreTelemetry({
   classify = async () => ({ text: null, error: 'no classifier' }),
   repoFor = repoOf,
   spawnerIds = () => [],
+  builtinIds = () => [],
   entryFor = () => null,
   // An alias picked at launch (opus) to the full id it runs (claude-opus-…).
   resolveModel = (_agent, model) => model,
@@ -279,6 +291,7 @@ export function createCoreTelemetry({
   if (!state.sessions || typeof state.sessions !== 'object') state.sessions = {};
   if (!state.day || typeof state.day !== 'object') state.day = { date: localDate(now()), active: [], peak: 0 };
   if (!state.cap || typeof state.cap !== 'object') state.cap = { date: localDate(now()), used: 0 };
+  if (!state.deprecated || typeof state.deprecated !== 'object' || !Array.isArray(state.deprecated.sent)) state.deprecated = { date: localDate(now()), sent: [] };
 
   const open = new Map(); // card id -> { state, reason, since }
   const history = new Map(); // card id -> [{ at, state, reason }], newest last
@@ -402,9 +415,11 @@ export function createCoreTelemetry({
   // Registers (or refreshes) core's catalogue: `spawner`'s list follows the
   // extensions present, so it is registered again when that changes.
   let spawners = [];
+  let builtins = [];
   function register() {
-    spawners = [...new Set((spawnerIds() || []).filter((s) => typeof s === 'string' && ENUM_RE.test(s) && s !== 'other'))].slice(0, 59);
-    const { catalogue, error } = normaliseCatalogue(coreCatalogue({ spawners }));
+    spawners = enumIds(spawnerIds(), ['other'], 59);
+    builtins = enumIds(builtinIds(), ['installed', 'unknown'], 58);
+    const { catalogue, error } = normaliseCatalogue(coreCatalogue({ spawners, builtins }));
     if (error) throw new Error(`core telemetry catalogue: ${error}`);
     telemetry.registerEmitter(emitter, { version, events: catalogue });
   }
@@ -461,6 +476,29 @@ export function createCoreTelemetry({
     tail?.forget?.(sessionId);
     for (let i = pendingWork.length - 1; i >= 0; i -= 1) if (pendingWork[i].sid === sessionId) pendingWork.splice(i, 1);
     save();
+  }
+
+  // A deprecated surface used through its adapter (server/deck/surfaces.js),
+  // by `extId` or by nothing that names itself (null). One event per surface
+  // per extension per local day, however often it is used; true when this use
+  // queued it.
+  function deprecated(surface, extId = null) {
+    if (!DEPRECATED_SURFACES.includes(surface)) return false;
+    const id = typeof extId === 'string' && extId ? extId : null;
+    const today = localDate(now());
+    if (state.deprecated.date !== today) state.deprecated = { date: today, sent: [] };
+    const key = `${surface}|${id ?? ''}`;
+    if (state.deprecated.sent.includes(key)) return false;
+    if (state.deprecated.sent.length >= 500) return false;
+    state.deprecated.sent.push(key);
+    save();
+    const builtin = id != null && builtins.includes(id);
+    emit('deprecated', {
+      surface,
+      extension: id == null ? 'unknown' : builtin ? id : 'installed',
+      extensionRef: id == null || builtin ? null : telemetry.ref('extension', id),
+    });
+    return true;
   }
 
   function prMerged(sessionId) {
@@ -622,6 +660,7 @@ export function createCoreTelemetry({
     sessionStarted,
     sessionEnded,
     interrupted,
+    deprecated,
     prMerged,
     sweep,
     // For tests: what is waiting for the classifier.
