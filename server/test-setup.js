@@ -2,6 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-test-home-'));
+process.env.HOME = home;
+process.on('exit', () => {
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
 // Loaded via `node --test --import ./server/test-setup.js` (package.json's
 // `test` script) so it runs before any test file, in every subprocess `node
 // --test` spawns (verified: each test file gets its own process, and each one
@@ -58,6 +64,4 @@ process.on('exit', () => {
   fs.rmSync(claudeDir, { recursive: true, force: true });
 });
 
-// Read by data-dir.js, which runs this file itself in a test process that skipped
-// the --import (a bare `node --test server/x.test.js`).
 process.env.AW_TEST_SETUP = '1';
