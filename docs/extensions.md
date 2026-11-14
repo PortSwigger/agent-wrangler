@@ -34,6 +34,11 @@ Select an extension to see its **Enabled** switch, **Uninstall…** (installed
 only), its **Auto-update** switch (installed from a git URL only), its **Source** (type, repository and
 commit) and its **Settings**.
 
+The server checks loaded installed extensions' directories and `index.js` manifests once a minute.
+If either disappears, it logs an error once per incident and shows a persistent board banner naming
+the affected extensions. Restore the files or reinstall the extension; the banner clears after the
+next successful check or a server restart. Core extensions are excluded from this check.
+
 ### Auto-update an extension
 
 **Auto-update** is off for every extension until you turn it on in that extension's detail pane, and

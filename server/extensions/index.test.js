@@ -149,7 +149,7 @@ test('enabled: every channel is populated, allowedToolNames is derived from tool
 
 test('assertGraphKeys refuses a reserved core graph key and a non-object contribution', () => {
   assertGraphKeys('fake', { fakes: 1 });
-  for (const k of ['sessions', 'tasks', 'schedules', 'history', 'extensions']) {
+  for (const k of ['sessions', 'tasks', 'schedules', 'history', 'extensions', 'missingExtensionFiles']) {
     assert.ok(RESERVED_GRAPH_KEYS.has(k));
     assert.throws(() => assertGraphKeys('fake', { [k]: 1 }), new RegExp(`Extension fake: graph key "${k}" is reserved`));
   }
