@@ -64,7 +64,7 @@ import { withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
-import { prCheckToastOptions } from './pr-check-notification.js';
+import { prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
@@ -189,6 +189,7 @@ let trustCodexLaunchCwd = true; // server config flag, carried on every graph pu
 let trustClaudeLaunchCwd = true; // likewise
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let mailWakesDormant = false;
+let suppressNudgedPrToasts = true;
 let prModelFooter = true;
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
@@ -961,6 +962,7 @@ function applyGraph(graph) {
   trustClaudeLaunchCwd = graph.trustClaudeLaunchCwd !== false;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   mailWakesDormant = graph.mailWakesDormant === true;
+  suppressNudgedPrToasts = graph.suppressNudgedPrToasts !== false;
   prModelFooter = graph.prModelFooter !== false;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
@@ -7341,6 +7343,7 @@ initSettings({
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
+      if (id === 'suppressNudgedPrToasts') return suppressNudgedPrToasts;
       if (id === 'mailWakesDormant') return mailWakesDormant;
       if (id === 'prModelFooter') return prModelFooter;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
@@ -7368,6 +7371,9 @@ initSettings({
       } else if (id === 'autoFixPrChecksDefault') {
         autoFixPrChecksDefault = Boolean(value);
         send({ type: 'set-auto-fix-pr-checks-default', enabled: autoFixPrChecksDefault });
+      } else if (id === 'suppressNudgedPrToasts') {
+        suppressNudgedPrToasts = Boolean(value);
+        send({ type: 'set-suppress-nudged-pr-toasts', enabled: suppressNudgedPrToasts });
       } else if (id === 'mailWakesDormant') {
         mailWakesDormant = Boolean(value);
         send({ type: 'set-mail-wakes-dormant', enabled: mailWakesDormant });
@@ -7854,7 +7860,7 @@ function onDeckMessage(msg) {
   else if (msg.type === 'prepare-warnings') toastLaunchWarnings(msg.warnings || []);
   else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
   else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
-  else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
+  else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true, prAlertToastOptions());
   else if (msg.type === 'fd-warning') {
     // #system-banner is one slot, so the producers have to take turns: an
     // fd leak is the most urgent and wins while it is active, and clearing it
@@ -8035,7 +8041,7 @@ function prRepoName(url) {
   return m ? m[1] : '';
 }
 function onPrChecks(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const isErr = msg.status === 'failing' || msg.status === 'changes-requested';
   // Omit the `(<repo>)` segment entirely for an enterprise/malformed url (prRepoName
   // returns '') rather than rendering bare `()` — mirrors the server's prPaneNudge.
@@ -8057,11 +8063,11 @@ function onPrChecks(msg) {
 // Success → accent toast; failure → red .err toast + a one-shot dot flash, so a
 // blocked merge (branch protection, conflicts) is visible rather than silent.
 function onPrMerge(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const text = msg.ok
     ? `PR #${msg.number} auto-merged`
     : `PR #${msg.number} auto-merge failed: ${msg.error}`;
-  toast(text, !msg.ok);
+  toast(text, !msg.ok, msg.ok ? undefined : prAlertToastOptions());
   if (!msg.ok) flashPr(msg.url);
 }
 
@@ -8069,11 +8075,11 @@ function onPrMerge(msg) {
 // an alert, unlike onPrChecks where only some statuses are errors. Mirrors
 // onPrChecks' shape (focus-suppressed toast + browser Notification + dot flash).
 function onPrDirty(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
-  toast(text, true);
+  toast(text, true, prAlertToastOptions());
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(cardOf(msg.sessionId)); };
@@ -8087,12 +8093,12 @@ function onPrDirty(msg) {
 // toast + browser Notification + dot flash). Notification-only — no new
 // persistent PR-dot/card UI beyond the existing transient flash.
 function onPrComments(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const phrase = `${msg.delta} new unresolved review thread${msg.delta === 1 ? '' : 's'} (${msg.count} unresolved total)`;
   const text = `[Agent Wrangler] ${label}: ${phrase}`;
-  toast(text, true);
+  toast(text, true, prAlertToastOptions());
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(cardOf(msg.sessionId)); };
