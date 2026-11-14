@@ -299,9 +299,9 @@ board half that reads `api.state()` and the session view, files through the `ses
 method changed shape, so moving to 2.0 is the migration below plus raising your ranges to `^2.0.0`.
 
 A manifest declaring a `^1` range (`engines.wranglerApi` or `boardApi`) still boots, on the **v1
-shim**: its `host.version` reads `1.77.0`, the last 1.x, and every surface 1.x offered keeps working,
+shim**: its `host.version` reads `1.80.0`, the last 1.x, and every surface 1.x offered keeps working,
 the older ones through the adapters listed under
-[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.77.0` is
+[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.80.0` is
 refused, as before. The adapters stay until 3.0, which removes them once their use has gone quiet:
 each use is reported as the [`core.deprecated`](#core-events) telemetry event, so the maintainers can
 see which surfaces are still in use.
@@ -966,7 +966,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`host-api/version.js`) is what the server serves and a breaking reshape adds
   `v2.js` keeping `v1.js` as the shim, selected by the declared range — never
   edit builders in place. 2.0.0 reshaped no builder, so both majors still build
-  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.77.0) and its
+  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.80.0) and its
   older surfaces through the adapters (see [Host API 2.0 and the v1
   shim](#host-api-20-and-the-v1-shim)). `semver` is a real dependency, so
   `scripts/sync-deps.sh` means the SERVICE needs a restart for it to land
@@ -1813,6 +1813,22 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`public/off-board.js`). Nothing else changes: it resumes, archives
   (`sessions.archive`, or the task's Archive) and bills exactly as a board card
   does. A manifest using it declares `^1.41.0`.
+- **`host.sessions.spawn({ agent: 'codex', approvalPolicy: 'on-request' })`
+  selects Codex approvals** (1.80.0). `approvalPolicy` accepts `on-request` or
+  `never`; any other value, including `null`, is refused before dispatch.
+  Supplying it for another agent (including the default Claude) is refused.
+  It overrides only approval with `--ask-for-approval <policy>` and preserves
+  the configured effective sandbox. Read-only, workspace-write and
+  danger-full-access defaults retain their sandbox. Bypass resolves to
+  `danger-full-access` with the bypass flag removed; approve-for-me resolves to
+  `workspace-write` with automatic approval review disabled. Both use the
+  requested approval policy. Without a configured sandbox, core uses
+  `workspace-write`. The resolved sandbox and approval are stored as the
+  session's `codexPolicy` and retained on resume and fork. Omit the option to
+  use configured Codex policy defaults unchanged.
+  Extension `codexPolicy` answers retain precedence at every launch; the
+  requested policy remains stored even when an extension overrides it.
+  A manifest relying on this option declares `engines: { wranglerApi: '^1.80.0' }`.
 - **`host.sessions.spawn({ remoteControl: { name } })` turns on Claude Code
   Remote Control for that one session** (1.55.0). The launch passes
   `--remote-control <name>`, and the name is stored on the entry so every resume
@@ -1863,6 +1879,64 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   second skill needs settings-rendered content.
 
 ## Launch context, events and lifecycle
+
+- **`hooks['session.beforeSpawn']`** (1.78.0), called with `{ spawnedBy,
+  parentSession, spawner, agent, model, effort, cwd, intent, source, taskId, host }` before
+  a new session's directory, worktree or process is created. All providers use
+  it: MCP spawns (including workflows), scheduled dispatches when they fire,
+  board launches, extension spawns and forks. Resuming an existing session does
+  not call it. `spawnedBy` identifies the launching session; for a scheduled
+  dispatch it identifies the session that last set the scheduled action.
+  ScheduleStore owns that provenance, supplied separately from action input by
+  the MCP scheduling tools: action edits reattribute to the editing caller;
+  board action edits clear it; timing/name-only edits retain it. Caller-supplied
+  attribution in stored dispatch input is discarded. Scheduled provenance is
+  hook-only: it does not set the new entry's `spawnedBy`, the agent's
+  `AW_SPAWNER_SESSION_ID`, the spawner chain, telemetry parent or `session.prepare`
+  lineage. `parentSession` is the requested board nesting parent, or the source
+  session for a fork. Forks have `spawnedBy: null`, matching their saved entry;
+  use `source: 'fork'` and `parentSession` for their relationship. `spawner` is
+  the extension id for `host.sessions.spawn`; these launches have no calling
+  session attribution (`spawnedBy: null`). A tool's calling session is not
+  automatically carried through the host spawn API; extensions must apply
+  caller-specific policies themselves. Absent ids, model, effort and cwd are
+  `null`; a blank cwd means a fresh scratch directory. `intent` is at most
+  8,000 characters, or `null` when explicitly supplied as null.
+  `source` is `agent`, `board`, `workflow`,
+  `schedule`, `extension` or `fork`, following the core launch source.
+  Hooks run sequentially and may return nothing to allow, `{ refuse: 'reason' }`
+  to stop the launch, or `{ data: anything }` to carry data to their own
+  `session.spawned` hook. A nonempty refusal stops later hooks and is returned
+  to the caller as the launch error, including through MCP. A refused scheduled
+  fire reports a board `schedule-error` toast, without messaging the scheduling
+  agent. A recurring schedule tries again at its next fire. Data is transient,
+  kept per launch and per extension, and never saved by core.
+- **`hooks['session.spawned']`** (1.78.0) receives the same launch fields plus
+  `{ sessionId, data }`, with `cwd` set to the actual launch directory, after
+  the process launches and its session entry is saved. Only that extension's
+  `data` is supplied (`undefined` if it supplied none). The notification is
+  awaited before dispatch/fork returns; a failed or refused launch never calls
+  it. Hook return values are ignored. Both spawn hooks receive their own host
+  facade, have a two-second timeout per extension, and log and skip thrown
+  errors or timeouts so launches fail open. A timeout cannot cancel extension
+  code already running: hooks should finish promptly and avoid delayed side
+  effects. Use `session.spawned` for enrollment that requires the new id;
+  a before hook's data has no delivery guarantee if a later hook refuses or
+  the launch fails. `server/session-spawn.js`.
+
+  Use the spawn pair for a short admission check across dispatches and forks,
+  using intent/model/effort/source, and for passing data to a completion hook.
+  Use [`session.prepare`](#launch-context-events-and-lifecycle) for dispatch-only
+  checkout preparation: it runs after cwd resolution with `sessionId`, `repoRoot`
+  and `willCreateWorktree`, and allows 60 seconds for work such as updating the
+  repository. Its existing hooks deliberately never run on forks: a fork reuses
+  its parent's checkout, so running repository preparation there could change
+  files beneath the parent session. Keeping the pair separate preserves that
+  contract and admits a launch before a scratch directory exists.
+  `session.launchContext` supplies process configuration and can refuse when that
+  configuration is unavailable; it also runs for resumes and non-launch context
+  changes. `onBeforeDispatch` is a dispatch lifecycle notification whose return
+  value cannot refuse a launch. These hooks serve different stages.
 
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, grantPaths, runtime,
   reason, parentId?, ext, host }`, returns `{ env?, secretEnv?, addDirs?, codexConfig?, claudeHooks?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
@@ -1989,7 +2063,14 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   through the usual dispatch error path, with no worktree or pane created
   (later extensions are not asked); `warnings` toast on the board and the
   launch goes ahead. A hook that throws or takes over 60s is logged and
-  skipped. Resume and fork never fire it. `server/session-prepare.js`.
+  skipped. Resume and fork never fire it. For a short admission check that also
+  covers forks and can pass data to `session.spawned`, use `session.beforeSpawn`
+  above. `server/session-prepare.js`.
+- **Metadata-only mail lists** (`mail:read`, 1.79.0):
+  `host.mail.list(sessionId)` returns `id`, `from`, `fromLabel`, `at`, `size`,
+  `state` and `readAt`, without message bodies or excerpts. Extensions that
+  depend on this contract declare `^1.79.0`. Core's `list_mail` tool retains
+  bounded previews through a separate accessor unavailable to extensions.
 - **Session status projections** (`sessions:read`, 1.59.0): `host.sessions.get(id)`,
   `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
   `hasBackgroundShell` from the latest board graph. Without a graph node, status

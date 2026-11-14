@@ -16,7 +16,7 @@ import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
 import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, codexPolicyDefaults } from './config-store.js';
-import { cleanCodexPolicy } from './extensions/codex-policy.js';
+import { cleanCodexPolicy, codexApprovalPolicyError } from './extensions/codex-policy.js';
 import { ensureCodexTrust } from './codex-trust.js';
 import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
 import { launchEnvOf, launchSecretEnvOf, withoutSecretEnv } from './launch-context.js';
@@ -515,6 +515,8 @@ export class SessionManager {
     // the loader and façades closed over; the default answers nothing, so every
     // existing launch is byte-identical and every test stays inert.
     this._launchContext = async () => ({ env: {}, addDirs: [] });
+    this._beforeSpawn = async () => new Map();
+    this._spawned = async () => {};
     // Seam for writing a launch's secretEnv file (launch-secrets.js), so a test
     // can point it at its own directory or observe it.
     this._writeSecretEnv = writeSecretEnvFile;
@@ -1418,6 +1420,12 @@ export class SessionManager {
     if (refusal) throw new Error(refusal);
     const agent = parentEntry?.agent ?? 'claude';
     if (parentEntry?.disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
+    const spawnPayload = {
+      spawnedBy: null, parentSession: parentId || null, spawner: null, agent,
+      model: parentEntry?.model || null, effort: parentEntry?.effort || null, cwd: cwd || null,
+      intent: prompt == null ? null : String(prompt).slice(0, 8_000), source: 'fork', taskId: this._taskFor(parentId)?.id || null,
+    };
+    const spawnData = await this._beforeSpawn(spawnPayload);
     const adapter = adapterFor(agent);
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
@@ -1447,7 +1455,7 @@ export class SessionManager {
     // fires after this launch, so the parent's card id is how an extension finds it.
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'fork', sessionId, entry: parentEntry, parentId }, parentEntry?.codexPolicy) : undefined;
     const inner = adapter.buildFork({
-      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt,
+      sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt ?? '',
       addDirs,
       launchContext,
       disabledSkills,
@@ -1475,6 +1483,7 @@ export class SessionManager {
     entry.launchedCodeVersion = this.codeVersion || undefined;
     this.map.set(sessionId, entry);
     this._save();
+    await this._spawned({ ...spawnPayload, sessionId, cwd: dir }, spawnData);
     await this._fireExtHooks('onFork', { sessionId, parentId, entry });
     this._launched({ sessionId, entry, source: 'fork' });
     await this.refreshAlive();
@@ -1993,8 +2002,10 @@ export class SessionManager {
 
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
-                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, codexPolicy: pickedCodexPolicy,
-                   launchSource, spawner } = {}) {
+                   autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, approvalPolicy, codexPolicy: pickedCodexPolicy,
+                   launchSource, spawner, scheduledBy } = {}) {
+    const approvalError = codexApprovalPolicyError(approvalPolicy, agent);
+    if (approvalError) throw new Error(approvalError);
     const modeError = permissionModeError(permissionMode, agent);
     if (modeError) throw new Error(modeError);
     if (remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
@@ -2036,6 +2047,12 @@ export class SessionManager {
       ? await rt.preflight({ cwd: trimmed, agent, workflow: Boolean(workflowOpt), worktree: Boolean(worktree), ext: ext || null })
       : null;
     if (preflightErr) throw new Error(preflightErr);
+    const spawnPayload = {
+      spawnedBy: spawnedBy || (launchSource === 'schedule' ? scheduledBy : null) || null, parentSession: parentSession || null, spawner: spawner || null, agent,
+      model: model || null, effort: effort || null, cwd: trimmed || null,
+      intent: intent == null ? null : String(intent).slice(0, 8_000), source: launchSource || (spawnedBy ? 'agent' : 'board'), taskId: taskId || null,
+    };
+    const spawnData = await this._beforeSpawn(spawnPayload);
     // Blank → a fresh timestamped scratch dir; a scratch path the client proposed
     // is ensured-fresh and created here; a real user-typed path is created too
     // (mkdir -p) so it exists before tmux launches in it — but NOT in worktree
@@ -2124,13 +2141,19 @@ export class SessionManager {
     // The dialog's pick is the whole policy (it prefills from Settings and sends
     // every field); a dispatch without one is stored with the Settings defaults
     // as they are now, so a later Settings change never moves a running card.
-    const storedCodexPolicy = adapterFor(agent).launch.codexPolicy ? (cleanCodexPolicy(pickedCodexPolicy ?? this._codexPolicyDefaults()) ?? {}) : undefined;
+    let storedCodexPolicy = adapterFor(agent).launch.codexPolicy ? (cleanCodexPolicy(pickedCodexPolicy ?? this._codexPolicyDefaults()) ?? {}) : undefined;
+    if (approvalPolicy !== undefined) {
+      storedCodexPolicy = {
+        sandbox: storedCodexPolicy?.bypass ? 'danger-full-access' : (storedCodexPolicy?.sandbox ?? 'workspace-write'),
+        approval: approvalPolicy,
+      };
+    }
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'dispatch', sessionId, entry: null }, storedCodexPolicy) : undefined;
     // `deferIntent` launches with no first prompt while still recording the intent
     // as the card's: the caller pastes it into the booted composer itself, which is
     // the only way a first prompt can carry images (dispatch-runner.js). A launch
     // argument has no composer for an image path to be absorbed into.
-    const launchIntent = deferIntent ? '' : intent;
+    const launchIntent = deferIntent ? '' : (intent ?? '');
     // Asked on both paths so a buildLaunch runtime logs the secrets it skips.
     const secretEnvFile = this._secretEnvFileFor(rt, tmux, launchContext);
     const inner = builds
@@ -2160,6 +2183,7 @@ export class SessionManager {
     const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
     this.map.set(sessionId, entry);
     this._save();
+    await this._spawned({ ...spawnPayload, sessionId, cwd }, spawnData);
     await this._fireExtHooks('onDispatch', { sessionId, entry });
     this._launched({ sessionId, entry, source: launchSource || (spawnedBy ? 'agent' : 'board'), spawner: spawner || null });
     await this.refreshAlive();

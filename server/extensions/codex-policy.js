@@ -6,6 +6,13 @@
 export const CODEX_SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access'];
 export const CODEX_APPROVALS = ['on-request', 'never'];
 
+export function codexApprovalPolicyError(value, agent = 'claude', name = 'approvalPolicy') {
+  if (value === undefined) return null;
+  if (!CODEX_APPROVALS.includes(value)) return `${name} must be one of: ${CODEX_APPROVALS.join(', ')}.`;
+  if (agent !== 'codex') return `${name} is only supported for Codex (got ${agent}).`;
+  return null;
+}
+
 const FIELDS = {
   sandbox: (v) => CODEX_SANDBOXES.includes(v),
   approval: (v) => CODEX_APPROVALS.includes(v),

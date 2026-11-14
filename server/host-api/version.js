@@ -553,6 +553,24 @@ import semver from 'semver';
 // With one deck the context is as before. A tray that reads `deckName`
 // declares `^1.77.0`.
 //
+// 1.78.0 adds manifest hooks `session.beforeSpawn` and `session.spawned` for
+// new-session launches across providers and launch sources. The first can
+// refuse with a reason or return extension-owned data; the second receives
+// that data and the new session id after launch. Both time out and fail open;
+// a timeout does not cancel extension code already running.
+//
+// 1.79.0 enforces the metadata-only contract of `host.mail.list(sessionId)`
+// under `mail:read`: id, from, fromLabel, at, size, state and readAt, without
+// bodies or excerpts. Core list_mail retains bounded previews through a
+// separate accessor that is not available on the extension facade. Extensions
+// relying on sender/time metadata without reading text can declare `^1.79.0`.
+//
+// 1.80.0 adds approvalPolicy to sessions.spawn: on-request or never for
+// Codex, retaining its configured sandbox. The resolved codexPolicy persists
+// for launch, resume and fork; combined bypass/approve-for-me modes are resolved
+// to their underlying sandbox with the requested approval.
+// Extension Codex policy answers retain precedence.
+//
 // 2.0.0 is the major the deck API makes. The 2.x contract is what the deck
 // API offers: a board half beside `boardApi` in a split manifest, its state
 // through `api.state()`, the session view without the fields it drops, files
@@ -568,7 +586,7 @@ import semver from 'semver';
 export const HOST_API_VERSION = '2.0.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
-export const V1_SHIM_VERSION = '1.77.0';
+export const V1_SHIM_VERSION = '1.80.0';
 
 // The version this server serves `range` as: HOST_API_VERSION, the v1 shim, or
 // null for neither. A null/absent range is "no constraint" and gets the
