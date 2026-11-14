@@ -1,12 +1,12 @@
 // The browser half of the builtin `todos` extension: the TODO zone in every task
 // tile (Unassigned included), contributed to the `task.body` slot.
 //
-// Data is `graph.todos` (`{ bucket: [todo] }`, the server half's graph key); a
-// bucket is a task id or the reserved Unassigned id, which the slot's ctx carries
-// as `adhocId`. Changes are applied optimistically to the graph object the slot
-// hands us, sent over this extension's own control types, and confirmed by the
-// next graph — then `api.requestBoardRender()` redraws (which also re-sizes the
-// tile through `weight`).
+// Data is `todos` (`{ bucket: [todo] }`) in this extension's own state,
+// `api.state()`; a bucket is a task id or the reserved Unassigned id, which the
+// slot's ctx carries as `adhocId`. Changes are applied optimistically to a
+// working copy of it, sent over this extension's own control types, and
+// confirmed by the next state frame — then `api.requestBoardRender()` redraws
+// (which also re-sizes the tile through `weight`).
 //
 // The zone's rows are draggable, so the host is `claimDrag`-ed: core's card and
 // tile drag handlers ignore any drag that starts in it. Reorder is within a tile;
@@ -27,6 +27,7 @@ export const COLLAPSED_KEY = 'wrangler.collapsedTodoZones';
 const state = {
   api: null,
   graph: null,
+  seen: null,
   collapsed: new Set(),
   views: new Map(), // host element -> view
   byKey: new Map(), // bucket key -> view (latest mounted)
@@ -35,7 +36,7 @@ const state = {
 };
 
 export function reset() {
-  Object.assign(state, { api: null, graph: null, collapsed: new Set(), views: new Map(), byKey: new Map(), drag: null, tooltip: null });
+  Object.assign(state, { api: null, graph: null, seen: null, collapsed: new Set(), views: new Map(), byKey: new Map(), drag: null, tooltip: null });
 }
 
 function loadCollapsed(api) {
@@ -58,12 +59,27 @@ function redraw() {
 
 // --- the slot contribution ---
 
+// What the zone draws from: a working copy of this extension's state, edited
+// optimistically until the next state frame replaces it. A board without
+// api.state() still hands the todos over on the graph.
+function data(graph) {
+  const own = state.api?.state?.() ?? null;
+  if (own == null) {
+    if (graph) state.graph = graph;
+    return state.graph;
+  }
+  if (own !== state.seen || !state.graph) {
+    state.seen = own;
+    state.graph = { todos: structuredClone(own.todos ?? {}) };
+  }
+  return state.graph;
+}
+
 // Tile height the zone wants, in px (see todoWeightPx). Called per tile per
 // layout pass with the graph the board is rendering, so it also keeps our
 // copy of the graph current for the handlers below.
 export function weight(taskId, graph) {
-  if (graph) state.graph = graph;
-  return todoWeightPx(todosOf(graph || state.graph, taskId).length, state.collapsed.has(taskId));
+  return todoWeightPx(todosOf(data(graph), taskId).length, state.collapsed.has(taskId));
 }
 
 function mount(el, api, ctx) {
@@ -76,7 +92,7 @@ function mount(el, api, ctx) {
 }
 
 function update(el, ctx, graph) {
-  if (graph) state.graph = graph;
+  data(graph);
   const view = state.views.get(el);
   if (!view) return;
   // An inline input in this host is mid-edit: replacing its markup would eat the

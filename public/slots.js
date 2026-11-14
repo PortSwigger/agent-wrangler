@@ -1,5 +1,6 @@
 import { parseCombo } from './keybindings.js';
 import { canOpenPath, fileTypes } from './file-types.js';
+import { warnLegacy } from './legacy-surface.js';
 // The client half of the extensions API: named slots an extension's client
 // module (served from /ext/<id>/, see extensions.js) contributes DOM into, and
 // the one place the board renders those contributions from. A leaf — no DOM at
@@ -160,6 +161,14 @@ function copyAgents(agents) {
 
 const TOAST_SEVERITIES = ['success', 'info', 'warning', 'error'];
 
+function deepFreeze(v) {
+  if (v && typeof v === 'object' && !Object.isFrozen(v)) {
+    Object.freeze(v);
+    for (const k of Object.keys(v)) deepFreeze(v[k]);
+  }
+  return v;
+}
+
 function isPlainObject(v) {
   return v != null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -215,6 +224,43 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // extId -> Set<unregister fn>: each extension's api.keys.bind() bindings,
   // dropped by removeExtension.
   const keyUnbinds = new Map();
+  // The state frame's `ext` map (extId -> that extension's state), what
+  // api.state() reads. `extKeys` maps each top-level key in it to its owner, for
+  // the graph-keys adapter (graphFor); `stateCopies` holds the frozen copy
+  // api.state() hands out until the next frame.
+  let extState = {};
+  const extKeys = new Map();
+  const stateCopies = new Map();
+  const stateListeners = new Map();
+  const graphViews = new Map();
+
+  // The graph handed to an extension's contribution. Extension state still sits
+  // at the graph's top level, as it always has, but reading one of those keys
+  // logs one deprecation warning naming api.state().
+  function graphFor(extId, graph) {
+    if (!graph || typeof graph !== 'object' || !extKeys.size) return graph;
+    if (!graphViews.has(extId)) graphViews.set(extId, new WeakMap());
+    const cache = graphViews.get(extId);
+    let view = cache.get(graph);
+    if (!view) {
+      view = new Proxy(graph, {
+        get(target, key, receiver) {
+          if (typeof key === 'string' && extKeys.has(key)) warnLegacy(`graph.${key}`, `api.state() (the ext.${extKeys.get(key)} state)`);
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      cache.set(graph, view);
+    }
+    return view;
+  }
+
+  function stateOf(extId) {
+    if (!stateCopies.has(extId)) {
+      const own = Object.hasOwn(extState, extId) ? extState[extId] : null;
+      stateCopies.set(extId, own == null ? null : deepFreeze(structuredClone(own)));
+    }
+    return stateCopies.get(extId);
+  }
 
   // Subscribe `fn` to this extension's own `ext:<extId>` frames. Returns an
   // unsubscribe function, which is what a contribution that subscribes inside
@@ -356,7 +402,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         current = context(ctx);
         for (const [c, el] of [...h.elements]) {
           if (typeof c.update !== 'function') continue;
-          try { c.update(el, current, graph); } catch (err) {
+          try { c.update(el, current, graphFor(c.extId, graph)); } catch (err) {
             onError(`[ext:${c.extId}] ${c.id} update failed — contribution removed`, err);
             drop('dispatch.field', c);
           }
@@ -523,6 +569,33 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           baseApi.send?.(frame, extId);
         },
         onMessage: (fn) => subscribe(extId, fn),
+        // This extension's own `ext.<id>` state from the deck's state frame
+        // (1.74.0): what its graph contributor returned, as a frozen copy, or
+        // null before the first frame. `onState(fn)` hears each new one.
+        state: () => stateOf(extId),
+        onState: (fn) => {
+          if (typeof fn !== 'function') {
+            onError(`[ext:${extId}] onState needs a function`);
+            return () => {};
+          }
+          if (!stateListeners.has(extId)) stateListeners.set(extId, new Set());
+          stateListeners.get(extId).add(fn);
+          return () => stateListeners.get(extId)?.delete(fn);
+        },
+        // Run one of this extension's own handlers as the deck action
+        // `ext.<id>.<name>` (1.74.0) and resolve with the result frame
+        // `{ ok, data, error }`; never rejects.
+        act: (name, args = {}, opts = {}) => {
+          if (typeof name !== 'string' || !name) return Promise.resolve({ ok: false, data: null, error: { code: 'invalid', message: 'act needs a handler type' } });
+          if (args != null && !isPlainObject(args)) return Promise.resolve({ ok: false, data: null, error: { code: 'invalid', message: 'act args must be an object' } });
+          if (typeof baseApi.act !== 'function') return Promise.resolve({ ok: false, data: null, error: { code: 'unsupported', message: 'act is not available' } });
+          const session = isPlainObject(opts) && typeof opts.session === 'string' && opts.session ? opts.session : null;
+          return Promise.resolve(baseApi.act(extId, name, { session, args: { ...(args || {}) } }))
+            .catch((err) => ({ ok: false, data: null, error: { code: 'failed', message: String(err?.message || err) } }));
+        },
+        // The board's style list (1.74.0), `[{ id, name, base, ... }]` as the
+        // Settings theme picker reads it, once the board has loaded it.
+        styles: () => Promise.resolve(typeof baseApi.styles === 'function' ? baseApi.styles() : []).then((list) => structuredClone(Array.isArray(list) ? list : [])),
         onConnect: (fn) => {
           if (typeof fn !== 'function') throw Error('onConnect requires a function');
           if (!connectionListeners.has(extId)) connectionListeners.set(extId, new Set());
@@ -1082,7 +1155,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     const el = c.mounts.get(host);
     if (!el || typeof c.update !== 'function') return true;
     try {
-      c.update(el, session, graph);
+      c.update(el, session, graphFor(c.extId, graph));
     } catch (err) {
       if (sample) { sampleFailed(c, host, 'update', err); return false; }
       onError(`[ext:${c.extId}] ${c.id} update failed — contribution removed`, err);
@@ -1125,7 +1198,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       if (typeof c.badge !== 'function' || c.mounts.size === 0) continue;
       let n;
       try {
-        n = c.badge(graph);
+        n = c.badge(graphFor(c.extId, graph));
       } catch (err) {
         onError(`[ext:${c.extId}] ${c.id} badge failed — contribution removed`, err);
         drop(slotName, c);
@@ -1188,7 +1261,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     for (const c of [...slotList(slotName)]) {
       let items;
       try {
-        items = c.items(subject, graph, apiFor(c.extId, baseApi));
+        items = c.items(subject, graphFor(c.extId, graph), apiFor(c.extId, baseApi));
       } catch (err) {
         onError(`[ext:${c.extId}] ${c.id} items failed — contribution removed`, err);
         drop(slotName, c);
@@ -1319,6 +1392,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       themeListeners.delete(extId);
       earlyAdopterApis.delete(extId);
       updateStatusListeners.delete(extId);
+      stateListeners.delete(extId);
+      graphViews.delete(extId);
       for (const unsub of [...(boardUnsubs.get(extId) || [])]) unsub();
       boardUnsubs.delete(extId);
       for (const unbind of [...(keyUnbinds.get(extId) || [])]) unbind();
@@ -1625,7 +1700,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         if (typeof c.weight !== 'function') continue;
         let w;
         try {
-          w = c.weight(taskId, graph);
+          w = c.weight(taskId, graphFor(c.extId, graph));
         } catch (err) {
           const key = `${c.extId}:${c.id}`;
           if (!weightReported.has(key)) { weightReported.add(key); onError(`[ext:${c.extId}] ${c.id} weight failed — counted as 0`, err); }
@@ -1695,7 +1770,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       for (const c of [...slotList('card.cost')]) {
         let got;
         try {
-          got = c.cost(session, graph);
+          got = c.cost(session, graphFor(c.extId, graph));
         } catch (err) {
           onError(`[ext:${c.extId}] ${c.id} cost failed — contribution removed`, err);
           drop('card.cost', c);
@@ -1721,7 +1796,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       for (const c of [...slotList('link.chip')]) {
         let got;
         try {
-          got = c.chip(link, graph, apiFor(c.extId, baseApi));
+          got = c.chip(link, graphFor(c.extId, graph), apiFor(c.extId, baseApi));
         } catch (err) {
           onError(`[ext:${c.extId}] ${c.id} chip failed — contribution removed`, err);
           drop('link.chip', c);
@@ -1748,7 +1823,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     fileOpen(file, graph, baseApi) {
       for (const c of [...slotList('file.open')]) {
         try {
-          if (c.open({ ...file }, graph, apiFor(c.extId, baseApi)) === true) return true;
+          if (c.open({ ...file }, graphFor(c.extId, graph), apiFor(c.extId, baseApi)) === true) return true;
         } catch (err) {
           onError(`[ext:${c.extId}] ${c.id} open failed — contribution removed`, err);
           drop('file.open', c);
@@ -1768,7 +1843,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       for (const c of [...slotList('session.inputGate')]) {
         let got;
         try {
-          got = c.gate(session, graph, apiFor(c.extId, baseApi));
+          got = c.gate(session, graphFor(c.extId, graph), apiFor(c.extId, baseApi));
         } catch (err) {
           onError(`[ext:${c.extId}] ${c.id} gate failed — contribution removed`, err);
           drop('session.inputGate', c);
@@ -1786,6 +1861,27 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         };
       }
       return null;
+    },
+
+    // app.js hands over each state frame's `ext` map. Listeners hear their own
+    // extension's state when it changed; a throwing one is reported and kept.
+    setExtState(ext) {
+      const next = ext && typeof ext === 'object' ? ext : {};
+      const prev = extState;
+      extState = next;
+      extKeys.clear();
+      for (const [id, v] of Object.entries(next)) {
+        if (v && typeof v === 'object') for (const k of Object.keys(v)) if (!extKeys.has(k)) extKeys.set(k, id);
+      }
+      const moved = [];
+      for (const id of new Set([...Object.keys(prev), ...Object.keys(next)])) {
+        if (JSON.stringify(prev[id] ?? null) !== JSON.stringify(next[id] ?? null)) { stateCopies.delete(id); moved.push(id); }
+      }
+      for (const id of moved) {
+        for (const fn of [...(stateListeners.get(id) || [])]) {
+          try { fn(stateOf(id)); } catch (err) { onError(`[ext:${id}] onState listener failed`, err); }
+        }
+      }
     },
 
     connected() {

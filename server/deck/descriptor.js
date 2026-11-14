@@ -11,7 +11,7 @@ export function deckDescriptor({ deckId, name, actions, runtimes, extensions, bo
     actions: [...actions].sort(),
     extensions: extensions
       .filter((e) => e.enabled)
-      .map((e) => ({ id: e.id, version: e.version ?? null, boardApi })),
+      .map((e) => ({ id: e.id, version: e.version ?? null, boardApi: e.boardApi || boardApi })),
   };
 }
 

@@ -439,6 +439,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
       id,
       requires: e.requires,
       range: e.range,
+      boardApi: e.boardApi,
       stores: storesFor(id),
       // The manifest's own setting DEFS, plus a READ-THROUGH of their values:
       // host.settings resolves against config.json on every call, so a value

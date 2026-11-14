@@ -6,6 +6,8 @@ import { validateSettingDef } from './setting-constraints.js';
 import { normalizeCodexPolicy } from './codex-policy.js';
 import { normaliseTelemetryDecl, VERSION_RE } from './telemetry-schema.js';
 import { isValidBranchName } from '../worktree.js';
+import { BOARD_FIELDS, manifestHalves } from './manifest-halves.js';
+import { warnLegacy } from '../deck/legacy.js';
 import { parseCombo, SCOPES as KEY_SCOPES } from '../../public/keybindings.js';
 import checklist from './builtin/checklist/index.js';
 import todos from './builtin/todos/index.js';
@@ -227,6 +229,16 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   // extension may take the id and emit as it.
   if (ext.id === 'core') fail(ext, 'id "core" is reserved for the wrangler itself');
   if (typeof ext.label !== 'string' || !ext.label) fail(ext, 'label must be a non-empty string');
+  if (ext.board != null) {
+    if (typeof ext.board !== 'object' || Array.isArray(ext.board)) fail(ext, `board must be an object of ${BOARD_FIELDS.join(', ')}`);
+    for (const k of Object.keys(ext.board)) if (!BOARD_FIELDS.includes(k)) fail(ext, `board.${k} is not a board field (known: ${BOARD_FIELDS.join(', ')})`);
+    for (const k of BOARD_FIELDS) if (ext[k] != null) fail(ext, `${k} belongs under board in a manifest that has a board half`);
+  }
+  if (ext.boardApi != null && (typeof ext.boardApi !== 'string' || semver.validRange(ext.boardApi) == null)) {
+    fail(ext, 'boardApi must be a valid semver range');
+  }
+  const board = manifestHalves(ext).board;
+  const boardKey = (k) => (ext.board != null ? `board.${k}` : k);
   if (ext.help != null && typeof ext.help !== 'string') fail(ext, 'help must be a string');
   // Consent-modal and settings-row prose. Optional, and third-party strings for
   // an installed extension — checked only for TYPE here; every consumer renders
@@ -326,7 +338,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
       // `themes`: false leaves it out of the picker and its assets unserved.
       if (s.theme != null) {
         if (s.type !== 'toggle') fail(ext, `settings.${s.key}.theme is only valid on a toggle setting`);
-        if (ext.themes == null) fail(ext, `settings.${s.key}.theme requires the manifest's themes`);
+        if (board.themes == null) fail(ext, `settings.${s.key}.theme requires the manifest's themes`);
         if (typeof s.theme !== 'string' || !ID_RE.test(s.theme)) fail(ext, `settings.${s.key}.theme must be a theme id matching ${ID_RE}`);
         if (themeToggles.has(s.theme)) fail(ext, `settings.${s.key}.theme "${s.theme}" is already switched by another setting`);
         themeToggles.add(s.theme);
@@ -431,25 +443,27 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   // `client` and `styles` are the two asset paths, checked identically: both are
   // served by the /ext/<id>/ static route, so both must resolve under the
   // manifest's own public/ and nowhere else.
-  for (const key of ['client', 'styles']) {
-    if (ext[key] == null) continue;
-    if (typeof ext[key] !== 'string' || !ext[key]) fail(ext, `${key} must be a relative path string`);
+  for (const k of ['client', 'styles']) {
+    if (board[k] == null) continue;
+    const key = boardKey(k);
+    if (typeof board[k] !== 'string' || !board[k]) fail(ext, `${key} must be a relative path string`);
     if (typeof dir !== 'string' || !path.isAbsolute(dir)) fail(ext, `${key} requires the manifest to export its absolute \`dir\``);
     const base = path.resolve(dir);
     const pubDir = path.join(base, 'public');
-    const resolved = path.resolve(base, ext[key]);
+    const resolved = path.resolve(base, board[k]);
     if (!resolved.startsWith(base + path.sep) || !resolved.startsWith(pubDir + path.sep)) {
-      fail(ext, `${key} "${ext[key]}" must resolve inside ${pubDir}`);
+      fail(ext, `${key} "${board[k]}" must resolve inside ${pubDir}`);
     }
   }
   // `themes` (1.43.0): a directory of `<id>/theme.json` + assets, read by
   // server/styles.js. Inside the manifest's own dir but not necessarily public/:
   // theme.json is compiled, never served, and only declared assets are.
-  if (ext.themes != null) {
-    if (typeof ext.themes !== 'string' || !ext.themes) fail(ext, 'themes must be a relative path string');
-    if (typeof dir !== 'string' || !path.isAbsolute(dir)) fail(ext, 'themes requires the manifest to export its absolute `dir`');
+  if (board.themes != null) {
+    const key = boardKey('themes');
+    if (typeof board.themes !== 'string' || !board.themes) fail(ext, `${key} must be a relative path string`);
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) fail(ext, `${key} requires the manifest to export its absolute \`dir\``);
     const base = path.resolve(dir);
-    if (!path.resolve(base, ext.themes).startsWith(base + path.sep)) fail(ext, `themes "${ext.themes}" must resolve inside ${base}`);
+    if (!path.resolve(base, board.themes).startsWith(base + path.sep)) fail(ext, `${key} "${board.themes}" must resolve inside ${base}`);
   }
   return true;
 }
@@ -678,6 +692,7 @@ function quarantinedEntry(ext, quarantine) {
     earlyAdopterBranch: null,
     telemetry: { events: null },
     version: null,
+    boardApi: null,
     quarantine,
   };
 }
@@ -697,6 +712,7 @@ function quarantinedEntry(ext, quarantine) {
 function stageExtension(ext, { cfg, out, reg }) {
   validateManifest(ext);
   if (reg.ids.has(ext.id)) fail(ext, 'duplicate extension id');
+  const { board, unsplitBoard } = manifestHalves(ext);
   const at = out.list.findIndex((e) => e.id === ext.id);
   const place = (entry) => { if (at >= 0) out.list[at] = entry; else out.list.push(entry); };
   const enabled = extensionEnabled(ext.id, ext.defaultEnabled, cfg);
@@ -754,6 +770,7 @@ function stageExtension(ext, { cfg, out, reg }) {
     // telemetry by index.js on activate, taken back on deactivate.
     telemetry: normaliseTelemetryDecl(ext.telemetry, ext.requires || []),
     version: typeof ext.version === 'string' ? ext.version : null,
+    boardApi: board.boardApi,
     quarantine: null,
   };
   if (!enabled) {
@@ -834,10 +851,11 @@ function stageExtension(ext, { cfg, out, reg }) {
   if (ext.dir) out.dirs[ext.id] = ext.dir;
   // Kept in list order, not push order: a re-enable re-stages at the row's own
   // index, and must not move its themes behind another extension's on an id tie.
-  if (ext.themes) {
+  if (unsplitBoard) warnLegacy(`An unsplit manifest (${ext.id}: top-level client, styles or themes)`, 'a board: { client, styles, themes } half beside boardApi');
+  if (board.themes) {
     const order = (id) => out.list.findIndex((e) => e.id === id);
     const toggles = Object.fromEntries((ext.settings || []).filter((d) => d.theme).map((d) => [d.theme, d.key]));
-    out.themeDirs.push({ id: ext.id, dir: path.resolve(ext.dir, ext.themes), toggles });
+    out.themeDirs.push({ id: ext.id, dir: path.resolve(ext.dir, board.themes), toggles });
     out.themeDirs.sort((a, b) => order(a.id) - order(b.id));
   }
   // Omitted rather than nulled when absent, so the announcement a stock
@@ -851,11 +869,15 @@ function stageExtension(ext, { cfg, out, reg }) {
   // the mirror of the `?t=` the server's own import is cache-busted with. The
   // static route splits the query off before resolving, so it costs nothing.
   const assetVersion = ext.provenance?.sha ? `?v=${ext.provenance.sha.slice(0, 12)}` : '';
-  if (ext.client || ext.styles) {
+  if (board.client || board.styles) {
     out.clientManifest.push({
       id: ext.id,
-      ...(ext.client ? { client: extAssetUrl(ext.id, ext.client) + assetVersion } : {}),
-      ...(ext.styles ? { styles: extAssetUrl(ext.id, ext.styles) + assetVersion } : {}),
+      ...(board.client ? { client: extAssetUrl(ext.id, board.client) + assetVersion } : {}),
+      ...(board.styles ? { styles: extAssetUrl(ext.id, board.styles) + assetVersion } : {}),
+      // Paired with the deck's GET /deck entry for this id: the board mounts
+      // the half only when the two name the same boardApi. Omitted when the
+      // manifest declares none, and the deck then lists the API it serves.
+      ...(board.boardApi ? { boardApi: board.boardApi } : {}),
       // The control types this extension's BROWSER half may send, carried on
       // the connect announcement as well as on graph.extensions because the
       // announcement lands before the first graph — and slots.js fails closed

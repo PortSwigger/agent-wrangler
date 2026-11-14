@@ -2333,3 +2333,74 @@ test('sessionPanel: view and scroll pass through; type needs session:type and is
   assert.equal(old.sessionPanel.view(), null, 'an older base api has no panel');
   assert.deepEqual(old.sessionPanel.scroll('top'), { ok: false, reason: 'no-panel' });
 });
+
+test('api.state reads only this extension\'s own ext.<id> state, as a frozen copy, and onState hears it change', () => {
+  const { slots, errors } = harness();
+  const api = slots.forExtension('todos').api;
+  assert.equal(api.state(), null, 'null before the first state frame');
+  const heard = [];
+  const off = api.onState((s) => heard.push(s));
+  const live = { todos: { items: [1] } };
+  slots.setExtState({ todos: live, other: { secret: 1 } });
+  const got = api.state();
+  assert.deepEqual(got, live);
+  assert.ok(Object.isFrozen(got) && Object.isFrozen(got.todos.items));
+  assert.notEqual(got, live, 'a copy, so a caller cannot write into board state');
+  assert.equal(api.state(), got, 'the same copy until the next frame');
+  slots.setExtState({ todos: live, other: { secret: 2 } });
+  assert.equal(heard.length, 1, 'another extension\'s change is not heard');
+  slots.setExtState({ todos: { todos: { items: [1, 2] } } });
+  assert.deepEqual(heard.at(-1), { todos: { items: [1, 2] } });
+  off();
+  slots.setExtState({});
+  assert.equal(heard.length, 2);
+  assert.equal(api.onState('x')(), undefined);
+  assert.match(errors.join('\n'), /onState needs a function/);
+});
+
+test('api.act runs ext.<own id>.<name> through the base api and resolves with the result frame', async () => {
+  const calls = [];
+  const { slots } = harness();
+  const baseApi = { act: async (extId, name, opts) => { calls.push([extId, name, opts]); return { ok: true, data: { n: 1 }, error: null }; } };
+  const api = slots.forExtension('todos', baseApi).api;
+  assert.deepEqual(await api.act('todo-add', { text: 'x' }, { session: 's1' }), { ok: true, data: { n: 1 }, error: null });
+  assert.deepEqual(calls, [['todos', 'todo-add', { session: 's1', args: { text: 'x' } }]]);
+  assert.equal((await api.act('')).error.code, 'invalid');
+  assert.equal((await api.act('x', [1])).error.code, 'invalid');
+  const bare = harness().slots.forExtension('todos', {}).api;
+  assert.equal((await bare.act('x')).error.code, 'unsupported');
+  const throwing = harness().slots.forExtension('todos', { act: async () => { throw new Error('gone'); } }).api;
+  assert.deepEqual(await throwing.act('x'), { ok: false, data: null, error: { code: 'failed', message: 'gone' } });
+});
+
+test('api.styles resolves with a copy of the board\'s style list', async () => {
+  const list = [{ id: 'sea', name: 'Sea' }];
+  const api = harness().slots.forExtension('themes', { styles: async () => list }).api;
+  const got = await api.styles();
+  assert.deepEqual(got, list);
+  assert.notEqual(got, list);
+  assert.deepEqual(await harness().slots.forExtension('themes', {}).api.styles(), []);
+});
+
+test('a contribution reading an extension\'s state off the graph still gets it, with one warning naming api.state()', async () => {
+  const { resetLegacyWarnings } = await import('./legacy-surface.js');
+  resetLegacyWarnings();
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (m) => warned.push(String(m));
+  try {
+    const { document, slots } = harness();
+    const read = [];
+    slots.register('view', 'todos', { id: 'main', label: 'Todos', mount() {}, update(_el, _ctx, graph) { read.push(graph.todos, graph.sessions); } });
+    slots.setExtState({ todos: { todos: { a: 1 } } });
+    const graph = { sessions: [], todos: { a: 1 } };
+    const host = document.make();
+    slots.syncHosts('view', [{ host, only: { extId: 'todos', id: 'main' } }], {}, graph);
+    slots.syncHosts('view', [{ host, only: { extId: 'todos', id: 'main' } }], {}, graph);
+    assert.deepEqual(read, [{ a: 1 }, [], { a: 1 }, []]);
+    assert.equal(warned.length, 1);
+    assert.match(warned[0], /graph\.todos is deprecated .* use api\.state\(\) \(the ext\.todos state\) instead/);
+  } finally {
+    console.warn = orig;
+  }
+});
