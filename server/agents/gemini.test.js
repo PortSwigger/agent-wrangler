@@ -86,9 +86,9 @@ test('launch, resume and fork all carry the session identity, settings, policy a
   assert.throws(() => geminiApprovalArgs('bypassPermissions'), /not supported for Gemini/);
 });
 
-test('settings: the board MCP server keyed by $AW_SESSION_ID, our hooks appended to any existing ones', () => {
+test('settings: the board MCP server with the $AW_SESSION_TOKEN bearer, our hooks appended to any existing ones', () => {
   const settings = geminiSettings({ port: 4321, base: { hooks: { AfterTool: [{ matcher: 'x', hooks: [] }] }, mcpServers: { mine: { command: 'm' } }, ui: { theme: 'x' } } });
-  assert.deepEqual(settings.mcpServers['agent-wrangler'], { httpUrl: 'http://127.0.0.1:4321/mcp', headers: { 'X-AW-Session': '$AW_SESSION_ID' }, description: 'Agent Wrangler board' });
+  assert.deepEqual(settings.mcpServers['agent-wrangler'], { httpUrl: 'http://127.0.0.1:4321/mcp', headers: { Authorization: 'Bearer $AW_SESSION_TOKEN' }, description: 'Agent Wrangler board' });
   assert.ok(settings.mcpServers.mine, 'a server already in the defaults file is kept');
   assert.equal(settings.ui.theme, 'x');
   assert.equal(settings.hooks.AfterTool.length, 2);

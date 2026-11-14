@@ -11,7 +11,7 @@ import { shellQuote } from './claude.js';
 import { analyzeCodex, listResumableCodex, activityInRangeCodex, codexContextWindow, codexSubagentDetail, findRollout } from './codex-rollout.js';
 import { discoverCodexLiveId } from './codex-discover.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
-import { codexMcpConfigArgs, MCP_TOKEN_ENV, prModelUrl } from '../mcp/client-config.js';
+import { codexMcpConfigArgs, prModelUrl } from '../mcp/client-config.js';
 import { codexPolicyArgs, codexPolicyAllowsAddDirs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
 import { tomlString, notifyOverride } from '../codex-notify-config.js';
@@ -33,7 +33,7 @@ const PR_FOOTER_HOOK_PATH = installPath(fileURLToPath(new URL('../../scripts/cod
 // `agent: 'codex'`, because Codex 0.149+ rejects a symlinked writable root.
 function envPrefix(sessionId, spawnedBy, launchContext) {
   let env = launchEnvGuard(launchContext, shellQuote) + launchEnvPrefix(launchContext, shellQuote)
-    + `AW_SESSION_ID=${shellQuote(sessionId)} ${MCP_TOKEN_ENV}=${shellQuote(sessionId)} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `;
+    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `;
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
 }

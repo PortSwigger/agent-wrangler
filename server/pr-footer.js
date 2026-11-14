@@ -6,6 +6,7 @@
 // Claude one). Dependency-free beyond node builtins: the devcontainer runtime
 // copies this file into the container beside the hook scripts.
 import { spawn } from 'node:child_process';
+import { sessionApiHeaders } from './pr-hook.js';
 
 // A `Model:` line anywhere in the body, ours or one the agent wrote itself.
 const MODEL_LINE = /^Model:[ \t]*\S/m;
@@ -38,9 +39,9 @@ export function withModelFooter(body, model) {
 
 // Asks the wrangler which model to tag this session's PRs with. Null when the
 // footer setting is off, the session is unknown or the server is unreachable.
-export async function fetchFooterModel({ url, session, fetchImpl = fetch }) {
-  if (!url || !session) return null;
-  const res = await fetchImpl(url, { method: 'POST', headers: { 'X-AW-Session': session } });
+export async function fetchFooterModel({ url, headers, fetchImpl = fetch }) {
+  if (!url || !headers) return null;
+  const res = await fetchImpl(url, { method: 'POST', headers });
   if (!res.ok) return null;
   const model = (await res.json())?.model;
   return typeof model === 'string' && model ? model : null;
@@ -70,9 +71,9 @@ export async function tagPrWithModel({ prUrl, model, gh = runGh }) {
 }
 
 // The whole footer step for a PR just created: model from the wrangler, then
-// the body edit. Env carries the session (AW_SESSION_ID) and the lookup url
-// (AW_PR_MODEL_URL), both set at launch.
+// the body edit. Env carries the session token (AW_SESSION_TOKEN) and the
+// lookup url (AW_PR_MODEL_URL), both set at launch.
 export async function runModelFooter({ prUrl, env = process.env, fetchImpl = fetch, gh = runGh }) {
-  const model = await fetchFooterModel({ url: env.AW_PR_MODEL_URL, session: env.AW_SESSION_ID, fetchImpl });
+  const model = await fetchFooterModel({ url: env.AW_PR_MODEL_URL, headers: sessionApiHeaders(env), fetchImpl });
   return tagPrWithModel({ prUrl, model, gh });
 }

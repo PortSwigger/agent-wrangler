@@ -19,7 +19,7 @@ import { activityInRangeGemini, analyzeGemini, geminiContextWindow, listResumabl
 //   - its conversation id is chosen at launch (`--session-id`), so it is preset;
 //   - it runs in a Gemini home of the board's (GEMINI_CLI_HOME, gemini-config.js)
 //     whose settings add the board's MCP server and hooks to the user's own;
-//     the card id reaches them through $AW_SESSION_ID;
+//     the session token reaches them through $AW_SESSION_TOKEN;
 //   - instructions and the skills catalog reach it through a SessionStart hook,
 //     as context rather than a system prompt;
 //   - status is read off the pane; there is no live status file;

@@ -42,10 +42,11 @@ import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoar
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
-import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
+import { createMcpRequestHandler } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
-import { bindHost, deckPort, deckOnly } from './runtime.js';
+import { bindHost, deckPort, deckOnly, sessionApiPort } from './runtime.js';
+import { createSessionApi } from './session-api/index.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createBoardServer } from './http-handler.js';
 import { createDeckServer } from './deck/http.js';
@@ -100,8 +101,8 @@ import { VERSION } from './version.js';
 
 const open = openModule.default || openModule;
 
-// PORT is the board's: the address people open, and the one launched sessions
-// reach MCP and the PR hooks on (forwarded to the deck). The deck listens on
+// PORT is the board's: the address people open. Launched sessions reach MCP and
+// the PR hooks on the session API's own port (sessionApiPort). The deck listens on
 // loopback on its own port; DECK_PORT is what it asks for, and deckListenPort
 // what it got. A deck-only instance has no board: nothing listens on PORT, its
 // sessions reach the deck directly, and only configured origins are boards.
@@ -974,18 +975,17 @@ const fireMailSettlesTick = createMailSettleSweeper({
 
 // POST /pr-attach — the launch-injected PostToolUse hook's callback. The hook
 // runs INSIDE the one session whose Bash tool ran `gh pr create` and posts the
-// new PR url with that session's card id in X-AW-Session, so the PR attaches to
+// new PR url with that session's token, so the PR attaches to
 // exactly that card — the precise attribution cwd-based polling couldn't give
 // (sibling sessions sharing a cwd resolve the same PR). Honors autoAttachPr.
 // Idempotent: a re-fired hook for an already-attached PR is a no-op.
-async function prAttachHandler(req, res) {
+async function prAttachHandler(req, res, caller) {
   try {
-    if (!autoAttachPrEnabled()) { res.writeHead(200).end('ok'); return; }
-    const caller = extractCaller(req);
+    if (!autoAttachPrEnabled()) { req.resume(); res.writeHead(200).end('ok'); return; }
     let body = '';
     for await (const chunk of req) body += chunk;
     const url = body ? JSON.parse(body)?.url : null;
-    if (caller == null || !url) { res.writeHead(400).end('bad request'); return; }
+    if (!url) { res.writeHead(400).end('bad request'); return; }
     let link;
     try { link = normalisePr({ url }); } catch { res.writeHead(400).end('bad url'); return; }
     const existing = sessionManager.getLinks(caller);
@@ -1092,8 +1092,28 @@ function deckHandler(req, res) {
   res.end(JSON.stringify(body));
 }
 
+// The session API (server/session-api): /mcp, /pr-attach and /pr-model behind
+// the per-card token check, on a port of its own. The deck keeps the same routes
+// for sessions launched before tokens, whose URLs name the board's port.
+const sessionApi = createSessionApi({
+  dataDir: DATA_DIR,
+  cardState: (id) => {
+    const entry = sessionManager.entryFor(id);
+    if (!entry) return 'unknown';
+    if (entry.archivedAt) return 'archived';
+    return entry.tmux && sessionManager.alive.has(entry.tmux) ? 'running' : 'stopped';
+  },
+  handlers: { '/mcp': mcpRequestHandler, '/pr-attach': prAttachHandler, '/pr-model': prModelHandler },
+  log, logWarn, logError,
+});
+sessionManager._issueSessionToken = (id) => sessionApi.tokens.issue(id);
+sessionManager._revokeSessionToken = (id) => sessionApi.tokens.revoke(id);
+
 const deckServer = createDeckServer({
-  boardPort: BOARD_ORIGIN_PORT, mcpRequestHandler, prAttachHandler, prModelHandler, deckHandler,
+  boardPort: BOARD_ORIGIN_PORT, deckHandler,
+  mcpRequestHandler: sessionApi.legacyHandlers['/mcp'],
+  prAttachHandler: sessionApi.legacyHandlers['/pr-attach'],
+  prModelHandler: sessionApi.legacyHandlers['/pr-model'],
   fileHandler: legacyFileRoutes.file, extFileHandler: legacyFileRoutes.extFile,
 });
 
@@ -1562,6 +1582,15 @@ async function main() {
   // KeepAlive never notices. The lock is released by its own exit handler.
   // Detached once listening: the server also emits 'error' for a failed accept
   // (EMFILE under fd pressure), which must stay a logged, survivable event.
+  // The session API binds before anything can launch a session, so every
+  // launch names the port it actually got.
+  try {
+    await sessionApi.start({ port: sessionApiPort(), host: HOST, fixed: Boolean(process.env.AW_SESSION_API_PORT) });
+  } catch (err) {
+    logError(listenErrorMessage(err, err?.port, 'set AW_SESSION_API_PORT to use another'));
+    process.exit(1);
+  }
+
   // The deck binds first, so the board's page names a port that answers. A
   // taken default deck port falls back to one the OS picks; one set with
   // AW_DECK_PORT is held to, as is a deck-only one: its sessions are told its port.

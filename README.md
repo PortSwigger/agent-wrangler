@@ -155,6 +155,8 @@ Environment variables:
 
 - `AW_PORT` (or legacy `PORT`) — port the board listens on, the address you open (default `7878`)
 - `AW_DECK_PORT` — loopback port the deck, which runs sessions, listens on (default `AW_PORT` + 1).
+- `AW_SESSION_API_PORT` — port launched sessions reach `/mcp` and the PR hooks on, each with its own
+  session token (default `AW_PORT` + 2; see [docs/session-api.md](docs/session-api.md)).
   The board talks to it cross-origin; if the default is taken the deck takes a free port instead
 - `AW_ALLOWED_ORIGINS` — comma-separated extra board origins the deck accepts, beside the board's
   own loopback origins. `allowedOrigins` in the data dir's `config.json` (a list) adds more
@@ -170,13 +172,13 @@ Environment variables:
   with `--add-host=host.docker.internal:host-gateway` so the default still resolves, or set this
   to a host address the container can reach (e.g. the `docker0` bridge IP). Either way, this alone
   isn't enough on Linux: the server also binds loopback-only by default, so pair it with
-  `AW_BIND_HOST=0.0.0.0` (below) or the container still can't reach `/mcp` even once it's dialing
-  the right address
-- `AW_BIND_HOST` — interface the board server listens on (default `127.0.0.1`, loopback-only; the
-  deck itself always stays on loopback, and the board server forwards `/mcp` to it); set to
-  `0.0.0.0` when a devcontainer session needs to reach this server's `/mcp` from inside its
-  container. Widens exposure on a shared machine (the control/MCP posture is localhost-advisory),
-  so treat it as a deliberate opt-in, not a default
+  `AW_BIND_HOST=0.0.0.0` (below) or the container still can't reach the session API even once
+  it's dialing the right address
+- `AW_BIND_HOST` — interface the board server and the session API listen on (default `127.0.0.1`,
+  loopback-only; the deck itself always stays on loopback); set to `0.0.0.0` when a devcontainer
+  session needs to reach the session API from inside its container. Every session API request needs
+  a session token, but the board's own control channel is localhost-advisory, so treat this as a
+  deliberate opt-in, not a default
 - `AW_UPDATE_CHECK_MINUTES` — how often the board checks `origin/main` for updates when Settings ›
   Updates is on Notify or Auto (default `60`)
 - `AW_ROLLBACK_AFTER_STARTS` — how many starts an update gets to come up healthy before
