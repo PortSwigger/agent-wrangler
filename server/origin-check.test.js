@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
+import { isAllowedOrigin, isAllowedHost, corsHeaders } from './origin-check.js';
 
 const PORT = 7878;
 
@@ -71,4 +71,16 @@ test('isAllowedHost: AW_ALLOWED_ORIGINS hosts are allowed too', () => {
     if (prev === undefined) delete process.env.AW_ALLOWED_ORIGINS;
     else process.env.AW_ALLOWED_ORIGINS = prev;
   }
+});
+
+test('corsHeaders: echoes an allowlisted board origin, never a foreign one', () => {
+  assert.deepEqual(corsHeaders(`http://127.0.0.1:${PORT}`, PORT), { 'Access-Control-Allow-Origin': `http://127.0.0.1:${PORT}`, Vary: 'Origin' });
+  assert.deepEqual(corsHeaders('http://evil.example', PORT), { Vary: 'Origin' });
+  assert.deepEqual(corsHeaders(undefined, PORT), { Vary: 'Origin' });
+});
+
+test('isAllowedHost: a list of ports allows each one\'s loopback authorities', () => {
+  assert.equal(isAllowedHost(`127.0.0.1:${PORT}`, [PORT, PORT + 1]), true);
+  assert.equal(isAllowedHost(`localhost:${PORT + 1}`, [PORT, PORT + 1]), true);
+  assert.equal(isAllowedHost(`localhost:${PORT + 2}`, [PORT, PORT + 1]), false);
 });

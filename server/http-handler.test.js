@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createConnection } from 'node:net';
-import { createHttpServer } from './http-handler.js';
+import WebSocket, { WebSocketServer } from 'ws';
+import { createBoardServer, BOARD_CSP } from './http-handler.js';
+import { createDeckServer } from './deck/http.js';
 
 // The /ext/<id>/ route serves an extension's client module out of its own
 // public/ subdir. Two things are asserted here because both fail silently in the
@@ -27,18 +29,30 @@ fs.writeFileSync(path.join(themeDir, 'route-sky', 'w.svg'), '<svg xmlns="http://
 
 const dirs = { checklist: extDir };
 let themeDirs = [{ id: 'sky-ext', dir: themeDir }];
-const server = createHttpServer({
-  port: 0,
-  mcpRequestHandler: (req, res) => res.end(),
+const deck = createDeckServer({
+  boardPort: 0,
+  mcpRequestHandler: (req, res) => res.end('mcp'),
   prAttachHandler: (req, res) => res.end(),
   prModelHandler: (req, res) => res.end('pr-model'),
-  fileHandler: (req, res) => res.end(),
+  fileHandler: (req, res) => res.end(`file ${req.headers.host}`),
+  extFileHandler: (req, res) => res.end('ext-file'),
+  deckHandler: (req, res) => res.end(JSON.stringify({ api: '1.0' })),
+});
+const deckWss = new WebSocketServer({ noServer: true });
+deck.on('upgrade', (req, socket, head) => deckWss.handleUpgrade(req, socket, head, (ws) => ws.send(`deck ${req.url} ${req.headers.origin}`)));
+await new Promise((resolve) => deck.listen(0, '127.0.0.1', resolve));
+
+let boardPort = 0;
+const server = createBoardServer({
+  boardPort: () => boardPort,
+  deckPort: () => deck.address().port,
   extensionAssets: (id) => dirs[id] || null,
   extensionThemes: () => themeDirs,
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+boardPort = server.address().port;
 const base = `http://127.0.0.1:${server.address().port}`;
-after(() => { server.close(); fs.rmSync(tmp, { recursive: true, force: true }); });
+after(() => { server.close(); deck.close(); deckWss.close(); fs.rmSync(tmp, { recursive: true, force: true }); });
 
 // fetch() normalises `..` out of a URL before sending, so a traversal has to go
 // down the raw socket the way a hand-crafted request would.
@@ -54,11 +68,49 @@ function rawGet(rawPath) {
   });
 }
 
-test('POST /pr-model reaches its handler; a cross-origin POST is refused', async () => {
+test('POST /pr-model on the board\'s port is forwarded to the deck; a cross-origin POST is refused there', async () => {
   const ok = await fetch(`${base}/pr-model`, { method: 'POST' });
   assert.equal(await ok.text(), 'pr-model');
   const cross = await fetch(`${base}/pr-model`, { method: 'POST', headers: { Origin: 'https://example.com' } });
   assert.equal(cross.status, 403);
+});
+
+test('GET /file, /ext-file and /deck on the board\'s port reach the deck with the board\'s Host', async () => {
+  assert.equal(await (await fetch(`${base}/file?path=x`)).text(), `file 127.0.0.1:${boardPort}`);
+  assert.equal(await (await fetch(`${base}/ext-file?ext=a&path=x`)).text(), 'ext-file');
+  assert.deepEqual(await (await fetch(`${base}/deck`)).json(), { api: '1.0' });
+});
+
+test('the deck allows a board origin to read GET /deck cross-origin, and no other', async () => {
+  const deckBase = `http://127.0.0.1:${deck.address().port}`;
+  const own = await fetch(`${deckBase}/deck`, { headers: { Origin: `http://127.0.0.1:${0}` } });
+  assert.equal(own.headers.get('access-control-allow-origin'), 'http://127.0.0.1:0');
+  const foreign = await fetch(`${deckBase}/deck`, { headers: { Origin: 'https://example.com' } });
+  assert.equal(foreign.headers.get('access-control-allow-origin'), null);
+  assert.equal((await fetch(`${deckBase}/index.html`)).status, 404, 'the deck serves no UI');
+});
+
+const wsOnce = (url, origin) => new Promise((resolve) => {
+  const ws = new WebSocket(url, { origin });
+  ws.once('message', (m) => { resolve(String(m)); ws.close(); });
+  ws.once('error', () => resolve('refused'));
+  ws.once('close', () => resolve('refused'));
+});
+
+test('/ws and /pty upgrades on the board\'s port are piped to the deck; a foreign origin is refused', async () => {
+  const wsBase = `ws://127.0.0.1:${boardPort}`;
+  assert.equal(await wsOnce(`${wsBase}/ws`, base), `deck /ws ${base}`);
+  assert.equal(await wsOnce(`${wsBase}/pty?sessionId=a`, base), `deck /pty?sessionId=a ${base}`);
+  assert.equal(await wsOnce(`${wsBase}/ws`, 'https://example.com'), 'refused');
+  assert.equal(await wsOnce(`${wsBase}/elsewhere`, base), 'refused');
+});
+
+test('the board page names the deck\'s port and carries a Report-Only CSP', async () => {
+  const res = await fetch(`${base}/`);
+  assert.equal(res.headers.get('content-security-policy-report-only'), BOARD_CSP);
+  assert.match(BOARD_CSP, /script-src 'self'/);
+  assert.equal(res.headers.get('content-security-policy'), null, 'never enforced, so inline extension code keeps running');
+  assert.match(await res.text(), new RegExp(`<meta name="aw-deck-port" content="${deck.address().port}" />`));
 });
 
 test('serves an enabled extension client module from its public/ dir, no-store', async () => {

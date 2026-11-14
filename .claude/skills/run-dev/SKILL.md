@@ -7,24 +7,26 @@ description: Use when running agent-wrangler locally for debugging or feature wo
 
 ## Overview
 
-Run a clean-slate instance fully isolated from the live board: its own data dir, port, and **auto-generated tmux socket**. A fresh data dir has no legacy entries, so it never scans the default socket — it *cannot* see, attach, or kill the live board's sessions.
+Run a clean-slate instance fully isolated from the live board: its own data dir, ports, and **auto-generated tmux socket**. A fresh data dir has no legacy entries, so it never scans the default socket — it *cannot* see, attach, or kill the live board's sessions.
 
 ## Launch
 
 ```bash
-# Pick a free port — Node asks the OS for one and releases it before we bind.
-# Port 0 collisions between the probe and the actual bind are not possible in
-# practice: the OS won't re-issue that port immediately to a different process.
-AW_PORT=$(node -e "const net=require('net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})")
+# Pick two free ports, board and deck — Node asks the OS for each and releases
+# it before we bind. Port 0 collisions between the probe and the actual bind are
+# not possible in practice: the OS won't re-issue a port immediately.
+FREE_PORT='const net=require("net");const s=net.createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})'
+AW_PORT=$(node -e "$FREE_PORT"); AW_DECK_PORT=$(node -e "$FREE_PORT")
 AWDIR=$(mktemp -d /tmp/aw-dev-XXXXX)
-AW_DEV=1 AW_DATA_DIR=$AWDIR AW_PORT=$AW_PORT node server/index.js >"$AWDIR/server.log" 2>&1 &
+AW_DEV=1 AW_DATA_DIR=$AWDIR AW_PORT=$AW_PORT AW_DECK_PORT=$AW_DECK_PORT node server/index.js >"$AWDIR/server.log" 2>&1 &
 SERVER_PID=$!                                              # needed for teardown
 until curl -s -o /dev/null -w "%{http_code}" "http://localhost:$AW_PORT/" | grep -q 200; do sleep 0.5; done
-echo "Dev board at http://localhost:$AW_PORT  (data: $AWDIR)"
+echo "Dev board at http://localhost:$AW_PORT, deck at http://127.0.0.1:$AW_DECK_PORT  (data: $AWDIR)"
 ```
 
 - `AW_DATA_DIR` — isolated state (mappings, memory, config). **`mktemp` ensures a fresh, unique dir with no legacy entries** so the instance never scans the live board's default tmux socket. **Always let `mktemp` mint a unique path — never substitute a fixed, memorable name (`/tmp/aw-dev-todo`) you reuse across runs** (see the lock-blind-spot gotcha).
-- `AW_PORT` — auto-selected free port; the board doesn't auto-open a browser (default off; `AW_OPEN_BROWSER=1` to open one).
+- `AW_PORT` — the board's port, the URL you open; the board doesn't auto-open a browser (default off; `AW_OPEN_BROWSER=1` to open one).
+- `AW_DECK_PORT` — the deck's loopback port. The board page talks to it cross-origin (`<meta name="aw-deck-port">` names it); left unset it is `AW_PORT` + 1, or a free port if that is taken. The server log's `deck API at …` line says which.
 - The instance generates its socket into `<AW_DATA_DIR>/config.json` (`tmuxSocket`); all its sessions run there.
 - `AW_DEV=1` — opts the instance into **self-shutdown** so a forgotten teardown can't leave it running forever (reparented to launchd). It exits when its data dir is wiped out from under it, or after ~30 min idle with no control-WS client connected (`AW_DEV_IDLE_SHUTDOWN_MIN` to tune, `0` to disable the idle timer). The production service never sets `AW_DEV`, so it's unaffected. It exits cleanly (lock released) but does **not** delete its data dir — teardown still owns that.
 
@@ -34,7 +36,7 @@ A fresh `AW_DATA_DIR` has no legacy (socket-less) entries, so `socketsToScan` re
 
 ## Drive it headlessly (deck API)
 
-`GET http://localhost:<port>/deck` returns the descriptor (`api`, `actions`, …). Then connect to `ws://localhost:<port>/ws?api=1` (a socket without `?api=1` is refused) and send action envelopes (minimal client: `import WebSocket from '<repo>/node_modules/ws/wrapper.mjs'` with an **absolute** path). Each gets one `{type:'result', id, ok, data, error}`:
+Drive the deck on its own port. `GET http://127.0.0.1:$AW_DECK_PORT/deck` returns the descriptor (`api`, `actions`, …). Then connect to `ws://127.0.0.1:$AW_DECK_PORT/ws?api=1` and send action envelopes (minimal client: `import WebSocket from '<repo>/node_modules/ws/wrapper.mjs'` with an **absolute** path). Each gets one `{type:'result', id, ok, data, error}`:
 
 | frame | effect |
 |---|---|
@@ -42,7 +44,7 @@ A fresh `AW_DATA_DIR` has no legacy (socket-less) entries, so `socketsToScan` re
 | `{type:'action', id:2, action:'session.fork', session:'<cardId>', args:{prompt:'<first msg>'}}` | result data `{type:'forked', sessionId}` |
 | `{type:'action', id:3, action:'session.archive', session:'<cardId>'}` / `session.resume` | archive / restore |
 
-A `{type:'state', rev, sessions, history, …}` frame is pushed on connect and on every rebuild that changed something (an idle server sends none; see `server/deck/state.js`); each session has `sessionId` = card id, `managed` and `label`. Broadcasts arrive as `{type:'event', event, session, data}`. Terminal bytes: `ws://localhost:<port>/pty?sessionId=<cardId>&cols=120&rows=32`.
+A `{type:'state', rev, sessions, history, …}` frame is pushed on connect and on every rebuild that changed something (an idle server sends none; see `server/deck/state.js`); each session has `sessionId` = card id, `managed` and `label`. Broadcasts arrive as `{type:'event', event, session, data}`. Terminal bytes: `ws://127.0.0.1:$AW_DECK_PORT/pty?sessionId=<cardId>&cols=120&rows=32`. A node client sends no `Origin`, which the deck allows; a browser page must be on a board origin (the board's port, or one in `AW_ALLOWED_ORIGINS`) or its socket is refused. The same routes on the board's port are forwarded to the deck, for older clients.
 
 ## Waiting on a session
 
