@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { createTokenStore, hashToken } from './tokens.js';
-import { createLaptopCheck, REFUSALS } from './check.js';
+import { createLaptopCheck, REFUSALS, carriesSessionCredential } from './check.js';
+import { resetLegacyWarnings } from '../deck/legacy.js';
 import { createSessionApi } from './index.js';
 import { createMcpRequestHandler } from '../mcp/server.js';
 import { SessionManager } from '../session-manager.js';
@@ -106,11 +107,13 @@ test('check legacy path: never for a card that has a token, an archived, stopped
 async function withApi(states, fn) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-session-api-'));
   const deps = { graph: () => ({ sessions: Object.keys(states).map((sessionId) => ({ sessionId, label: sessionId, agent: 'claude', status: 'idle', cwd: '/a' })) }), taskStore: { taskFor: () => null } };
-  const api = createSessionApi({ dataDir, cardState: (id) => states[id] || 'unknown', handlers: { '/mcp': createMcpRequestHandler(deps), '/pr-attach': (q, s, c) => s.end(c), '/pr-model': (q, s, c) => s.end(c) } });
+  const warnings = [];
+  resetLegacyWarnings();
+  const api = createSessionApi({ dataDir, cardState: (id) => states[id] || 'unknown', logWarn: (m) => warnings.push(m), handlers: { '/mcp': createMcpRequestHandler(deps), '/pr-attach': (q, s, c) => s.end(c), '/pr-model': (q, s, c) => s.end(c) } });
   const port = await api.start({ port: 0 });
   const legacy = http.createServer((q, s) => api.legacyHandlers[q.url](q, s));
   await new Promise((r) => legacy.listen(0, '127.0.0.1', r));
-  try { return await fn({ api, port, legacyPort: legacy.address().port }); } finally { api.server.close(); legacy.close(); }
+  try { return await fn({ api, port, legacyPort: legacy.address().port, warnings }); } finally { api.server.close(); legacy.close(); }
 }
 
 async function listSessions(port, headers) {
@@ -170,6 +173,28 @@ test('legacy routes: a pre-token card id still works there, a token works too, a
     assert.equal((await post('/pr-model', { 'X-AW-Session': 'LIVE' }))[0], 403);
     assert.equal((await post('/pr-model', { Authorization: `Bearer ${token}`, 'X-AW-Session': 'OTHER' }))[0], 403);
   });
+});
+
+test('legacy routes: an adapter onto the session API that logs one deprecation warning naming its port', async () => {
+  await withApi({ OLD: 'running', LIVE: 'running' }, async ({ api, port, legacyPort, warnings }) => {
+    const token = api.tokens.issue('LIVE');
+    const post = (route, headers) => fetch(`http://127.0.0.1:${legacyPort}${route}`, { method: 'POST', headers }).then((r) => r.status);
+    assert.equal(await post('/pr-model', { Authorization: `Bearer ${token}` }), 200);
+    assert.equal(await post('/pr-attach', { Authorization: `Bearer ${token}` }), 200);
+    assert.equal(await post('/pr-model', {}), 403, 'the same token check');
+    assert.equal(await post('/pr-model', { 'X-AW-Session': 'OLD' }), 200);
+    const deprecations = warnings.filter((m) => m.includes('deprecated'));
+    assert.equal(deprecations.length, 1, warnings.join('\n'));
+    assert.match(deprecations[0], new RegExp(`POST /mcp, /pr-attach and /pr-model on the deck's or board's port is deprecated.*session API at http://127\\.0\\.0\\.1:${port}`));
+  });
+});
+
+test('a request carrying a bearer or an X-AW-Session claim carries a session credential', () => {
+  assert.equal(carriesSessionCredential(req({})), false);
+  assert.equal(carriesSessionCredential(req({ Authorization: 'Basic abc' })), false);
+  assert.equal(carriesSessionCredential(req({ Authorization: 'Bearer awt_x' })), true);
+  assert.equal(carriesSessionCredential(req({ 'X-AW-Session': 'awt_x' })), true);
+  assert.equal(carriesSessionCredential(req({ 'X-AW-Session': 'C1' })), true);
 });
 
 test('a launch carries its token as a secret where the runtime takes secrets, else as env', () => {

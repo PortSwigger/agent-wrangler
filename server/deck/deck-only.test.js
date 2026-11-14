@@ -28,8 +28,8 @@ const listening = (port) => new Promise((res) => {
   c.once('error', () => res(false));
 });
 
-function open(url, origin) {
-  const ws = new WebSocket(url, origin ? { origin } : {});
+function open(url, origin, headers) {
+  const ws = new WebSocket(url, { ...(origin ? { origin } : {}), ...(headers ? { headers } : {}) });
   const frames = [];
   ws.on('message', (raw) => { try { frames.push(JSON.parse(raw.toString())); } catch {} });
   const opened = new Promise((res) => { ws.on('open', () => res(true)); ws.on('error', () => res(false)); ws.on('close', () => res(false)); });
@@ -56,7 +56,7 @@ async function startDeckOnly({ args = [], env = {}, config, tokens } = {}) {
   const sockets = [];
   return {
     dataDir, deckPort, boardPort, base, deck, sockets, out: () => out,
-    open: (path, origin) => { const s = open(`ws://127.0.0.1:${deckPort}${path}`, origin); sockets.push(s.ws); return s; },
+    open: (path, origin, headers) => { const s = open(`ws://127.0.0.1:${deckPort}${path}`, origin, headers); sockets.push(s.ws); return s; },
     async stop() {
       for (const ws of sockets) try { ws.close(); } catch {}
       try { server.kill(); } catch {}
@@ -133,6 +133,60 @@ test('a deck-only instance serves its session API on the port next to its deck, 
     assert.equal((await listSessions({ Authorization: 'Bearer awt_forged' })).body.error, 'unknown-token');
     assert.equal((await listSessions({ 'X-AW-Session': 'deck-card' })).body.error, 'missing-token', 'a card id is no token here');
     assert.equal((await fetch(`http://127.0.0.1:${port}/deck`)).status, 404, 'the session API port serves no deck API');
+  } finally {
+    await d.stop();
+  }
+});
+
+test('the deck refuses a valid session token on GET /deck, the /ws action channel and /pty', { timeout: 60_000 }, async () => {
+  const token = 'awt_deck-boundary-test-token';
+  const board = 'http://localhost:7878';
+  const d = await startDeckOnly({ args: ['--allowed-origins', board], tokens: { 'deck-card': createHash('sha256').update(token).digest('hex') } });
+  try {
+    assert.ok(d.deck, `GET /deck never answered:\n${d.out()}`);
+    for (const headers of [{ Authorization: `Bearer ${token}` }, { 'X-AW-Session': token }]) {
+      const r = await fetch(`${d.base}/deck`, { headers });
+      assert.equal(r.status, 403, `GET /deck with ${Object.keys(headers)[0]}`);
+      assert.deepEqual(await r.json(), { error: 'session-credential', reason: 'the deck API takes no session token; a session calls the session API' });
+      const ws = d.open('/ws?api=1', board, headers);
+      assert.equal(await ws.opened, false, `/ws?api=1 with ${Object.keys(headers)[0]}`);
+      assert.equal(ws.frames.length, 0, 'no state, so no action can be sent');
+      assert.equal(await d.open('/ws', undefined, headers).opened, false, 'nor the legacy /ws');
+      assert.equal(await d.open('/pty?session=none', board, headers).opened, false, `/pty with ${Object.keys(headers)[0]}`);
+    }
+    assert.equal((await fetch(`${d.base}/deck`)).status, 200, 'GET /deck without one still answers');
+    assert.equal(await d.open('/ws?api=1', board).opened, true, 'and /ws opens');
+    assert.equal(await d.open('/pty?session=none', board).opened, true, 'and /pty');
+  } finally {
+    await d.stop();
+  }
+});
+
+test('the old POST /mcp, /pr-attach and /pr-model on the deck port still work, behind the token check, with one deprecation warning', { timeout: 60_000 }, async () => {
+  const token = 'awt_deck-legacy-test-token';
+  const d = await startDeckOnly({ tokens: { 'deck-card': createHash('sha256').update(token).digest('hex') } });
+  try {
+    assert.ok(d.deck, `GET /deck never answered:\n${d.out()}`);
+    const port = Number(await waitFor(() => d.out().match(/session API at http:\/\/127\.0\.0\.1:(\d+)/)?.[1]));
+    const listSessions = (headers) => fetch(`${d.base}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_sessions', arguments: {} } }),
+    }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+    for (let i = 0; i < 3; i++) {
+      const ok = await listSessions({ Authorization: `Bearer ${token}` });
+      assert.equal(ok.status, 200);
+      assert.equal(ok.body.result.isError, undefined, JSON.stringify(ok.body));
+    }
+    assert.equal((await listSessions({})).body.error, 'missing-token', 'the same token check');
+    assert.equal((await listSessions({ Authorization: 'Bearer awt_forged' })).body.error, 'unknown-token');
+    const model = await fetch(`${d.base}/pr-model`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}' });
+    assert.notEqual(model.status, 403, '/pr-model takes the token too');
+
+    const lines = await waitFor(() => { const l = d.out().split('\n').filter((x) => x.includes('is deprecated') && x.includes('/pr-model')); return l.length ? l : null; });
+    assert.equal(lines?.length, 1, `exactly one deprecation warning:\n${d.out()}`);
+    assert.match(lines[0], new RegExp(`POST /mcp, /pr-attach and /pr-model on the deck's or board's port is deprecated.*session API at http://127\\.0\\.0\\.1:${port}`));
   } finally {
     await d.stop();
   }
