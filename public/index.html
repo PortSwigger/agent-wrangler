@@ -55,6 +55,7 @@
 
   <main>
     <div id="grid"></div>
+    <script>if (/^#view=ext:/.test(location.hash)) document.getElementById('grid').classList.add('hidden');</script>
     <!-- Slide-in working-tree diff, overlaying the #grid slot only (the terminal
          #sidebar stays live). Kept as a #grid sibling so it inherits the same flex
          column width; wired + rendered in diff-view.js. -->
