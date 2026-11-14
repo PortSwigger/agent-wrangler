@@ -149,7 +149,7 @@ export function openDiffPanel(card) {
   pendingDiff = null; inFlight = false; clearTimeout(inFlightTimer);
   const s = sessionByCard(card);
   sessionLabel = s ? s.label : sessionIdOf(card);
-  prLinks = diffPrLinks(s, taskForSession(sessionIdOf(card)));
+  prLinks = diffPrLinks(s, taskForSession(s || sessionIdOf(card)));
   renderPrModeButtons();
   applyMode(diffMode);
   updateSubText();
@@ -307,7 +307,7 @@ function requestDiff() {
   inFlight = true;
   clearTimeout(inFlightTimer);
   inFlightTimer = setTimeout(() => { inFlight = false; }, INFLIGHT_TIMEOUT_MS);
-  const msg = { type: 'view-diff', sessionId: sessionIdOf(openCard), reqId: reqSeq, mode: diffMode };
+  const msg = { type: 'view-diff', sessionId: sessionIdOf(openCard), reqId: reqSeq, mode: diffMode, card: openCard };
   if (diffMode === 'pr' && selectedPr) {
     msg.prUrl = selectedPr.url;
     lastPrRequestAtByKey.set(prRequestKey(), Date.now());
@@ -412,7 +412,7 @@ function prRequestKey() {
 
 function refreshPrLinks() {
   const s = sessionByCard(openCard);
-  const nextLinks = diffPrLinks(s, taskForSession(sessionIdOf(openCard)));
+  const nextLinks = diffPrLinks(s, taskForSession(s || sessionIdOf(openCard)));
   const changed = JSON.stringify(nextLinks) !== JSON.stringify(prLinks);
   prLinks = nextLinks;
   const stillLinked = diffMode === 'pr' && selectedPr
@@ -933,7 +933,7 @@ function submit() {
     updateSendBtn();
     renderDiff();
   }, SUBMIT_TIMEOUT_MS);
-  const msg = { type: 'diff-comments', sessionId: sessionIdOf(openCard), comments, mode: diffMode };
+  const msg = { type: 'diff-comments', sessionId: sessionIdOf(openCard), comments, mode: diffMode, card: openCard };
   if (diffMode === 'pr' && selectedPr) {
     msg.prUrl = selectedPr.url;
     msg.prNumber = selectedPr.number;

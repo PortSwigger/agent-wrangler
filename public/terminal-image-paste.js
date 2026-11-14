@@ -23,7 +23,7 @@ export function createTerminalImagePaste({ send, toast, frameOf = sourceToFrame,
   let seq = 0;
   const pending = new Map(); // token → resolve
 
-  function take(e, dt, { sessionId, pasteText }) {
+  function take(e, dt, { sessionId, card = null, pasteText }) {
     const { sources, text } = imageSources(dt);
     if (!sources.length) return;
     e.preventDefault();
@@ -43,7 +43,7 @@ export function createTerminalImagePaste({ send, toast, frameOf = sourceToFrame,
           pending.set(token, resolve);
           setTimeout(() => { if (pending.delete(token)) resolve(); }, timeoutMs);
         });
-        if (!send({ type: 'paste-image', sessionId, token, intoPane: true, ...frame })) {
+        if (!send({ type: 'paste-image', sessionId, token, intoPane: true, ...frame, ...(card ? { card } : {}) })) {
           pending.delete(token);
           toast('Not connected to the wrangler — try again in a moment.', true);
           return;
@@ -54,8 +54,8 @@ export function createTerminalImagePaste({ send, toast, frameOf = sourceToFrame,
   }
 
   // Returns the detach function closeTerminal calls.
-  function attach(el, { sessionId, pasteText }) {
-    const opts = { sessionId, pasteText };
+  function attach(el, { sessionId, card = null, pasteText }) {
+    const opts = { sessionId, card, pasteText };
     const onPaste = (e) => take(e, e.clipboardData, opts);
     // Without cancelling dragover a dropped file is opened by the browser,
     // replacing the whole board with the image.

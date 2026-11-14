@@ -208,6 +208,9 @@ board by default: a browser page is let in only from an origin in `--allowed-ori
 `{"allowedOrigins": ["http://localhost:7878"]}`. Non-browser clients, which send no `Origin`, are
 always let in, as on any deck. `curl http://127.0.0.1:7890/deck` shows its descriptor.
 
+To show its sessions on your board, add it under **Settings › Decks** (see
+[Add a deck to the board](docs/board-and-sessions.md#add-a-deck-to-the-board)).
+
 ### Run as a background service
 
 To keep it always-on, run it under launchd (macOS) or a systemd user unit (Linux).

@@ -59,7 +59,9 @@ import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onT
 import { toast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
-import { cardKey, sessionIdOf, stampDeck } from './card-key.js';
+import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
+import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, OWN_ENTRY } from './decks.js';
+import { mountDecksPanel } from './decks-panel.js';
 import { withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
@@ -176,12 +178,15 @@ function restoreAll() {
 }
 
 export let latestSessions = [];
-// The deck this board reads (GET /deck's deckId). Every card on the board is
-// one of its sessions until the board reads more than one deck.
+// The board's own deck (GET /deck's deckId). Other decks in the board's deck
+// list add their sessions beside its own (decks.js).
 let boardDeckId = null;
-// The card key for a session id the board's deck sent bare (a deck event, an
+// The deck whose reply or event is being handled right now, while it is not
+// the board's own: a session id it names bare is one of its sessions.
+let msgDeckId = null;
+// The card key for a session id a deck sent bare (a deck event, an
 // extension's argument, a #session= link).
-export const cardOf = (sessionId) => cardKey(boardDeckId, sessionId);
+export const cardOf = (sessionId) => cardKey(msgDeckId || boardDeckId, sessionId);
 export const sessionByCard = (card) => (card ? latestSessions.find((x) => x.cardKey === card) || null : null);
 export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
@@ -400,7 +405,7 @@ function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
 // fire the old caller's onClose (board-open.js).
 function landOnCard(card, { diff, onClose }, select) {
   if (diff) boardOpen.watchDiff(card, onClose);
-  const tile = assignedTaskId(sessionIdOf(card)) || ADHOC_ID;
+  const tile = assignedTaskId(sessionByCard(card) || sessionIdOf(card)) || ADHOC_ID;
   if (minimisedIds.has(tile)) unminimise(tile);
   select(card);
   document.querySelector(`#grid .session-card[data-card="${CSS.escape(card)}"]`)
@@ -1883,9 +1888,15 @@ function cardState(s) {
   return phaseOf(s) === 'awake' ? `${base} snooze-alarm` : base;
 }
 
-// Which (still-existing) task a session belongs to, or null for No-task.
-function assignedTaskId(sessionId) {
-  const id = latestTasks.assignments[sessionId];
+// Which (still-existing) task a session belongs to, or null for No-task. Takes
+// a session id of the own deck's, or a session record: another deck's session
+// is in none of this board's tasks.
+function assignedTaskId(ref) {
+  if (ref && typeof ref === 'object') {
+    if (ref.deckId && ref.deckId !== boardDeckId) return null;
+    ref = ref.sessionId;
+  }
+  const id = latestTasks.assignments[ref];
   return id && latestTasks.tasks.some((t) => t.id === id && !t.archivedAt) ? id : null;
 }
 
@@ -2080,6 +2091,7 @@ function flashPr(url) {
 function cardCtx() {
   return {
     selectedCard, selectedNewSlot, flashingPr, collapsedWorkflows, collapsedSnoozed, activitySortedTasks, restoredTaskId,
+    ownDeckId: boardDeckId,
     justFinished, unread, cardState, barWord, phaseOf, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
@@ -2205,7 +2217,7 @@ function renderGrid(trayPass = 0, fitPass = 0) {
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
   for (const s of onBoard(latestSessions)) {
-    const tid = assignedTaskId(s.sessionId);
+    const tid = assignedTaskId(s);
     if (tid) byTask.get(tid).push(s);
     else noTask.push(s);
   }
@@ -2333,7 +2345,7 @@ function renderFocusedTile(el, id) {
   const isAdhoc = id === ADHOC_ID;
   const sessions = sortAsleepLast(
     sortBucketSessions(
-      onBoard(latestSessions).filter((s) => isAdhoc ? !assignedTaskId(s.sessionId) : assignedTaskId(s.sessionId) === id),
+      onBoard(latestSessions).filter((s) => isAdhoc ? !assignedTaskId(s) : assignedTaskId(s) === id),
       id
     ),
     phaseOf
@@ -2380,7 +2392,7 @@ function trayHtml(visible) {
   const pills = mins.map((t) => {
     const sessions = sortBucketSessions(
       onBoard(latestSessions).filter((s) => {
-        const tid = assignedTaskId(s.sessionId);
+        const tid = assignedTaskId(s);
         return (t.id === ADHOC_ID ? !tid : tid === t.id) && !isAsleep(s);
       }),
       t.id
@@ -2796,9 +2808,10 @@ function mountMenu(items, x, y) {
 // the row button, whose trailing slot holds the tick.
 // Every file link clicked in a session's chat or terminal: a `file.open`
 // extension may take it, otherwise the board's own preview opens.
-function openFile(path, { sessionId, source }) {
+function openFile(path, { card, source }) {
+  const sessionId = sessionIdOf(card);
   if (slots.fileOpen({ path, sessionId, source }, latestGraph, extApi)) return;
-  openFilePreview(path);
+  openFilePreview(path, { card });
 }
 
 // `card.action` extension items for one card, in the menu's own item shape.
@@ -2962,8 +2975,8 @@ function attachSession(sessionId, parentSessionId) {
 function attachMenuItems(sessionId) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!s) return [];
-  const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
-  const candidates = orderAttachCandidates(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId), s.spawnedBy);
+  const byId = new Map(latestSessions.filter((sess) => sess.deckId === s.deckId).map((sess) => [sess.sessionId, sess]));
+  const candidates = orderAttachCandidates(attachCandidates(sessionId, onBoard(latestSessions).filter((x) => x.deckId === s.deckId), assignedTaskId), s.spawnedBy);
   return candidates.map((c) => {
     const depth = nestingDepth(c, byId);
     const prefix = depth ? '— '.repeat(depth) : '';
@@ -2975,6 +2988,7 @@ function attachMenuItems(sessionId) {
 function openCardMenu(card, x, y) {
   const s = sessionByCard(card);
   if (!s) return;
+  actingCard = card;
   const { sessionId } = s;
   const snoozed = isAsleep(s);
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
@@ -3013,7 +3027,7 @@ function openCardMenu(card, x, y) {
     // "Full view" only makes sense for a genuine CHILD (parentSession set) — a
     // top-level session already renders full, whether or not it's `spawnedBy`.
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions).filter((x) => x.deckId === s.deckId), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Archive', icon: ARCHIVE_ICON, action: 'session.archive', danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
@@ -3035,6 +3049,7 @@ function copySessionReference(s) {
 function openActionsMenu(card, x, y) {
   const s = sessionByCard(card);
   if (!s) return;
+  actingCard = card;
   const { sessionId } = s;
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
   const items = [
@@ -3058,7 +3073,7 @@ function openActionsMenu(card, x, y) {
     ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, action: 'session.detach', run: () => promoteSession(sessionId) }] : []),
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions).filter((x) => x.deckId === s.deckId), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Stop & archive', icon: ARCHIVE_ICON, action: 'session.archive', danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
@@ -3118,7 +3133,7 @@ function openModelMenu(sessionId, x, y) {
 function clearableInTask(taskId) {
   const isAdhoc = taskId === ADHOC_ID;
   const sessions = onBoard(latestSessions).filter((s) => {
-    const tid = assignedTaskId(s.sessionId);
+    const tid = assignedTaskId(s);
     return isAdhoc ? !tid : tid === taskId;
   });
   return clearableSessions(sessions, { justFinished, unread, isAcknowledged, phaseOf });
@@ -3209,7 +3224,7 @@ function archiveTaskFromCell(cell) {
 // server's task-archived reply (not fired optimistically here) since the
 // cascade's kill-jobs-first wait can take several seconds per session.
 async function archiveTask(taskId, name) {
-  const liveCount = latestSessions.filter((s) => assignedTaskId(s.sessionId) === taskId).length;
+  const liveCount = latestSessions.filter((s) => assignedTaskId(s) === taskId).length;
   if (liveCount > 0) {
     const result = await confirmDialog({
       title: 'Archive this task?',
@@ -3535,7 +3550,7 @@ function wireGridDnd(el) {
         // placeholder's slot and skipping its hidden source. Otherwise (re)assign
         // to this cell's task, or to Ad hoc when dropped on the unassigned tile.
         const bucket = isNoTask ? ADHOC_ID : taskId;
-        const sameBucket = isNoTask ? !assignedTaskId(p.sessionId) : assignedTaskId(p.sessionId) === taskId;
+        const sameBucket = isNoTask ? !assignedTaskId(p) : assignedTaskId(p) === taskId;
         // An activity-sorted bucket has no manual order to write — a same-bucket drop
         // is a no-op (dragend rebuilds from canonical order). Cross-bucket still reassigns.
         if (bucket && sameBucket && activitySortedTasks.has(bucket)) return;
@@ -4136,6 +4151,11 @@ function toggleMaximize() {
 // acknowledgement — persist it so the needs-you alarm stays quiet across a
 // refresh, not just while this card happens to be the selected one.
 function selectSession(card) {
+  if (cardUnreachable(card)) {
+    toast(`${deckNameOf(deckIdOf(card))} is unreachable — its cards come back when it does`, true);
+    return;
+  }
+  actingCard = null;
   selectionBeforeView = null;
   // Moving the selection to a DIFFERENT session dismisses a diff panel still
   // showing the previous one — the diff is coupled to a single session's terminal,
@@ -4153,7 +4173,7 @@ function selectSession(card) {
   // Opening a session is "I've come back to it" — wake it for good. Harmless
   // (server no-ops) if it wasn't snoozed.
   const s = sessionByCard(card);
-  if (s && s.snooze) send({ type: 'snooze-clear', sessionId });
+  if (s && s.snooze) send({ type: 'snooze-clear', sessionId, card });
   // Opening an unread card is "I've read it" — drop the manual bookmark.
   setUnread(sessionId, false);
   renderPanel(card);
@@ -4177,9 +4197,10 @@ function selectSession(card) {
 const resuming = new Set();
 let resumeFailTimer = null;
 function resumeDormant(card) {
+  if (cardUnreachable(card)) { selectSession(card); return; }
   resuming.add(card);
   setPendingSelect(card);
-  send({ type: 'resume', sessionId: sessionIdOf(card) });
+  send({ type: 'resume', sessionId: sessionIdOf(card), card });
   toast('Resuming…');
   selectSession(card);
   // Re-arm a single timer so repeated clicks during the window don't stack
@@ -4211,7 +4232,7 @@ function abandonResume(card) {
 function wakeSession(card) {
   const s = sessionByCard(card);
   if (s && !s.managed) resumeDormant(card);
-  else { send({ type: 'snooze-clear', sessionId: sessionIdOf(card) }); selectSession(card); }
+  else { send({ type: 'snooze-clear', sessionId: sessionIdOf(card), card }); selectSession(card); }
 }
 
 // Drop the current selection: close its terminal and hide the sidebar. Used by
@@ -4338,7 +4359,7 @@ function navTargets() {
   const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
   const noTask = [];
   for (const s of onBoard(latestSessions)) {
-    const tid = assignedTaskId(s.sessionId);
+    const tid = assignedTaskId(s);
     if (tid && byTask.has(tid)) byTask.get(tid).push(s);
     else noTask.push(s);
   }
@@ -4820,7 +4841,7 @@ registerCoreBindings(keybindings, {
   'chord.new': { when: chordGate, run: () => openDispatch(currentTaskSelection()) },
   'chord.terminal': withSelected((card) => {
     if (currentShellTerm && currentShellTerm.card === card) { closeShellTerminal(); return; }
-    if (sessionByCard(card)?.cwd) send({ type: 'open-terminal-for-session', sessionId: sessionIdOf(card) });
+    if (sessionByCard(card)?.cwd) send({ type: 'open-terminal-for-session', sessionId: sessionIdOf(card), card });
   }),
   'chord.fork': withSelected((card) => openFork(sessionIdOf(card))),
   // Restart matches its menu gate — only a live (managed) session, since a dormant
@@ -4883,7 +4904,7 @@ function snoozeSelected(card) {
 // selection — same shape openDispatch expects.
 function currentTaskSelection() {
   if (selectedNewSlot != null) return selectedNewSlot === ADHOC_ID ? null : selectedNewSlot;
-  if (selectedCard) return assignedTaskId(sessionIdOf(selectedCard));
+  if (selectedCard) return assignedTaskId(sessionByCard(selectedCard) || sessionIdOf(selectedCard));
   return null;
 }
 
@@ -5052,7 +5073,7 @@ function renderSidebar(s) {
     <p class="muted">${esc(providerMetadataFor(s?.agent).forkHelp || 'Branch this conversation into a fresh session. The original keeps running independently.')}</p>
   </div>`;
   term.querySelector('#resume-btn').addEventListener('click', () => {
-    send({ type: 'resume', sessionId: s.sessionId });
+    send({ type: 'resume', sessionId: s.sessionId, card: s.cardKey });
     toast('Resuming…');
   });
 }
@@ -5088,7 +5109,7 @@ function beginRename(card) {
       const name = input.value.trim();
       // Unchanged: skip the send and toast, and keep an un-renamed fork's marker.
       if (name !== seed.trim()) {
-        send({ type: 'rename', sessionId, name });
+        send({ type: 'rename', sessionId, name, card });
         if (s && name) s.label = name; // optimistic (rename drops the marker); server confirms on next graph
         toast(name ? 'Renamed' : 'Name reset');
       }
@@ -5465,7 +5486,7 @@ function syncShellTerminal(card) {
 // A registered shell tmux attached into `body`: the xterm, its /pty socket and
 // the size sync. `onEnd(ws)` runs when that socket closes.
 // `card` is the card a sidebar shell belongs to, so its lock covers it.
-function connectShellXterm(body, terminalId, onEnd, card = null) {
+function connectShellXterm(body, terminalId, onEnd, card = null, deckId = null) {
   const term = new Terminal({
     fontSize: termFontSize(), fontFamily: readTerminalFont(),
     theme: readTerminalTheme(), cursorBlink: true,
@@ -5485,7 +5506,8 @@ function connectShellXterm(body, terminalId, onEnd, card = null) {
   syncTermFont(term, fit);
   term.focus();
 
-  const ws = new WebSocket(`${deckOrigin().ws}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
+  const shellDeck = card ? deckIdOf(card) : deckId;
+  const ws = new WebSocket(`${originForDeck(shellDeck).ws}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
   term.onData((d) => ws.readyState === 1 && inputGates.allow(card, d) && ws.send(d));
@@ -5532,7 +5554,7 @@ function closeTerminalDialog() {
   focusReturnTarget(opener, document, scope)?.focus();
 }
 
-function openTerminalDialog({ terminalId, command, title }) {
+function openTerminalDialog({ terminalId, command, title, deckId = null }) {
   if (terminalDialog?.terminalId === terminalId) { terminalDialog.term.focus(); return; }
   const prior = terminalModal.contains(document.activeElement) ? null : document.activeElement;
   const { opener = prior, scope = prior?.closest?.('[id$="-modal"]') ?? null } = detachTerminalDialog() ?? {};
@@ -5546,7 +5568,7 @@ function openTerminalDialog({ terminalId, command, title }) {
   const body = document.getElementById('terminal-modal-body');
   const conn = connectShellXterm(body, terminalId, (closed) => {
     if (terminalDialog?.ws === closed) ended.classList.remove('hidden');
-  });
+  }, null, deckId);
   terminalDialog = { terminalId, ...conn, opener, scope };
 }
 
@@ -5556,7 +5578,7 @@ terminalModal.addEventListener('cancel', (e) => e.preventDefault());
 // Open (or replace) the shell terminal pane below #term-wrap in the sidebar.
 // `command` (if non-empty) is already pre-populated server-side; we show it
 // in a DOM preview so it's immune to ANSI tricks inside the xterm canvas.
-function openShellTerminal({ terminalId, command, sessionId }) {
+function openShellTerminal({ terminalId, command, sessionId, deckId = null }) {
   closeShellTerminal();
   showSidebar();
 
@@ -5610,10 +5632,10 @@ function openShellTerminal({ terminalId, command, sessionId }) {
   const body = pane.querySelector('.shell-terminal-body');
   // Server-side kill on disconnect removes the registry entry; client-side close
   // removes the pane from DOM. No reconnect — shell terminals are one-shot.
-  const card = sessionId ? cardOf(sessionId) : null;
+  const card = sessionId ? cardKey(deckId || boardDeckId, sessionId) : null;
   const { term, fit, ws } = connectShellXterm(body, terminalId, (closed) => {
     if (currentShellTerm && currentShellTerm.ws === closed) closeShellTerminal();
-  }, card);
+  }, card, deckId);
 
   // Hide immediately if the terminal belongs to a session other than the currently selected one.
   const visible = !card || card === selectedCard;
@@ -5669,6 +5691,7 @@ function attachUnicode11(term) {
 }
 
 function openTerminal(s) {
+  if (!originForDeck(s.deckId)) return;
   closeTerminal();
   showSidebar();
   const term = new Terminal({
@@ -5711,7 +5734,7 @@ function openTerminal(s) {
   // looks like an http(s) URL, and vice-versa. s.cwd is the base a relative
   // path (docs/x.md) resolves against.
   try {
-    term.registerLinkProvider(createMarkdownLinkProvider(term, (p) => openFile(p, { sessionId: s.sessionId, source: 'terminal' }), s.cwd));
+    term.registerLinkProvider(createMarkdownLinkProvider(term, (p) => openFile(p, { card: s.cardKey, source: 'terminal' }), s.cwd));
   } catch (err) {
     console.error('[term-links]', err);
   }
@@ -5742,8 +5765,8 @@ function openTerminal(s) {
   term.textarea?.addEventListener('focus', () => acknowledge(s.sessionId));
   // Text that rode along with a pasted image goes through xterm's own paste, so
   // it is bracketed exactly as a plain text paste would be.
-  const detachImagePaste = terminalImagePaste.attach(el, { sessionId: s.sessionId, pasteText: (t) => term.paste(t) });
-  const ws = new WebSocket(`${deckOrigin().ws}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
+  const detachImagePaste = terminalImagePaste.attach(el, { sessionId: s.sessionId, card: s.cardKey, pasteText: (t) => term.paste(t) });
+  const ws = new WebSocket(`${originForDeck(s.deckId).ws}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
   term.onData((d) => ws.readyState === 1 && inputGates.allow(s.cardKey, d) && ws.send(d));
@@ -6537,7 +6560,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   // Folders dismissed from the recents list are skipped here too.
   const cwdForTask = (sel) => {
     const hidden = hiddenRecents();
-    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd, s.worktree)))));
+    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd, s.worktree)))));
     return pick(latestSessions) || pick(latestHistory);
   };
   cwdInput.value = schedule
@@ -7430,6 +7453,7 @@ initSettings({
   },
   extensions: { mount: openExtensionsPanel },
   updates: { mount: mountUpdatePanel },
+  decks: { mount: (el) => mountDecksPanel(el, decksPanelBridge) },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', () => submitDispatch());
@@ -7670,11 +7694,15 @@ let idleReapply = null;
 function armIdleReapply() {
   clearTimeout(idleReapply);
   idleReapply = setTimeout(() => {
-    if (latestGraph) applyGraph(latestGraph);
+    applyDecks();
     armIdleReapply();
   }, IDLE_REAPPLY_MS);
 }
 let deckStatus = 'connecting';
+// The own deck's last graph, before the other decks' sessions join it.
+let ownGraph = null;
+// The board server's deck list (decks.js createDeckList); the own deck first.
+let deckEntries = [];
 const deck = createDeckClient({
   onStatus: (status) => {
     const was = deckStatus;
@@ -7682,11 +7710,14 @@ const deck = createDeckClient({
     if (was === 'incompatible') hideSystemBanner();
     syncStandingBanner();
     syncDeckControls();
+    if (deckEntries.length > 1) applyDecks();
+    remountDecksPanel();
   },
   onState: (frame) => {
     boardDeckId = deck.descriptor()?.deckId || boardDeckId;
     slots.setExtState(frame.ext);
-    applyGraph(stampDeck(stateToGraph(frame, { restore: withCompatFields }), boardDeckId));
+    ownGraph = stampDeck(stateToGraph(frame, { restore: withCompatFields }), boardDeckId);
+    applyDecks();
     armIdleReapply();
   },
   onEvent: (frame) => onDeckMessage(frame.data),
@@ -7696,9 +7727,71 @@ const deck = createDeckClient({
   onOpen: () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); },
   onClose: () => chatView.onConnectionClosed(),
 });
-// Whether the deck can do `action` for this card: it advertises the action
-// and the card does not list it as unsupported.
-const canAct = (action, s = null) => deck.supports(action, s);
+const DECK_CACHE_PREFIX = 'aw-deck-cache-';
+const remoteDeckCache = {
+  get: (entry) => { try { return JSON.parse(localStorage.getItem(DECK_CACHE_PREFIX + entry.id) || 'null'); } catch { return null; } },
+  set: (entry, value) => { try { localStorage.setItem(DECK_CACHE_PREFIX + entry.id, JSON.stringify(value)); } catch {} },
+  drop: (entry) => { try { localStorage.removeItem(DECK_CACHE_PREFIX + entry.id); } catch {} },
+};
+const remoteDecks = createRemoteDecks({
+  ownDeckId: () => boardDeckId,
+  cache: remoteDeckCache,
+  onChange: () => { applyDecks(); remountDecksPanel(); },
+  onEvent: (deckId, frame) => onRemoteDeckMessage(deckId, frame.data),
+});
+const deckList = createDeckList({
+  onList: (list) => {
+    deckEntries = list;
+    remoteDecks.sync(list);
+    applyDecks();
+    remountDecksPanel();
+  },
+});
+const ownDeckEntry = () => deckEntries.find((e) => e.own) || { id: OWN_ENTRY, own: true, name: '', colour: null };
+// Every deck on the board as the deck list and settings show it: the own deck
+// first, then each other deck in list order.
+function boardDecks() {
+  const own = ownDeckEntry();
+  return [
+    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, descriptor: deck.descriptor(), name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
+    ...remoteDecks.list(),
+  ];
+}
+const deckNameOf = (deckId) => boardDecks().find((d) => d.deckId === deckId)?.name || 'That deck';
+function applyDecks() {
+  if (!ownGraph) return;
+  const [own, ...remotes] = boardDecks();
+  applyGraph(mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi: deckEntries.length > 1 }));
+}
+function clientForDeck(deckId) {
+  return !deckId || deckId === boardDeckId ? deck : remoteDecks.clientFor(deckId);
+}
+// Where a deck's API is: the own deck's loopback port, or the URL another
+// deck was added by. Null for a deck no longer on the board.
+export function originForDeck(deckId) {
+  return !deckId || deckId === boardDeckId ? deckOrigin() : remoteDecks.originFor(deckId);
+}
+// A card is disabled while its deck is not connected; its last state stays.
+const cardUnreachable = (card) => Boolean(sessionByCard(card)?.deckUnreachable) || (deckIdOf(card) && !clientForDeck(deckIdOf(card)));
+function withDeckContext(deckId, fn) {
+  const was = msgDeckId;
+  msgDeckId = deckId && deckId !== boardDeckId ? deckId : null;
+  try { fn(); } finally { msgDeckId = was; }
+}
+// The card a person last opened a menu on: when two decks hold the same
+// session id, a call naming it bare goes to this card's deck.
+let actingCard = null;
+const deckForCall = (sessionId, card = null) => routeDeck({
+  card, sessionId, sessions: latestSessions, hint: actingCard || selectedCard, context: msgDeckId, own: boardDeckId, deckIdOf,
+});
+// Whether the card's deck can do `action` for it: it advertises the action,
+// the card does not list it as unsupported, and (for another deck than the
+// board's own) it is connected.
+const canAct = (action, s = null) => {
+  const client = clientForDeck(s?.deckId);
+  if (!client || (client !== deck && client.status() !== 'ready')) return false;
+  return client.supports(action, s);
+};
 // Board-wide controls name their action in data-deck-action. Before the first
 // handshake answers, nothing is hidden.
 function syncDeckControls() {
@@ -7712,24 +7805,54 @@ function syncDeckControls() {
 // when the deck is not connected or does not offer the action. The reply a
 // handler makes is the result's data and goes through the same ladder as an
 // event; a refused or failed action arrives there as an `error`.
+// `card` (a card key) names the card the message is about, which decides the
+// deck it goes to; without it the session id does (deckForCall).
 export function send(obj, extId = null) {
-  const call = toActionCall(obj, extId);
+  const { card = null, ...frame } = obj || {};
+  const call = toActionCall(frame, extId);
   if (!call) return false;
-  if (!deck.canSend(call.action)) {
-    if (deckStatus === 'ready') toast(`This deck does not offer ${call.action}`, true);
+  const deckId = deckForCall(frame.sessionId, card);
+  const client = clientForDeck(deckId);
+  if (!client || !client.canSend(call.action)) {
+    if (client === deck) { if (deckStatus === 'ready') toast(`This deck does not offer ${call.action}`, true); }
+    else toast(client?.status() === 'ready' ? `${deckNameOf(deckId)} does not offer ${call.action}` : `${deckNameOf(deckId)} is unreachable`, true);
     return false;
   }
-  deck.act(call.action, call).then((r) => {
+  client.act(call.action, call).then((r) => withDeckContext(deckId, () => {
     if (r.ok) { if (r.data && typeof r.data.type === 'string') onDeckMessage(r.data); }
     else onDeckMessage({ type: 'error', message: r.error?.message || 'The action failed' });
-  });
+  }));
   return true;
 }
-export function deckAct(action, opts) {
-  return deck.act(action, opts);
+export function deckAct(action, { card = null, ...opts } = {}) {
+  const client = clientForDeck(deckForCall(opts.session, card));
+  if (!client) return Promise.resolve({ ok: false, data: null, error: { code: 'failed', message: 'That deck is not on this board' } });
+  return client.act(action, opts);
 }
+// What another deck may tell the board: news about its own sessions. Its
+// settings, extensions and updates are its own and stay off this board.
+const REMOTE_DECK_MESSAGES = new Set([
+  'notify', 'diff', 'diff-comments-result', 'pr-checks', 'pr-merge', 'pr-dirty', 'pr-unresolved',
+  'auto-archived', 'archived', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
+  'forked', 'resume-needs-dir', 'open-terminal', 'subagent-detail', 'chat', 'message-result',
+  'paste-image-result', 'interrupt-restore', 'model-set', 'error',
+]);
+function onRemoteDeckMessage(deckId, msg) {
+  if (!msg || !REMOTE_DECK_MESSAGES.has(msg.type)) return;
+  withDeckContext(deckId, () => onDeckMessage(msg));
+}
+function remountDecksPanel() {
+  const el = document.getElementById('settings-decks');
+  if (el) mountDecksPanel(el, decksPanelBridge);
+}
+const decksPanelBridge = {
+  decks: boardDecks,
+  change: (op) => deckList.change(op),
+  toast,
+};
 function connect() {
   deck.start();
+  deckList.start();
 }
 function onDeckMessage(msg) {
   if (!msg || typeof msg.type !== 'string') return;
@@ -7909,17 +8032,19 @@ function onDeckMessage(msg) {
     flashRestoredTask(msg.taskId);
   }
   else if (msg.type === 'worktree-removed') {
-    if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId }) }], duration: 15000 });
+    const card = cardOf(msg.sessionId);
+    if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId, card }) }], duration: 15000 });
     else toast('Worktree removed');
   }
   else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop');
   else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`, 'success');
   else if (msg.type === 'branch-delete-blocked') {
+    const card = cardOf(msg.sessionId);
     confirmDialog({
       title: 'Branch has unmerged commits',
       body: `Git wouldn't delete branch ${msg.branch}:\n\n${msg.reason}\n\nForce-delete it anyway? Its unmerged commits will be lost.`,
       okLabel: 'Force delete',
-    }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true }); });
+    }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true, card }); });
   }
   else if (msg.type === 'forked') { setPendingSelect(cardOf(msg.sessionId)); tryFulfillPending(); }
   // Search adopted an off-board conversation onto the board (or found it already
@@ -7930,18 +8055,19 @@ function onDeckMessage(msg) {
   else if (msg.type === 'resume-needs-dir') {
     const forking = msg.action === 'fork';
     const verb = forking ? 'fork' : 'resume';
+    const card = cardOf(msg.sessionId);
     confirmDialog({
       title: 'Original folder was deleted',
       body: `The folder this session ran in is gone:\n\n${tildeCollapse(msg.dir)}\n\nRecreate it and ${verb} anyway? The full conversation is restored from the transcript — but the working files that were in that folder won't be.`,
       okLabel: `Recreate & ${verb}`,
     }).then((result) => {
       if (result !== 'ok') { toast(`${forking ? 'Fork' : 'Resume'} cancelled — original folder is gone.`); return; }
-      if (forking) send({ type: 'fork', sessionId: msg.sessionId, recreateDir: true, prompt: msg.prompt || '', name: msg.name || '' });
-      else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true });
+      if (forking) send({ type: 'fork', sessionId: msg.sessionId, recreateDir: true, prompt: msg.prompt || '', name: msg.name || '', card });
+      else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true, card });
     });
   }
-  else if (msg.type === 'open-terminal' && msg.presentation === 'dialog') openTerminalDialog({ terminalId: msg.terminalId, command: msg.command || '', title: msg.title || '' });
-  else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
+  else if (msg.type === 'open-terminal' && msg.presentation === 'dialog') openTerminalDialog({ terminalId: msg.terminalId, command: msg.command || '', title: msg.title || '', deckId: msgDeckId || boardDeckId });
+  else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null, deckId: msgDeckId || boardDeckId });
   else if (msg.type === 'styles') { setCustomStyles(msg.styles); refreshThemeRows(); }
   else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
   else if (msg.type === 'chat') chatView.onChatReply(msg);
@@ -8155,7 +8281,7 @@ const chatView = initChatView({
   },
   // The same destination the terminal's .md link provider uses, so a path opens
   // the same preview whichever view it was clicked in.
-  onOpenFile: (path, card) => openFile(path, { sessionId: sessionIdOf(card), source: 'chat' }),
+  onOpenFile: (path, card) => openFile(path, { card, source: 'chat' }),
   // Looked up per click/render rather than pushed in on mount: the chat view only
   // ever needs the cwd of the session it is showing, and latestSessions is already
   // the live answer.

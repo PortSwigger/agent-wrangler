@@ -49,6 +49,7 @@ import { bindHost, deckPort, deckOnly, sessionApiPort } from './runtime.js';
 import { createSessionApi } from './session-api/index.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createBoardServer } from './http-handler.js';
+import { createBoardDecks } from './board-decks.js';
 import { createDeckServer } from './deck/http.js';
 import { resolveMarkdownPath } from './file-preview.js';
 import { createExtFiles } from './ext-files.js';
@@ -1119,11 +1120,16 @@ const deckServer = createDeckServer({
 
 // /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
 // extensions alone — so a disabled extension's client is a 404, never served.
+const boardDecks = createBoardDecks({
+  file: path.join(DATA_DIR, 'board-decks.json'),
+  onChange: (snapshot) => boardServer.announceDecks(snapshot),
+});
 const boardServer = createBoardServer({
   boardPort: () => PORT,
   deckPort: () => deckListenPort,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
   extensionThemes: () => themeSources(ext.themeDirs),
+  decks: boardDecks,
 });
 
 // --- WebSocket: control channel (graph + actions) and pty channel ---
