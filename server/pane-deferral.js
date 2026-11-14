@@ -1,6 +1,7 @@
 import { classifyPane } from './tmux-scraper.js';
 import { adapterFor } from './agents/index.js';
 import { sendText as defaultSendText, capturePaneStyled as defaultCapture, classify as defaultClassify } from './tmux-scraper.js';
+import { codexComposerDiagnostic } from './agents/composer-parsers.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
 
 // Hold an AUTOMATED pane notification back while the human is mid-prompt.
@@ -67,12 +68,17 @@ export function createPaneDeferral({
       const allowWorking = !deferWhileWorking || (allowWhileWorking && adapterFor(agent).terminal.allowWhileWorking);
       const canNotify = (status) => status === 'idle' || (allowWorking && status === 'working');
       const status = statusFor(id);
-      if (status != null && !canNotify(status)) return `board status ${status}`;
+      const boardBlocker = status != null && !canNotify(status) ? `board status ${status}` : null;
+      if (boardBlocker && agent !== 'codex') return boardBlocker;
       const pane = await capture(tmux, CAPTURE_LINES, socket);
-      if (!pane) return 'pane capture empty';
-      const paneStatus = classifyPane(pane, agent, { tailLines: CAPTURE_LINES, strictWorking: true }, classify).status;
-      if (!canNotify(paneStatus)) return `pane classified ${paneStatus}`;
-      if (!paneComposerIsEmpty(pane, agent, { allowWhileWorking: allowWorking })) return COMPOSER_BLOCKED_REASON;
+      if (!pane) return boardBlocker || 'pane capture empty';
+      const paneState = classifyPane(pane, agent, { tailLines: CAPTURE_LINES, strictWorking: true }, classify);
+      const rejection = (reason) => agent === 'codex'
+        ? `${reason}: ${JSON.stringify(codexComposerDiagnostic(pane, { approvalSelector: paneState.waitingReason === 'permission' }))}`
+        : reason;
+      if (boardBlocker) return rejection(boardBlocker);
+      if (!canNotify(paneState.status)) return rejection(`pane classified ${paneState.status}`);
+      if (!paneComposerIsEmpty(pane, agent, { allowWhileWorking: allowWorking })) return rejection(COMPOSER_BLOCKED_REASON);
       return null;
     } catch (err) {
       return `pane check failed: ${err?.message || err}`;
