@@ -599,12 +599,12 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         // This extension's own `ext.<id>` state from the deck's state frame
         // (1.74.0): what its graph contributor returned, as a frozen copy, or
         // null before the first frame. `onState(fn)` hears each new one.
-        // With `{ deck }` (1.77.0), that deck's copy of it instead.
+        // With `{ deck }` (1.78.0), that deck's copy of it instead.
         state: (opts) => {
           const deckId = isPlainObject(opts) && typeof opts.deck === 'string' && opts.deck ? opts.deck : null;
           return deckId ? deckStateOf(extId, deckId) : stateOf(extId);
         },
-        // The decks on the board that report this extension (1.77.0), the own
+        // The decks on the board that report this extension (1.78.0), the own
         // deck first: `[{ deckId, name, colour, own, status, boardApi }]`, where
         // `status` is 'ready', 'incompatible' (the deck lists it with another
         // boardApi than this half's, so it is never sent an action) or
@@ -638,7 +638,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           if (args != null && !isPlainObject(args)) return Promise.resolve({ ok: false, data: null, error: { code: 'invalid', message: 'act args must be an object' } });
           if (typeof baseApi.act !== 'function') return Promise.resolve({ ok: false, data: null, error: { code: 'unsupported', message: 'act is not available' } });
           const session = isPlainObject(opts) && typeof opts.session === 'string' && opts.session ? opts.session : null;
-          // `deck` (1.77.0) sends it to that deck alone, which must report this
+          // `deck` (1.78.0) sends it to that deck alone, which must report this
           // extension with a boardApi this half pairs with.
           const deckId = isPlainObject(opts) && typeof opts.deck === 'string' && opts.deck ? opts.deck : null;
           if (deckId) {

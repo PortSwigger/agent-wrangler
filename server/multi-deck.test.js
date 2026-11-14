@@ -32,17 +32,34 @@ function startDeckOnly(dataDir, port, origins) {
   return { proc, out: () => out };
 }
 
-async function deckSession(port, sessionId) {
+async function deckState(port) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?api=1`);
     ws.on('message', (raw) => {
       const m = JSON.parse(raw.toString());
       if (m.type !== 'state') return;
       ws.close();
-      resolve(m.sessions.find((s) => s.sessionId === sessionId) || null);
+      resolve(m);
     });
     ws.on('error', reject);
   });
+}
+
+async function deckSession(port, sessionId) {
+  return (await deckState(port)).sessions.find((s) => s.sessionId === sessionId) || null;
+}
+
+function seedTasks(dataDir, tasks, assignments) {
+  writeFileSync(join(dataDir, 'tasks.json'), JSON.stringify({
+    tasks: tasks.map(([id, name]) => ({ id, name })), order: [...tasks.map(([id]) => id), 'adhoc'], assignments,
+  }));
+}
+
+function seedSchedule(dataDir, id, name, sessionId) {
+  writeFileSync(join(dataDir, 'schedules.json'), JSON.stringify({ schedules: [{
+    id, name, enabled: true, when: { kind: 'cron', cron: '0 9 * * 1' }, action: { kind: 'session', sessionId, message: '' },
+    createdAt: new Date().toISOString(), lastRunAt: null, lastSessionId: null, nextRunAt: null, missed: false,
+  }] }));
 }
 
 const CARDS = `JSON.stringify([...document.querySelectorAll('.session-card')].map((e) => ({
@@ -106,6 +123,86 @@ test('one board shows two decks\' cards, routes each card\'s action to its own d
     b = startDeckOnly(dirB, portB, origins);
     const back = await waitFor(async () => { const c = JSON.parse(await tab.evaluate(CARDS)); return c.length >= 3 && c.every((x) => !x.unreachable) && c; });
     assert.ok(back, 'deck B\'s cards were live again once it restarted');
+    assert.deepEqual(tab.errors, [], 'no console errors');
+  } finally {
+    await tab?.close();
+    try { b?.proc.kill(); } catch {}
+    try { a?.server.kill(); } catch {}
+    await sleep(500);
+    rmSync(dirA, { recursive: true, force: true });
+    rmSync(dirB, { recursive: true, force: true });
+  }
+});
+
+const TILES = `JSON.stringify([...document.querySelectorAll('.task-cell:not(.no-task)')].map((e) => ({
+  id: e.dataset.taskid, deck: e.querySelector('.task-deck')?.textContent ?? null, name: e.querySelector('.task-name').textContent,
+  cards: [...e.querySelectorAll('.session-card')].map((c) => c.dataset.card),
+})))`;
+
+test('each deck\'s tasks and schedules show under its name, and each task or schedule action reaches only its own deck', { timeout: 180_000 }, async (t) => {
+  const chromePath = findChrome();
+  if (!chromePath) {
+    assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
+    return t.skip('no Chrome/Chromium found (set CHROME_BIN to enable)');
+  }
+  const dirA = mkdtempSync(join(tmpdir(), 'aw-multitask-a-'));
+  const dirB = mkdtempSync(join(tmpdir(), 'aw-multitask-b-'));
+  // The same task id and schedule id on both decks: each is its own deck's.
+  seedSessions(dirA, [['a-1', 'Login form']]);
+  seedTasks(dirA, [['t_00000001', 'Auth revamp']], { 'a-1': 't_00000001' });
+  seedSchedule(dirA, 'sch_00000001', 'Morning check', 'a-1');
+  seedSessions(dirB, [['b-1', 'Importer profiling']]);
+  seedTasks(dirB, [['t_00000001', 'Data pipeline'], ['t_00000002', 'Flaky tests']], { 'b-1': 't_00000001' });
+  seedSchedule(dirB, 'sch_00000001', 'Nightly report', 'b-1');
+  let a, b, tab;
+  try {
+    a = await startInstance(dirA);
+    assert.ok(a.up, `deck A never started:\n${a.out()}`);
+    const board = `http://127.0.0.1:${a.port}`;
+    const portB = await freePort();
+    b = startDeckOnly(dirB, portB, `${board},http://localhost:${a.port}`);
+    assert.ok(await waitFor(async () => (await fetch(`http://127.0.0.1:${portB}/deck`)).ok), `deck B never started:\n${b.out()}`);
+
+    tab = await openTab(chromePath, `${board}/`);
+    const single = await waitFor(async () => { const x = JSON.parse(await tab.evaluate(TILES) || '[]'); return x.length === 1 && x; });
+    assert.deepEqual(single.map((x) => [x.deck, x.name]), [[null, 'Auth revamp']], 'with only its own deck, task tiles name no deck');
+
+    const post = (body) => fetch(`${board}/api/decks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: board }, body: JSON.stringify(body) });
+    assert.equal((await post({ op: 'update', id: 'own', name: 'Laptop A' })).status, 200);
+    assert.equal((await post({ op: 'add', url: `http://127.0.0.1:${portB}`, name: 'Laptop B' })).status, 200);
+
+    const tiles = await waitFor(async () => { const x = JSON.parse(await tab.evaluate(TILES) || '[]'); return x.length === 3 && x.every((y) => y.cards.length || y.name === 'Flaky tests') && x; });
+    assert.ok(tiles, `the board never showed both decks' tasks: ${await tab.evaluate(TILES)}`);
+    assert.deepEqual(tiles.map((x) => [x.deck, x.name]), [['Laptop A', 'Auth revamp'], ['Laptop B', 'Data pipeline'], ['Laptop B', 'Flaky tests']]);
+    const [authA, pipelineB, flakyB] = tiles;
+    assert.notEqual(pipelineB.id, authA.id, 'the same task id on two decks is two tasks');
+    assert.ok(authA.cards[0].endsWith('/a-1') && pipelineB.cards[0].endsWith('/b-1'), 'each card sits in its own deck\'s task');
+
+    // Rename deck B's task from its tile.
+    await tab.evaluate(`(() => {
+      document.querySelector('.task-cell[data-taskid="${flakyB.id}"] .task-name').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const input = document.querySelector('.task-name-input');
+      input.value = 'Flaky tests (triaged)';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+    const renamed = await waitFor(async () => (await deckState(portB)).tasks.tasks.find((x) => x.id === 't_00000002' && x.name === 'Flaky tests (triaged)'));
+    assert.ok(renamed, 'deck B renamed its task');
+    assert.deepEqual((await deckState(a.deckPort())).tasks.tasks.map((x) => x.name), ['Auth revamp'], 'deck A heard nothing');
+
+    // A session cannot be moved onto another deck's task.
+    const moved = await tab.send('Runtime.evaluate', { awaitPromise: true, returnByValue: true, expression: `import('/app.js').then((m) => m.send({ type: 'task-assign', sessionId: 'b-1', card: '${pipelineB.cards[0]}', taskId: '${authA.id}' }))` });
+    assert.equal(moved.result?.result?.value, false, 'a cross-deck move is refused on the board');
+
+    // The Schedules panel lists each deck's schedules under its name; a toggle
+    // reaches only the schedule's own deck.
+    await tab.evaluate(`document.getElementById('schedules-btn').click()`);
+    const SCHED = `JSON.stringify([...document.querySelectorAll('.sched-deck')].map((g) => [g.querySelector('.sched-deck-name').textContent, [...g.querySelectorAll('.sched-name')].map((n) => n.textContent)]))`;
+    const groups = await waitFor(async () => { const x = JSON.parse(await tab.evaluate(SCHED) || '[]'); return x.length === 2 && x; });
+    assert.deepEqual(groups, [['Laptop A', ['Morning check']], ['Laptop B', ['Nightly report']]]);
+    await tab.evaluate(`(() => { const box = [...document.querySelectorAll('.sched-deck')][1].querySelector('.sched-enable input'); box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const off = await waitFor(async () => (await deckState(portB)).schedules.schedules.find((x) => x.id === 'sch_00000001' && x.enabled === false));
+    assert.ok(off, 'deck B disabled its schedule');
+    assert.equal((await deckState(a.deckPort())).schedules.schedules[0].enabled, true, 'deck A\'s schedule with the same id is untouched');
     assert.deepEqual(tab.errors, [], 'no console errors');
   } finally {
     await tab?.close();

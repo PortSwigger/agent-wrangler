@@ -60,7 +60,7 @@ import { toast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
-import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, OWN_ENTRY } from './decks.js';
+import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
 import { mountDecksPanel } from './decks-panel.js';
 import { withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
@@ -190,6 +190,12 @@ export const cardOf = (sessionId) => cardKey(msgDeckId || boardDeckId, sessionId
 export const sessionByCard = (card) => (card ? latestSessions.find((x) => x.cardKey === card) || null : null);
 export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
+// The other decks' tasks and schedules, ids scoped by deck (decks.js
+// remoteTaskView). Empty while the board shows only its own deck.
+let remoteBoard = remoteTaskView([]);
+// The own deck's name and colour for its task tiles, while the board shows
+// more than one deck; null otherwise.
+let ownTaskDeck = null;
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let trustClaudeLaunchCwd = true; // likewise
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
@@ -1417,8 +1423,11 @@ let dragColumnGap = new Map();
 // mid-drag, an unchanged position can change nothing, so those are skipped.
 let lastDragPoint = null;
 
-function beginDragCaches(sessionId) {
-  dragNestTargets = nestTargetsFor(sessionId, latestSessions, assignedTaskId);
+function beginDragCaches(sessionId, card = null) {
+  // Nesting is worked out on the own deck's sessions; another deck's card
+  // moves between that deck's tasks only.
+  const remote = deckIdOf(card) && deckIdOf(card) !== boardDeckId;
+  dragNestTargets = remote ? new Set() : nestTargetsFor(sessionId, latestSessions, assignedTaskId);
   dragMultiColumn = new Map();
   dragColumnGap = new Map();
   lastDragPoint = null;
@@ -1901,11 +1910,26 @@ function cardState(s) {
 // is in none of this board's tasks.
 function assignedTaskId(ref) {
   if (ref && typeof ref === 'object') {
-    if (ref.deckId && ref.deckId !== boardDeckId) return null;
+    if (ref.deckId && ref.deckId !== boardDeckId) {
+      const rid = remoteBoard.assignments[ref.cardKey];
+      return rid && remoteBoard.tasks.some((t) => t.id === rid && !t.archivedAt) ? rid : null;
+    }
     ref = ref.sessionId;
   }
   const id = latestTasks.assignments[ref];
   return id && latestTasks.tasks.some((t) => t.id === id && !t.archivedAt) ? id : null;
+}
+
+// Every task on the board: the own deck's, then each other deck's.
+const boardTasks = () => (remoteBoard.tasks.length ? [...latestTasks.tasks, ...remoteBoard.tasks] : latestTasks.tasks);
+const findTask = (id) => latestTasks.tasks.find((t) => t.id === id) || remoteBoard.tasks.find((t) => t.id === id) || null;
+const isRemoteTask = (id) => remoteBoard.tasks.some((t) => t.id === id);
+const bucketOrder = (id) => (latestTasks.sessionOrder || {})[id] || remoteBoard.sessionOrder[id];
+// A task as its tile draws it: with more than one deck on the board, each tile
+// names its deck, so the tasks read grouped under their decks' names.
+function tileTask(task) {
+  if (!task || task.deckName || !ownTaskDeck) return task;
+  return { ...task, ...ownTaskDeck };
 }
 
 export function taskForSession(sessionId) {
@@ -1975,7 +1999,7 @@ function toggleActivitySort(bucketId) {
 function sortBucketSessions(sessions, bucketId) {
   return activitySortedTasks.has(bucketId)
     ? sortByLastActivity(sessions)
-    : orderSessions(sessions, (latestTasks.sessionOrder || {})[bucketId]);
+    : orderSessions(sessions, bucketOrder(bucketId));
 }
 
 // Feeds tileSpan (layout.js) the secondary-weight counts it needs, all derived from
@@ -2122,6 +2146,8 @@ function currentOrder() {
   const order = [...new Set((Array.isArray(latestTasks.order) ? latestTasks.order : []).filter((id) => valid.has(id)))];
   for (const id of ids) if (!order.includes(id)) order.push(id);
   if (!order.includes(ADHOC_ID)) order.push(ADHOC_ID);
+  const live = new Set(remoteBoard.tasks.filter((t) => !t.archivedAt).map((t) => t.id));
+  for (const id of remoteBoard.order) if (live.has(id)) order.push(id);
   return order;
 }
 
@@ -2186,10 +2212,10 @@ function reconcileMinimised(orderIds) {
 
 function trayContext() {
   return {
-    tasks: currentOrder().map((id) => ({
-      id, name: id === ADHOC_ID ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === id).name,
-      adhoc: id === ADHOC_ID,
-    })),
+    tasks: currentOrder().map((id) => {
+      const task = id === ADHOC_ID ? null : tileTask(findTask(id));
+      return { id, name: task ? task.name : 'Unassigned', adhoc: !task, ...(task?.deckName ? { deckName: task.deckName } : {}) };
+    }),
     minimisedIds: [...minimisedIds],
   };
 }
@@ -2222,7 +2248,7 @@ function renderGrid(trayPass = 0, fitPass = 0) {
   // than one → the normal packed grid. The tray is appended by both paths.
   if (visible.length === 1) { renderFocusedTile(el, visible[0]); return; }
   el.classList.remove('focus-mode');
-  const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
+  const byTask = new Map(boardTasks().map((t) => [t.id, []]));
   const noTask = [];
   for (const s of onBoard(latestSessions)) {
     const tid = assignedTaskId(s);
@@ -2241,14 +2267,14 @@ function renderGrid(trayPass = 0, fitPass = 0) {
   const rowHeight = gridRowHeight(el.clientHeight, trayHeight, { gap, paddingY });
   function buildTiles() {
     const tileById = new Map(
-      latestTasks.tasks.map((task) => {
+      boardTasks().map((task) => {
         const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
         const sessions = sortAsleepLast(ordered, phaseOf);
         // Tile height the `task.body` extensions want (e.g. the TODO zone); 0
         // when none is registered, which is also what a disabled one contributes.
         const bodyPx = slots.taskBodyWeight(task.id, latestGraph);
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, estimate: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
+        return [task.id, { kind: 'task', id: task.id, task: tileTask(task), sessions, estimate: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
       })
     );
     const {
@@ -2360,7 +2386,7 @@ function renderFocusedTile(el, id) {
   );
   const tile = isAdhoc
     ? { kind: 'notask', id: ADHOC_ID, sessions, span: 1 }
-    : { kind: 'task', id, task: latestTasks.tasks.find((t) => t.id === id), sessions, span: 1 };
+    : { kind: 'task', id, task: tileTask(findTask(id)), sessions, span: 1 };
   el.classList.add('focus-mode');
   el.classList.remove('scrolling', 'single-column');
   el.style.gridTemplateColumns = '';
@@ -2394,7 +2420,7 @@ function trayHtml(visible) {
   const visibleSet = new Set(visible);
   const mins = currentOrder()
     .filter((id) => !visibleSet.has(id))
-    .map((id) => (id === ADHOC_ID ? { id: ADHOC_ID, name: 'Unassigned' } : latestTasks.tasks.find((t) => t.id === id)))
+    .map((id) => (id === ADHOC_ID ? { id: ADHOC_ID, name: 'Unassigned' } : findTask(id)))
     .filter(Boolean);
   if (!mins.length) return '';
   const pills = mins.map((t) => {
@@ -2429,7 +2455,7 @@ function wireTray(el) {
     b.addEventListener('contextmenu', (e) => {
       const taskId = b.dataset.taskid;
       if (taskId === ADHOC_ID) return;
-      const task = latestTasks.tasks.find((t) => t.id === taskId);
+      const task = findTask(taskId);
       if (!task) return;
       e.preventDefault();
       e.stopPropagation();
@@ -2857,7 +2883,7 @@ function extTaskMenuItems(taskId, isNoTask) {
 
 function taskMinimiseMenuItem(taskId) {
   const adhoc = taskId === ADHOC_ID;
-  const task = { id: taskId, name: adhoc ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === taskId)?.name, adhoc };
+  const task = { id: taskId, name: adhoc ? 'Unassigned' : findTask(taskId)?.name, adhoc };
   return slots.trayMinimiseItem(task, latestGraph, extApi)
     || { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(taskId) };
 }
@@ -3154,7 +3180,7 @@ function clearTaskStatuses(taskId) {
     acknowledgedAt.set(s.sessionId, s.updatedAt ?? null);
     if (justFinished.delete(s.sessionId)) hadJustFinished = true;
     if (unread.delete(s.sessionId)) hadUnread = true;
-    if (phaseOf(s) === 'awake') send({ type: 'snooze-clear', sessionId: s.sessionId });
+    if (phaseOf(s) === 'awake') send({ type: 'snooze-clear', sessionId: s.sessionId, card: s.cardKey });
   }
   persistAcknowledged();
   if (hadJustFinished) persistJustFinished();
@@ -3172,9 +3198,10 @@ function clearStatusesMenuItems(taskId) {
 // Archive is available only for real tasks. Sort stays open as a ticked toggle.
 function openTaskActionsMenu(taskId, x, y) {
   const isAdhoc = taskId === ADHOC_ID;
-  const task = isAdhoc ? null : latestTasks.tasks.find((t) => t.id === taskId);
+  const task = isAdhoc ? null : findTask(taskId);
   if (!isAdhoc && !task) return;
-  const extItems = extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
+  // An extension's task actions act on this board's own deck's tasks.
+  const extItems = isRemoteTask(taskId) ? [] : extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
   const sortOn = activitySortedTasks.has(taskId);
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
@@ -3354,10 +3381,11 @@ function wireGridDnd(el) {
       if (e.target.closest('.link-chip')) { e.preventDefault(); return; }
       e.stopPropagation();
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'session', sessionId: dragUnitSid(card) }));
+      const cardKeyOf = card.dataset.card || card.querySelector('[data-card]')?.dataset.card || null;
+      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'session', sessionId: dragUnitSid(card), card: cardKeyOf }));
       draggedCard = card;
       dragActive = true;
-      beginDragCaches(dragUnitSid(card));
+      beginDragCaches(dragUnitSid(card), cardKeyOf);
       armNewTask(true); // reveal the "drop to create" landing area immediately
       // Defer one tick: the native drag image (the floating card) is
       // snapshotted synchronously now, so the card must still look intact. Then
@@ -3451,7 +3479,7 @@ function wireGridDnd(el) {
       g.classList.remove('drop');
       let p;
       try { p = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
-      if (p.kind === 'session') createTask(p.sessionId);
+      if (p.kind === 'session') createTask(p.sessionId, p.card);
     });
   });
 
@@ -3558,7 +3586,11 @@ function wireGridDnd(el) {
         // placeholder's slot and skipping its hidden source. Otherwise (re)assign
         // to this cell's task, or to Ad hoc when dropped on the unassigned tile.
         const bucket = isNoTask ? ADHOC_ID : taskId;
-        const sameBucket = isNoTask ? !assignedTaskId(p) : assignedTaskId(p) === taskId;
+        const dragged = sessionByCard(p.card) || p;
+        const remote = Boolean(dragged.deckId && dragged.deckId !== boardDeckId);
+        const sameBucket = isNoTask ? !assignedTaskId(dragged) : assignedTaskId(dragged) === taskId;
+        // Unassigned's order is the own deck's: another deck's card keeps its place there.
+        if (remote && sameBucket && isNoTask) return;
         // An activity-sorted bucket has no manual order to write — a same-bucket drop
         // is a no-op (dragend rebuilds from canonical order). Cross-bucket still reassigns.
         if (bucket && sameBucket && activitySortedTasks.has(bucket)) return;
@@ -3589,7 +3621,7 @@ function wireGridDnd(el) {
           latestTasks.sessionOrder = latestTasks.sessionOrder || {};
           latestTasks.sessionOrder[bucket] = order; // optimistic; server confirms on next graph
           send({ type: 'task-reorder-sessions', taskId: bucket, order });
-        } else if (releaseChildForMove(p.sessionId)) send({ type: 'task-assign', sessionId: p.sessionId, taskId: isNoTask ? null : taskId });
+        } else if (remote || releaseChildForMove(p.sessionId)) send({ type: 'task-assign', sessionId: p.sessionId, card: p.card || null, taskId: isNoTask ? null : taskId });
       }
       // Task drops are handled by the #grid drop handler (commits at the current
       // slot wherever the cursor lands).
@@ -3620,6 +3652,12 @@ function taskTargetAt(x, y) {
 
 function commitTaskReorder() {
   if (!draggedTaskId || !taskDropTargetId || taskDropTargetId === draggedTaskId) return;
+  // Each deck orders its own tasks; Unassigned sits among the own deck's.
+  const deckOfTile = (id) => findTask(id)?.deckId || null;
+  if (deckOfTile(draggedTaskId) !== deckOfTile(taskDropTargetId)) {
+    toast("Tasks stay with their own deck's tasks", true);
+    return;
+  }
   const order = currentOrder();
   const i = order.indexOf(draggedTaskId);
   const j = order.indexOf(taskDropTargetId);
@@ -3659,7 +3697,7 @@ function beginTaskRename(cell, isNew = false) {
     const name = input.value.trim();
     if (save && (isNew || (name && name !== current))) {
       send({ type: 'task-rename', taskId, name: name || current });
-      const t = latestTasks.tasks.find((x) => x.id === taskId);
+      const t = findTask(taskId);
       if (t) t.name = name || current; // optimistic; server confirms on next graph
     }
     renderGrid();
@@ -3758,8 +3796,8 @@ function wireTaskControls(el) {
 
 
 // Ask the server to create a task. Optionally seed it with a session.
-function createTask(sessionId) {
-  send({ type: 'task-create', sessionId, draft: true });
+function createTask(sessionId, card = null) {
+  send({ type: 'task-create', sessionId, draft: true, card });
 }
 
 function onTaskCreated(msg) {
@@ -3806,7 +3844,7 @@ function armNewTask(on) {
     let p;
     try { p = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { armNewTask(false); return; }
     armNewTask(false);
-    if (p.kind === 'session') createTask(p.sessionId);
+    if (p.kind === 'session') createTask(p.sessionId, p.card);
   });
 })();
 // Track working→idle transitions: a finished session enters the persisted
@@ -4364,7 +4402,7 @@ function focusModeActive() {
 // workers are dropped here rather than reordered — same rule as asleep, don't
 // offer the keyboard a target the board isn't drawing.
 function navTargets() {
-  const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
+  const byTask = new Map(boardTasks().map((t) => [t.id, []]));
   const noTask = [];
   for (const s of onBoard(latestSessions)) {
     const tid = assignedTaskId(s);
@@ -7594,21 +7632,25 @@ function closeSchedulesPanel() { schedulesModal.classList.add('hidden'); }
 function renderSchedules() {
   const el = document.getElementById('schedules-list');
   if (!el) return;
-  const list = latestSchedules.schedules || [];
+  const list = [...(latestSchedules.schedules || []), ...remoteBoard.schedules];
   if (!list.length) {
     el.innerHTML = '<div class="sched-empty">No schedules yet. Create one to launch, resume, or message a session on a one-off or recurring cadence.</div>';
     return;
   }
-  const labelFor = (id) => latestSessions.find((x) => x.sessionId === id)?.label;
-  el.innerHTML = list.map((s) => {
-    const meta = [cadenceSummary(s.when), truncate(actionSummary(s.action, labelFor), 44)].filter(Boolean).join(' · ');
+  const labelFor = (deckId) => (id) => latestSessions.find((x) => x.sessionId === id && (!deckId || x.deckId === deckId))?.label;
+  const rowHtml = (s) => {
+    const remote = Boolean(s.deckId);
+    const meta = [cadenceSummary(s.when), truncate(actionSummary(s.action, labelFor(s.deckId)), 44)].filter(Boolean).join(' · ');
     const next = s.enabled ? formatNextRun(s.nextRunAt, Date.now()) : '';
     const badge = s.missed ? '<span class="sched-badge">missed</span>' : '';
     const nextHtml = s.enabled
       ? `<span class="sched-next">${esc(next) || '—'}</span>`
       : '<span class="sched-next off">disabled</span>';
-    return `<div class="sched-row${s.enabled ? '' : ' disabled'}" data-id="${esc(s.id)}">
-      <label class="sched-enable" title="${s.enabled ? 'Disable' : 'Enable'}"><input type="checkbox" ${s.enabled ? 'checked' : ''} /></label>
+    // Another deck's schedule is edited from that deck's own board: the
+    // editor's folders, tasks and agents are this deck's.
+    const edit = remote ? '' : '<button class="sched-edit" title="Edit" aria-label="Edit">✎</button>';
+    return `<div class="sched-row${s.enabled ? '' : ' disabled'}${s.deckUnreachable ? ' deck-unreachable' : ''}" data-id="${esc(s.id)}">
+      <label class="sched-enable" title="${s.enabled ? 'Disable' : 'Enable'}"><input type="checkbox" ${s.enabled ? 'checked' : ''}${s.deckUnreachable ? ' disabled' : ''} /></label>
       <div class="sched-main">
         <div class="sched-name">${esc(s.name)}${badge}</div>
         <div class="sched-meta">${esc(meta)}</div>
@@ -7616,28 +7658,39 @@ function renderSchedules() {
       ${nextHtml}
       <div class="sched-actions">
         <button class="sched-run" title="Run now" aria-label="Run now">▶</button>
-        <button class="sched-edit" title="Edit" aria-label="Edit">✎</button>
+        ${edit}
         <button class="sched-del" title="Delete" aria-label="Delete">✕</button>
       </div>
     </div>`;
-  }).join('');
+  };
+  // With more than one deck, each deck's schedules sit under its name.
+  if (ownTaskDeck) {
+    const groups = [{ ...ownTaskDeck, rows: latestSchedules.schedules || [] }];
+    for (const s of remoteBoard.schedules) {
+      let g = groups.find((x) => x.deckId === s.deckId);
+      if (!g) groups.push(g = { deckId: s.deckId, deckName: s.deckName, deckColour: s.deckColour, deckUnreachable: s.deckUnreachable, rows: [] });
+      g.rows.push(s);
+    }
+    el.innerHTML = groups.filter((g) => g.rows.length).map((g) => `<div class="sched-deck"${g.deckColour ? ` style="--deck-colour:${esc(g.deckColour)}"` : ''}>
+      <div class="sched-deck-name">${esc(g.deckName)}${g.deckUnreachable ? ' · unreachable' : ''}</div>
+      ${g.rows.map(rowHtml).join('')}
+    </div>`).join('');
+  } else el.innerHTML = list.map(rowHtml).join('');
   const byId = (id) => list.find((s) => s.id === id);
   el.querySelectorAll('.sched-row').forEach((row) => {
     const id = row.dataset.id;
     row.querySelector('.sched-enable input').addEventListener('change', (e) =>
       send({ type: 'schedule-toggle', id, enabled: e.target.checked }));
     row.querySelector('.sched-run').addEventListener('click', () => {
-      send({ type: 'schedule-run-now', id });
-      toast(`Running "${byId(id)?.name || 'schedule'}" now…`);
+      if (send({ type: 'schedule-run-now', id })) toast(`Running "${byId(id)?.name || 'schedule'}" now…`);
     });
-    row.querySelector('.sched-edit').addEventListener('click', () => {
+    row.querySelector('.sched-edit')?.addEventListener('click', () => {
       closeSchedulesPanel();
       openScheduleEditor(byId(id));
     });
     row.querySelector('.sched-del').addEventListener('click', () => {
       const name = byId(id)?.name || 'schedule';
-      send({ type: 'schedule-delete', id });
-      toast(`Schedule "${name}" deleted`);
+      if (send({ type: 'schedule-delete', id })) toast(`Schedule "${name}" deleted`);
     });
   });
 }
@@ -7774,7 +7827,10 @@ function applyDecks() {
   syncExtDecks();
   if (!ownGraph) return;
   const [own, ...remotes] = boardDecks();
-  applyGraph(mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi: deckEntries.length > 1 }));
+  const multi = deckEntries.length > 1;
+  remoteBoard = remoteTaskView(multi ? remotes : []);
+  ownTaskDeck = multi ? { deckId: boardDeckId, deckName: own.name, deckColour: own.colour } : null;
+  applyGraph(mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi }));
 }
 // Hands every board half the decks that report its extension (api.decks()).
 function syncExtDecks() {
@@ -7825,18 +7881,29 @@ function syncDeckControls() {
 // `card` (a card key) names the card the message is about, which decides the
 // deck it goes to; without it the session id does (deckForCall).
 export function send(obj, extId = null) {
-  const { card = null, ...frame } = obj || {};
+  const { card = null, ...named } = obj || {};
+  // A task or schedule id names its deck (decks.js scopeCall); a call that
+  // would move a session or task onto another deck's is refused here.
+  const scope = scopeCall(named);
+  let deckId = deckForCall(named.sessionId, card);
+  const owner = scope.deckId === undefined ? deckId : scope.deckId || boardDeckId;
+  if (scope.conflict || ((card || named.sessionId) && deckId !== owner)) {
+    toast('Tasks stay on their own deck: move it to a task on the same deck', true);
+    return false;
+  }
+  deckId = owner;
+  const frame = scope.frame;
   const call = toActionCall(frame, extId);
   if (!call) return false;
-  const deckId = deckForCall(frame.sessionId, card);
   const client = clientForDeck(deckId);
   if (!client || !client.canSend(call.action)) {
     if (client === deck) { if (deckStatus === 'ready') toast(`This deck does not offer ${call.action}`, true); }
     else toast(client?.status() === 'ready' ? `${deckNameOf(deckId)} does not offer ${call.action}` : `${deckNameOf(deckId)} is unreachable`, true);
     return false;
   }
+  const remote = deckId && deckId !== boardDeckId ? deckId : null;
   client.act(call.action, call).then((r) => withDeckContext(deckId, () => {
-    if (r.ok) { if (r.data && typeof r.data.type === 'string') onDeckMessage(r.data); }
+    if (r.ok) { if (r.data && typeof r.data.type === 'string') onDeckMessage(scopeReply(r.data, remote)); }
     else onDeckMessage({ type: 'error', message: r.error?.message || 'The action failed' });
   }));
   return true;
@@ -7859,6 +7926,7 @@ const REMOTE_DECK_MESSAGES = new Set([
   'auto-archived', 'archived', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
   'forked', 'resume-needs-dir', 'open-terminal', 'subagent-detail', 'chat', 'message-result',
   'paste-image-result', 'interrupt-restore', 'model-set', 'error',
+  'schedule-fired', 'schedule-error', 'schedule-missed',
 ]);
 function onRemoteDeckMessage(deckId, msg) {
   if (!msg || !REMOTE_DECK_MESSAGES.has(msg.type)) return;

@@ -292,8 +292,17 @@ board does not speak, or the URL reaches a deck already on the board) or **Unrea
 cannot reach `GET /deck` there, often because the deck does not allow this board's origin).
 
 With more than one deck on the board, each card shows its deck's name and colour. A card whose deck
-is unreachable stays on the board, greyed out and disabled, until the deck is back. Another deck's
-cards sit in the **Ad hoc** tile: this board's tasks and new sessions belong to its own deck.
+is unreachable stays on the board, greyed out and disabled, until the deck is back.
+
+Tasks and schedules belong to a deck too. With more than one deck, each task tile names its deck
+ahead of the task, in the deck's colour, and each deck's tasks sit together, this board's own first.
+Renaming, reordering, archiving or dragging a session into a task goes to that task's deck; a session
+or task cannot move onto another deck's, and **Unassigned** holds every deck's unassigned sessions.
+**Schedules** lists each deck's schedules under its name, and enabling, running or deleting one goes
+to its deck. Another deck's schedule is edited, and its tasks get new sessions, from that deck's own
+board: new sessions here start on this board's deck. An unreachable deck's tasks and schedules stay
+listed, greyed out, until it is back.
+
 **Remove** takes a deck off the board; its sessions keep running on it.
 
 Extensions load once, from the board's own install. A card's checklist is the one its own deck

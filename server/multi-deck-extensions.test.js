@@ -27,7 +27,7 @@ function seedDeck(dataDir, { sessions, checklists, boardApi = null }) {
   cpSync(FIXTURE, extDir, { recursive: true });
   if (boardApi) {
     const manifest = join(extDir, 'index.js');
-    writeFileSync(manifest, readFileSync(manifest, 'utf8').replace("boardApi: '^1.77.0'", `boardApi: '${boardApi}'`));
+    writeFileSync(manifest, readFileSync(manifest, 'utf8').replace("boardApi: '^1.78.0'", `boardApi: '${boardApi}'`));
   }
   writeFileSync(join(dataDir, 'extensions.json'), JSON.stringify({ 'per-deck-probe': { id: 'per-deck-probe', requires: ['board:rebuild'] } }));
 }

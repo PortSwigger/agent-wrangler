@@ -1,5 +1,5 @@
 import { createDeckClient, stateToGraph } from './deck-client.js';
-import { stampDeck } from './card-key.js';
+import { stampDeck, cardKey, parseCardKey } from './card-key.js';
 
 // The decks one board shows. The list lives in the board server
 // (server/board-decks.js), so every browser on the board reads the same one;
@@ -54,6 +54,63 @@ export function mergeDeckGraphs(own, remotes = [], { multi = false } = {}) {
   return { ...base, sessions, ...(nodes ? { nodes } : {}) };
 }
 
+// Another deck's tasks and schedules as this board shows them: each id is
+// scoped by its deck id (`<deckId>/<id>`, the card key's form; the board's own
+// ids never contain '/'), so two decks' ids never meet. `assignments` is keyed
+// by card key. Each task and schedule carries its deck's name, colour and
+// whether the deck is connected; the order keeps each deck's tasks together,
+// in the deck's own order, decks in list order.
+export function remoteTaskView(remotes = []) {
+  const view = { tasks: [], order: [], assignments: {}, sessionOrder: {}, schedules: [] };
+  for (const deck of remotes) {
+    if (!deck?.deckId || !deck.graph) continue;
+    const scope = (id) => cardKey(deck.deckId, id);
+    const mark = { deckId: deck.deckId, deckName: deck.name, deckColour: deck.colour, ...(deck.status !== 'ready' ? { deckUnreachable: true } : {}) };
+    const t = deck.graph.tasks || {};
+    const tasks = (Array.isArray(t.tasks) ? t.tasks : []).filter((x) => typeof x?.id === 'string' && scope(x.id));
+    for (const task of tasks) view.tasks.push({ ...task, ...mark, id: scope(task.id), localId: task.id });
+    const ids = new Set(tasks.map((x) => x.id));
+    const order = (Array.isArray(t.order) ? t.order : []).filter((id) => ids.has(id));
+    for (const task of tasks) if (!order.includes(task.id)) order.push(task.id);
+    view.order.push(...order.map(scope));
+    for (const [sid, tid] of Object.entries(t.assignments || {})) {
+      const key = cardKey(deck.deckId, sid);
+      if (key && ids.has(tid)) view.assignments[key] = scope(tid);
+    }
+    for (const [bucket, list] of Object.entries(t.sessionOrder || {})) if (scope(bucket)) view.sessionOrder[scope(bucket)] = list;
+    const schedules = Array.isArray(deck.graph.schedules?.schedules) ? deck.graph.schedules.schedules : [];
+    for (const sch of schedules) if (typeof sch?.id === 'string' && scope(sch.id)) view.schedules.push({ ...sch, ...mark, id: scope(sch.id), localId: sch.id });
+  }
+  return view;
+}
+
+// Where a task or schedule call goes, from the ids it names: a scoped id names
+// another deck and is sent there bare; any other id is the board's own deck's
+// (`deckId: null`). `deckId` is undefined when the call names none, and
+// `conflict` is set when it names two decks (a task moved onto another deck's).
+export function scopeCall(frame) {
+  const type = typeof frame?.type === 'string' ? frame.type : '';
+  const fields = type.startsWith('schedule-') ? ['id'] : type.startsWith('task-') ? ['taskId', 'targetId'] : [];
+  let deckId;
+  const out = { ...frame };
+  for (const f of fields) {
+    if (typeof frame[f] !== 'string') continue;
+    const p = parseCardKey(frame[f]);
+    const d = p ? p.deckId : null;
+    if (deckId !== undefined && deckId !== d) return { conflict: true, frame };
+    deckId = d;
+    if (p) out[f] = p.sessionId;
+  }
+  return { deckId, frame: out };
+}
+
+// A reply or event from another deck naming one of its tasks names it scoped,
+// as the board shows it.
+export function scopeReply(msg, deckId) {
+  if (!deckId || !msg || typeof msg.taskId !== 'string' || !String(msg.type).startsWith('task-')) return msg;
+  return { ...msg, taskId: cardKey(deckId, msg.taskId) || msg.taskId };
+}
+
 // Which deck an outgoing call goes to. `card` names it outright. Otherwise the
 // session id picks the one deck holding it; when two decks hold the same id,
 // the card being acted on (`hint`) decides, then the deck whose reply is being
@@ -77,8 +134,9 @@ export function routeDeck({ card = null, sessionId = null, sessions = [], hint =
 // status or descriptor moved; `onEvent(deckId, frame)` for its events. A deck
 // whose id is the board's own or another listed deck's (the same deck under a
 // second URL) is shown as incompatible and not read twice. `cache` keeps each
-// deck's last sessions ({ get(entry), set(entry, value), drop(entry) }), so a
-// deck that is down when the page loads still shows its cards, unreachable.
+// deck's last sessions, tasks and schedules ({ get(entry), set(entry, value),
+// drop(entry) }), so a deck that is down when the page loads still shows them,
+// unreachable.
 export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = () => null, onChange = () => {}, onEvent = () => {}, cache = null } = {}) {
   const decks = new Map();
   let opened = 0;
@@ -98,7 +156,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
     const cached = cache?.get(entry);
     if (cached && typeof cached.deckId === 'string' && Array.isArray(cached.sessions) && cached.url === entry.url) {
       d.deckId = cached.deckId;
-      d.graph = stampDeck({ sessions: cached.sessions }, cached.deckId);
+      d.graph = stampDeck({ sessions: cached.sessions, tasks: cached.tasks, schedules: cached.schedules }, cached.deckId);
     }
     d.client = makeClient({
       origin: () => originOfUrl(d.entry.url),
@@ -116,7 +174,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
         if (!d.deckId) return;
         d.graph = stampDeck(stateToGraph(frame), d.deckId);
         d.ext = frame.ext && typeof frame.ext === 'object' ? frame.ext : null;
-        cache?.set(d.entry, { url: d.entry.url, deckId: d.deckId, sessions: d.graph.sessions || [] });
+        cache?.set(d.entry, { url: d.entry.url, deckId: d.deckId, sessions: d.graph.sessions || [], tasks: d.graph.tasks, schedules: d.graph.schedules });
         onChange();
       },
       onEvent: (frame) => { if (d.deckId && !d.duplicate) onEvent(d.deckId, frame); },

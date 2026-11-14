@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDeckClient } from './deck-client.js';
 import { deckIdOf, stampDeck } from './card-key.js';
-import { createDeckList, createRemoteDecks, deckLabel, extensionDecks, mergeDeckGraphs, originOfUrl, routeDeck } from './decks.js';
+import { createDeckList, createRemoteDecks, deckLabel, extensionDecks, mergeDeckGraphs, originOfUrl, remoteTaskView, routeDeck, scopeCall, scopeReply } from './decks.js';
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -207,17 +207,17 @@ test('a deck that is down when the page loads still shows its last cards, unreac
 test('each extension is listed with every deck reporting it: ready, incompatible on another boardApi, or unreachable', () => {
   const descriptor = (exts) => ({ extensions: exts.map(([id, boardApi]) => ({ id, version: null, boardApi })) });
   const decks = [
-    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', descriptor: descriptor([['probe', '^1.77.0'], ['todos', '^1.74.0']]), ext: { probe: { count: 1 } } },
+    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', descriptor: descriptor([['probe', '^1.78.0'], ['todos', '^1.74.0']]), ext: { probe: { count: 1 } } },
     { deckId: 'deck-b', name: 'Laptop B', colour: null, status: 'ready', descriptor: descriptor([['probe', '^1.76.0']]), ext: { probe: { count: 9 } } },
-    { deckId: 'deck-c', name: 'Laptop C', colour: null, status: 'unreachable', descriptor: descriptor([['probe', '^1.77.0']]), ext: { probe: { count: 4 } } },
-    { deckId: 'deck-d', name: 'Copy of A', status: 'incompatible', duplicate: 'own', descriptor: descriptor([['probe', '^1.77.0']]) },
+    { deckId: 'deck-c', name: 'Laptop C', colour: null, status: 'unreachable', descriptor: descriptor([['probe', '^1.78.0']]), ext: { probe: { count: 4 } } },
+    { deckId: 'deck-d', name: 'Copy of A', status: 'incompatible', duplicate: 'own', descriptor: descriptor([['probe', '^1.78.0']]) },
     { deckId: 'deck-e', name: 'Not yet', status: 'connecting', descriptor: null },
   ];
-  const got = extensionDecks(decks, (id) => ({ probe: '^1.77.0' })[id] ?? null);
+  const got = extensionDecks(decks, (id) => ({ probe: '^1.78.0' })[id] ?? null);
   assert.deepEqual(got.get('probe'), [
-    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', boardApi: '^1.77.0', state: { count: 1 } },
+    { deckId: 'deck-a', name: 'Laptop A', colour: '#e5793b', own: true, status: 'ready', boardApi: '^1.78.0', state: { count: 1 } },
     { deckId: 'deck-b', name: 'Laptop B', colour: null, own: false, status: 'incompatible', boardApi: '^1.76.0', state: null },
-    { deckId: 'deck-c', name: 'Laptop C', colour: null, own: false, status: 'unreachable', boardApi: '^1.77.0', state: { count: 4 } },
+    { deckId: 'deck-c', name: 'Laptop C', colour: null, own: false, status: 'unreachable', boardApi: '^1.78.0', state: { count: 4 } },
   ]);
   assert.deepEqual(got.get('todos').map((r) => [r.deckId, r.status]), [['deck-a', 'ready']], 'an extension with no board half here pairs with any deck');
 });
@@ -229,4 +229,37 @@ test('a remote deck keeps its own extension state from its state frames', async 
   await flush(); await flush();
   net.socketOf('http://127.0.0.1:7001').receive({ ...stateFrame([]), ext: { probe: { count: 2 } } });
   assert.deepEqual(remotes.list()[0].ext, { probe: { count: 2 } });
+});
+
+test('another deck\'s tasks and schedules are scoped by its deck id and carry its name', () => {
+  const graph = {
+    sessions: [],
+    tasks: { tasks: [{ id: 't_1', name: 'Pipeline' }, { id: 't_2', name: 'Old', archivedAt: 1 }], order: ['t_2', 'adhoc', 't_1', 'gone'], assignments: { s1: 't_1', s2: 'nope' }, sessionOrder: { t_1: ['s1'] } },
+    schedules: { schedules: [{ id: 'sch_1', name: 'Nightly', enabled: true }] },
+  };
+  const view = remoteTaskView([
+    { deckId: 'deck-b', name: 'Laptop B', colour: '#112233', status: 'ready', graph },
+    { deckId: 'deck-c', name: 'Laptop C', colour: null, status: 'unreachable', graph: { tasks: { tasks: [{ id: 't_1', name: 'Same id' }] } } },
+    { deckId: null, name: 'Connecting', graph },
+  ]);
+  assert.deepEqual(view.tasks.map((t) => [t.id, t.name, t.deckName, Boolean(t.deckUnreachable)]), [
+    ['deck-b/t_1', 'Pipeline', 'Laptop B', false], ['deck-b/t_2', 'Old', 'Laptop B', false], ['deck-c/t_1', 'Same id', 'Laptop C', true],
+  ]);
+  assert.deepEqual(view.order, ['deck-b/t_2', 'deck-b/t_1', 'deck-c/t_1'], 'each deck\'s own order, decks kept together');
+  assert.deepEqual(view.assignments, { 'deck-b/s1': 'deck-b/t_1' });
+  assert.deepEqual(view.sessionOrder, { 'deck-b/t_1': ['s1'] });
+  assert.deepEqual(view.schedules.map((s) => [s.id, s.localId, s.deckName]), [['deck-b/sch_1', 'sch_1', 'Laptop B']]);
+  assert.deepEqual(remoteTaskView([]).tasks, []);
+});
+
+test('a task or schedule call goes to the deck its id names, bare; naming two decks is a conflict', () => {
+  assert.deepEqual(scopeCall({ type: 'task-rename', taskId: 'deck-b/t_1', name: 'X' }), { deckId: 'deck-b', frame: { type: 'task-rename', taskId: 't_1', name: 'X' } });
+  assert.deepEqual(scopeCall({ type: 'task-rename', taskId: 't_1' }), { deckId: null, frame: { type: 'task-rename', taskId: 't_1' } });
+  assert.deepEqual(scopeCall({ type: 'schedule-toggle', id: 'deck-b/sch_1', enabled: false }).frame, { type: 'schedule-toggle', id: 'sch_1', enabled: false });
+  assert.equal(scopeCall({ type: 'task-assign', sessionId: 's1', taskId: null }).deckId, undefined, 'unassigning names no deck');
+  assert.equal(scopeCall({ type: 'task-reorder', taskId: 'deck-b/t_1', targetId: 'adhoc' }).conflict, true);
+  assert.equal(scopeCall({ type: 'task-reorder', taskId: 'deck-b/t_1', targetId: 'deck-b/t_2' }).frame.targetId, 't_2');
+  assert.equal(scopeCall({ type: 'launch', taskId: 'deck-b/t_1' }).deckId, undefined, 'only task and schedule calls are scoped');
+  assert.deepEqual(scopeReply({ type: 'task-created', taskId: 't_9' }, 'deck-b'), { type: 'task-created', taskId: 'deck-b/t_9' });
+  assert.deepEqual(scopeReply({ type: 'task-created', taskId: 't_9' }, null), { type: 'task-created', taskId: 't_9' });
 });
