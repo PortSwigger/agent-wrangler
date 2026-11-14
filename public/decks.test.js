@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDeckClient } from './deck-client.js';
 import { deckIdOf, stampDeck } from './card-key.js';
-import { createDeckList, createRemoteDecks, deckLabel, deckPickerOptions, deckRunsAgent, deckRuntimes, extensionDecks, mergeDeckGraphs, originOfUrl, remoteTaskView, routeDeck, scopeCall, scopeReply } from './decks.js';
+import { createDeckList, createRemoteDecks, deckLabel, deckPickerOptions, deckRunsAgent, deckRuntimes, extensionDecks, mergeDeckGraphs, originOfUrl, remoteTaskView, routeDeck, scheduleActionForDeck, scopeCall, scopeReply, sessionsOnDeck } from './decks.js';
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -296,4 +296,21 @@ test('a deck offers the runtimes its descriptor lists, each with the agents it r
   assert.deepEqual(deckRuntimes(null), [{ id: 'local', label: 'Local (host)', agents: null }]);
   assert.equal(deckRunsAgent(rts, 'codex'), true);
   assert.equal(deckRunsAgent([{ id: 'sandbox', label: 'Sandbox', agents: ['claude'] }], 'codex'), false);
+});
+
+test('a deck holds its own sessions; the board’s own deck also those with no deck id', () => {
+  const sessions = [{ sessionId: 'a', deckId: 'own' }, { sessionId: 'b', deckId: 'deckb' }, { sessionId: 'c' }];
+  assert.deepEqual(sessionsOnDeck(sessions, null, 'own').map((s) => s.sessionId), ['a', 'c']);
+  assert.deepEqual(sessionsOnDeck(sessions, 'deckb', 'own').map((s) => s.sessionId), ['b']);
+});
+
+test('a schedule for another deck names its task by that deck’s own id', () => {
+  const tasks = [{ id: 'deckb/t1', localId: 't1' }];
+  const action = { kind: 'dispatch', dispatch: { intent: 'x', taskId: 'deckb/t1' } };
+  assert.deepEqual(scheduleActionForDeck(action, tasks), { kind: 'dispatch', dispatch: { intent: 'x', taskId: 't1' } });
+  assert.equal(action.dispatch.taskId, 'deckb/t1');
+  const unassigned = { kind: 'dispatch', dispatch: { intent: 'x' } };
+  assert.equal(scheduleActionForDeck(unassigned, tasks), unassigned);
+  const session = { kind: 'session', sessionId: 's1', message: '' };
+  assert.equal(scheduleActionForDeck(session, tasks), session);
 });

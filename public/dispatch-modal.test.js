@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { dispatchModePresentation } from './dispatch-mode.js';
 import { createBoardOpen } from './board-open.js';
 import { cardKey, sessionIdOf } from './card-key.js';
+import { scheduleActionForDeck } from './decks.js';
 import { adapterFor, providerMetadata } from '../server/agents/index.js';
 
 const html = readFileSync(join(import.meta.dirname, 'index.html'), 'utf8');
@@ -541,21 +542,22 @@ test('the Codex sandbox/approval row shows for a Codex draft only, prefilled fro
   assert.deepEqual(h.readCoreDispatchFields().codexPolicy, { bypass: true });
 });
 
-function scheduleHarness(kind = 'dispatch', editing = false) {
+function scheduleHarness(kind = 'dispatch', editing = false, { deck = null, refuse = false } = {}) {
   const sent = [];
   const state = { invalid: true, closed: false };
   const go = { disabled: false };
   const document = { getElementById: (id) => id === 'm-go' ? go : { value: id === 'm-sch-target' ? 'S1' : 'Example' } };
-  const action = kind === 'dispatch' ? { kind, dispatch: { cwd: '/repo', addDirs: ['/extra'] } } : { kind: 'session', sessionId: 'S1' };
+  const action = kind === 'dispatch' ? { kind, dispatch: { cwd: '/repo', addDirs: ['/extra'], ...(deck ? { taskId: `${deck}/t1` } : {}) } } : { kind: 'session', sessionId: 'S1' };
   const app = loadApp(
     ['function scheduleActionValid() {', 'function syncScheduleGo() {', 'function submitSchedule() {'],
     ['submitSchedule', 'syncScheduleGo'],
-    `const scheduleAction = ${JSON.stringify(kind)}; const modalMode = ${JSON.stringify(editing ? 'schedule-edit' : 'schedule-create')}; const editingScheduleId = 'SCH1';`,
+    `const scheduleAction = ${JSON.stringify(kind)}; const modalMode = ${JSON.stringify(editing ? 'schedule-edit' : 'schedule-create')}; const editingScheduleId = 'SCH1'; const dispatchDeck = ${JSON.stringify(deck)};`,
     {
       document, additionalFolders: { invalid: () => state.invalid },
       scheduleMode: () => true, readPicker: () => ({}), whenValid: () => true,
       compileWhen: () => '2027-01-01T09:00:00Z', readScheduleAction: () => action,
-      send: (msg) => sent.push(msg), closeModal: () => { state.closed = true; },
+      remoteBoard: { tasks: deck ? [{ id: `${deck}/t1`, localId: 't1' }] : [] }, scheduleActionForDeck,
+      send: (msg) => (refuse ? false : sent.push(msg) > 0), closeModal: () => { state.closed = true; },
       openSchedulesPanel() {}, toast() {},
     },
   );
@@ -579,6 +581,23 @@ for (const editing of [false, true]) {
     assert.equal(state.closed, true);
   });
 }
+
+test('a schedule created on another deck goes to that deck, naming its task by that deck\'s id', () => {
+  const { submitSchedule, sent, state } = scheduleHarness('dispatch', false, { deck: 'deckb' });
+  state.invalid = false;
+  submitSchedule();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].deck, 'deckb');
+  assert.equal(sent[0].action.dispatch.taskId, 't1');
+  assert.equal(state.closed, true);
+});
+
+test('a schedule the board could not send keeps the dialog open', () => {
+  const { submitSchedule, state } = scheduleHarness('dispatch', false, { deck: 'deckb', refuse: true });
+  state.invalid = false;
+  submitSchedule();
+  assert.equal(state.closed, false);
+});
 
 test('session schedules ignore folder errors in the unused dispatch fields', () => {
   const { submitSchedule, sent, go } = scheduleHarness('session');
