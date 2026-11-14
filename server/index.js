@@ -17,6 +17,7 @@ import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
+import { readProvenance } from './extensions/provenance.js';
 import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor, themeSources } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
@@ -44,7 +45,7 @@ import { dispatchModels } from './agents/listing.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
-import { bindHost, deckPort } from './runtime.js';
+import { bindHost, deckPort, deckOnly } from './runtime.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createBoardServer } from './http-handler.js';
 import { createDeckServer } from './deck/http.js';
@@ -102,12 +103,16 @@ const open = openModule.default || openModule;
 // PORT is the board's: the address people open, and the one launched sessions
 // reach MCP and the PR hooks on (forwarded to the deck). The deck listens on
 // loopback on its own port; DECK_PORT is what it asks for, and deckListenPort
-// what it got.
+// what it got. A deck-only instance has no board: nothing listens on PORT, its
+// sessions reach the deck directly, and only configured origins are boards.
 const PORT = Number(process.env.AW_PORT) || Number(process.env.PORT) || 7878;
 const HOST = bindHost();
+const DECK_ONLY = deckOnly();
 const DECK_HOST = '127.0.0.1';
 const DECK_PORT = deckPort();
 let deckListenPort = DECK_PORT;
+const BOARD_ORIGIN_PORT = DECK_ONLY ? null : PORT;
+const deckAuthorities = () => (DECK_ONLY ? [deckListenPort] : [PORT, deckListenPort]);
 
 // Last-resort guards: a single bad PTY/AppleScript/parse must never take the
 // whole dashboard down. Log and keep serving.
@@ -1008,7 +1013,7 @@ const openExtFile = async (id, p) => (hostApis.has(id) ? extFiles.open(id, p) : 
 const legacyFileRoutes = createLegacyFileRoutes({
   registry: deckActions,
   ctx: () => ({ readMarkdownFile, openExtFile }),
-  allowedHost: (host) => isAllowedHost(host, [PORT, deckListenPort]),
+  allowedHost: (host) => isAllowedHost(host, deckAuthorities()),
   logError,
 });
 
@@ -1054,7 +1059,7 @@ const mcpRequestHandler = createMcpRequestHandler({
 
 // GET /deck — the deck API's descriptor. Host-pinned like /file.
 function deckHandler(req, res) {
-  if (!isAllowedHost(req.headers.host, [PORT, deckListenPort])) {
+  if (!isAllowedHost(req.headers.host, deckAuthorities())) {
     res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: 'forbidden' }));
     return;
@@ -1072,7 +1077,7 @@ function deckHandler(req, res) {
 }
 
 const deckServer = createDeckServer({
-  boardPort: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, deckHandler,
+  boardPort: BOARD_ORIGIN_PORT, mcpRequestHandler, prAttachHandler, prModelHandler, deckHandler,
   fileHandler: legacyFileRoutes.file, extFileHandler: legacyFileRoutes.extFile,
 });
 
@@ -1092,7 +1097,7 @@ const ptyWss = new WebSocketServer({ noServer: true });
 deckServer.on('upgrade', (req, socket, head) => {
   // CSRF gate: a cross-origin browser page can open a WS without a preflight, so
   // reject before handleUpgrade (an absent Origin is a non-browser client — allow).
-  if (!isAllowedOrigin(req.headers.origin, PORT)) {
+  if (!isAllowedOrigin(req.headers.origin, BOARD_ORIGIN_PORT)) {
     socket.destroy();
     return;
   }
@@ -1218,7 +1223,7 @@ async function rebuildOnce() {
   // back, and what the client mounts/unmounts its slot contributions from. `enabled`
   // is re-read from config here, not taken from ext.list's boot snapshot: see
   // extensionsForGraph.
-  graph.extensions = extensionsForGraph(ext.list);
+  graph.extensions = extensionsForGraph(ext.list, undefined, undefined, readProvenance());
   // Rarely moves — a builtin quarantines at boot, or on a live enable that
   // failed — but carried on the graph
   // rather than the connect announcement so the banner survives a reconnect the
@@ -1409,7 +1414,7 @@ async function main() {
   // before any store write (init/rebuild) so a duplicate never gets a save in.
   let instanceLock;
   try {
-    instanceLock = await acquireInstanceLock({ port: PORT });
+    instanceLock = await acquireInstanceLock({ port: DECK_ONLY ? DECK_PORT : PORT });
   } catch (err) {
     if (err instanceof InstanceLockError) {
       logError(`[agent-wrangler] ${err.message}`);
@@ -1542,11 +1547,11 @@ async function main() {
   // (EMFILE under fd pressure), which must stay a logged, survivable event.
   // The deck binds first, so the board's page names a port that answers. A
   // taken default deck port falls back to one the OS picks; one set with
-  // AW_DECK_PORT is held to.
+  // AW_DECK_PORT is held to, as is a deck-only one: its sessions are told its port.
   await new Promise((resolve) => {
     let tryPort = DECK_PORT;
     const onDeckError = (err) => {
-      if (err?.code === 'EADDRINUSE' && !process.env.AW_DECK_PORT && tryPort !== 0) {
+      if (err?.code === 'EADDRINUSE' && !process.env.AW_DECK_PORT && !DECK_ONLY && tryPort !== 0) {
         tryPort = 0;
         deckServer.listen(0, DECK_HOST);
         return;
@@ -1564,12 +1569,22 @@ async function main() {
     deckServer.listen(DECK_PORT, DECK_HOST);
   });
 
+  if (DECK_ONLY) {
+    const url = `http://localhost:${deckListenPort}`;
+    if (startupStyle({ isTTY: process.stdout.isTTY, supervised: INSTALL_ENV.supervised }) === 'banner') {
+      console.log(bannerLines({ version: VERSION, commit: install.checkout ? codeVersion : null, url, dataDir: DATA_DIR, deckOnly: true }).join('\n'));
+    } else {
+      log(`[agent-wrangler] deck-only at ${url} (pid ${process.pid})`);
+    }
+    setTimeout(() => clearRollbackMarker(), ROLLBACK_CLEAR_AFTER_MS).unref();
+  }
+
   const onListenError = (err) => {
     logError(listenErrorMessage(err, PORT));
     process.exit(1);
   };
-  boardServer.once('error', onListenError);
-  boardServer.listen(PORT, HOST, () => {
+  if (!DECK_ONLY) boardServer.once('error', onListenError);
+  if (!DECK_ONLY) boardServer.listen(PORT, HOST, () => {
     boardServer.off('error', onListenError);
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;

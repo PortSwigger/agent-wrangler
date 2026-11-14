@@ -17,6 +17,13 @@ const cases = [
   { name: '--data-dir', argv: ['--data-dir', '~/aw-x'], want: { action: 'run', env: { AW_DATA_DIR: '~/aw-x' } } },
   { name: '--open', argv: ['--open'], want: { action: 'run', env: { AW_OPEN_BROWSER: '1', AW_NO_OPEN: '' } } },
   { name: '--host', argv: ['--host', '0.0.0.0'], want: { action: 'run', env: { AW_BIND_HOST: '0.0.0.0' } } },
+  { name: '--deck-only', argv: ['--deck-only'], want: { action: 'run', env: { AW_DECK_ONLY: '1' } } },
+  { name: '--port with --deck-only is the deck port', argv: ['--deck-only', '--port', '7990'], want: { action: 'run', env: { AW_DECK_PORT: '7990', AW_DECK_ONLY: '1' } } },
+  {
+    name: '--allowed-origins',
+    argv: ['--allowed-origins', 'http://localhost:7878, http://127.0.0.1:7878'],
+    want: { action: 'run', env: { AW_ALLOWED_ORIGINS: 'http://localhost:7878, http://127.0.0.1:7878' } },
+  },
   {
     name: 'flags combine',
     argv: ['--port', '7998', '--data-dir', '/tmp/aw', '--open'],
@@ -34,6 +41,8 @@ const errors = [
   { name: 'unknown flag', argv: ['--bogus'], match: /--bogus/ },
   { name: 'positional argument', argv: ['serve'], match: /serve/ },
   { name: 'missing port value', argv: ['--port'], match: /--port/ },
+  { name: 'allowed origin that is not a URL', argv: ['--allowed-origins', 'localhost'], match: /--allowed-origins/ },
+  { name: 'allowed origin with a path', argv: ['--allowed-origins', 'http://localhost:7878/board'], match: /--allowed-origins/ },
   { name: 'port zero', argv: ['--port', '0'], match: /1 to 65535/ },
   { name: 'port too large', argv: ['--port', '65536'], match: /1 to 65535/ },
   { name: 'non-numeric port', argv: ['--port', 'abc'], match: /1 to 65535/ },

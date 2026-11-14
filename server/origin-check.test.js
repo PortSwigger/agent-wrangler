@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAllowedOrigin, isAllowedHost, corsHeaders } from './origin-check.js';
+import { isAllowedOrigin, isAllowedHost, corsHeaders, configuredOrigins } from './origin-check.js';
 
 const PORT = 7878;
 
@@ -83,4 +83,25 @@ test('isAllowedHost: a list of ports allows each one\'s loopback authorities', (
   assert.equal(isAllowedHost(`127.0.0.1:${PORT}`, [PORT, PORT + 1]), true);
   assert.equal(isAllowedHost(`localhost:${PORT + 1}`, [PORT, PORT + 1]), true);
   assert.equal(isAllowedHost(`localhost:${PORT + 2}`, [PORT, PORT + 1]), false);
+});
+
+test('configuredOrigins: AW_ALLOWED_ORIGINS and config.json allowedOrigins (list or comma string) combine', () => {
+  assert.deepEqual(configuredOrigins({ AW_ALLOWED_ORIGINS: 'http://a:1, ' }, { allowedOrigins: ['http://b:2/', 3] }), ['http://a:1', 'http://b:2']);
+  assert.deepEqual(configuredOrigins({}, { allowedOrigins: 'http://c:3,http://d:4' }), ['http://c:3', 'http://d:4']);
+  assert.deepEqual(configuredOrigins({}, {}), []);
+});
+
+test('a null board port (deck-only) allows only configured origins', () => {
+  const prev = process.env.AW_ALLOWED_ORIGINS;
+  try {
+    delete process.env.AW_ALLOWED_ORIGINS;
+    assert.equal(isAllowedOrigin(`http://localhost:${PORT}`, null), false);
+    assert.equal(isAllowedOrigin(undefined, null), true);
+    process.env.AW_ALLOWED_ORIGINS = `http://localhost:${PORT}`;
+    assert.equal(isAllowedOrigin(`http://localhost:${PORT}`, null), true);
+    assert.equal(isAllowedOrigin('http://127.0.0.1:7878', null), false);
+  } finally {
+    if (prev === undefined) delete process.env.AW_ALLOWED_ORIGINS;
+    else process.env.AW_ALLOWED_ORIGINS = prev;
+  }
 });
