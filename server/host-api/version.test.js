@@ -81,7 +81,7 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.75.0 `deckId` and `cardKey` on the board's session rows,
 // and 1.76.0 `deckName`, `deckColour` and `deckUnreachable` on them,
 // and 1.77.0 every deck's tasks, with `deckName`, in the `board.tray` context,
-// and 1.78.0 the board half's per-deck `decks`, `state({ deck })` and `act`'s `deck`,
+// and 1.78.0 the board half's per-deck `decks`, `state({ deck })`, `act`'s and `send`'s `deck`, `fromDeck` and `decks: true` task contributions,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.

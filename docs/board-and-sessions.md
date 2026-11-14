@@ -306,7 +306,9 @@ listed, greyed out, until it is back.
 **Remove** takes a deck off the board; its sessions keep running on it.
 
 Extensions load once, from the board's own install. A card's checklist is the one its own deck
-keeps, and ticking an item changes it on that deck alone. An extension with a view of its own may
+keeps, and ticking an item changes it on that deck alone. Another deck's task tile shows that deck's
+TODOs, and its **Task memory** opens that deck's memory; edits go to that deck alone. TODOs move only
+between tasks on the same deck, and another deck's TODO has no start-session button. An extension with a view of its own may
 show one section for each deck that runs it; a deck running a version of it whose board API does not
 match this board's is shown there as **Incompatible** and is sent nothing.
 

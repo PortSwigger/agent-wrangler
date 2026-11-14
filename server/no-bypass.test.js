@@ -94,6 +94,8 @@ test('board code reaches the deck only through /deck, /ws and /pty on the deck o
   assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}card-key.js`)), 'the card-key module is board code');
   assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}decks.js`)) && files.some((f) => f.endsWith(`${sep}public${sep}decks-panel.js`)), 'the multi-deck modules are board code');
   assert.ok(files.some((f) => f.endsWith(`checklist${sep}public${sep}index.js`)), 'the checklist board half, which reads each card\'s own deck, is board code');
+  assert.ok(files.some((f) => f.endsWith(`todos${sep}public${sep}client.js`)), 'the todos board half, which reads each task\'s own deck, is board code');
+  assert.ok(files.some((f) => f.endsWith(`task-memory${sep}public${sep}index.js`)), 'the task-memory board half, which reads each task\'s own deck, is board code');
   const all = files.flatMap((f) => bypasses(readFileSync(f, 'utf8'), f).map((b) => `${relative(REPO_ROOT, f)}:${b}`));
   assert.deepEqual(all, []);
 });

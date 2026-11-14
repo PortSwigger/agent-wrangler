@@ -18,8 +18,8 @@ export const PENCIL_ICON = svg('<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.8
 export const PLUS_ICON = svg('<path d="M5 12h14"/><path d="M12 5v14"/>');
 export const MINUS_ICON = svg('<path d="M5 12h14"/>');
 
-export function todoRowHtml(td, key) {
-  const spawn = `<button class="todo-spawn" title="Start a session from this TODO"><span class="todo-tick">${CHECK_ICON}</span><span class="todo-play">${PLAY_ICON}</span></button>`;
+export function todoRowHtml(td, key, { spawn: canSpawn = true } = {}) {
+  const spawn = !canSpawn ? '' : `<button class="todo-spawn" title="Start a session from this TODO"><span class="todo-tick">${CHECK_ICON}</span><span class="todo-play">${PLAY_ICON}</span></button>`;
   const details = `<button class="todo-details${td.description ? ' has-description' : ''}" title="Edit TODO details" aria-label="Edit TODO details">${PENCIL_ICON}</button>`;
   const del = `<button class="todo-del" title="Delete TODO">${X_ICON}</button>`;
   return `<div class="todo-row" data-todoid="${esc(td.id)}" data-todo-key="${esc(key)}" draggable="true">
@@ -34,11 +34,16 @@ export function todoRowHtml(td, key) {
 //
 // The toggle is a `.card-tag` pill — count + a +/- icon, never a rotating
 // chevron (a rotating chevron reads as "which way is open?"; +/- doesn't).
-export function todoZoneHtml(todos, key, collapsed = false) {
+export function todoZoneHtml(todos, key, collapsed = false, { spawn = true } = {}) {
   if (!todos.length) return `<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
   const toggleIcon = `<span class="todo-toggle-icon">${collapsed ? PLUS_ICON : MINUS_ICON}</span>`;
   const pill = `<button class="card-tag todo-pill" data-todo-key="${esc(key)}" title="${collapsed ? 'Show TODOs' : 'Hide TODOs'}">todo ${todos.length}${toggleIcon}</button>`;
   const divider = `<div class="todo-divider">${pill}</div>`;
-  const rows = collapsed ? '' : todos.map((td) => todoRowHtml(td, key)).join('');
+  const rows = collapsed ? '' : todos.map((td) => todoRowHtml(td, key, { spawn })).join('');
   return `${divider}${rows}<div class="todo-zone" data-todo-key="${esc(key)}"></div>`;
+}
+
+// Another deck's tile when that deck runs this extension with another boardApi.
+export function todoIncompatibleHtml(deckName) {
+  return `<div class="todo-incompatible">Incompatible: ${esc(deckName || 'this task\'s deck')} runs another version of TODOs</div>`;
 }

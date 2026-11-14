@@ -1434,6 +1434,51 @@ test('task.body: taskBodyWeight sums weights, ignores absent/invalid ones, and a
   assert.equal(slots.contributions('task.body').length, 6);
 });
 
+test('task.body and task.action: another deck\'s task reaches only contributions registered with decks: true', () => {
+  const { document, slots } = harness();
+  const mounted = [];
+  slots.register('task.body', 'old', { id: 'zone', mount: (el, api, ctx) => mounted.push(['old', ctx.taskId]), weight: () => 10 });
+  slots.register('task.body', 'new', { id: 'zone', decks: true, mount: (el, api, ctx) => mounted.push(['new', ctx.taskId, ctx.deckId, ctx.deckTaskId]), weight: (id, g, task) => (task ? 7 : 3) });
+  const own = document.make(); const remote = document.make();
+  slots.syncHosts('task.body', [
+    { host: own, session: { taskId: 'T1', adhocId: 'adhoc', container: own } },
+    { host: remote, session: { taskId: 'deck-b/T1', adhocId: 'adhoc', container: remote, deckId: 'deck-b', deckTaskId: 'T1' } },
+  ], {}, {});
+  assert.deepEqual(mounted, [['old', 'T1'], ['new', 'T1', undefined, undefined], ['new', 'deck-b/T1', 'deck-b', 'T1']]);
+  assert.equal(slots.taskBodyWeight('T1', {}, { taskId: 'T1' }), 13);
+  assert.equal(slots.taskBodyWeight('deck-b/T1', {}, { taskId: 'deck-b/T1', deckId: 'deck-b', deckTaskId: 'T1' }), 7);
+  slots.register('task.action', 'old', { id: 'a', items: () => [{ label: 'Old', run() {} }] });
+  slots.register('task.action', 'new', { id: 'a', decks: true, items: (task) => [{ label: `New ${task.deckTaskId ?? task.id}`, run() {} }] });
+  assert.deepEqual(slots.taskMenuItems({ id: 'T1', name: 'x', adhoc: false }, {}, {}).map((i) => i.label), ['Old', 'New T1']);
+  assert.deepEqual(slots.taskMenuItems({ id: 'deck-b/T1', name: 'x', adhoc: false, deckId: 'deck-b', deckTaskId: 'T1' }, {}, {}).map((i) => i.label), ['New T1']);
+});
+
+test('api.send with deck goes to a deck reporting this extension, and another deck\'s message arrives marked fromDeck', () => {
+  const sent = [];
+  const { slots, errors } = harness({ handlerTypesFor: () => ['ping'] });
+  const api = slots.forExtension('probe', { send: (f, extId) => sent.push([f, extId]) }).api;
+  slots.setExtDecks(new Map([['probe', [
+    { deckId: 'deck-a', name: 'A', own: true, status: 'ready', state: null },
+    { deckId: 'deck-b', name: 'B', own: false, status: 'ready', state: null },
+    { deckId: 'deck-c', name: 'C', own: false, status: 'incompatible', state: null },
+  ]]]));
+  api.send({ type: 'ping', deck: 'deck-b' });
+  api.send({ type: 'ping', deck: 'deck-c' });
+  api.send({ type: 'ping', deck: 'nowhere' });
+  api.send({ type: 'ping' });
+  assert.deepEqual(sent, [[{ type: 'ping', deck: 'deck-b' }, 'probe'], [{ type: 'ping' }, 'probe']]);
+  assert.match(errors.join('\n'), /C runs this extension with an incompatible boardApi/);
+  assert.match(errors.join('\n'), /no deck on this board reports this extension/);
+
+  const heard = [];
+  api.onMessage((m) => heard.push(m));
+  slots.dispatchMessage({ type: 'ext:probe', n: 1, fromDeck: 'deck-b' });
+  slots.dispatchMessage({ type: 'ext:probe', n: 2 }, { deck: 'deck-b' });
+  slots.dispatchMessage({ type: 'ext:probe', n: 3 }, { deck: 'deck-c' });
+  slots.dispatchMessage({ type: 'ext:probe', n: 4 }, { deck: 'nowhere' });
+  assert.deepEqual(heard, [{ type: 'ext:probe', n: 1 }, { type: 'ext:probe', n: 2, fromDeck: 'deck-b' }]);
+});
+
 test('task.body: weight must be a function', () => {
   const { slots } = harness();
   assert.throws(() => slots.register('task.body', 'x', { id: 'a', mount() {}, weight: 3 }), /weight must be a function/);

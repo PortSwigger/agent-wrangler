@@ -1924,6 +1924,10 @@ function assignedTaskId(ref) {
 const boardTasks = () => (remoteBoard.tasks.length ? [...latestTasks.tasks, ...remoteBoard.tasks] : latestTasks.tasks);
 const findTask = (id) => latestTasks.tasks.find((t) => t.id === id) || remoteBoard.tasks.find((t) => t.id === id) || null;
 const isRemoteTask = (id) => remoteBoard.tasks.some((t) => t.id === id);
+// What a task.body / task.action subject adds for another deck's task: its deck
+// and its id there. Slots offers such a task only to contributions registered
+// with `decks: true`.
+const deckTaskFields = (task) => (task && isRemoteTask(task.id) ? { deckId: task.deckId, deckTaskId: task.localId } : {});
 const bucketOrder = (id) => (latestTasks.sessionOrder || {})[id] || remoteBoard.sessionOrder[id];
 // A task as its tile draws it: with more than one deck on the board, each tile
 // names its deck, so the tasks read grouped under their decks' names.
@@ -2272,7 +2276,7 @@ function renderGrid(trayPass = 0, fitPass = 0) {
         const sessions = sortAsleepLast(ordered, phaseOf);
         // Tile height the `task.body` extensions want (e.g. the TODO zone); 0
         // when none is registered, which is also what a disabled one contributes.
-        const bodyPx = slots.taskBodyWeight(task.id, latestGraph);
+        const bodyPx = slots.taskBodyWeight(task.id, latestGraph, { taskId: task.id, ...deckTaskFields(task) });
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
         return [task.id, { kind: 'task', id: task.id, task: tileTask(task), sessions, estimate: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
       })
@@ -2511,7 +2515,7 @@ function mountTaskBodies(el) {
   const entries = [];
   for (const host of el.querySelectorAll('.task-body-ext')) {
     const taskId = host.dataset.taskBody;
-    if (taskId) entries.push({ host, session: { taskId, adhocId: ADHOC_ID, container: host } });
+    if (taskId) entries.push({ host, session: { taskId, adhocId: ADHOC_ID, container: host, ...deckTaskFields(findTask(taskId)) } });
   }
   slots.syncHosts('task.body', entries, extApi, latestGraph);
 }
@@ -2867,10 +2871,10 @@ function extMenuItems(s) {
 // adhoc }`, the no-task tile carrying ADHOC_ID — not the DOM cell.
 function extTaskMenuItems(taskId, isNoTask) {
   const id = isNoTask ? ADHOC_ID : taskId;
-  const task = isNoTask ? null : latestTasks.tasks.find((t) => t.id === taskId);
+  const task = isNoTask ? null : findTask(taskId);
   // Core carries Minimise in both task menus, so the legacy minimise-task
   // extension's own item is dropped rather than shown twice.
-  return slots.taskMenuItems({ id, name: task?.name ?? null, adhoc: isNoTask }, latestGraph, extApi)
+  return slots.taskMenuItems({ id, name: task?.name ?? null, adhoc: isNoTask, ...deckTaskFields(task) }, latestGraph, extApi)
     .filter((it) => !(it.extId === 'minimise-task' && it.label === 'Minimise'))
     .map((it) => ({
       label: it.label,
@@ -3200,8 +3204,7 @@ function openTaskActionsMenu(taskId, x, y) {
   const isAdhoc = taskId === ADHOC_ID;
   const task = isAdhoc ? null : findTask(taskId);
   if (!isAdhoc && !task) return;
-  // An extension's task actions act on this board's own deck's tasks.
-  const extItems = isRemoteTask(taskId) ? [] : extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
+  const extItems = extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
   const sortOn = activitySortedTasks.has(taskId);
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
@@ -7881,17 +7884,18 @@ function syncDeckControls() {
 // `card` (a card key) names the card the message is about, which decides the
 // deck it goes to; without it the session id does (deckForCall).
 export function send(obj, extId = null) {
-  const { card = null, ...named } = obj || {};
+  const { card = null, deck: toDeck = null, ...named } = obj || {};
   // A task or schedule id names its deck (decks.js scopeCall); a call that
   // would move a session or task onto another deck's is refused here.
   const scope = scopeCall(named);
   let deckId = deckForCall(named.sessionId, card);
   const owner = scope.deckId === undefined ? deckId : scope.deckId || boardDeckId;
-  if (scope.conflict || ((card || named.sessionId) && deckId !== owner)) {
+  if (!toDeck && (scope.conflict || ((card || named.sessionId) && deckId !== owner))) {
     toast('Tasks stay on their own deck: move it to a task on the same deck', true);
     return false;
   }
-  deckId = owner;
+  // An extension's frame may name its deck outright (`deck`, slots checks it).
+  deckId = toDeck || owner;
   const frame = scope.frame;
   const call = toActionCall(frame, extId);
   if (!call) return false;
@@ -7929,7 +7933,7 @@ const REMOTE_DECK_MESSAGES = new Set([
   'schedule-fired', 'schedule-error', 'schedule-missed',
 ]);
 function onRemoteDeckMessage(deckId, msg) {
-  if (!msg || !REMOTE_DECK_MESSAGES.has(msg.type)) return;
+  if (!msg || (!REMOTE_DECK_MESSAGES.has(msg.type) && !String(msg.type).startsWith('ext:'))) return;
   withDeckContext(deckId, () => onDeckMessage(msg));
 }
 function remountDecksPanel() {
@@ -7974,7 +7978,7 @@ function onDeckMessage(msg) {
   // extension's own module subscribed are called, and an unknown or unloaded
   // id reaches nothing. This branch is the whole reason such a frame is no
   // longer dropped off the end of this ladder.
-  else if (typeof msg.type === 'string' && msg.type.startsWith('ext:')) slots.dispatchMessage(msg);
+  else if (typeof msg.type === 'string' && msg.type.startsWith('ext:')) slots.dispatchMessage(msg, { deck: msgDeckId });
   // Success is silent on purpose: the model chip changes on the next turn, off
   // the transcript, which is real confirmation rather than this reply's
   // optimism. Only a refusal needs saying, because nothing else would show it.

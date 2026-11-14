@@ -305,7 +305,17 @@ runs its extension (1.78.0):
   incompatible deck is refused with error code `incompatible`, and a deck id not in `api.decks()`
   with `invalid`; neither reaches any deck.
 - `api.send(frame)` may carry `card`, a session row's `cardKey`, to send the frame to that card's
-  deck rather than the deck the bare `sessionId` picks.
+  deck rather than the deck the bare `sessionId` picks, or `deck`, a deck id from `api.decks()`, to
+  send it to that deck alone. A `deck` that is incompatible or not in `api.decks()` is refused and
+  reaches no deck.
+- A message another deck's server half broadcasts (`host.broadcast`) reaches `onMessage` carrying
+  `fromDeck`, that deck's id, and only while that deck is not incompatible. The board's own deck's
+  messages never carry `fromDeck`.
+- Another deck's task tile offers its `task.body` host and its `task.action` menu only to
+  contributions registered with `decks: true`. Their subject also carries `deckId` and `deckTaskId`,
+  the task's id on that deck (the board shows it as `<deckId>/<id>`), and `weight(taskId, graph,
+  task)` gets that subject as its third argument. The board's own deck's tasks carry neither, and
+  a contribution without `decks: true` sees only them, as before.
 
 A per-session board half reads the open card's deck from its session row:
 
@@ -328,8 +338,24 @@ function render() {
 }
 ```
 
-A board half that uses any of these declares `^1.78.0`. The builtin checklist does: on a board with
-several decks each card's checklist comes from, and is written to, that card's own deck.
+A per-task board half reads the task's deck from its subject:
+
+```js
+slots.register('task.body', {
+  id: 'notes',
+  decks: true,
+  mount(el, api, task) { /* … */ },
+  update(el, task) {
+    const mine = task.deckId ? api.state({ deck: task.deckId }) : api.state();
+    const save = (text) => api.send({ type: 'notes-set', taskId: task.deckTaskId ?? task.taskId, text, ...(task.deckId ? { deck: task.deckId } : {}) });
+  },
+});
+```
+
+A board half that uses any of these declares `^1.78.0`. The builtin checklist, todos and task
+memory do: on a board with several decks each card's checklist, and each task's TODOs and memory,
+come from and are written to that card's or task's own deck, and a deck running another version of
+one shows Incompatible in its place.
 
 ### Ports and origins
 

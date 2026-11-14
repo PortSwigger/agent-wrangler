@@ -20,6 +20,8 @@ export function todoLaunchIntent(todo) {
 // measured: (239-95) - 3*34 = 42px with 3 rows.
 export const TODO_STRIDE_PX = 34;
 export const TODO_DIVIDER_PX = 42;
+// The one-line Incompatible note another deck's tile shows in place of its zone.
+export const TODO_INCOMPATIBLE_PX = 26;
 
 // A todo-zone key (task.id or the ADHOC_ID sentinel) back to the taskId the server
 // expects on the wire: null for adhoc (the handler coerces null ⇒ adhoc), the real

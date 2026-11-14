@@ -12,13 +12,22 @@ import { REPO_ROOT, findChrome, freePort, openTab, sleep, startInstance, waitFor
 // extension declares another boardApi). The fixture's view shows one section
 // per deck, an action in a section reaches only that deck, and deck C's
 // section says it is incompatible. The builtin checklist shows the open card's
-// own deck's list and writes only there.
+// own deck's list and writes only there; the builtin todos and task memory show
+// and edit a task's own deck's, with the same task id seeded on both decks.
 
 const FIXTURE = join(REPO_ROOT, 'server', 'fixtures', 'per-deck-probe');
 
-function seedDeck(dataDir, { sessions, checklists, boardApi = null }) {
+function seedDeck(dataDir, { sessions, checklists, boardApi = null, task = null }) {
   const work = join(dataDir, 'work');
   mkdirSync(work, { recursive: true });
+  if (task) {
+    writeFileSync(join(dataDir, 'tasks.json'), JSON.stringify({
+      tasks: [{ id: 'T1', name: task.name }], order: ['T1', 'adhoc'], assignments: { [sessions[0][0]]: 'T1' },
+    }));
+    writeFileSync(join(dataDir, 'todos.json'), JSON.stringify({ migrated: true, todos: { T1: [{ id: 'td1', text: task.todo, createdAt: 1 }] } }));
+    mkdirSync(join(dataDir, 'memory', 'tasks', 'T1'), { recursive: true });
+    writeFileSync(join(dataDir, 'memory', 'tasks', 'T1', 'memory.md'), task.memory);
+  }
   writeFileSync(join(dataDir, 'mappings.json'), JSON.stringify(Object.fromEntries(
     sessions.map(([sessionId, name]) => [sessionId, { sessionId, agent: 'claude', cwd: work, intent: name, name }]),
   )));
@@ -71,8 +80,8 @@ test('one board half shows a section per deck, acts on that deck alone, and mark
   }
   const dirs = ['a', 'b', 'c'].map((x) => mkdtempSync(join(tmpdir(), `aw-multideck-ext-${x}-`)));
   const item = (id, text) => [{ id, text, done: false, createdAt: 1 }];
-  seedDeck(dirs[0], { sessions: [['shared-0001', 'Login form']], checklists: { 'shared-0001': item('a1', 'Deck A step') } });
-  seedDeck(dirs[1], { sessions: [['shared-0001', 'Importer profiling']], checklists: { 'shared-0001': item('b1', 'Deck B step') } });
+  seedDeck(dirs[0], { sessions: [['shared-0001', 'Login form']], checklists: { 'shared-0001': item('a1', 'Deck A step') }, task: { name: 'Checkout', todo: 'Deck A todo', memory: 'Deck A memory' } });
+  seedDeck(dirs[1], { sessions: [['shared-0001', 'Importer profiling']], checklists: { 'shared-0001': item('b1', 'Deck B step') }, task: { name: 'Importer', todo: 'Deck B todo', memory: 'Deck B memory' } });
   seedDeck(dirs[2], { sessions: [['c-only', 'CI tidy-up']], checklists: {}, boardApi: '^1.76.0' });
   let a, b, c, tab;
   try {
@@ -80,7 +89,10 @@ test('one board half shows a section per deck, acts on that deck alone, and mark
     assert.ok(a.up, `deck A never started:\n${a.out()}`);
     const board = `http://127.0.0.1:${a.port}`;
     const origins = `${board},http://localhost:${a.port}`;
-    const [portB, portC] = [await freePort(), await freePort()];
+    // A deck's session API takes the port after its own, so B's and C's are kept apart.
+    const portB = await freePort();
+    let portC = await freePort();
+    while (Math.abs(portC - portB) < 2) portC = await freePort();
     b = startDeckOnly(dirs[1], portB, origins);
     c = startDeckOnly(dirs[2], portC, origins);
     for (const [port, d] of [[portB, b], [portC, c]]) {
@@ -132,6 +144,48 @@ test('one board half shows a section per deck, acts on that deck alone, and mark
     const done = await waitFor(async () => (await deckExt(portB, 'checklist'))?.checklists?.['shared-0001']?.[0]?.done === true);
     assert.ok(done, 'deck B recorded the tick');
     assert.equal((await deckExt(a.deckPort(), 'checklist')).checklists['shared-0001'][0].done, false, 'deck A\'s item with the same session id is untouched');
+
+    // Todos: each T1 tile shows its own deck's, and an edit on deck B's tile reaches deck B alone.
+    const tileB = `${three[1].deck}/T1`;
+    const todoText = (id) => tab.evaluate(`[...document.querySelectorAll('.task-cell[data-taskid="${id}"] .todo-row .todo-text')].map((r) => r.textContent.trim()).join('|')`);
+    assert.ok(await waitFor(async () => (await todoText(tileB)) === 'Deck B todo'), `deck B's task tile never showed deck B's todo: ${await todoText(tileB)}`);
+    assert.equal(await todoText('T1'), 'Deck A todo', 'deck A\'s task tile shows deck A\'s todo');
+    await tab.evaluate(`(() => {
+      document.querySelector('.task-cell[data-taskid="${tileB}"] .todo-row .todo-text').click();
+      const input = document.querySelector('.task-cell[data-taskid="${tileB}"] .todo-text-input');
+      input.value = 'Deck B todo, edited';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()`);
+    const edited = await waitFor(async () => (await deckExt(portB, 'todos'))?.todos?.T1?.[0]?.text === 'Deck B todo, edited');
+    assert.ok(edited, `deck B never recorded the todo edit: ${JSON.stringify(await deckExt(portB, 'todos'))}`);
+    assert.equal((await deckExt(a.deckPort(), 'todos')).todos.T1[0].text, 'Deck A todo', 'deck A\'s todo for the same task id is untouched');
+    assert.ok(await waitFor(async () => (await todoText(tileB)) === 'Deck B todo, edited'), 'deck B\'s tile shows the edit');
+
+    // Task memory: deck B's task opens deck B's memory, and Save writes there alone.
+    const openMemory = (id) => tab.evaluate(`(() => {
+      const cell = document.querySelector('.task-cell[data-taskid="${id}"]');
+      const r = cell.getBoundingClientRect();
+      cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 5, clientY: r.bottom - 5 }));
+      const item = [...document.querySelectorAll('.context-menu-item')].find((b) => b.textContent.trim() === 'Task memory');
+      if (!item) return false;
+      item.click();
+      return true;
+    })()`);
+    const memoryText = () => tab.evaluate(`document.getElementById('memory-text')?.value ?? null`);
+    assert.ok(await openMemory(tileB), 'deck B\'s task menu offers Task memory');
+    assert.ok(await waitFor(async () => (await memoryText()) === 'Deck B memory'), `deck B's task memory never loaded: ${await memoryText()}`);
+    await tab.evaluate(`(() => {
+      const ta = document.getElementById('memory-text');
+      ta.value = 'Deck B memory, edited';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      document.getElementById('memory-save').click();
+    })()`);
+    const memB = join(dirs[1], 'memory', 'tasks', 'T1', 'memory.md');
+    assert.ok(await waitFor(async () => readFileSync(memB, 'utf8') === 'Deck B memory, edited'), 'deck B saved the memory');
+    assert.equal(readFileSync(join(dirs[0], 'memory', 'tasks', 'T1', 'memory.md'), 'utf8'), 'Deck A memory', 'deck A\'s memory for the same task id is untouched');
+    assert.ok(await openMemory('T1'), 'deck A\'s task menu offers Task memory');
+    assert.ok(await waitFor(async () => (await memoryText()) === 'Deck A memory'), `deck A's task memory never loaded: ${await memoryText()}`);
+    await tab.evaluate(`document.getElementById('memory-close').click()`);
     assert.deepEqual(tab.errors, [], 'no console errors');
   } finally {
     await tab?.close();

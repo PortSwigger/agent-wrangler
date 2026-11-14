@@ -629,7 +629,8 @@ test('tileHtml: with several decks a task tile names its deck; another deck\'s t
   const remote = tileHtml(tile({ id: 'deck-b/T1', name: 'T', deckId: 'deck-b', deckName: 'Laptop B', deckUnreachable: true }), ctx({ ownDeckId: 'deck-a' }));
   assert.match(remote, /task-cell on-deck deck-unreachable"/);
   assert.match(remote, />Laptop B · unreachable</);
-  assert.doesNotMatch(remote, /task-new-sess|data-task-body/);
+  assert.doesNotMatch(remote, /task-new-sess/);
+  assert.match(remote, /data-task-body="deck-b\/T1"/);
 });
 
 test('visibleTaskLinkCount: keeps every link that fits and reserves the overflow badge only when needed', () => {

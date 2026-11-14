@@ -102,7 +102,7 @@ for (const adhoc of [false, true]) test(`both task menus preserve extension acti
   const id = adhoc ? 'adhoc' : 'a';
   const scope = {
     ADHOC_ID: 'adhoc', latestTasks: { tasks: [{ id: 'a', name: 'Alpha' }] }, latestGraph: {}, extApi: {},
-    findTask: (id) => (id === 'a' ? { id: 'a', name: 'Alpha' } : null), isRemoteTask: () => false,
+    findTask: (id) => (id === 'a' ? { id: 'a', name: 'Alpha' } : null), isRemoteTask: () => false, deckTaskFields: () => ({}),
     activitySortedTasks: new Set(), slots,
     mountMenu: (value) => { items = value; },
     FOCUS_ICON: '', MINIMISE_ICON: '', SORT_ICON: '', CHECK_ICON: '', ARCHIVE_ICON: '', TERMINAL_ICON: '', PENCIL_ICON: '',

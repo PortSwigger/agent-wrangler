@@ -557,9 +557,12 @@ import semver from 'semver';
 // 'incompatible' when it lists the extension with another boardApi than the
 // board's half, or 'unreachable') with `api.decks.onChange(fn)`, `api.state({
 // deck })` for that deck's own state, and `api.act(name, args, { deck })`,
-// which goes to that deck alone and is refused for an incompatible one. An
-// older board has no `api.decks`, so a board half that uses any declares
-// `^1.78.0`.
+// which goes to that deck alone and is refused for an incompatible one;
+// `api.send` takes `deck` the same way, and another deck's `ext:<id>` message
+// arrives carrying `fromDeck`. A `task.body` or `task.action` contribution
+// registered with `decks: true` is also offered another deck's task, whose
+// subject carries `deckId` and `deckTaskId`. An older board has no
+// `api.decks`, so a board half that uses any declares `^1.78.0`.
 export const HOST_API_VERSION = '1.78.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
