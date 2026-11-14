@@ -1836,7 +1836,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 ## Launch context, events and lifecycle
 
-- **`hooks['session.beforeSpawn']`** (1.77.0), called with `{ spawnedBy,
+- **`hooks['session.beforeSpawn']`** (1.78.0), called with `{ spawnedBy,
   parentSession, spawner, agent, model, effort, cwd, intent, source, taskId, host }` before
   a new session's directory, worktree or process is created. All providers use
   it: MCP spawns (including workflows), scheduled dispatches when they fire,
@@ -1867,7 +1867,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   fire reports a board `schedule-error` toast, without messaging the scheduling
   agent. A recurring schedule tries again at its next fire. Data is transient,
   kept per launch and per extension, and never saved by core.
-- **`hooks['session.spawned']`** (1.77.0) receives the same launch fields plus
+- **`hooks['session.spawned']`** (1.78.0) receives the same launch fields plus
   `{ sessionId, data }`, with `cwd` set to the actual launch directory, after
   the process launches and its session entry is saved. Only that extension's
   `data` is supplied (`undefined` if it supplied none). The notification is
