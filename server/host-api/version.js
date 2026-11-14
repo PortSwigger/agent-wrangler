@@ -532,7 +532,13 @@ import semver from 'semver';
 // resolving with the result) and `api.styles()` (the board's style list). An
 // older server ignores `board` and loads no board half, so a split manifest
 // declares `^1.74.0`.
-export const HOST_API_VERSION = '1.74.0';
+//
+// 1.75.0 names each card by deck and session: every session row the board
+// hands a board half (slot updates, the graph) carries `deckId`, the id of the
+// deck it is on (GET /deck), and `cardKey`, `<deckId>/<sessionId>`. Session ids
+// in the API (openSession, mountSession, actions) stay as they were. An older
+// board leaves both out, so a board half that reads them declares `^1.75.0`.
+export const HOST_API_VERSION = '1.75.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
