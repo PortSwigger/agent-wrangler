@@ -218,3 +218,15 @@ test('deliverFirstPrompt sends the prose only after the composer shows the image
   assert.ok(steps.some(([k]) => k === 'wait'), 'and it waited for the attach');
   assert.ok(!steps.some(([k]) => k === 'log'));
 });
+
+
+test('schedule creator is trusted only from runner dependencies and kept separate from lineage', async () => {
+  const scheduled = deps({ launchSource: 'schedule', scheduledBy: 'EDITOR' });
+  await runDispatch({ cwd: '/repo', intent: 'do it', spawnedBy: 'FORGED', scheduledBy: 'FORGED' }, scheduled);
+  assert.equal(scheduled.calls.dispatch[0].scheduledBy, 'EDITOR');
+  assert.equal(scheduled.calls.dispatch[0].spawnedBy, undefined);
+  const board = deps();
+  await runDispatch({ cwd: '/repo', intent: 'do it', spawnedBy: 'FORGED', scheduledBy: 'FORGED' }, board);
+  assert.equal(board.calls.dispatch[0].spawnedBy, undefined);
+  assert.equal(board.calls.dispatch[0].scheduledBy, undefined);
+});

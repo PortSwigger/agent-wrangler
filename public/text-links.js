@@ -54,7 +54,7 @@ export function trimUrlTail(url) {
 // Split `text` into a flat, gap-free list of segments:
 //   { kind: 'text', text }
 //   { kind: 'url',  text, href }
-//   { kind: 'file', text, path }   — path already resolved for GET /file
+//   { kind: 'file', text, path }   — path already resolved for session.file
 //
 // `baseDir` is the session's cwd, used to resolve a relative match. With no
 // baseDir a relative path is left as plain text rather than turned into a link

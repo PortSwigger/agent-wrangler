@@ -18,28 +18,7 @@ import { DATA_DIR } from './data-dir.js';
 
 const clean = { tmux: 'cc_abc', sessionId: 's1', status: 0, archived: false };
 
-// attachSession/dispatch read config-store's childFullViewByDefault() bare (no
-// cfg injection, same as trustCodexLaunchCwd) — so a test asserting the stamped
-// value must pin the real shared config.json for its duration and restore it
-// after, like config-store.test.js's withConfigRestored. Unlike
-// trustCodexLaunchCwd (nobody casually flips that), this setting is exactly
-// the one a person trying the new feature live is likely to have toggled —
-// confirmed happening mid-development (the real config.json picked up
-// `childFullViewByDefault: true` while this feature was being tried out on the
-// live board), which is why this isolation exists rather than assuming the
-// ambient default.
-const CHILD_FULL_VIEW_CONFIG_PATH = path.join(DATA_DIR, 'config.json');
-async function withChildFullViewDefault(value, fn) {
-  let saved;
-  try { saved = fs.readFileSync(CHILD_FULL_VIEW_CONFIG_PATH, 'utf8'); } catch { saved = null; }
-  try {
-    writeConfig({ childFullViewByDefault: value });
-    await fn();
-  } finally {
-    if (saved === null) { try { fs.rmSync(CHILD_FULL_VIEW_CONFIG_PATH); } catch { /* nothing to restore */ } }
-    else fs.writeFileSync(CHILD_FULL_VIEW_CONFIG_PATH, saved);
-  }
-}
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 // Scratch dirs for folderless dispatches must live under the data dir, NOT inside
 // the wrangler checkout. readBranch walks up to the nearest enclosing repo, so a
@@ -2036,26 +2015,13 @@ test('attachSession is a no-op (false) when the target parent is unmapped', () =
   assert.equal(sm.map.get('child').parentSession, undefined);
 });
 
-// "New child sessions show full view by default" is a CREATION-time snapshot,
-// not a live rule (see config-store.js childFullViewByDefault) — attachSession
-// stamps it in once, the first time a session becomes a child.
-test('attachSession stamps entry.childFullView from the current default the first time a session becomes a child', async () => {
-  await withChildFullViewDefault(false, () => {
-    const sm = new SessionManager();
-    sm._save = () => {};
-    sm.map.set('child', { short: 's', tmux: 'cc_c' });
-    sm.map.set('newparent', { short: 'p', tmux: 'cc_p' });
-    sm.attachSession('child', 'newparent');
-    assert.equal(sm.map.get('child').childFullView, false);
-  });
-  await withChildFullViewDefault(true, () => {
-    const sm = new SessionManager();
-    sm._save = () => {};
-    sm.map.set('child2', { short: 's', tmux: 'cc_c' });
-    sm.map.set('newparent2', { short: 'p', tmux: 'cc_p' });
-    sm.attachSession('child2', 'newparent2');
-    assert.equal(sm.map.get('child2').childFullView, true);
-  });
+test('attachSession leaves an unset childFullView unset so the board default applies', () => {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.map.set('child', { short: 's', tmux: 'cc_c' });
+  sm.map.set('newparent', { short: 'p', tmux: 'cc_p' });
+  sm.attachSession('child', 'newparent');
+  assert.equal(sm.map.get('child').childFullView, undefined);
 });
 
 test('attachSession does not overwrite an already-stamped childFullView on re-attach', () => {
@@ -2285,20 +2251,10 @@ test('dispatch leaves parentSession undefined when not passed', async () => {
   assert.equal(sm.map.get(sessionId).parentSession, undefined);
 });
 
-// A `nest:true` spawn sets parentSession directly in dispatch() — the session
-// IS a child from creation, so this is the same creation-time stamp as
-// attachSession (see the comment there).
-test('dispatch stamps entry.childFullView from the current default when parentSession is passed', async () => {
-  await withChildFullViewDefault(false, async () => {
-    const sm = smForDispatch();
-    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'y', parentSession: 'ORCH1' });
-    assert.equal(sm.map.get(sessionId).childFullView, false);
-  });
-  await withChildFullViewDefault(true, async () => {
-    const sm = smForDispatch();
-    const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'z', parentSession: 'ORCH2' });
-    assert.equal(sm.map.get(sessionId).childFullView, true);
-  });
+test('dispatch leaves entry.childFullView unset for a nested dispatch so the board default applies', async () => {
+  const sm = smForDispatch();
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'y', parentSession: 'ORCH1' });
+  assert.equal(sm.map.get(sessionId).childFullView, undefined);
 });
 
 test('dispatch leaves entry.childFullView undefined for a non-nested dispatch', async () => {
@@ -2422,13 +2378,13 @@ test('dispatch trusts SESSIONS_DIR (never the launch cwd) for a claude session, 
 
 async function withClaudeTrustSetting(value, fn) {
   let saved;
-  try { saved = fs.readFileSync(CHILD_FULL_VIEW_CONFIG_PATH, 'utf8'); } catch { saved = null; }
+  try { saved = fs.readFileSync(CONFIG_PATH, 'utf8'); } catch { saved = null; }
   try {
     writeConfig({ trustClaudeLaunchCwd: value });
     await fn();
   } finally {
-    if (saved === null) { try { fs.rmSync(CHILD_FULL_VIEW_CONFIG_PATH); } catch { /* nothing to restore */ } }
-    else fs.writeFileSync(CHILD_FULL_VIEW_CONFIG_PATH, saved);
+    if (saved === null) { try { fs.rmSync(CONFIG_PATH); } catch { /* nothing to restore */ } }
+    else fs.writeFileSync(CONFIG_PATH, saved);
   }
 }
 
@@ -3917,4 +3873,97 @@ test('secretEnv: an extension runtime gets no file and no values, and the skip n
   assert.ok(!seen[0].inner.includes(SECRET_VALUE));
   assert.equal(warned.filter((w) => /cannot take secret variables; skipped ACME_TOKEN/.test(w)).length, 2);
   assert.ok(warned.every((w) => !w.includes(SECRET_VALUE)));
+});
+
+for (const agent of ['claude', 'codex', 'gemini']) {
+  test(`beforeSpawn refuses ${agent} before creating a directory or launching`, async () => {
+    const sm = smForDispatch();
+    const target = path.join(os.tmpdir(), `aw-spawn-refused-${agent}-${Date.now()}`);
+    let launched = false;
+    sm._beforeSpawn = async (payload) => {
+      assert.equal(payload.agent, agent);
+      throw new Error('Capacity reached');
+    };
+    sm._newSession = async () => { launched = true; };
+    await assert.rejects(sm.dispatch({ agent, cwd: target, intent: 'do it' }), /Capacity reached/);
+    assert.equal(fs.existsSync(target), false);
+    assert.equal(launched, false);
+    assert.equal(sm.map.size, 0);
+  });
+}
+
+test('beforeSpawn is awaited and its data reaches spawned after the entry exists', async () => {
+  const sm = smForDispatch();
+  const order = [];
+  const token = new Map([['example', { reservation: 7 }]]);
+  sm._beforeSpawn = async (payload) => {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    order.push('before');
+    assert.deepEqual(payload, {
+      spawnedBy: 'PARENT', parentSession: 'NEST', spawner: null, agent: 'codex', model: 'gpt-5', effort: 'high',
+      cwd: os.tmpdir(), intent: 'do it', source: 'schedule', taskId: 'TASK',
+    });
+    return token;
+  };
+  sm._newSession = async () => { order.push('launch'); };
+  sm._spawned = async ({ sessionId, ...payload }, data) => {
+    assert.ok(sm.map.has(sessionId));
+    assert.equal(payload.cwd, os.tmpdir());
+    assert.equal(data, token);
+    order.push('spawned');
+  };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: 'do it', agent: 'codex', model: 'gpt-5', effort: 'high',
+    spawnedBy: 'PARENT', parentSession: 'NEST', launchSource: 'schedule', taskId: 'TASK' });
+  assert.deepEqual(order, ['before', 'launch', 'spawned']);
+});
+
+test('a failed launch does not emit spawned', async () => {
+  const sm = smForDispatch();
+  let notified = false;
+  sm._beforeSpawn = async () => new Map();
+  sm._spawned = async () => { notified = true; };
+  sm._newSession = async () => { throw new Error('launch failed'); };
+  await assert.rejects(sm.dispatch({ cwd: os.tmpdir() }), /launch failed/);
+  assert.equal(notified, false);
+});
+
+test('fork asks beforeSpawn with its parent and refuses before launch', async () => {
+  const sm = smForDispatch();
+  let asked;
+  sm._beforeSpawn = async (payload) => { asked = payload; throw new Error('Fork refused'); };
+  await assert.rejects(sm.fork({ sourceId: 'LIVE', parentId: 'PARENT',
+    parentEntry: { agent: 'codex', model: 'gpt-5', effort: 'high' }, cwd: os.tmpdir(), prompt: 'branch' }), /Fork refused/);
+  assert.equal(asked.spawnedBy, null);
+  assert.equal(asked.parentSession, 'PARENT');
+  assert.equal(asked.spawner, null);
+  assert.equal(asked.source, 'fork');
+  assert.equal(asked.intent, 'branch');
+});
+
+test('extension spawn hooks include the extension id and preserve null intent', async () => {
+  const sm = smForDispatch();
+  let asked;
+  let notified;
+  sm._beforeSpawn = async (payload) => { asked = payload; };
+  sm._spawned = async (payload) => { notified = payload; };
+  await sm.dispatch({ cwd: os.tmpdir(), intent: null, launchSource: 'extension', spawner: 'example' });
+  assert.equal(asked.intent, null);
+  assert.equal(asked.spawner, 'example');
+  assert.equal(asked.spawnedBy, null);
+  assert.equal(notified.spawner, 'example');
+});
+
+test('schedule provenance reaches the hook without changing saved lineage or launch context', async () => {
+  const sm = smForDispatch();
+  let asked;
+  let prepared;
+  let command;
+  sm._beforeSpawn = async (payload) => { asked = payload; };
+  sm._prepare = async (payload) => { prepared = payload; };
+  sm._newSession = async (_tmux, _cwd, inner) => { command = inner; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), scheduledBy: 'SCHEDULER', launchSource: 'schedule' });
+  assert.equal(asked.spawnedBy, 'SCHEDULER');
+  assert.equal(prepared.spawnedBy, null);
+  assert.equal(sm.map.get(sessionId).spawnedBy, undefined);
+  assert.ok(!command.includes('AW_SPAWNER_SESSION_ID'));
 });

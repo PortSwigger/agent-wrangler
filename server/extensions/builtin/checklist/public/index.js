@@ -47,8 +47,8 @@ export default {
     const openOverrides = parseChecklistOpen(openStore.get());
     const showDoneIds = parseChecklistShowDone(showDoneStore.get());
 
-    // The latest graph's snapshot, mutated optimistically below exactly like the
-    // todo flow writes into latestTasks; replaced wholesale on every update.
+    // The latest snapshot, mutated optimistically below exactly like the todo
+    // flow writes into latestTasks.
     let checklists = {};
     let sessionId = null;
     const sections = new Set();
@@ -284,9 +284,21 @@ export default {
       list.addEventListener('scroll', () => syncScrollHint(root, list));
     }
 
+    // `checklists` is a working copy of this extension's own state, replaced
+    // when a new state frame arrives; a board without api.state() still hands
+    // it over on the graph.
+    let seen = null;
     function sync(session, graph) {
       sessionId = session?.sessionId || null;
-      checklists = graph?.checklists || {};
+      const own = api.state?.() ?? null;
+      if (own == null) {
+        checklists = graph?.checklists || {};
+        return;
+      }
+      if (own !== seen) {
+        seen = own;
+        checklists = structuredClone(own.checklists ?? {});
+      }
     }
 
     reg.register('panel.section', {

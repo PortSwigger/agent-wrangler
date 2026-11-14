@@ -26,12 +26,12 @@ export function bannerLines({ version, commit = null, url, dataDir }) {
 
 // One line for a failed bind, in place of the raw stack an unhandled listen
 // error would otherwise print. EADDRINUSE names the fix: another port.
-export function listenErrorMessage(err, port) {
+export function listenErrorMessage(err, port, remedy = 'pass --port <n> (or set AW_PORT) to use another') {
   if (err && err.code === 'EADDRINUSE') {
-    return `[agent-wrangler] port ${port} is already in use — pass --port <n> (or set AW_PORT) to use another`;
+    return `[agent-wrangler] port ${port} is already in use — ${remedy}`;
   }
   if (err && err.code === 'EACCES') {
-    return `[agent-wrangler] not allowed to listen on port ${port} — pass --port <n> (or set AW_PORT) to use another`;
+    return `[agent-wrangler] not allowed to listen on port ${port} — ${remedy}`;
   }
   return `[agent-wrangler] could not listen on port ${port}: ${err && err.message ? err.message : err}`;
 }

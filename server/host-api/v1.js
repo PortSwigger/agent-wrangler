@@ -501,6 +501,7 @@ const schedulesWrite = ({ scheduleStore }) => ({
 const mailRead = ({ mailStore }) => ({
   mail: {
     unread: (sid) => mailStore.unreadInfo(sid),
+    // Metadata only: id, from, fromLabel, at, size, state and readAt; no text.
     list: (sid) => mailStore.list(sid),
   },
 });

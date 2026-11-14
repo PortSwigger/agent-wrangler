@@ -50,6 +50,7 @@ function ctx(builtin, { quarantine } = {}) {
 }
 
 const set = (c, msg) => extSettingSetHandler.handler({ type: 'ext-setting-set', ...msg }, c);
+const act = (c, args) => routeControlMessage(JSON.stringify({ type: 'action', id: 1, action: 'admin.ext-setting-set', args }), c);
 
 test('a text value is stored under extensionSettings.<id>.<key> and the board rebuilt', async () => {
   await withConfig({ tmuxSocket: 'aw-1', extensions: { demo: true } }, async () => {
@@ -83,13 +84,14 @@ test('an unknown extension, a quarantined one and an undeclared key are all refu
   });
 });
 
-test('a refusal reaches the client as the router\'s error envelope', async () => {
+test('a refusal reaches the client as a failed result', async () => {
   await withConfig({}, async () => {
     const c = ctx([manifest('demo')]);
-    await routeControlMessage(JSON.stringify({ type: 'ext-setting-set', id: 'demo', key: 'pollMs', value: 'abc' }), c);
+    await act(c, { id: 'demo', key: 'pollMs', value: 'abc' });
     assert.equal(c.calls.replies.length, 1);
-    assert.equal(c.calls.replies[0].type, 'error');
-    assert.match(c.calls.replies[0].message, /Setting demo.pollMs must be a number/);
+    assert.equal(c.calls.replies[0].type, 'result');
+    assert.equal(c.calls.replies[0].error.code, 'failed');
+    assert.match(c.calls.replies[0].error.message, /Setting demo.pollMs must be a number/);
     assert.equal(c.calls.rebuild, 0);
   });
 });
@@ -263,14 +265,15 @@ test("a list def's pattern and maxLength apply to every item", async () => {
   });
 });
 
-test('a reqId gets an ext-setting-result reply, in place of the error envelope on failure', async () => {
+test('a reqId gets an ext-setting-result as the result data, in place of a failed result', async () => {
   await withConfig({}, async () => {
     const c = ctx([manifest('demo', { settings: LIST_DEFS })]);
-    await routeControlMessage(JSON.stringify({ type: 'ext-setting-set', id: 'demo', key: 'hidden', value: ['x'], reqId: 'r1' }), c);
-    assert.deepEqual(c.calls.replies, [{ type: 'ext-setting-result', reqId: 'r1', ok: true }]);
-    await routeControlMessage(JSON.stringify({ type: 'ext-setting-set', id: 'demo', key: 'hidden', value: 'x', reqId: 'r2' }), c);
+    await act(c, { id: 'demo', key: 'hidden', value: ['x'], reqId: 'r1' });
+    assert.deepEqual(c.calls.replies, [{ type: 'result', id: 1, ok: true, data: { type: 'ext-setting-result', reqId: 'r1', ok: true } }]);
+    await act(c, { id: 'demo', key: 'hidden', value: 'x', reqId: 'r2' });
     assert.equal(c.calls.replies.length, 2);
-    assert.deepEqual({ ...c.calls.replies[1], error: undefined }, { type: 'ext-setting-result', reqId: 'r2', ok: false, error: undefined });
-    assert.match(c.calls.replies[1].error, /must be a list of strings/);
+    const { data } = c.calls.replies[1];
+    assert.deepEqual({ ...data, error: undefined }, { type: 'ext-setting-result', reqId: 'r2', ok: false, error: undefined });
+    assert.match(data.error, /must be a list of strings/);
   });
 });

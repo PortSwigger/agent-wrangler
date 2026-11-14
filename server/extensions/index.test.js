@@ -116,7 +116,7 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
     description: '', author: '', homepage: '',
     requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['mail'], handlerTypes: [],
     hideDispatchField: [], keybindings: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, earlyAdopterBranch: null,
-    telemetry: { events: null }, version: null, quarantine: null,
+    telemetry: { events: null }, version: null, boardApi: null, quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
@@ -754,7 +754,7 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
     defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
     handlerTypes: [], hideDispatchField: [], keybindings: [], runtimes: [], external: true, dir: null, provenance: null, earlyAdopterBranch: null,
-    telemetry: { events: null }, version: null, quarantine: 'no index.js',
+    telemetry: { events: null }, version: null, boardApi: null, quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);
 });
@@ -1323,4 +1323,12 @@ test('a valid telemetry declaration is carried normalised on the entry, with the
   assert.equal(e.quarantine, null);
   assert.equal(e.version, '1.2.3');
   assert.deepEqual(e.telemetry.events, { 'thing.done': { v: 1, fields: { n: { t: 'int', min: 0, max: 9, nullable: false } } } });
+});
+
+test('spawn hooks register and unload through manifest hooks', () => {
+  const hooks = { 'session.beforeSpawn': () => ({}), 'session.spawned': () => {} };
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ hooks })] });
+  for (const name of Object.keys(hooks)) assert.equal(loaded.hooks[name].length, 1);
+  unregisterExtension(loaded, loaded.list[0].id);
+  for (const name of Object.keys(hooks)) assert.deepEqual(loaded.hooks[name], []);
 });

@@ -10,8 +10,8 @@ function deps(created = {}) {
   return {
     calls,
     scheduleStore: {
-      create: (payload, now) => {
-        calls.create.push({ payload, now });
+      create: (payload, now, context) => {
+        calls.create.push({ payload, now, context });
         const action = payload.action;
         return {
           id: 'sch_new', name: payload.name || 'Untitled schedule', enabled: true,
@@ -130,4 +130,12 @@ test('a dispatch schedule refuses an unknown agent', async () => {
   assert.equal(out.isError, true);
   assert.match(out.content[0].text, /Unknown agent "codx"/);
   assert.equal(d.calls.create.length, 0);
+});
+
+test('scheduled dispatch preserves its creator for the before-spawn hook', async () => {
+  const d = deps();
+  await scheduleSessionTool.handler({ deps: d, caller: 'CARD_T' },
+    { at: '2099-06-25T15:00:00Z', intent: 'do it' });
+  assert.equal(d.calls.create[0].payload.action.dispatch.spawnedBy, undefined);
+  assert.deepEqual(d.calls.create[0].context, { caller: 'CARD_T' });
 });
