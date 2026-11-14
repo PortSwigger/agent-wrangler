@@ -109,3 +109,22 @@ test('codexStatus carries waitingReason permission for a Codex approval prompt',
   assert.equal(idle.waitingReason, null);
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
+
+
+test('codexStatus: modern MCP approval wins over an unfinished turn and clears after approval', async (t) => {
+  const sid = '33333333-3333-4333-8333-333333333333';
+  const current = Date.now();
+  const sessionsDir = sessionsWithRollout(sid, [mark('task_started', new Date(current - 5000).toISOString())]);
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-codex-data-'));
+  t.after(() => {
+    fs.rmSync(sessionsDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+  const paneText = fs.readFileSync(new URL('../fixtures/codex-approval/mcp-modern.txt', import.meta.url), 'utf8');
+  assert.deepEqual(await codexStatus({ liveSid: sid, paneText, now: current, dataDir, sessionsDir }), {
+    status: 'needs-you', waitingFor: 'Codex is asking for approval', waitingReason: 'permission',
+  });
+  const resumed = await codexStatus({ liveSid: sid, paneText: '› Ask Codex to do anything', now: current, dataDir, sessionsDir });
+  assert.equal(resumed.status, 'working');
+  assert.equal(resumed.waitingReason, null);
+});
