@@ -45,6 +45,11 @@ This reminder is advisory: re-running ToolSearch does not guarantee that a resum
 or uses the current schema. Check the tool's current parameters when a resumed agent reports that a
 new parameter is unavailable.
 
+The server checks loaded installed extensions' directories and `index.js` manifests once a minute.
+If either disappears, it logs an error once per incident and shows a persistent board banner naming
+the affected extensions. Restore the files or reinstall the extension; the banner clears after the
+next successful check or a server restart. Core extensions are excluded from this check.
+
 ### Auto-update an extension
 
 **Auto-update** is off for every extension until you turn it on in that extension's detail pane, and

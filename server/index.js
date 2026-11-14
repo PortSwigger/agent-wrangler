@@ -74,6 +74,7 @@ import { DATA_DIR } from './data-dir.js';
 import { scanAllDaily } from './usage-report.js';
 import { startFdWatchdog } from './fd-watchdog.js';
 import { startHeapWatchdog } from './heap-watchdog.js';
+import { startExtensionFileWatchdog } from './extensions/file-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
@@ -664,6 +665,7 @@ const extBag = {
 // connects (or reconnects/reloads) while it's active, since a WS broadcast alone
 // only reaches tabs already open at the moment it fires.
 let fdWarning = null;
+let missingExtensionFiles = [];
 
 // `{ socket }` when this install's tmux server is in an old macOS login session
 // (gui-session.js), else null. Checked once at startup: a logout stops this
@@ -1283,6 +1285,7 @@ async function rebuildOnce() {
   // rather than the connect announcement so the banner survives a reconnect the
   // same way fdWarning's re-send does. A handful of short ids at most.
   graph.quarantinedBuiltins = quarantinedBuiltinIds();
+  graph.missingExtensionFiles = missingExtensionFiles;
   // Boot-fixed too, and carried the same way for the same reason.
   graph.staleGuiSession = staleGuiSession;
   // Each enabled extension's graph contribution. Only enabled ones are in the
@@ -1567,6 +1570,14 @@ async function main() {
     onClear: () => {
       fdWarning = null;
       broadcast({ type: 'fd-warning', active: false });
+    },
+  });
+
+  startExtensionFileWatchdog({
+    list: () => ext.list,
+    onChange: (missing) => {
+      missingExtensionFiles = missing;
+      rebuild().catch((err) => logError('[extension-files] could not refresh board', err));
     },
   });
 
