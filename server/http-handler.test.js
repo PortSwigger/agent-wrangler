@@ -6,7 +6,8 @@ import path from 'node:path';
 import { createConnection } from 'node:net';
 import WebSocket, { WebSocketServer } from 'ws';
 import { createBoardServer, BOARD_CSP } from './http-handler.js';
-import { createDeckServer } from './deck/http.js';
+import { createDeckServer, refuseSessionCredentialUpgrade } from './deck/http.js';
+import { carriesSessionCredential } from './session-api/check.js';
 import { createBoardDecks } from './board-decks.js';
 
 // The /ext/<id>/ route serves an extension's client module out of its own
@@ -40,7 +41,7 @@ const deck = createDeckServer({
   deckHandler: (req, res) => res.end(JSON.stringify({ api: '1.0' })),
 });
 const deckWss = new WebSocketServer({ noServer: true });
-deck.on('upgrade', (req, socket, head) => deckWss.handleUpgrade(req, socket, head, (ws) => ws.send(`deck ${req.url} ${req.headers.origin}`)));
+deck.on('upgrade', (req, socket, head) => (carriesSessionCredential(req) ? refuseSessionCredentialUpgrade(socket) : deckWss.handleUpgrade(req, socket, head, (ws) => ws.send(`deck ${req.url} ${req.headers.origin}`))));
 await new Promise((resolve) => deck.listen(0, '127.0.0.1', resolve));
 
 let boardPort = 0;
@@ -91,8 +92,8 @@ test('the deck allows a board origin to read GET /deck cross-origin, and no othe
   assert.equal((await fetch(`${deckBase}/index.html`)).status, 404, 'the deck serves no UI');
 });
 
-const wsOnce = (url, origin) => new Promise((resolve) => {
-  const ws = new WebSocket(url, { origin });
+const wsOnce = (url, origin, headers) => new Promise((resolve) => {
+  const ws = new WebSocket(url, { origin, headers });
   ws.once('message', (m) => { resolve(String(m)); ws.close(); });
   ws.once('error', () => resolve('refused'));
   ws.once('close', () => resolve('refused'));
@@ -104,6 +105,17 @@ test('/ws and /pty upgrades on the board\'s port are piped to the deck; a foreig
   assert.equal(await wsOnce(`${wsBase}/pty?sessionId=a`, base), `deck /pty?sessionId=a ${base}`);
   assert.equal(await wsOnce(`${wsBase}/ws`, 'https://example.com'), 'refused');
   assert.equal(await wsOnce(`${wsBase}/elsewhere`, base), 'refused');
+});
+
+test('a session token sent to the board\'s port reaches the deck and is refused on /deck, /ws and /pty', async () => {
+  for (const headers of [{ Authorization: 'Bearer awt_x' }, { 'X-AW-Session': 'awt_x' }]) {
+    const r = await fetch(`${base}/deck`, { headers });
+    assert.equal(r.status, 403);
+    assert.equal((await r.json()).error, 'session-credential');
+    const wsBase = `ws://127.0.0.1:${boardPort}`;
+    assert.equal(await wsOnce(`${wsBase}/ws?api=1`, base, headers), 'refused');
+    assert.equal(await wsOnce(`${wsBase}/pty?sessionId=a`, base, headers), 'refused');
+  }
 });
 
 test('the board page names the deck\'s port and carries a Report-Only CSP', async () => {

@@ -3831,6 +3831,24 @@ a.ext-row-origin { color: var(--blue-fg); }
 .deck-unreachable { opacity: 0.5; filter: grayscale(0.8); }
 .deck-unreachable, .deck-unreachable * { cursor: not-allowed; }
 .deck-unreachable .deck-badge { background: var(--fg-subtle); }
+/* Tasks and schedules from several decks: each task tile names its deck ahead
+   of the task, with the deck's colour along the tile's top edge, and the
+   Schedules panel lists each deck's schedules under its name. */
+.task-cell.on-deck { box-shadow: inset 0 3px 0 var(--deck-colour, var(--border)); }
+.task-deck {
+  flex: 0 1 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10px; font-weight: 700; line-height: 16px; padding: 0 6px; border-radius: 8px;
+  color: #fff; background: var(--deck-colour, var(--fg-subtle));
+}
+.task-cell.deck-unreachable { opacity: 1; filter: none; }
+.task-cell.deck-unreachable .task-head { opacity: 0.5; filter: grayscale(0.8); }
+.task-cell.deck-unreachable .task-deck { background: var(--fg-subtle); }
+.sched-deck { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+.sched-deck + .sched-deck { margin-top: 10px; }
+.sched-deck-name {
+  align-self: flex-start; font-size: 11px; font-weight: 700; line-height: 18px; padding: 0 8px; border-radius: 9px;
+  color: #fff; background: var(--deck-colour, var(--fg-subtle));
+}
 
 .decks-panel { display: flex; flex-direction: column; gap: 10px; }
 .decks-panel .setting-help { margin-bottom: 4px; }
