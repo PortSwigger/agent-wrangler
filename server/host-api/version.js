@@ -565,12 +565,12 @@ import semver from 'semver';
 // separate accessor that is not available on the extension facade. Extensions
 // relying on sender/time metadata without reading text can declare `^1.79.0`.
 //
-// 1.77.0 adds approvalPolicy to sessions.spawn: on-request or never for
+// 1.80.0 adds approvalPolicy to sessions.spawn: on-request or never for
 // Codex, retaining its configured sandbox. The resolved codexPolicy persists
 // for launch, resume and fork; combined bypass/approve-for-me modes are resolved
 // to their underlying sandbox with the requested approval.
 // Extension Codex policy answers retain precedence.
-export const HOST_API_VERSION = '1.79.0';
+export const HOST_API_VERSION = '1.80.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

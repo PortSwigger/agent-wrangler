@@ -86,7 +86,7 @@ approval review disabled. With no configured sandbox, core uses `workspace-write
 The resolved policy persists across resume and fork. Extension Codex policy overrides
 retain precedence. Extensions can use
 `host.sessions.spawn({ agent: 'codex', approvalPolicy: 'on-request' })`
-with host API `^1.74.0`.
+with host API `^1.80.0`.
 
 ## Remote Control on `spawn_session`
 

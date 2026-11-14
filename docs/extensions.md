@@ -1792,7 +1792,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`sessions.archive`, or the task's Archive) and bills exactly as a board card
   does. A manifest using it declares `^1.41.0`.
 - **`host.sessions.spawn({ agent: 'codex', approvalPolicy: 'on-request' })`
-  selects Codex approvals** (1.77.0). `approvalPolicy` accepts `on-request` or
+  selects Codex approvals** (1.80.0). `approvalPolicy` accepts `on-request` or
   `never`; any other value, including `null`, is refused before dispatch.
   Supplying it for another agent (including the default Claude) is refused.
   It overrides only approval with `--ask-for-approval <policy>` and preserves
@@ -1806,7 +1806,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   use configured Codex policy defaults unchanged.
   Extension `codexPolicy` answers retain precedence at every launch; the
   requested policy remains stored even when an extension overrides it.
-  A manifest relying on this option declares `engines: { wranglerApi: '^1.77.0' }`.
+  A manifest relying on this option declares `engines: { wranglerApi: '^1.80.0' }`.
 - **`host.sessions.spawn({ remoteControl: { name } })` turns on Claude Code
   Remote Control for that one session** (1.55.0). The launch passes
   `--remote-control <name>`, and the name is stored on the entry so every resume
