@@ -60,7 +60,7 @@ import { toast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
-import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
+import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, deckPickerOptions, deckRuntimes, deckRunsAgent, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
 import { mountDecksPanel } from './decks-panel.js';
 import { withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
@@ -603,6 +603,8 @@ function syncSessionEmbed() {
 // when a launch is already awaiting its ack (see dispatch-waiter.js). `cwd`
 // prefills the folder and `images` (names from api.images.stage) become chips.
 function openDispatchAcked({ taskId = null, intent = '', lockTask = false, cwd = '', images = [] } = {}) {
+  const unpickable = taskDeckUnpickable(taskId);
+  if (unpickable) { toast(`${unpickable} is unreachable`, true); return Promise.resolve(null); }
   return dispatchWaiter.open(() => openDispatch(taskId, {
     ...(intent ? { intent } : {}), ...(cwd ? { cwd } : {}), ...(images.length ? { images } : {}), lockTask,
   }));
@@ -779,6 +781,17 @@ const dispatchWaiter = createDispatchWaiter();
 // Available agents + their models, replaced by the server's `agents` message on
 // connect (the lists are the server's live model catalogs — never copied here).
 let availableAgents = [];
+// The deck the open new-session dialog starts its session on: another deck's
+// id, or null for the board's own. Only a launch picks another deck.
+let dispatchDeck = null;
+// The deck whose agents #m-model lists now.
+let modelSelectDeck = null;
+// The agents the dialog offers: on another deck, those its runtimes run.
+function dispatchAgentList() {
+  if (!dispatchDeck) return availableAgents;
+  const runtimes = deckRuntimes(remoteDecks.entryFor(dispatchDeck)?.descriptor);
+  return availableAgents.filter((a) => deckRunsAgent(runtimes, a.id));
+}
 
 let dispatchModelPicker = null;
 
@@ -796,7 +809,7 @@ function rememberDispatchPick() {
 }
 
 function applyDispatchPick(explicit) {
-  const pick = dispatchPick(availableAgents, rememberedDispatchPick(), explicit);
+  const pick = dispatchPick(dispatchAgentList(), rememberedDispatchPick(), explicit);
   if (!pick) return;
   const model = document.getElementById('m-model');
   model.selectedIndex = [...model.options].findIndex((o) => o.value === pick.model && o.dataset.agent === pick.agent);
@@ -811,8 +824,10 @@ function populateModelSelect() {
   if (!sel) return;
   const prev = modelEdited ? currentDispatchPick() : undefined;
   sel.innerHTML = '';
-  const single = availableAgents.length === 1;
-  for (const a of availableAgents) {
+  modelSelectDeck = dispatchDeck;
+  const agents = dispatchAgentList();
+  const single = agents.length === 1;
+  for (const a of agents) {
     const parent = single ? sel : document.createElement('optgroup');
     if (!single) { parent.label = a.label; sel.appendChild(parent); }
     for (const m of a.models) {
@@ -820,7 +835,7 @@ function populateModelSelect() {
       opt.value = m.value;
       opt.textContent = m.label;
       opt.dataset.agent = a.id;
-      if (m.default && a.id === availableAgents[0]?.id) opt.selected = true;
+      if (m.default && a.id === agents[0]?.id) opt.selected = true;
       parent.appendChild(opt);
     }
   }
@@ -5925,7 +5940,7 @@ function hideRecentFolder(path) {
 }
 const additionalFolders = createAdditionalFolders({
   list: document.getElementById('m-add-dirs'), add: document.getElementById('m-add-dir'),
-  send, recentFolders: () => recentFolders, onChange: syncScheduleGo,
+  send: dialogSend, recentFolders: () => recentFolders, onChange: syncScheduleGo,
 });
 let suggestIndex = -1;
 // Filesystem completion for whatever is typed, answered by the 'browse-folders'
@@ -5952,7 +5967,7 @@ function requestFolderBrowse() {
   const raw = document.getElementById('m-cwd').value;
   if (raw === fsProbed) return;
   clearTimeout(browseTimer);
-  browseTimer = setTimeout(() => send({ type: 'browse-folders', path: raw }), 90);
+  browseTimer = setTimeout(() => dialogSend({ type: 'browse-folders', path: raw }), 90);
 }
 function onFolderBrowse(msg) {
   if (additionalFolders.onBrowse(msg)) return;
@@ -6051,13 +6066,89 @@ function hideFolderSuggest() {
 // worktrees defaults to the repo (a valid dispatch target), never a worktree
 // path — and worktrees of the same repo aggregate instead of splitting the vote.
 function mostCommonCwd(sessions) { return mostCommonCwdPure(sessions, sessionsDir); }
+// The picked deck's tasks: another deck's by their scoped ids.
 function populateTaskSelect(selectedId) {
   const sel = document.getElementById('m-task');
   if (!sel) return;
+  const tasks = dispatchDeck ? remoteBoard.tasks.filter((t) => t.deckId === dispatchDeck) : latestTasks.tasks;
   sel.innerHTML = ['<option value="">Unassigned (no task)</option>']
-    .concat(latestTasks.tasks.filter((t) => !t.archivedAt).map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`))
+    .concat(tasks.filter((t) => !t.archivedAt).map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`))
     .join('');
-  sel.value = selectedId && latestTasks.tasks.some((t) => t.id === selectedId) ? selectedId : '';
+  sel.value = selectedId && tasks.some((t) => t.id === selectedId && !t.archivedAt) ? selectedId : '';
+}
+
+// The deck picker, shown in launch mode while the board has more than one
+// deck. A deck that cannot be picked falls back to the board's own.
+function syncDeckPicker() {
+  const row = document.getElementById('m-deck-row');
+  const sel = document.getElementById('m-deck');
+  const show = modalMode === 'launch' && deckEntries.length > 1;
+  row.classList.toggle('hidden', !show);
+  if (!show) { sel.innerHTML = ''; delete sel.dataset.html; return; }
+  const options = deckPickerOptions(boardDecks());
+  const html = options.map((o) => `<option value="${esc(o.value)}"${o.disabled ? ' disabled' : ''}>${esc(o.label)}</option>`).join('');
+  if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
+  const want = options.find((o) => o.value === (dispatchDeck || ''));
+  if (!want || want.disabled) dispatchDeck = null;
+  sel.value = dispatchDeck || '';
+}
+
+// The runtimes the picked deck offers: the board's own (built-ins and its
+// extensions'), or another deck's from its descriptor, each with its agents.
+const OWN_RUNTIME_OPTIONS = [...document.getElementById('m-runtime').options].map((o) => ({ value: o.value, label: o.textContent }));
+function syncDispatchRuntimes() {
+  const rt = document.getElementById('m-runtime');
+  const was = rt.value;
+  rt.innerHTML = '';
+  const add = (value, label, agents) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    if (agents !== undefined) opt.dataset.agents = JSON.stringify(agents);
+    rt.appendChild(opt);
+  };
+  if (dispatchDeck) {
+    for (const r of deckRuntimes(remoteDecks.entryFor(dispatchDeck)?.descriptor)) add(r.id, r.label, r.agents);
+  } else {
+    for (const o of OWN_RUNTIME_OPTIONS) add(o.value, o.label);
+    syncExtRuntimeOptions();
+  }
+  rt.value = [...rt.options].some((o) => o.value === was) ? was : (rt.options[0]?.value || 'local');
+}
+
+// Moves the open dialog onto another deck (or back to the board's own): its
+// tasks, folder, runtimes and agents become that deck's.
+function setDispatchDeck(deckId) {
+  const next = deckId || null;
+  if (next === dispatchDeck) return;
+  dispatchDeck = next;
+  if (intentImages.names().length) { intentImages.reset(); toast('Images are kept by one deck: paste them again for this one.'); }
+  populateTaskSelect(null);
+  syncDispatchRuntimes();
+  populateModelSelect();
+  setDispatchCwdDefaults();
+  syncRuntimeToggle();
+  fsFolders = []; fsProbed = null; cwdExists = null; cwdCreatable = null; renderCwdState();
+  syncWorktreeFields();
+  requestFolderBrowse();
+  syncDispatchExtFields();
+}
+// A deck that comes or goes while the dialog is open updates the picker; one
+// that can no longer be picked hands the dialog back to the board's own deck.
+function refreshDeckPicker() {
+  if (modal.classList.contains('hidden') || modalMode !== 'launch') return;
+  const was = dispatchDeck;
+  syncDeckPicker();
+  if (was === dispatchDeck) return;
+  dispatchDeck = was;
+  setDispatchDeck(null);
+}
+document.getElementById('m-deck').addEventListener('change', (e) => setDispatchDeck(e.target.value));
+
+// The calls the open dialog makes while filling itself in (folder completion,
+// worktree checks, staged images) go to the deck it launches on.
+function dialogSend(frame) {
+  return send(dispatchDeck ? { ...frame, deck: dispatchDeck } : frame);
 }
 function setDispatchPending(p) { wtPending = p; renderWorktreeState(); }
 
@@ -6180,7 +6271,7 @@ function validateWorktree() {
   // field current with the auto-derived slug even when untouched, so this
   // catches existing-branch / adopt / blocked targets whether typed or auto-derived.
   const branch = document.getElementById('m-wt-branch').value.trim();
-  send({ type: 'validate-worktree', cwd, branch });
+  dialogSend({ type: 'validate-worktree', cwd, branch });
 }
 
 function onWorktreeValidation(msg) {
@@ -6235,6 +6326,10 @@ function setDispatchMode(mode) { dispatchMode = mode; syncWorkflow(); }
 // (runtimeAgentError), so this is the dialog's courtesy, not the guard.
 function runtimeAllowsAgent(opt, agent) {
   if (!opt || opt.value === 'local') return true;
+  if (opt.dataset.agents !== undefined) {
+    const listed = JSON.parse(opt.dataset.agents);
+    return listed === null || listed.includes(agent);
+  }
   const agents = opt.dataset.ext
     ? latestExtensions.find((e) => e.id === opt.dataset.ext)?.runtimes?.find((r) => r?.id === opt.value)?.agents
     : null;
@@ -6282,7 +6377,7 @@ function syncCodexPolicyRow(agent) {
 // provider has gone falls back to local — the server would refuse it anyway.
 function syncExtRuntimeOptions() {
   const rt = document.getElementById('m-runtime');
-  if (!rt) return;
+  if (!rt || dispatchDeck) return;
   const want = new Map(); // runtime id -> { extId, label }; the first provider wins
   for (const e of latestExtensions) {
     if (!e.enabled || e.quarantine || !Array.isArray(e.runtimes)) continue;
@@ -6595,32 +6690,18 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   document.getElementById('m-sch-focus').checked = action?.kind === 'session' && action.focus === true;
   document.getElementById('m-sch-message').value = action && action.kind !== 'dispatch' ? (action.message || '') : '';
   const wantTask = typeof taskId === 'string' ? taskId : (d.taskId || null);
+  dispatchDeck = mode === 'launch' && isRemoteTask(wantTask) ? findTask(wantTask).deckId : null;
+  syncDeckPicker();
   populateTaskSelect(wantTask);
   dispatchMode = d.workflow ? 'workflow' : 'standard'; // never sticky otherwise
-  // Propose a fresh timestamped scratch folder; show it relative, send it absolute.
-  const now = new Date();
-  const stamp = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
-  proposedCwd = sessionsDir ? `${sessionsDir}/${stamp}` : '';
-  const cwdInput = document.getElementById('m-cwd');
-  const selected = document.getElementById('m-task').value;
-  // Default the repo to the task's dominant cwd. Live sessions win; if the task
-  // has none left on the board (e.g. all archived) fall back to its history —
-  // archived entries keep their task assignment + cwd — so the repo isn't lost.
-  // Folders dismissed from the recents list are skipped here too.
-  const cwdForTask = (sel) => {
-    const hidden = hiddenRecents();
-    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd, s.worktree)))));
-    return pick(latestSessions) || pick(latestHistory);
-  };
-  cwdInput.value = schedule
-    ? (d.cwd || '')
-    : ((selected && cwdForTask(selected)) || defaultSessionCwd);
-  cwdInput.placeholder = proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
+  setDispatchCwdDefaults();
+  if (schedule) document.getElementById('m-cwd').value = d.cwd || '';
   additionalFolders.reset(d.addDirs || []);
   document.getElementById('m-intent').value = d.intent || '';
   // Images an openDispatch is about to adopt keep their previews through the reset.
   intentImages.reset({ keep: keepImages });
   autoCompactTokens = d.autoCompactTokens;
+  if (modelSelectDeck !== dispatchDeck) populateModelSelect();
   applyDispatchPick(schedule ? d : undefined);
   autoCompactAgent = document.getElementById('m-model').options[document.getElementById('m-model').selectedIndex]?.dataset.agent ?? 'claude';
   // A scheduled worktree restores the checkbox; workflow mode drives its own.
@@ -6629,7 +6710,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   // syncWorkflow→syncRuntimeToggle re-gates by agent. The extension options go
   // in first so an extension runtime can be selected; one whose extension is now
   // off or gone matches no option (the select reads back '') and falls back to local.
-  syncExtRuntimeOptions();
+  syncDispatchRuntimes();
   const rtSel = document.getElementById('m-runtime');
   const wantRuntime = (schedule ? d.runtime : defaultRuntime) || 'local';
   rtSel.value = wantRuntime;
@@ -6672,13 +6753,44 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   modal.classList.remove('hidden');
   (scheduleMode() ? document.getElementById('m-sch-name') : document.getElementById('m-intent')).focus();
 }
+// Default the repo to the task's dominant cwd. Live sessions win; if the task
+// has none left on the board (e.g. all archived) fall back to its history —
+// archived entries keep their task assignment + cwd — so the repo isn't lost.
+// Folders dismissed from the recents list are skipped here too.
+function cwdForTask(sel) {
+  const hidden = hiddenRecents();
+  const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd, s.worktree)))));
+  return pick(latestSessions) || pick(latestHistory);
+}
+// The folder field for the picked deck and task. The board's own deck proposes
+// a fresh timestamped scratch folder (shown relative, sent absolute); another
+// deck makes its own when the field is left blank.
+function setDispatchCwdDefaults() {
+  const now = new Date();
+  const stamp = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
+  proposedCwd = !dispatchDeck && sessionsDir ? `${sessionsDir}/${stamp}` : '';
+  const cwdInput = document.getElementById('m-cwd');
+  const selected = document.getElementById('m-task').value;
+  cwdInput.value = (selected && cwdForTask(selected)) || (dispatchDeck ? '' : defaultSessionCwd);
+  cwdInput.placeholder = dispatchDeck ? `A new scratch folder on ${deckNameOf(dispatchDeck)}`
+    : proposedCwd ? tildeCollapse(proposedCwd) : '/Users/you/vcs/project';
+}
 // Default one-off ~1h out (rounded to the minute), 09:00 for recurring.
 function defaultPicker() {
   return { cadence: 'once', at: toDatetimeLocalValue(Date.now() + 3600e3), time: '09:00', weekdaysOnly: false, days: [] };
 }
+// Another deck's task whose deck cannot take a session now: its name, else null.
+function taskDeckUnpickable(taskId) {
+  const task = isRemoteTask(taskId) ? findTask(taskId) : null;
+  if (!task) return null;
+  return remoteDecks.entryFor(task.deckId)?.status === 'ready' ? null : (task.deckName || deckNameOf(task.deckId));
+}
 function openDispatch(taskId = null, opts = {}) {
+  const unpickable = taskDeckUnpickable(taskId);
+  if (unpickable) { toast(`${unpickable} is unreachable`, true); return; }
   const taskSel = document.getElementById('m-task');
   if (taskSel) taskSel.disabled = Boolean(opts.lockTask);
+  document.getElementById('m-deck').disabled = Boolean(opts.lockTask);
   openModal({ mode: 'launch', taskId, keepImages: opts.images || [] });
   // The source session's exact folder must win over openModal's task-dominant cwd.
   if (opts.cwd) {
@@ -6785,7 +6897,10 @@ function submitDispatch(over) {
   // A classified target the server says is impossible (branch busy / folder occupied)
   // blocks dispatch — Launch is disabled for it, but Cmd+Enter reaches here directly.
   if (wtOn && wtValidation && wtValidation.ok && worktreeStatusMsg(wtValidation)?.blocks) return false;
-  send({ type: 'dispatch', ...fields });
+  const sent = dispatchDeck
+    ? send({ type: 'dispatch', ...fields, taskId: findTask(fields.taskId)?.localId, deck: dispatchDeck })
+    : send({ type: 'dispatch', ...fields });
+  if (!sent) return false;
   // The names now belong to this dispatch; a relaunch must not claim them again.
   intentImages.reset();
   dispatchWaiter.submit();
@@ -6896,6 +7011,7 @@ function closeModal() {
   modalMode = 'launch'; editingScheduleId = null;
   subagentModalReq = null;
   document.getElementById('m-task').disabled = false;
+  document.getElementById('m-deck').disabled = false;
 }
 // Dismiss (Cancel/Escape): drop back to the Schedules panel when we came from it,
 // so editing a schedule round-trips through the panel rather than the bare board.
@@ -7804,7 +7920,7 @@ const remoteDeckCache = {
 const remoteDecks = createRemoteDecks({
   ownDeckId: () => boardDeckId,
   cache: remoteDeckCache,
-  onChange: () => { applyDecks(); remountDecksPanel(); },
+  onChange: () => { applyDecks(); remountDecksPanel(); refreshDeckPicker(); },
   onEvent: (deckId, frame) => onRemoteDeckMessage(deckId, frame.data),
 });
 const deckList = createDeckList({
@@ -8348,7 +8464,7 @@ const extImageStaging = createExtImageStaging({ send, previews: stagedPreviews }
 const intentImages = createIntentImages({
   input: document.getElementById('m-intent'),
   listEl: document.getElementById('m-intent-attachments'),
-  send,
+  send: dialogSend,
   toast,
   previews: stagedPreviews,
   // The overlay, not the card: .modal-card scrolls and has a backdrop-filter,

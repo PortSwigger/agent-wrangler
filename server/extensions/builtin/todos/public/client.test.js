@@ -259,7 +259,8 @@ test('another deck\'s task draws that deck\'s todos, sends changes to that deck 
   assert.match(own.children[0].innerHTML, /own deck/);
   const elB = hostB.children[0];
   assert.match(elB.innerHTML, /deck B todo/);
-  assert.doesNotMatch(elB.innerHTML, /own deck|todo-spawn/, 'another deck\'s task starts no session from here');
+  assert.doesNotMatch(elB.innerHTML, /own deck/);
+  assert.match(elB.innerHTML, /todo-spawn/, 'another deck\'s TODO starts a session on that deck');
   assert.match(hostC.children[0].innerHTML, /Incompatible: Laptop C runs another version of TODOs/);
   assert.equal(slots.taskBodyWeight('deck-b/T1', {}, remote('deck-b')), TODO_DIVIDER_PX + TODO_STRIDE_PX);
 
@@ -273,4 +274,30 @@ test('another deck\'s task draws that deck\'s todos, sends changes to that deck 
   assert.deepEqual(labels('deck-b'), ['New TODO']);
   assert.deepEqual(labels('deck-c'), [], 'no New TODO on a deck that runs another version');
   assert.deepEqual(errors, []);
+});
+
+test('starting another deck\'s TODO opens the dialog on its scoped task and deletes it on that deck once launched', async () => {
+  const { slots, document, sent, baseApi } = load();
+  const opened = [];
+  baseApi.openDispatchAcked = (o) => { opened.push(o); return Promise.resolve({ type: 'dispatched' }); };
+  slots.setExtDecks(new Map([['todos', [
+    { deckId: 'deck-a', name: 'Laptop A', own: true, status: 'ready', state: { todos: {} } },
+    { deckId: 'deck-b', name: 'Laptop B', own: false, status: 'ready', state: { todos: { T1: [{ id: 'b', text: 'Fix the build' }] } } },
+    { deckId: 'deck-c', name: 'Laptop C', own: false, status: 'unreachable', state: { todos: { T1: [{ id: 'c', text: 'Later' }] } } },
+  ]]]));
+  const hostB = document.make(); const hostC = document.make();
+  const remote = (deckId, host) => ({ taskId: `${deckId}/T1`, adhocId: 'adhoc', container: host, deckId, deckTaskId: 'T1' });
+  slots.syncHosts('task.body', [{ host: hostB, session: remote('deck-b', hostB) }, { host: hostC, session: remote('deck-c', hostC) }], {}, {});
+  assert.doesNotMatch(hostC.children[0].innerHTML, /todo-spawn/, 'an unreachable deck\'s TODO starts nothing');
+  const elB = hostB.children[0];
+  const row = document.make(); row.dataset.todoid = 'b';
+  const play = document.make();
+  play.closest = (sel) => (sel === '.todo-spawn' ? play : sel === '.todo-row' ? row : null);
+  for (const fn of elB.listeners.click) fn({ target: play, stopPropagation() {} });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].taskId, 'deck-b/T1');
+  assert.equal(opened[0].lockTask, true);
+  assert.match(opened[0].intent, /Fix the build/);
+  assert.deepEqual(sent, [{ type: 'todo-delete', taskId: 'T1', todoId: 'b', deck: 'deck-b' }]);
 });
