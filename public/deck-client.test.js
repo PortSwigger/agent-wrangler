@@ -29,7 +29,7 @@ function harness(descriptor) {
   const client = createDeckClient({
     fetchImpl: async (url) => { fetched.push(url); return { ok: true, json: async () => descriptor }; },
     WebSocketImpl: FakeSocket,
-    location: { protocol: 'http:', host: 'localhost:7777' },
+    origin: () => ({ http: 'http://127.0.0.1:7779', ws: 'ws://127.0.0.1:7779' }),
     onStatus: (s) => statuses.push(s),
     onState: (f) => states.push(f),
     onEvent: (f) => events.push(f),
@@ -51,9 +51,9 @@ test('apiMajor reads the major of a version string and nothing else', () => {
 test('the handshake reads GET /deck, then opens /ws with the API major', async () => {
   const h = harness(DECK);
   await h.client.start();
-  assert.deepEqual(h.fetched, ['/deck']);
+  assert.deepEqual(h.fetched, ['http://127.0.0.1:7779/deck'], 'the descriptor is read from the deck\'s own origin');
   assert.equal(FakeSocket.all.length, 1);
-  assert.equal(FakeSocket.all[0].url, 'ws://localhost:7777/ws?api=1');
+  assert.equal(FakeSocket.all[0].url, 'ws://127.0.0.1:7779/ws?api=1');
   FakeSocket.all[0].open();
   assert.equal(h.client.status(), 'ready');
   assert.deepEqual(h.client.descriptor(), DECK);
@@ -142,7 +142,7 @@ test('a closed socket settles every pending action as failed and reconnects thro
   assert.equal(h.client.status(), 'connecting');
   assert.equal(h.timers.length, 1);
   await h.timers[0].fn();
-  assert.deepEqual(h.fetched, ['/deck', '/deck']);
+  assert.deepEqual(h.fetched, ['http://127.0.0.1:7779/deck', 'http://127.0.0.1:7779/deck']);
 });
 
 test('refresh picks up a changed action list', async () => {

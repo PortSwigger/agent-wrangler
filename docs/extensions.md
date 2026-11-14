@@ -278,6 +278,26 @@ A board half reads only its own state and the session view, and acts only throug
   with the reply arriving through `api.onMessage`.
 - `api.styles()` resolves with the board's contributed styles, the list `/api/styles` serves.
 
+### Ports and origins
+
+The deck and the board listen on separate ports, so the board talks to the deck cross-origin. The
+board server is on `AW_PORT` (default `7878`), the address you open: it serves the board's HTML and
+scripts, each extension's board half under `/ext/<id>/`, and styles (`/api/styles`, `/styles/*`).
+The deck listens on loopback only, on `AW_DECK_PORT` (default `AW_PORT` + 1), and the board page names
+that port in `<meta name="aw-deck-port">`. The deck accepts a browser only from the board origins in
+its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS`. A board
+opened from another host (with `AW_BIND_HOST`) reaches the deck through the board server instead.
+
+Board pages are sent with `Content-Security-Policy-Report-Only: script-src 'self'; object-src 'none';
+base-uri 'self'`. Nothing is blocked yet: an inline `onclick` or `<script>` in a board half still
+runs, and the browser reports it as a violation in the console. Load board code as modules from your
+`public/` directory so it keeps working once the policy is enforced.
+
+Routes that board code reached on its own origin before the split are forwarded by the board server
+to the deck unchanged: `GET /file`, `GET /ext-file`, `GET /deck`, `POST /mcp`, `/pr-attach` and
+`/pr-model`, and the `/ws` and `/pty` sockets. The deck still applies its own origin and host checks
+to each.
+
 ### Migrating an unsplit manifest
 
 A manifest with `client`, `styles` or `themes` at the top level is unsplit. It still loads exactly as
@@ -305,6 +325,7 @@ one console warning on first use naming its replacement:
 | A `/ws` connection without `?api=` (deck log) | `GET /deck` and `/ws?api=1` |
 | `GET /file` (deck log) | the `session.file` action |
 | `GET /ext-file` (deck log) | the `deck.ext-file` action, through `api.openFile` |
+| `GET /deck`, `/ws?api=` or `/pty` on the board's port (deck log) | the same route on the deck's port |
 | The session fields the session view leaves out (`pid`, `socket`, `jobId`, `liveSessionId`, `hasTranscript`, `currentModel`, `launchedCodeVersion`, `autoBlockSeconds`, `suspendedAt`) | the fields the session view carries |
 
 ## Authoring rules

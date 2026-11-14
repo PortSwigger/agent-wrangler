@@ -7,8 +7,9 @@ import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from '.
 
 // Pins the surfaces an extension written before the deck API reaches: the
 // fixture in fixtures/compat-probe reads dropped session fields off the graph,
-// fetches GET /file and GET /ext-file, and opens a /ws without ?api= from its
-// board code, in a real headless Chrome against an isolated instance. Each must
+// fetches GET /file and GET /ext-file and opens a /ws without ?api= on the
+// board's origin (forwarded to the deck), and runs an inline onclick handler,
+// in a real headless Chrome against an isolated instance. Each must
 // answer in its old shape, and each must have gone through its adapter, which
 // the one deprecation warning per surface shows. Skips without Chrome, like
 // board-acceptance.test.js.
@@ -51,6 +52,15 @@ test('an extension using the pre-deck surfaces still works, each through its ada
     assert.ok(!done.legacyWs.types.includes('state') && !done.legacyWs.types.includes('event'));
     assert.deepEqual(done.legacyWs.graphSessions, [{ sessionId: sid, hasPid: true, suspendedAt }], 'its graph frame carries the full record');
     assert.equal(done.legacyWs.pong, 7, 'a legacy message reaches its handler and the reply comes back unwrapped');
+
+    await tab.evaluate("document.getElementById('compat-inline').click()");
+    const inline = await waitFor(async () => {
+      const r = JSON.parse((await probe()) || 'null');
+      return r?.inline && r.csp ? r : null;
+    });
+    assert.ok(inline, `the inline handler never ran: ${await probe()}`);
+    assert.equal(inline.inline, 'ran', 'an inline handler still runs under the Report-Only CSP');
+    assert.deepEqual(inline.csp, { directive: 'script-src-attr', disposition: 'report' }, 'and is reported, not enforced');
 
     for (const field of ['pid', 'suspendedAt', 'jobId']) {
       assert.equal(warnings.filter((w) => w.includes(`session.${field} is deprecated`)).length, 1, `one warning for session.${field}`);
