@@ -1,0 +1,14 @@
+  [2mField 1/1[0m
+  Allow the chrome-devtools MCP server to run tool "press_key"?
+
+  key: Tab
+  pageId: 15
+
+  [1;7m› 1. Allow                   [0;7mRun the tool and continue[1m                      [0m
+    2. Allow for this session  [2mRun the tool and remember this choice for this[0m
+                               [2msession[0m
+    3. Always allow            [2mRun the tool and remember this choice for[0m
+                               [2mfuture tool calls[0m
+    4. Cancel                  [2mCancel this tool call[0m
+  [1menter[0m to submit[2m | [0;1mesc[0m to cancel
+
