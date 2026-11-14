@@ -32,17 +32,17 @@ echo "Dev board at http://localhost:$AW_PORT  (data: $AWDIR)"
 
 A fresh `AW_DATA_DIR` has no legacy (socket-less) entries, so `socketsToScan` returns only the generated socket and the **default socket is never scanned**. Never point a dev instance at the live `~/.agent-wrangler` data dir.
 
-## Drive it headlessly (control WS)
+## Drive it headlessly (deck API)
 
-Connect to `ws://localhost:<port>/ws` and send JSON (minimal client: `import WebSocket from '<repo>/node_modules/ws/wrapper.mjs'` with an **absolute** path):
+`GET http://localhost:<port>/deck` returns the descriptor (`api`, `actions`, …). Then connect to `ws://localhost:<port>/ws?api=1` (a socket without `?api=1` is refused) and send action envelopes (minimal client: `import WebSocket from '<repo>/node_modules/ws/wrapper.mjs'` with an **absolute** path). Each gets one `{type:'result', id, ok, data, error}`:
 
-| message | effect |
+| frame | effect |
 |---|---|
-| `{type:'dispatch', cwd:'', intent:'<prompt>', model:'sonnet'}` | new session (blank cwd → scratch dir) |
-| `{type:'fork', sessionId:'<cardId>', prompt:'<first msg>'}` | replies `{type:'forked', sessionId}` |
-| `{type:'archive', sessionId:'<cardId>'}` / `{type:'resume', sessionId:'<cardId>'}` | archive / restore |
+| `{type:'action', id:1, action:'session.dispatch', args:{cwd:'', intent:'<prompt>', model:'sonnet'}}` | new session (blank cwd → scratch dir) |
+| `{type:'action', id:2, action:'session.fork', session:'<cardId>', args:{prompt:'<first msg>'}}` | result data `{type:'forked', sessionId}` |
+| `{type:'action', id:3, action:'session.archive', session:'<cardId>'}` / `session.resume` | archive / restore |
 
-A `{type:'graph', graph}` is pushed on connect and on every rebuild that changed something (an idle server sends none; see `server/graph-frame-gate.js`); sessions are under **`msg.graph.sessions`** (each has `sessionId` = card id, `liveSessionId`, `managed`, `socket`, `label`). Terminal bytes: `ws://localhost:<port>/pty?sessionId=<cardId>&cols=120&rows=32`.
+A `{type:'state', rev, sessions, history, …}` frame is pushed on connect and on every rebuild that changed something (an idle server sends none; see `server/deck/state.js`); each session has `sessionId` = card id, `managed` and `label`. Broadcasts arrive as `{type:'event', event, session, data}`. Terminal bytes: `ws://localhost:<port>/pty?sessionId=<cardId>&cols=120&rows=32`.
 
 ## Waiting on a session
 

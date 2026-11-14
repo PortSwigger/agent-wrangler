@@ -56,6 +56,9 @@ import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChips
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
+import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
+import { withCompatFields } from './legacy-surface.js';
+import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
 import { prCheckToastOptions } from './pr-check-notification.js';
@@ -462,7 +465,7 @@ const extApi = {
     return minimisedIds.has(taskId);
   },
   // Backs `api.openFile`; slots has checked the capability and bound the id.
-  openExtFile: (extId, p) => (extFileViewer ||= createExtFileViewer({ document, renderMarkdown: (md) => extApi.markdownPreview(md) })).open(extId, p),
+  openExtFile: (extId, p) => (extFileViewer ||= createExtFileViewer({ document, act: deckAct, renderMarkdown: (md) => extApi.markdownPreview(md) })).open(extId, p),
   // Backs `api.images.stage`.
   stageImage: (file) => extImageStaging.stage(file),
   // Back `api.earlyAdopter`; slots binds the id.
@@ -918,7 +921,7 @@ function applyGraph(graph) {
   latestSessions = graph.sessions || [];
   // history is the one key the server may leave OUT: it's the archive of every
   // session ever set aside and it changes a handful of times a day against a ~2s
-  // broadcast, so it rides only the ticks that change it (server/history-gate.js).
+  // broadcast, so it rides only the ticks that change it (server/deck/state.js).
   // Keyed on PRESENCE, never truthiness — purging the last archive sends a real
   // empty array, and `|| []` would read that as "unchanged" and never clear.
   if ('history' in graph) latestHistory = graph.history || [];
@@ -951,7 +954,7 @@ function applyGraph(graph) {
   // An open panel follows the list, but ONLY when the list itself changed: this
   // runs on every ~2s graph tick, and a blind re-render would wipe a half-typed
   // git URL out of the install field. The signature is the serialised list for
-  // the same reason history-gate.js compares serialised history — anything
+  // the same reason the deck state stream compares serialised history — anything
   // narrower has to be kept in step with the server's record by hand.
   //
   // Load-bearing after a RESTART: `config` (which clears the pending-removal
@@ -2785,6 +2788,7 @@ function autoFixMenuItem(s) {
   let on = Boolean(s.autoFixPrChecks);
   return {
     label: 'Auto-fix PR checks',
+    action: 'session.auto-fix-pr-checks',
     icon: GITHUB_ICON,
     trailing: on ? CHECK_ICON : '',
     keepOpen: true,
@@ -2804,6 +2808,7 @@ function autoMergeMenuItem(s) {
   let on = Boolean(s.autoMergeOnPass);
   return {
     label: 'Auto-merge when checks pass',
+    action: 'session.auto-merge-on-pass',
     icon: GITHUB_ICON,
     trailing: on ? CHECK_ICON : '',
     keepOpen: true,
@@ -2851,6 +2856,7 @@ function childFullViewMenuItem(s) {
   let on = isChildFullView(s);
   return {
     label: 'Full view',
+    action: 'session.set-child-full-view',
     icon: MAXIMIZE_ICON,
     trailing: on ? CHECK_ICON : '',
     keepOpen: true,
@@ -2909,18 +2915,18 @@ function openCardMenu(sessionId, x, y) {
   // Rename edits the panel title, so select first to open the panel — exactly
   // what the pencil button assumes. Fork/Archive act on the id directly.
   const items = [
-    { label: 'Rename', icon: PENCIL_ICON, run: () => { selectSession(sessionId); beginRename(sessionId); } },
-    ...(!snoozed ? [{ label: 'Fork', icon: FORK_ICON, run: () => openFork(sessionId) }] : []),
-    ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, run: () => peerReviewSession(sessionId) }] : []),
-    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
+    { label: 'Rename', icon: PENCIL_ICON, action: 'session.rename', run: () => { selectSession(sessionId); beginRename(sessionId); } },
+    ...(!snoozed ? [{ label: 'Fork', icon: FORK_ICON, action: 'session.fork', run: () => openFork(sessionId) }] : []),
+    ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', run: () => peerReviewSession(sessionId) }] : []),
+    { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
     { label: 'Copy reference', icon: COPY_ICON, run: () => copySessionReference(s) },
     ...(s.exitOutput ? [{ label: 'Show last output', icon: ROBOT_ICON, run: () => selectSession(sessionId) }] : []),
     { sep: true },
     ...(snoozed ? [
-      { label: 'Unsnooze', icon: CLOCK_ICON, run: () => wakeSession(sessionId) },
-      { label: 'Extend snooze…', icon: CLOCK_ICON, run: () => openSnoozeMenu(sessionId, x, y) },
+      { label: 'Unsnooze', icon: CLOCK_ICON, action: 'session.snooze-clear', run: () => wakeSession(sessionId) },
+      { label: 'Extend snooze…', icon: CLOCK_ICON, action: 'session.snooze-set', run: () => openSnoozeMenu(sessionId, x, y) },
     ] : [
-      { label: 'Snooze…', icon: CLOCK_ICON, run: () => openSnoozeMenu(sessionId, x, y) },
+      { label: 'Snooze…', icon: CLOCK_ICON, action: 'session.snooze-set', run: () => openSnoozeMenu(sessionId, x, y) },
       unread.has(sessionId)
         ? { label: 'Mark read', icon: BELL_ICON, run: () => setUnread(sessionId, false) }
         : { label: 'Mark unread', icon: BELL_ICON, run: () => setUnread(sessionId, true) },
@@ -2932,19 +2938,19 @@ function openCardMenu(sessionId, x, y) {
     { sep: true },
     // Restart (kill tmux + relaunch with --resume) only makes sense while the
     // session is live; a dormant/snoozed card already offers Resume elsewhere.
-    ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, run: () => restartSession(sessionId) }] : []),
+    ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', run: () => restartSession(sessionId) }] : []),
     // Promote is offered only for a nested session, and never for a workflow
     // worker (its orchestrator's autopilot run tracks it — promoting would
     // desync that). Attach is offered whenever there's at least one valid
     // same-task target to attach under.
-    ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, run: () => promoteSession(sessionId) }] : []),
+    ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, action: 'session.detach', run: () => promoteSession(sessionId) }] : []),
     // "Full view" only makes sense for a genuine CHILD (parentSession set) — a
     // top-level session already renders full, whether or not it's `spawnedBy`.
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
-    { label: 'Archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
+    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
+    { label: 'Archive', icon: ARCHIVE_ICON, action: 'session.archive', danger: true, run: () => archiveSession(sessionId) },
   ];
-  mountMenu(items, x, y);
+  mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
 }
 
 // A line to paste into another agent's chat: the id is what read_session_transcript
@@ -2965,30 +2971,30 @@ function openActionsMenu(sessionId, x, y) {
   if (!s) return;
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
   const items = [
-    { label: 'Fork session', icon: FORK_ICON, trailing: KBD_FORK, run: () => openFork(sessionId) },
-    { label: 'Peer review session…', icon: PLUS_ICON, trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
+    { label: 'Fork session', icon: FORK_ICON, action: 'session.fork', trailing: KBD_FORK, run: () => openFork(sessionId) },
+    { label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
     // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
-    { label: 'View diff', icon: DIFF_ICON, trailing: KBD_DIFF, run: () => { openDiffPanel(sessionId); if (sessionEmbed.active()) renderPanel(sessionId); } },
+    { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => { openDiffPanel(sessionId); if (sessionEmbed.active()) renderPanel(sessionId); } },
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
     // the handler's own error) and doesn't care whether the panel is showing Chat or
     // Terminal for this session.
-    ...(s.cwd ? [{ label: 'Open terminal', icon: TERMINAL_ICON, trailing: KBD_TERMINAL, run: () => send({ type: 'open-terminal-for-session', sessionId }) }] : []),
+    ...(s.cwd ? [{ label: 'Open terminal', icon: TERMINAL_ICON, action: 'session.open-terminal', trailing: KBD_TERMINAL, run: () => send({ type: 'open-terminal-for-session', sessionId }) }] : []),
     isAsleep(s)
-      ? { label: 'Unsnooze', icon: CLOCK_ICON, trailing: KBD_SNOOZE, run: () => wakeSession(sessionId) }
-      : { label: 'Snooze…', icon: CLOCK_ICON, trailing: KBD_SNOOZE, run: () => openSnoozeMenu(sessionId, x, y) },
+      ? { label: 'Unsnooze', icon: CLOCK_ICON, action: 'session.snooze-clear', trailing: KBD_SNOOZE, run: () => wakeSession(sessionId) }
+      : { label: 'Snooze…', icon: CLOCK_ICON, action: 'session.snooze-set', trailing: KBD_SNOOZE, run: () => openSnoozeMenu(sessionId, x, y) },
     autoFixMenuItem(s),
     autoMergeMenuItem(s),
     ...extMenuItems(s),
     { sep: true },
-    ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
-    ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, run: () => promoteSession(sessionId) }] : []),
+    ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
+    ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, action: 'session.detach', run: () => promoteSession(sessionId) }] : []),
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, submenu: attachMenuItems(sessionId) }] : []),
-    { label: 'Stop & archive', icon: ARCHIVE_ICON, danger: true, run: () => archiveSession(sessionId) },
+    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
+    { label: 'Stop & archive', icon: ARCHIVE_ICON, action: 'session.archive', danger: true, run: () => archiveSession(sessionId) },
   ];
-  mountMenu(items, x, y);
+  mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
 }
 
 // Mirrors set-session-model.js's own refusals, so the chat view only offers the
@@ -2996,7 +3002,7 @@ function openActionsMenu(sessionId, x, y) {
 // inline conditions because the two sides have to agree: a mismatch here shows a
 // menu whose every choice fails.
 function canSwitchModel(s) {
-  return canSwitchProviderModel(s && { ...s, status: displayStatus(s) });
+  return canSwitchProviderModel(s && { managed: s.managed, agent: s.agent, status: displayStatus(s) });
 }
 
 // What this browser last asked for, per card id. Needed only to break one
@@ -6393,7 +6399,7 @@ function syncDispatchExtFields() {
   const ctx = modalMode === 'subagent' ? null : dispatchFieldCtx();
   const entries = ctx === null ? [] : [...document.querySelectorAll('.ext-dispatch-slot')]
     .map((host) => ({ host, at: host.dataset.at, session: ctx }));
-  // The graph only carries `history` on ticks where it changed (history-gate.js),
+  // The graph only carries `history` on ticks where it changed (server/deck/state.js),
   // so hand contributions the cached copy rather than whatever the last tick had.
   slots.syncHosts('dispatch.field', entries, extApi, latestGraph && { ...latestGraph, history: latestHistory });
   applyDispatchFieldVeto(ctx);
@@ -6789,6 +6795,11 @@ async function restartTmux() {
 }
 
 function syncStandingBanner() {
+  if (deckStatus === 'incompatible') {
+    const api = deck.descriptor()?.api;
+    showSystemBanner(`⚠ This deck speaks API ${api || 'of an unknown version'}, which this board cannot use (it needs ${DECK_API_MAJOR}.x). The board will not act on it.`);
+    return;
+  }
   if (fdBannerActive) return;
   if (quarantinedBuiltins.length) {
     const many = quarantinedBuiltins.length !== 1;
@@ -7549,9 +7560,8 @@ function tryFulfillScheduledFocus() {
   landOnCard(target, { diff: false, onClose: null }, selectSession);
 }
 
-// --- websocket control ---
-let ws;
-// The server only sends a graph when something in it changed (graph-frame-gate.js),
+// --- deck connection ---
+// The deck only sends a state frame when something in it changed (server/deck/state.js),
 // so an idle board can go minutes without one. What the board draws still moves
 // with the clock — "5m ago" tags, a comment-less snooze waking, a finished
 // sub-agent leaving the recent window — so after this long without a frame the
@@ -7566,280 +7576,317 @@ function armIdleReapply() {
     armIdleReapply();
   }, IDLE_REAPPLY_MS);
 }
-export function send(obj) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-  ws.send(JSON.stringify(obj));
-  return true;
-}
-function connect() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
+let deckStatus = 'connecting';
+const deck = createDeckClient({
+  onStatus: (status) => {
+    const was = deckStatus;
+    deckStatus = status;
+    if (was === 'incompatible') hideSystemBanner();
+    syncStandingBanner();
+    syncDeckControls();
+  },
+  onState: (frame) => { applyGraph(stateToGraph(frame, { restore: withCompatFields })); armIdleReapply(); },
+  onEvent: (frame) => onDeckMessage(frame.data),
   // A #view=search deep link runs setView before this socket exists, so its
   // index-status request is dropped. Re-issue it on open — which also refreshes
   // the view after a reconnect.
-  ws.onopen = () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); };
-  ws.onclose = () => { chatView.onConnectionClosed(); setTimeout(connect, 1500); };
-  ws.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data);
-    if (msg.type === 'graph') { applyGraph(msg.graph); armIdleReapply(); }
-    // A `config` is the first frame of every connect, so it is also how the board
-    // learns a restart finished: the pending install/removal notes describe a
-    // boot snapshot that has just been replaced, and the process holding them is
-    // gone either way.
-    else if (msg.type === 'config') {
-      sessionsDir = msg.sessionsDir || '';
-      homeDir = msg.homeDir || '';
-      canRestartServer = Boolean(msg.canRestart);
-      extRestarting = false;
-      noteConfigUpdate(msg);
-      extPendingRemoval.clear();
-      extPendingInstall = '';
-      remountExtensions();
+  onOpen: () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); },
+  onClose: () => chatView.onConnectionClosed(),
+});
+// Whether the deck can do `action` for this card: it advertises the action
+// and the card does not list it as unsupported.
+const canAct = (action, s = null) => deck.supports(action, s);
+// Board-wide controls name their action in data-deck-action. Before the first
+// handshake answers, nothing is hidden.
+function syncDeckControls() {
+  const known = deckStatus === 'ready' || deckStatus === 'incompatible';
+  for (const el of document.querySelectorAll('[data-deck-action]')) {
+    el.classList.toggle('deck-unsupported', known && !canAct(el.dataset.deckAction));
+  }
+}
+
+// Sends a control message as its deck action. Returns false, sending nothing,
+// when the deck is not connected or does not offer the action. The reply a
+// handler makes is the result's data and goes through the same ladder as an
+// event; a refused or failed action arrives there as an `error`.
+export function send(obj, extId = null) {
+  const call = toActionCall(obj, extId);
+  if (!call) return false;
+  if (!deck.canSend(call.action)) {
+    if (deckStatus === 'ready') toast(`This deck does not offer ${call.action}`, true);
+    return false;
+  }
+  deck.act(call.action, call).then((r) => {
+    if (r.ok) { if (r.data && typeof r.data.type === 'string') onDeckMessage(r.data); }
+    else onDeckMessage({ type: 'error', message: r.error?.message || 'The action failed' });
+  });
+  return true;
+}
+export function deckAct(action, opts) {
+  return deck.act(action, opts);
+}
+function connect() {
+  deck.start();
+}
+function onDeckMessage(msg) {
+  if (!msg || typeof msg.type !== 'string') return;
+  // A `config` is the first frame of every connect, so it is also how the board
+  // learns a restart finished: the pending install/removal notes describe a
+  // boot snapshot that has just been replaced, and the process holding them is
+  // gone either way.
+  if (msg.type === 'config') {
+    sessionsDir = msg.sessionsDir || '';
+    homeDir = msg.homeDir || '';
+    canRestartServer = Boolean(msg.canRestart);
+    extRestarting = false;
+    noteConfigUpdate(msg);
+    extPendingRemoval.clear();
+    extPendingInstall = '';
+    remountExtensions();
+  }
+  // Sent on EVERY connect (before the first graph); the loader is idempotent
+  // per id, so a reconnect registers nothing twice. Not awaited — an
+  // extension that fails to load is logged and dropped, never the board's
+  // problem. A render is asked for once something new registered, since the
+  // first graph may already have been applied while the module was in flight.
+  else if (msg.type === 'extensions') { deck.refresh().then(syncDeckControls); extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteExtClientFacts(extClientManifest); syncClientExtensions(); }
+  // An extension's server half talking to its own browser half: host.broadcast
+  // FORCES the frame's type to `ext:<its own id>` (host-api/v1.js), so the
+  // prefix can never collide with a core type and the id in it is the whole
+  // address. slots.dispatchMessage fails closed — only listeners that
+  // extension's own module subscribed are called, and an unknown or unloaded
+  // id reaches nothing. This branch is the whole reason such a frame is no
+  // longer dropped off the end of this ladder.
+  else if (typeof msg.type === 'string' && msg.type.startsWith('ext:')) slots.dispatchMessage(msg);
+  // Success is silent on purpose: the model chip changes on the next turn, off
+  // the transcript, which is real confirmation rather than this reply's
+  // optimism. Only a refusal needs saying, because nothing else would show it.
+  // The install/update flow. Progress is broadcast (so a second tab watching
+  // the same install follows it) and the terminal phases are ALSO replied, so
+  // the modal never depends on a broadcast it might have missed.
+  else if (msg.type === 'ext-install-progress') {
+    extInstallProgress = progressText(msg.phase, msg);
+    extInstallPhase = msg.phase;
+    if (msg.phase === 'failed' || msg.phase === 'cancelled' || msg.phase === 'done') extInstallBusy = false;
+    if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) {
+      if (msg.phase === 'done' && extRestartOnDone) extRestartAfterUpdates = true;
+      extRestartOnDone = false;
     }
-    // Sent on EVERY connect (before the first graph); the loader is idempotent
-    // per id, so a reconnect registers nothing twice. Not awaited — an
-    // extension that fails to load is logged and dropped, never the board's
-    // problem. A render is asked for once something new registered, since the
-    // first graph may already have been applied while the module was in flight.
-    else if (msg.type === 'extensions') { extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteExtClientFacts(extClientManifest); syncClientExtensions(); }
-    // An extension's server half talking to its own browser half: host.broadcast
-    // FORCES the frame's type to `ext:<its own id>` (host-api/v1.js), so the
-    // prefix can never collide with a core type and the id in it is the whole
-    // address. slots.dispatchMessage fails closed — only listeners that
-    // extension's own module subscribed are called, and an unknown or unloaded
-    // id reaches nothing. This branch is the whole reason such a frame is no
-    // longer dropped off the end of this ladder.
-    else if (typeof msg.type === 'string' && msg.type.startsWith('ext:')) slots.dispatchMessage(msg);
-    // Success is silent on purpose: the model chip changes on the next turn, off
-    // the transcript, which is real confirmation rather than this reply's
-    // optimism. Only a refusal needs saying, because nothing else would show it.
-    // The install/update flow. Progress is broadcast (so a second tab watching
-    // the same install follows it) and the terminal phases are ALSO replied, so
-    // the modal never depends on a broadcast it might have missed.
-    else if (msg.type === 'ext-install-progress') {
-      extInstallProgress = progressText(msg.phase, msg);
-      extInstallPhase = msg.phase;
-      if (msg.phase === 'failed' || msg.phase === 'cancelled' || msg.phase === 'done') extInstallBusy = false;
-      if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) {
-        if (msg.phase === 'done' && extRestartOnDone) extRestartAfterUpdates = true;
-        extRestartOnDone = false;
-      }
-      if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) clearExtTransientLater();
-      remountExtensions();
-      if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) runNextExtUpdate();
+    if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) clearExtTransientLater();
+    remountExtensions();
+    if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) runNextExtUpdate();
+  }
+  else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
+  // The server refused it — the extension needs a host API this wrangler does
+  // not serve. Nothing changed on disk. An update's reason replaces its update
+  // button (hasUpdate) and sits on its row until the next check; the `failed`
+  // progress broadcast already carries the same line for a fresh install.
+  else if (msg.type === 'ext-install-incompatible') {
+    if (msg.update) extUpdateStatuses[msg.id] = { ...extUpdateStatuses[msg.id], incompatible: msg.message };
+    remountExtensions();
+  }
+  else if (msg.type === 'ext-install-done') {
+    extInstallBusy = false;
+    // An install is live now — the server registers and activates it in
+    // process, and re-announces, so its client half arrives on its own. Only
+    // an UPDATE of an already-registered id still needs the restart (two
+    // versions of one extension must never run at once), and only that case
+    // leaves a pending-install row with its restart button.
+    if (msg.installed) {
+      extPendingInstall = msg.restartRequired ? msg.id : '';
+      // Reinstalling an id uninstalled earlier in THIS process: only a `config`
+      // frame clears the removal set, so without this the freshly installed —
+      // and live — row comes back struck through under its own "Uninstalled"
+      // note, and keeps the head's restart button up for a removal that has
+      // been superseded.
+      extPendingRemoval.delete(msg.id);
+      // The row's "a newer commit is available" note came from the last check
+      // and nothing else refreshes it — not this frame, not the restart (the
+      // page survives it), and not the transient timer, which keeps `behind`
+      // on purpose. Left in place it re-offers the update just applied, and a
+      // second Update clones the same sha again.
+      delete extUpdateStatuses[msg.id];
+      if (extBgUpdates) extBgUpdates = { ...extBgUpdates, extensions: extBgUpdates.extensions.filter((e) => e.id !== msg.id) };
+      remountUpdatePanel();
+      // `automatic`: the update tick applied it for an extension that opted
+      // in, and every tab is told, so the restart button is up wherever the
+      // human looks next.
+      if (msg.automatic) toast(`Auto-updated ${msg.id}. ${canRestartServer ? EXT_AUTO_RESTART_NOTE : EXT_RESTART_NOTE}`);
+      else if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
+      else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
+      else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
     }
-    else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
-    // The server refused it — the extension needs a host API this wrangler does
-    // not serve. Nothing changed on disk. An update's reason replaces its update
-    // button (hasUpdate) and sits on its row until the next check; the `failed`
-    // progress broadcast already carries the same line for a fresh install.
-    else if (msg.type === 'ext-install-incompatible') {
-      if (msg.update) extUpdateStatuses[msg.id] = { ...extUpdateStatuses[msg.id], incompatible: msg.message };
-      remountExtensions();
+    remountExtensions();
+  }
+  else if (msg.type === 'ext-uninstall-done') {
+    extPendingRemoval.add(msg.id);
+    toast(`Uninstalled ${msg.id}. ${EXT_UNINSTALL_RESTART_NOTE}`);
+    remountExtensions();
+  }
+  else if (msg.type === 'ext-browse-results') {
+    extBrowse = { loading: false, repos: Array.isArray(msg.repos) ? msg.repos : [], error: msg.error || '' };
+    remountExtensions();
+  }
+  else if (msg.type === 'ext-updates') {
+    extUpdateStatuses = Object.fromEntries((msg.extensions || []).map((e) => [e.id, e]));
+    extUpdatesCheckedAt = Date.now();
+    extChecking = false;
+    clearExtTransientLater();
+    remountExtensions();
+  }
+  else if (msg.type === 'ext-update-status') applyExtUpdateStatus(msg);
+  else if (msg.type === 'update-status') { applyUpdateStatus(msg); updatePhase = 'status'; remountUpdatePanel(); }
+  // `extensions`: the restart loads auto-applied extension updates only.
+  else if (msg.type === 'update-applied') { updatePhase = 'restarting'; if (msg.extensions) extRestarting = true; remountUpdatePanel(); remountExtensions(); }
+  else if (msg.type === 'install-drift') { installDrift = msg.drift || null; remountUpdatePanel(); }
+  else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
+  // The board is about to lose this socket; ws.onclose already retries every
+  // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
+  else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
+  else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
+  else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); setBackgroundModelOptions(availableAgents); } populateModelSelect(); }
+  else if (msg.type === 'notify') notify(msg.session);
+  else if (msg.type === 'diff') onDiff(msg);
+  else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);
+  else if (msg.type === 'pr-checks') onPrChecks(msg);
+  else if (msg.type === 'pr-merge') onPrMerge(msg);
+  else if (msg.type === 'pr-dirty') onPrDirty(msg);
+  else if (msg.type === 'pr-unresolved') onPrComments(msg);
+  else if (msg.type === 'schedule-fired') onScheduleFired(msg);
+  else if (msg.type === 'schedule-error') toast(`Schedule "${msg.name}" failed: ${msg.message}`, true);
+  else if (msg.type === 'prepare-warnings') toastLaunchWarnings(msg.warnings || []);
+  else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
+  else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
+  else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
+  else if (msg.type === 'fd-warning') {
+    // #system-banner is one slot, so the producers have to take turns: an
+    // fd leak is the most urgent and wins while it is active, and clearing it
+    // re-asserts the quarantine or rollback line (which is otherwise never
+    // redrawn) rather than leaving the slot blank.
+    fdBannerActive = Boolean(msg.active);
+    if (msg.active) showSystemBanner(`⚠ Server open file count is climbing (currently ${msg.count}) — possible leak, check server logs`, { level: msg.level, kind: 'fd' });
+    else {
+      hideSystemBanner();
+      syncStandingBanner();
     }
-    else if (msg.type === 'ext-install-done') {
-      extInstallBusy = false;
-      // An install is live now — the server registers and activates it in
-      // process, and re-announces, so its client half arrives on its own. Only
-      // an UPDATE of an already-registered id still needs the restart (two
-      // versions of one extension must never run at once), and only that case
-      // leaves a pending-install row with its restart button.
-      if (msg.installed) {
-        extPendingInstall = msg.restartRequired ? msg.id : '';
-        // Reinstalling an id uninstalled earlier in THIS process: only a `config`
-        // frame clears the removal set, so without this the freshly installed —
-        // and live — row comes back struck through under its own "Uninstalled"
-        // note, and keeps the head's restart button up for a removal that has
-        // been superseded.
-        extPendingRemoval.delete(msg.id);
-        // The row's "a newer commit is available" note came from the last check
-        // and nothing else refreshes it — not this frame, not the restart (the
-        // page survives it), and not the transient timer, which keeps `behind`
-        // on purpose. Left in place it re-offers the update just applied, and a
-        // second Update clones the same sha again.
-        delete extUpdateStatuses[msg.id];
-        if (extBgUpdates) extBgUpdates = { ...extBgUpdates, extensions: extBgUpdates.extensions.filter((e) => e.id !== msg.id) };
-        remountUpdatePanel();
-        // `automatic`: the update tick applied it for an extension that opted
-        // in, and every tab is told, so the restart button is up wherever the
-        // human looks next.
-        if (msg.automatic) toast(`Auto-updated ${msg.id}. ${canRestartServer ? EXT_AUTO_RESTART_NOTE : EXT_RESTART_NOTE}`);
-        else if (msg.restartRequired) toast(`Installed ${msg.id}. ${EXT_RESTART_NOTE}`);
-        else if (msg.active === false) toast(`Installed ${msg.id}. Turn it on to start it.`);
-        else toast(`Installed ${msg.id} and live. Running sessions pick up its tools when they next resume.`);
-      }
-      remountExtensions();
+  }
+  else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);
+  // The "Kill jobs & archive" outcome — the immediate toast in archiveSession()
+  // already fired; this replaces it once the nudge/wait/teardown actually finish.
+  else if (msg.type === 'archived') {
+    const worktree = latestSessions.find((x) => x.sessionId === msg.sessionId)?.worktree || null;
+    const archivedIds = [msg.sessionId, ...(msg.childIds || [])];
+    archivedToast(msg.sessionId, msg.unclean
+      ? 'Archived — the background job may have been interrupted uncleanly'
+      : 'Background jobs stopped — archived cleanly', worktree, archivedIds);
+  }
+  else if (msg.type === 'task-created') onTaskCreated(msg);
+  // The single toast for task-archive (no separate immediate one when the task
+  // had no live sessions — see archiveTask() — so this never double-fires).
+  else if (msg.type === 'task-archived') {
+    const n = msg.archivedSessions || 0;
+    const sessionsNote = n > 0 ? ` (${n} session${n > 1 ? 's' : ''})` : '';
+    toast(msg.unclean
+      ? `Task archived${sessionsNote} — a background job may have been interrupted uncleanly`
+      : `Task archived${sessionsNote}`, false, {
+      label: 'Restore task',
+      duration: 10000,
+      // Force through, no dialog — this is an immediate undo of the action the
+      // user just took, so it restores the task AND every session it just
+      // cascaded. The deliberate "task only vs. task + sessions" choice only
+      // applies later, from Search's archived rows (see restoreTaskWithPrompt).
+      onClick: () => send({ type: 'task-unarchive', taskId: msg.taskId, restoreSessions: true }),
+    });
+  }
+  // Nav signal for a task restore (toast or Search): jump back to the board
+  // and halo the tile, decoupled from the slower per-session resumes a
+  // restoreSessions:true restore may still be doing in the background.
+  else if (msg.type === 'task-unarchived') {
+    setView('grid');
+    flashRestoredTask(msg.taskId);
+  }
+  else if (msg.type === 'worktree-removed') {
+    if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId }) }], duration: 15000 });
+    else toast('Worktree removed');
+  }
+  else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop');
+  else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`, 'success');
+  else if (msg.type === 'branch-delete-blocked') {
+    confirmDialog({
+      title: 'Branch has unmerged commits',
+      body: `Git wouldn't delete branch ${msg.branch}:\n\n${msg.reason}\n\nForce-delete it anyway? Its unmerged commits will be lost.`,
+      okLabel: 'Force delete',
+    }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true }); });
+  }
+  else if (msg.type === 'forked') { setPendingSelect(msg.sessionId); tryFulfillPending(); }
+  // Search adopted an off-board conversation onto the board (or found it already
+  // had a card). The card id is minted server-side, so this reply is the first
+  // moment the view knows what to jump to — same deferred select as a fork.
+  else if (msg.type === 'adopted') { setPendingSelect(msg.sessionId); tryFulfillPending(); onAdopted(msg); }
+  else if (msg.type === 'adopt-failed') { toast(msg.message); onAdoptFailed(msg); }
+  else if (msg.type === 'resume-needs-dir') {
+    const forking = msg.action === 'fork';
+    const verb = forking ? 'fork' : 'resume';
+    confirmDialog({
+      title: 'Original folder was deleted',
+      body: `The folder this session ran in is gone:\n\n${tildeCollapse(msg.dir)}\n\nRecreate it and ${verb} anyway? The full conversation is restored from the transcript — but the working files that were in that folder won't be.`,
+      okLabel: `Recreate & ${verb}`,
+    }).then((result) => {
+      if (result !== 'ok') { toast(`${forking ? 'Fork' : 'Resume'} cancelled — original folder is gone.`); return; }
+      if (forking) send({ type: 'fork', sessionId: msg.sessionId, recreateDir: true, prompt: msg.prompt || '', name: msg.name || '' });
+      else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true });
+    });
+  }
+  else if (msg.type === 'open-terminal' && msg.presentation === 'dialog') openTerminalDialog({ terminalId: msg.terminalId, command: msg.command || '', title: msg.title || '' });
+  else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
+  else if (msg.type === 'styles') { setCustomStyles(msg.styles); refreshThemeRows(); }
+  else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
+  else if (msg.type === 'chat') chatView.onChatReply(msg);
+  else if (msg.type === 'message-result') chatView.onMessageResult(msg);
+  else if (msg.type === 'paste-image-result') { if (!terminalImagePaste.onResult(msg) && !intentImages.onResult(msg) && !extImageStaging.onResult(msg)) chatView.onPasteImageResult(msg); }
+  else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
+  else if (msg.type === 'usage') onUsage(msg);
+  else if (msg.type === 'search-results') onSearchResults(msg);
+  else if (msg.type === 'search-status') onSearchStatus(msg);
+  else if (msg.type === 'worktree-validation') onWorktreeValidation(msg);
+  else if (msg.type === 'folder-browse') onFolderBrowse(msg);
+  else if (msg.type === 'dispatched') {
+    if (wtPending) {
+      wtPending = false; setDispatchPending(false);
+      modal.classList.add('hidden');
+      document.getElementById('m-intent').value = '';
     }
-    else if (msg.type === 'ext-uninstall-done') {
-      extPendingRemoval.add(msg.id);
-      toast(`Uninstalled ${msg.id}. ${EXT_UNINSTALL_RESTART_NOTE}`);
-      remountExtensions();
-    }
-    else if (msg.type === 'ext-browse-results') {
-      extBrowse = { loading: false, repos: Array.isArray(msg.repos) ? msg.repos : [], error: msg.error || '' };
-      remountExtensions();
-    }
-    else if (msg.type === 'ext-updates') {
-      extUpdateStatuses = Object.fromEntries((msg.extensions || []).map((e) => [e.id, e]));
-      extUpdatesCheckedAt = Date.now();
-      extChecking = false;
-      clearExtTransientLater();
-      remountExtensions();
-    }
-    else if (msg.type === 'ext-update-status') applyExtUpdateStatus(msg);
-    else if (msg.type === 'update-status') { applyUpdateStatus(msg); updatePhase = 'status'; remountUpdatePanel(); }
-    // `extensions`: the restart loads auto-applied extension updates only.
-    else if (msg.type === 'update-applied') { updatePhase = 'restarting'; if (msg.extensions) extRestarting = true; remountUpdatePanel(); remountExtensions(); }
-    else if (msg.type === 'install-drift') { installDrift = msg.drift || null; remountUpdatePanel(); }
-    else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
-    // The board is about to lose this socket; ws.onclose already retries every
-    // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
-    else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
-    else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
-    else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); setBackgroundModelOptions(availableAgents); } populateModelSelect(); }
-    else if (msg.type === 'notify') notify(msg.session);
-    else if (msg.type === 'diff') onDiff(msg);
-    else if (msg.type === 'diff-comments-result') onDiffCommentsResult(msg);
-    else if (msg.type === 'pr-checks') onPrChecks(msg);
-    else if (msg.type === 'pr-merge') onPrMerge(msg);
-    else if (msg.type === 'pr-dirty') onPrDirty(msg);
-    else if (msg.type === 'pr-unresolved') onPrComments(msg);
-    else if (msg.type === 'schedule-fired') onScheduleFired(msg);
-    else if (msg.type === 'schedule-error') toast(`Schedule "${msg.name}" failed: ${msg.message}`, true);
-    else if (msg.type === 'prepare-warnings') toastLaunchWarnings(msg.warnings || []);
-    else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
-    else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
-    else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
-    else if (msg.type === 'fd-warning') {
-      // #system-banner is one slot, so the producers have to take turns: an
-      // fd leak is the most urgent and wins while it is active, and clearing it
-      // re-asserts the quarantine or rollback line (which is otherwise never
-      // redrawn) rather than leaving the slot blank.
-      fdBannerActive = Boolean(msg.active);
-      if (msg.active) showSystemBanner(`⚠ Server open file count is climbing (currently ${msg.count}) — possible leak, check server logs`, { level: msg.level, kind: 'fd' });
+    dispatchWaiter.ack(msg);
+  }
+  else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
+  else if (msg.type === 'ext-early-adopter-result') settleEarlyAdopter(msg);
+  else if (msg.type === 'restart-tmux-done') {
+    tmuxRestarting = false;
+    toast('tmux restarted. Resume your sessions to bring them back.');
+  }
+  else if (msg.type === 'error') {
+    dispatchWaiter.error({ modalOpen: wtPending });
+    // A refused restart-tmux comes back as a bare error too; put the button back.
+    if (tmuxRestarting) { tmuxRestarting = false; syncStandingBanner(); }
+    if (wtPending) {
+      wtPending = false; setDispatchPending(false);
+      // Workflow mode hides the worktree box, so its message slot is invisible —
+      // surface the failure as a toast there; otherwise show it inline. An
+      // extension's `worktree` veto hides the outer row instead, same outcome.
+      const box = document.querySelector('.worktree-box');
+      if (box.classList.contains('hidden') || box.closest('.dispatch-field.hidden')) { toast(msg.message, true); }
       else {
-        hideSystemBanner();
-        syncStandingBanner();
+        const el = document.getElementById('m-worktree-msg');
+        el.textContent = msg.message; el.classList.remove('hidden', 'hint'); el.classList.add('error');
       }
+    } else {
+      toast(msg.message, true);
+      // A refused resume comes back as a bare error with no session id, so
+      // every in-flight resume gives up its placeholder. A resume that's still
+      // on its way just shows the dormant panel until its tmux appears.
+      if (resuming.size) { clearTimeout(resumeFailTimer); resumeFailTimer = null; [...resuming].forEach(abandonResume); }
     }
-    else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);
-    // The "Kill jobs & archive" outcome — the immediate toast in archiveSession()
-    // already fired; this replaces it once the nudge/wait/teardown actually finish.
-    else if (msg.type === 'archived') {
-      const worktree = latestSessions.find((x) => x.sessionId === msg.sessionId)?.worktree || null;
-      const archivedIds = [msg.sessionId, ...(msg.childIds || [])];
-      archivedToast(msg.sessionId, msg.unclean
-        ? 'Archived — the background job may have been interrupted uncleanly'
-        : 'Background jobs stopped — archived cleanly', worktree, archivedIds);
-    }
-    else if (msg.type === 'task-created') onTaskCreated(msg);
-    // The single toast for task-archive (no separate immediate one when the task
-    // had no live sessions — see archiveTask() — so this never double-fires).
-    else if (msg.type === 'task-archived') {
-      const n = msg.archivedSessions || 0;
-      const sessionsNote = n > 0 ? ` (${n} session${n > 1 ? 's' : ''})` : '';
-      toast(msg.unclean
-        ? `Task archived${sessionsNote} — a background job may have been interrupted uncleanly`
-        : `Task archived${sessionsNote}`, false, {
-        label: 'Restore task',
-        duration: 10000,
-        // Force through, no dialog — this is an immediate undo of the action the
-        // user just took, so it restores the task AND every session it just
-        // cascaded. The deliberate "task only vs. task + sessions" choice only
-        // applies later, from Search's archived rows (see restoreTaskWithPrompt).
-        onClick: () => send({ type: 'task-unarchive', taskId: msg.taskId, restoreSessions: true }),
-      });
-    }
-    // Nav signal for a task restore (toast or Search): jump back to the board
-    // and halo the tile, decoupled from the slower per-session resumes a
-    // restoreSessions:true restore may still be doing in the background.
-    else if (msg.type === 'task-unarchived') {
-      setView('grid');
-      flashRestoredTask(msg.taskId);
-    }
-    else if (msg.type === 'worktree-removed') {
-      if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId }) }], duration: 15000 });
-      else toast('Worktree removed');
-    }
-    else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop');
-    else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`, 'success');
-    else if (msg.type === 'branch-delete-blocked') {
-      confirmDialog({
-        title: 'Branch has unmerged commits',
-        body: `Git wouldn't delete branch ${msg.branch}:\n\n${msg.reason}\n\nForce-delete it anyway? Its unmerged commits will be lost.`,
-        okLabel: 'Force delete',
-      }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true }); });
-    }
-    else if (msg.type === 'forked') { setPendingSelect(msg.sessionId); tryFulfillPending(); }
-    // Search adopted an off-board conversation onto the board (or found it already
-    // had a card). The card id is minted server-side, so this reply is the first
-    // moment the view knows what to jump to — same deferred select as a fork.
-    else if (msg.type === 'adopted') { setPendingSelect(msg.sessionId); tryFulfillPending(); onAdopted(msg); }
-    else if (msg.type === 'adopt-failed') { toast(msg.message); onAdoptFailed(msg); }
-    else if (msg.type === 'resume-needs-dir') {
-      const forking = msg.action === 'fork';
-      const verb = forking ? 'fork' : 'resume';
-      confirmDialog({
-        title: 'Original folder was deleted',
-        body: `The folder this session ran in is gone:\n\n${tildeCollapse(msg.dir)}\n\nRecreate it and ${verb} anyway? The full conversation is restored from the transcript — but the working files that were in that folder won't be.`,
-        okLabel: `Recreate & ${verb}`,
-      }).then((result) => {
-        if (result !== 'ok') { toast(`${forking ? 'Fork' : 'Resume'} cancelled — original folder is gone.`); return; }
-        if (forking) send({ type: 'fork', sessionId: msg.sessionId, recreateDir: true, prompt: msg.prompt || '', name: msg.name || '' });
-        else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true });
-      });
-    }
-    else if (msg.type === 'open-terminal' && msg.presentation === 'dialog') openTerminalDialog({ terminalId: msg.terminalId, command: msg.command || '', title: msg.title || '' });
-    else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
-    else if (msg.type === 'styles') { setCustomStyles(msg.styles); refreshThemeRows(); }
-    else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
-    else if (msg.type === 'chat') chatView.onChatReply(msg);
-    else if (msg.type === 'message-result') chatView.onMessageResult(msg);
-    else if (msg.type === 'paste-image-result') { if (!terminalImagePaste.onResult(msg) && !intentImages.onResult(msg) && !extImageStaging.onResult(msg)) chatView.onPasteImageResult(msg); }
-    else if (msg.type === 'interrupt-restore') chatView.onInterruptRestore(msg);
-    else if (msg.type === 'usage') onUsage(msg);
-    else if (msg.type === 'search-results') onSearchResults(msg);
-    else if (msg.type === 'search-status') onSearchStatus(msg);
-    else if (msg.type === 'worktree-validation') onWorktreeValidation(msg);
-    else if (msg.type === 'folder-browse') onFolderBrowse(msg);
-    else if (msg.type === 'dispatched') {
-      if (wtPending) {
-        wtPending = false; setDispatchPending(false);
-        modal.classList.add('hidden');
-        document.getElementById('m-intent').value = '';
-      }
-      dispatchWaiter.ack(msg);
-    }
-    else if (msg.type === 'ext-setting-result') settleExtSetting(msg);
-    else if (msg.type === 'ext-early-adopter-result') settleEarlyAdopter(msg);
-    else if (msg.type === 'restart-tmux-done') {
-      tmuxRestarting = false;
-      toast('tmux restarted. Resume your sessions to bring them back.');
-    }
-    else if (msg.type === 'error') {
-      dispatchWaiter.error({ modalOpen: wtPending });
-      // A refused restart-tmux comes back as a bare error too; put the button back.
-      if (tmuxRestarting) { tmuxRestarting = false; syncStandingBanner(); }
-      if (wtPending) {
-        wtPending = false; setDispatchPending(false);
-        // Workflow mode hides the worktree box, so its message slot is invisible —
-        // surface the failure as a toast there; otherwise show it inline. An
-        // extension's `worktree` veto hides the outer row instead, same outcome.
-        const box = document.querySelector('.worktree-box');
-        if (box.classList.contains('hidden') || box.closest('.dispatch-field.hidden')) { toast(msg.message, true); }
-        else {
-          const el = document.getElementById('m-worktree-msg');
-          el.textContent = msg.message; el.classList.remove('hidden', 'hint'); el.classList.add('error');
-        }
-      } else {
-        toast(msg.message, true);
-        // A refused resume comes back as a bare error with no session id, so
-        // every in-flight resume gives up its placeholder. A resume that's still
-        // on its way just shows the dormant panel until its tmux appears.
-        if (resuming.size) { clearTimeout(resumeFailTimer); resumeFailTimer = null; [...resuming].forEach(abandonResume); }
-      }
-    }
-  };
+  }
 }
 
 // One toast for a launch's warnings: a single one as it is, several as a count

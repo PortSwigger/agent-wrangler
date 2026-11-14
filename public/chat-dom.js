@@ -145,7 +145,7 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
       if (e.text) wrap.appendChild(fillLinked(el('div', 'chat-user-text'), e.text));
       const row = el('div', 'chat-user-images');
       for (const img of e.images) {
-        // A chip, not a thumbnail: GET /file is markdown-only by design and
+        // A chip, not a thumbnail: session.file is markdown-only by design and
         // widening it to serve arbitrary image paths would open a read surface
         // for one decoration. The chip is also exactly what the pane shows for
         // an attached image, so the two views agree.

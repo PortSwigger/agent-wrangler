@@ -528,6 +528,8 @@ main.session-embedded #drag-handle { display: none; }
    so an element toggled via the hidden attribute (not a class — see chat-view.js)
    needs its own [hidden] override. Same fix as .diff-panel[hidden] above. */
 #term-wrap[hidden] { display: none; }
+/* A control the deck does not offer. */
+[data-deck-action].deck-unsupported { display: none !important; }
 /* #term is the backdrop wrapper: it paints --term-bg (rgba honored) and the
    xterm canvas inside is made transparent for dark translucent themes (see
    readTerminalTheme), so the cells AND the inset take this one bg uniformly —

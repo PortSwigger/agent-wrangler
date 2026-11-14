@@ -42,7 +42,8 @@ function realCtx() {
 function route(raw, host) {
   const handlers = loadExtensions({ cfg: {}, builtin: [manifest] }).handlers;
   const routerCtx = { hostApiFor: () => host, reply: (obj) => host.calls.replies.push(obj) };
-  return routeControlMessage(raw, routerCtx, { handlers });
+  const { type, ...args } = JSON.parse(raw);
+  return routeControlMessage(JSON.stringify({ type: 'action', id: 1, action: `ext.checklist.${type}`, args }), routerCtx, { handlers });
 }
 
 test('checklist-add adds to the given card id and rebuilds', async () => {
@@ -99,18 +100,18 @@ test('the four types are routable end-to-end through the control router', async 
   assert.deepEqual(c.stores.checklist.list('CARD1').map((i) => [i.text, i.done]), [['two', false], ['one', true]]);
   await route(JSON.stringify({ type: 'checklist-remove', sessionId: 'CARD1', itemId: b.id }), c);
   assert.deepEqual(c.stores.checklist.list('CARD1').map((i) => i.text), ['one']);
-  assert.deepEqual(c.calls.replies, [], 'no errors on the happy path');
+  assert.ok(c.calls.replies.every((r) => r.type === 'result' && r.ok), 'no errors on the happy path');
 });
 
-// The store throws on a cap breach; the router's error envelope is what turns
-// that into a toast rather than a silently dropped click.
-test('a rejected add reaches the client as an error reply, not silence', async () => {
+// The store throws on a cap breach; the failed result is what turns that into
+// a toast rather than a silently dropped click.
+test('a rejected add reaches the client as a failed result, not silence', async () => {
   const c = realCtx();
   await route(JSON.stringify({
     type: 'checklist-add', sessionId: 'CARD1', text: 'x'.repeat(MAX_TEXT_LENGTH + 1),
   }), c);
   assert.equal(c.calls.replies.length, 1);
-  assert.equal(c.calls.replies[0].type, 'error');
-  assert.match(c.calls.replies[0].message, /too long/);
+  assert.equal(c.calls.replies[0].error.code, 'failed');
+  assert.match(c.calls.replies[0].error.message, /too long/);
   assert.deepEqual(c.stores.checklist.list('CARD1'), []);
 });

@@ -251,6 +251,15 @@ have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
   consented to and recorded, so a reinstall can clone that branch before any manifest is imported.
 - Put browser assets under `public/`. Third-party strings render as text; homepages must use `https://`.
 - Handle cleanup explicitly: uninstall removes the extension and provenance, not files it wrote elsewhere.
+- Prefer `api.send`, `api.openFile` and the session fields the board draws from over the older direct
+  surfaces. These still work, each through an adapter over the deck API (`GET /deck`, `/ws?api=1`),
+  and log one console warning on first use naming the replacement:
+  - a `/ws` connection without `?api=`: legacy message types run as their deck actions, and graph
+    frames are built from state frames;
+  - `GET /file` and `GET /ext-file`: answered by the `session.file` and `deck.ext-file` actions;
+  - the session fields the deck's session view leaves out (`pid`, `socket`, `jobId`, `liveSessionId`,
+    `hasTranscript`, `currentModel`, `launchedCodeVersion`, `autoBlockSeconds`, `suspendedAt`): still on
+    every session record an extension's board code is handed.
 
 ### Session launch capabilities
 

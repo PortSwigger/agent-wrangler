@@ -1,11 +1,12 @@
 import { toast } from './toast.js';
 import { esc } from './util.js';
 import { createRenderer } from './markdown-preview.js';
+import { deckAct } from './app.js';
 
 // The click-to-preview modal for a .md path clicked in the terminal. Fetches
-// GET /file, renders with the shared markdown renderer, shows it full-height.
+// the deck's session.file action, renders with the shared markdown renderer, shows it full-height.
 // Owns its own DOM wiring (like modals.js). currentPath guards against a slow
-// fetch resolving after the user has opened a different file / closed the modal.
+// read resolving after the user has opened a different file / closed the modal.
 const modal = document.getElementById('file-modal');
 const titleEl = document.getElementById('file-title');
 const pathEl = document.getElementById('file-path');
@@ -22,9 +23,9 @@ function close() { modal.classList.add('hidden'); currentPath = null; }
 async function load(p) {
   bodyEl.innerHTML = '<div class="file-loading">Loading…</div>';
   try {
-    const res = await fetch(`/file?path=${encodeURIComponent(p)}`);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const res = await deckAct('session.file', { args: { path: p } });
+    if (!res.ok) throw new Error(res.error?.message || 'read error');
+    const data = res.data;
     if (currentPath !== p) return; // superseded
     bodyEl.innerHTML = renderer()(data.content);
     if (data.path) pathEl.textContent = data.path;
