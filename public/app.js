@@ -1,4 +1,5 @@
 import { setProviderMetadata, providerMetadataFor, canSwitchProviderModel, needsYouTitle } from './provider-metadata.js';
+import { parseViewHash } from './hash-view.js';
 import { dispatchPick, readDispatchPick, saveDispatchPick } from './dispatch-preferences.js';
 import { createDispatchModelPicker } from './dispatch-model-picker.js';
 import { effortsOf } from './model-front.js';
@@ -715,8 +716,8 @@ function syncClientExtensions() {
   // A panel re-render is what draws the gap the unmount left, and what gives a
   // freshly-loaded contribution its host to mount into.
   if (unmounted) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); }
-  clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
-    .then((changed) => { if (changed) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); } });
+  trackExtLoad(clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
+    .then((changed) => { if (changed) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); } }));
 }
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
@@ -1008,6 +1009,7 @@ function applyGraph(graph) {
   // can ask for reads that — and before the renderPanel further down, so the
   // panel is drawn against the contributions that survive this tick.
   if (latestExtensions.some((e) => e.id === 'sounds')) migrateSoundPreference(send);
+  extGraphSeen = true;
   syncClientExtensions();
   // After the sync above, so the Settings row offers exactly what #m-runtime does.
   setRuntimeOptions([...document.getElementById('m-runtime').options].map((o) => ({ value: o.value, label: o.textContent })));
@@ -1074,6 +1076,7 @@ function applyGraph(graph) {
 }
 
 function setView(view) {
+  awaitingExtView = null;
   if (currentView === 'search' && view === 'grid') clearSearch();
   currentView = view;
   // The diff panel overlays the board, so leaving grid must dismiss it. An
@@ -1174,9 +1177,39 @@ function renderExtViews() {
   updateExtViews();
   // A deep link can land before the extension's module has loaded, so the hash
   // is re-read once its view finally exists (hashView refuses an unknown one).
-  const deep = hashView();
-  if (deep && deep !== currentView && isExtView(deep)) setView(deep);
+  settleDeepView();
 }
+
+// A cold load of #view=ext:<id>:<view> names a view whose extension module has
+// not loaded yet. The grid stays hidden meanwhile (awaitingExtView) so the board
+// never flashes; this selects the view once it registers, or — when the
+// extensions have finished loading without it (off, unknown) — falls back to the
+// board and clears the hash.
+let awaitingExtView = null;
+let extGraphSeen = false;
+let extLoadsInFlight = 0;
+// A second sync mid-import resolves at once (the loader already marked the id
+// loaded), so the verdict waits for every load in flight, not the first to settle.
+function trackExtLoad(promise) {
+  extLoadsInFlight++;
+  return promise.finally(() => { if (--extLoadsInFlight === 0) settleDeepView(true); });
+}
+function settleDeepView(loaded = false) {
+  const deep = hashView();
+  if (deep && deep !== currentView && isExtView(deep)) { setView(deep); return; }
+  if (!awaitingExtView) return;
+  if (isExtView(awaitingExtView)) { setView(awaitingExtView); return; }
+  if (!loaded || !extGraphSeen) return;
+  releaseAwaitingView();
+}
+function releaseAwaitingView() {
+  if (!awaitingExtView) return;
+  awaitingExtView = null;
+  document.getElementById('grid').classList.remove('hidden');
+  renderGrid();
+  syncHash();
+}
+const AWAITING_EXT_VIEW_TIMEOUT_MS = 10000;
 
 // Hand every mounted view contribution the CURRENT graph. Split out of
 // renderExtViews and called from applyGraph as well, because a view is the one
@@ -4192,9 +4225,10 @@ function isHashView(view) {
   return HASH_VIEWS.includes(view) || isExtView(view);
 }
 function hashView() {
-  const m = (location.hash || '').match(/^#view=(.+)$/);
-  if (m && m[1] === 'history') return 'search';
-  return m && isHashView(m[1]) ? m[1] : null;
+  const parsed = parseViewHash(location.hash);
+  if (!parsed) return null;
+  if (parsed.view === 'history') return 'search';
+  return isHashView(parsed.view) ? parsed.view : null;
 }
 
 // Mirror the current view/selection into the hash so a refresh re-lands here.
@@ -4206,7 +4240,7 @@ function syncHash() {
     ? `#view=${currentView}`
     : selectedSessionId ? `#session=${encodeURIComponent(selectedSessionId)}` : '';
   if (target) {
-    if (location.hash !== target) location.hash = target;
+    if (location.hash !== target && !location.hash.startsWith(`${target}&`)) location.hash = target;
   } else if (location.hash) {
     history.replaceState(null, '', location.pathname + location.search);
   }
@@ -4231,6 +4265,11 @@ function tryFulfillPending() {
 }
 
 window.addEventListener('hashchange', () => {
+  if (awaitingExtView) {
+    if (parseViewHash(location.hash)?.view === awaitingExtView) return;
+    awaitingExtView = null;
+    document.getElementById('grid').classList.remove('hidden');
+  }
   const view = hashView();
   // Re-sync even when the view didn't change, so a legacy alias in the hash
   // (#view=history) is normalized to what syncHash would write.
@@ -8081,6 +8120,13 @@ if (window.Notification && Notification.permission === 'default') Notification.r
 // a #session link is fulfilled once the first graph contains it.
 initSearchView();
 if (hashView()) setView(hashView());
-else setPendingSelect(hashSessionId());
+else {
+  const coldView = parseViewHash(location.hash)?.view;
+  if (coldView?.startsWith(EXT_VIEW_PREFIX)) {
+    awaitingExtView = coldView;
+    document.getElementById('grid').classList.add('hidden');
+    setTimeout(releaseAwaitingView, AWAITING_EXT_VIEW_TIMEOUT_MS);
+  } else setPendingSelect(hashSessionId());
+}
 populateModelSelect();
 connect();

@@ -1,6 +1,7 @@
+import { parseViewHash } from './hash-view.js';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 
 const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 function declaration(head) {
@@ -37,7 +38,9 @@ function harness() {
     'function tryFulfillPending() {', 'function syncHash() {',
     'function hashSessionId() {', 'function hashView() {',
     'function isHashView(view) {', 'function closePanel() {',
+    'function isExtView(view) {', 'function settleDeepView(loaded = false) {', 'function trackExtLoad(promise) {', 'function releaseAwaitingView() {',
   ];
+  const coldStart = source.slice(source.indexOf('if (hashView()) setView(hashView());'), source.indexOf('populateModelSelect();\nconnect();'));
   const hashListener = source.slice(source.indexOf("window.addEventListener('hashchange', () => {"), source.indexOf('// True when the board is collapsed'));
   const scope = {
     document: { getElementById: node, querySelectorAll: () => [] },
@@ -45,14 +48,15 @@ function harness() {
     location, history: { replaceState: () => { location.hash = ''; } },
     extViewHosts: new Map([['ext:example:list', node('extension')]]),
     sessionEmbed: { active: () => null }, syncSessionEmbed: noop,
-    isExtView: (v) => v === 'ext:example:list',
+    parseViewHash,
     clearSearch: noop, onEnterSearchView: noop, isDiffPanelOpen: () => false,
     closeDiffPanel: noop, diffPanelSessionId: noop, disarmChatHandoff: noop,
     acknowledge: noop, send: noop, setUnread: noop, renderSidebar: noop,
-    syncShellTerminal: noop, renderGrid: noop,
+    syncShellTerminal: noop,
     renderPanel: (sid) => { node('sidebar').style.display = ''; log.push(['panel', sid]); },
     closeTerminal: () => log.push(['detach']),
     hideSidebar: () => { node('sidebar').style.display = 'none'; },
+    renderGrid: noop,
     boardOpen: { claim: () => null }, applyEmbedView: noop,
   };
   const app = new Function(...Object.keys(scope), `
@@ -60,10 +64,14 @@ function harness() {
     let selectionBeforeView = null, pendingSelect = null, currentShellTerm = null;
     let latestSessions = [{ sessionId: 'first / session' }, { sessionId: 'second' }];
     const HASH_VIEWS = ['search'];
+    const AWAITING_EXT_VIEW_TIMEOUT_MS = 10000;
+    const EXT_VIEW_PREFIX = 'ext:';
+    let awaitingExtView = null, extGraphSeen = false, extLoadsInFlight = 0;
     ${heads.map(declaration).join('\n')}
     ${hashListener}
-    return { setView, selectSession, deselectSession, setPendingSelect, tryFulfillPending, closePanel,
-      selected: () => selectedSessionId,
+    const coldLoad = () => { ${coldStart} };
+    return { coldLoad, trackExtLoad, settleDeepView, graphSeen: () => { extGraphSeen = true; }, awaiting: () => awaitingExtView, setView, selectSession, deselectSession, setPendingSelect, tryFulfillPending, closePanel,
+      selected: () => selectedSessionId, view: () => currentView,
       sessions: (v) => { latestSessions = v; } };
   `)(...Object.values(scope));
   return { ...app, log, location, node, scope,
@@ -210,4 +218,113 @@ test('an active extension embed keeps its selected panel and attached terminal',
   assert.equal(h.node('sidebar').style.display, '');
   assert.deepEqual(h.log, []);
   assert.equal(h.location.hash, '#view=ext:example:list');
+});
+
+test('a #view=ext: deep link with extra params opens the extension view and keeps the params', () => {
+  const h = harness();
+  h.hash('#view=ext:example:list&cell=cell_1');
+  assert.equal(h.location.hash, '#view=ext:example:list&cell=cell_1');
+  assert.equal(h.view(), 'ext:example:list');
+});
+
+function gridHidden(h) {
+  return h.node('grid').classList.contains('hidden');
+}
+
+test('a cold load of an unregistered ext view keeps the board hidden until it registers', () => {
+  const h = harness();
+  h.location.hash = '#view=ext:later:main&cell=c1';
+  h.coldLoad();
+  assert.equal(gridHidden(h), true);
+  assert.equal(h.view(), 'grid');
+  h.settleDeepView(true);
+  assert.equal(gridHidden(h), true, 'no verdict before the first graph');
+  h.graphSeen();
+  h.scope.extViewHosts.set('ext:later:main', h.node('later'));
+  h.settleDeepView(true);
+  assert.equal(h.view(), 'ext:later:main');
+  assert.equal(h.location.hash, '#view=ext:later:main&cell=c1');
+  assert.equal(h.awaiting(), null);
+});
+
+test('a cold load of an unknown ext view falls back to the board once extensions have loaded', () => {
+  const h = harness();
+  h.location.hash = '#view=ext:nope:main&x=1';
+  h.coldLoad();
+  assert.equal(gridHidden(h), true);
+  h.graphSeen();
+  h.settleDeepView(false);
+  assert.equal(gridHidden(h), true, 'extensions still loading');
+  h.settleDeepView(true);
+  assert.equal(gridHidden(h), false);
+  assert.equal(h.location.hash, '');
+  assert.equal(h.awaiting(), null);
+});
+
+test('a registered ext key with params is recognised by the real isExtView path', () => {
+  const h = harness();
+  h.hash('#view=ext:example:list&a=1&b=2');
+  assert.equal(h.view(), 'ext:example:list');
+  assert.equal(h.location.hash, '#view=ext:example:list&a=1&b=2');
+});
+
+test('legacy #view=history with params normalises to #view=search', () => {
+  const h = harness();
+  h.hash('#view=history&x=1');
+  assert.equal(h.view(), 'search');
+  assert.equal(h.location.hash, '#view=search');
+});
+
+test('a second load resolving mid-import does not trigger the fallback', async () => {
+  const h = harness();
+  h.location.hash = '#view=ext:slow:main&cell=c1';
+  h.coldLoad();
+  h.graphSeen();
+  let finishImport;
+  const first = h.trackExtLoad(new Promise((r) => { finishImport = r; }));
+  await h.trackExtLoad(Promise.resolve(false));
+  assert.equal(gridHidden(h), true, 'the first import is still pending');
+  assert.equal(h.location.hash, '#view=ext:slow:main&cell=c1');
+  h.scope.extViewHosts.set('ext:slow:main', h.node('slow'));
+  finishImport(true);
+  await first;
+  assert.equal(h.view(), 'ext:slow:main');
+});
+
+test('a hashchange away from the awaited view releases the board', () => {
+  const h = harness();
+  h.location.hash = '#view=ext:later:main';
+  h.coldLoad();
+  assert.equal(gridHidden(h), true);
+  h.hash('');
+  assert.equal(gridHidden(h), false);
+  assert.equal(h.awaiting(), null);
+});
+
+test('a hashchange to new params on the awaited view keeps waiting and keeps the hash', () => {
+  const h = harness();
+  h.location.hash = '#view=ext:later:main&cell=c1';
+  h.coldLoad();
+  h.hash('#view=ext:later:main&cell=c2');
+  assert.equal(gridHidden(h), true);
+  assert.equal(h.awaiting(), 'ext:later:main');
+  assert.equal(h.location.hash, '#view=ext:later:main&cell=c2');
+});
+
+test('an import that never settles releases the board after the safety timeout', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = harness();
+    h.location.hash = '#view=ext:stuck:main';
+    h.coldLoad();
+    assert.equal(gridHidden(h), true);
+    mock.timers.tick(9999);
+    assert.equal(gridHidden(h), true);
+    mock.timers.tick(1);
+    assert.equal(gridHidden(h), false);
+    assert.equal(h.location.hash, '');
+    assert.equal(h.awaiting(), null);
+  } finally {
+    mock.timers.reset();
+  }
 });
