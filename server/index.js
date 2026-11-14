@@ -12,7 +12,7 @@ import openModule from 'open';
 import { buildGraph, createWatcher, sessionLabel } from './state-reader.js';
 import { analyze, resolveResumeDir } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
-import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor } from './runtimes/index.js';
+import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, knownRuntimes } from './runtimes/index.js';
 import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
@@ -56,7 +56,11 @@ import { createExtTerminalOpener } from './ext-terminals.js';
 import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
 import { archiveTaskCascade } from './control/handlers/tasks.js';
 import { createTargets } from './control/targets.js';
-import { routeControlMessage, invalidateHandlerMap } from './control/router.js';
+import { routeControlMessage, invalidateHandlerMap, deckActions } from './control/router.js';
+import { loadDeckId } from './deck/deck-id.js';
+import { deckDescriptor, wsApiMode } from './deck/descriptor.js';
+import { deckEvent } from './deck/actions.js';
+import { createStateStream } from './deck/state.js';
 import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
 import { resolveTmuxBin, TmuxNotFoundError } from './tmux-resolve.js';
 import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
@@ -137,7 +141,7 @@ ensurePtyHelperExecutable();
 applyRetiredFlagMigrations();
 let ext;
 try {
-  ext = await primeExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type), coreRuntimeIds: BUILTIN_RUNTIME_IDS });
+  ext = await primeExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: [...CONTROL_HANDLERS.map((h) => h.type), 'action'], coreRuntimeIds: BUILTIN_RUNTIME_IDS });
 } catch (err) {
   logError(`[agent-wrangler] ${err.message}`);
   process.exit(1);
@@ -302,6 +306,7 @@ const terminalRegistry = new TerminalRegistry();
 const STALE_MS = 12 * 60 * 60 * 1000;
 
 let lastGraph = null;
+let deckId = null;
 const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, () => lastGraph);
 
 // Every AUTOMATED paste into a pane goes through here. A paste lands at the
@@ -976,6 +981,15 @@ const prModelHandler = createPrModelHandler({
 // 2 MB cap. A read-time growth past the cap is an accepted race on a localhost
 // dev tool.
 const FILE_MAX_BYTES = 2 * 1024 * 1024;
+// Shared by GET /file and the deck API's session.file action.
+async function readMarkdownFile(raw) {
+  const r = resolveMarkdownPath(raw, {
+    homedir: os.homedir(), realpathSync: fs.realpathSync, statSync: fs.statSync, maxBytes: FILE_MAX_BYTES,
+  });
+  if (r.status !== 200) return r;
+  return { status: 200, path: r.path, content: await fs.promises.readFile(r.path, 'utf8') };
+}
+
 async function fileHandler(req, res) {
   try {
     if (!isAllowedHost(req.headers.host, PORT)) {
@@ -983,18 +997,14 @@ async function fileHandler(req, res) {
       res.end(JSON.stringify({ error: 'forbidden' }));
       return;
     }
-    const raw = new URL(req.url, 'http://localhost').searchParams.get('path');
-    const r = resolveMarkdownPath(raw, {
-      homedir: os.homedir(), realpathSync: fs.realpathSync, statSync: fs.statSync, maxBytes: FILE_MAX_BYTES,
-    });
+    const r = await readMarkdownFile(new URL(req.url, 'http://localhost').searchParams.get('path'));
     if (r.status !== 200) {
       res.writeHead(r.status, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ error: r.message }));
       return;
     }
-    const content = await fs.promises.readFile(r.path, 'utf8');
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ path: r.path, content }));
+    res.end(JSON.stringify({ path: r.path, content: r.content }));
   } catch (err) {
     logError('[file]', err);
     if (!res.headersSent) {
@@ -1007,6 +1017,8 @@ async function fileHandler(req, res) {
 // GET /ext-file?ext=<id>&path=… — what api.openFile reads. Same localhost posture
 // as /file (no CORS header). Answers 200 { ok, … } either way: a refusal is
 // { ok:false, reason }, and only the registry (host.files) decides what opens.
+const openExtFile = async (id, p) => (hostApis.has(id) ? extFiles.open(id, p) : { ok: false, reason: 'not-permitted' });
+
 async function extFileHandler(req, res) {
   const json = (status, body) => {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -1015,9 +1027,7 @@ async function extFileHandler(req, res) {
   try {
     if (!isAllowedHost(req.headers.host, PORT)) return json(403, { ok: false, reason: 'forbidden' });
     const q = new URL(req.url, 'http://localhost').searchParams;
-    const id = q.get('ext');
-    const r = hostApis.has(id) ? await extFiles.open(id, q.get('path')) : { ok: false, reason: 'not-permitted' };
-    json(200, r);
+    json(200, await openExtFile(q.get('ext'), q.get('path')));
   } catch (err) {
     logError('[ext-file]', err);
     if (!res.headersSent) json(200, { ok: false, reason: 'error' });
@@ -1064,10 +1074,29 @@ const mcpRequestHandler = createMcpRequestHandler({
   boardClients: () => controlWss.clients.size,
 });
 
+// GET /deck — the deck API's descriptor. Host-pinned like /file.
+function deckHandler(req, res) {
+  if (!isAllowedHost(req.headers.host, PORT)) {
+    res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'forbidden' }));
+    return;
+  }
+  const body = deckDescriptor({
+    deckId,
+    name: os.hostname(),
+    actions: deckActions().keys(),
+    runtimes: knownRuntimes(),
+    extensions: ext.list,
+    boardApi: HOST_API_VERSION,
+  });
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
 // /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
 // extensions alone — so a disabled extension's client is a 404, never served.
 const server = createHttpServer({
-  port: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, fileHandler, extFileHandler,
+  port: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, fileHandler, extFileHandler, deckHandler,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
   extensionThemes: () => themeSources(ext.themeDirs),
 });
@@ -1083,9 +1112,17 @@ server.on('upgrade', (req, socket, head) => {
     socket.destroy();
     return;
   }
-  const { pathname } = new URL(req.url, 'http://localhost');
+  const { pathname, search } = new URL(req.url, 'http://localhost');
   if (pathname === '/ws') {
-    controlWss.handleUpgrade(req, socket, head, (ws) => controlWss.emit('connection', ws, req));
+    const mode = wsApiMode(search);
+    if (!mode) {
+      socket.destroy();
+      return;
+    }
+    controlWss.handleUpgrade(req, socket, head, (ws) => {
+      ws.deckApi = mode === 'deck';
+      controlWss.emit('connection', ws, req);
+    });
   } else if (pathname === '/pty') {
     ptyWss.handleUpgrade(req, socket, head, (ws) => ptyWss.emit('connection', ws, req));
   } else {
@@ -1114,31 +1151,50 @@ async function dispatchAgents() {
 }
 
 async function agentsMessage() {
-  return JSON.stringify({ type: 'agents', agents: await dispatchAgents(), providers: registeredAgents().map(providerMetadata) });
+  return { type: 'agents', agents: await dispatchAgents(), providers: registeredAgents().map(providerMetadata) };
 }
 
 function broadcastAgents() {
   agentsMessage()
-    .then((msg) => { for (const client of controlWss.clients) sendGuarded(client, msg); })
+    .then(broadcast)
     .catch(() => {});
 }
 
+// A deck API client gets every broadcast wrapped as an event; a legacy board
+// gets it as it is.
 function broadcast(obj) {
-  broadcastMessage(JSON.stringify(obj));
+  const legacy = JSON.stringify(obj);
+  let event = null;
+  for (const client of controlWss.clients) {
+    if (client.deckApi) sendGuarded(client, event ??= JSON.stringify(deckEvent(obj)));
+    else sendGuarded(client, legacy);
+  }
 }
 
-function broadcastMessage(msg) {
-  // readyState alone is not enough: a client that stops reading stays OPEN
-  // forever, so every snapshot we send it is queued in our own heap until the
-  // process OOMs. sendGuarded drops such a peer instead — see ws-backpressure.js
-  // for why terminate (not skip, not close) is the only safe option here.
-  for (const client of controlWss.clients) sendGuarded(client, msg);
+// readyState alone is not enough: a client that stops reading stays OPEN
+// forever, so every snapshot we send it is queued in our own heap until the
+// process OOMs. sendGuarded drops such a peer instead — see ws-backpressure.js
+// for why terminate (not skip, not close) is the only safe option here.
+function sendToClients(msg, { deckApi, except = null }) {
+  for (const client of controlWss.clients) if (Boolean(client.deckApi) === deckApi && client !== except) sendGuarded(client, msg);
+}
+
+const hasDeckClients = () => [...controlWss.clients].some((c) => c.deckApi);
+
+// Sends any change the stream holds to the deck clients already connected. Run
+// on every rebuild while one is connected, and before a new one is handed its
+// snapshot, so no client misses a rev.
+function flushState({ except = null } = {}) {
+  if (!hasDeckClients()) return;
+  const frame = stateStream.next();
+  if (frame) sendToClients(frame, { deckApi: true, except });
 }
 
 // Module-scope so its "have I already sent this?" memory spans every rebuild, not
 // one call — the whole saving is across ticks.
 const wireGraph = createHistoryGate();
 const graphFrame = createGraphFrameGate();
+const stateStream = createStateStream();
 
 // Wrapped below in createRebuildCoalescer — see there for why an overlapping call
 // must trail rather than skip or race.
@@ -1184,7 +1240,11 @@ async function rebuildOnce() {
   graph.staleGuiSession = staleGuiSession;
   // Each enabled extension's graph contribution. Only enabled ones are in the
   // list, keys were checked against the core's at boot — and no logging here: this is the 4s rebuild.
-  for (const { id, contribute } of ext.graphContributors) Object.assign(graph, contribute({ host: hostApiFor(id), graph }));
+  const extState = {};
+  for (const { id, contribute } of ext.graphContributors) {
+    extState[id] = contribute({ host: hostApiFor(id), graph });
+    Object.assign(graph, extState[id]);
+  }
   lastGraph = graph;
   coreTelemetry.observe(graph.sessions);
 
@@ -1205,7 +1265,9 @@ async function rebuildOnce() {
   // graphFrame then drops the tick altogether when nothing but generatedAt moved
   // (see graph-frame-gate.js), which on an idle server is every one of them.
   const frame = graphFrame(wireGraph(graph));
-  if (frame) broadcastMessage(frame);
+  if (frame) sendToClients(frame, { deckApi: false });
+  stateStream.observe(graph, extState);
+  flushState();
   broadcastStylesIfChanged();
   return graph;
 }
@@ -1278,17 +1340,24 @@ controlWss.on('connection', (ws) => {
   // `canRestart` gates the board's own "Restart the wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
-  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() }));
+  // A deck API client is sent the same announcements as events, and the state
+  // stream in place of the graph.
+  const send = (obj) => ws.send(JSON.stringify(ws.deckApi ? deckEvent(obj) : obj));
+  send({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() });
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
   // the host API version this server serves. Sent before the first graph,
   // every connect.
-  ws.send(JSON.stringify({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION }));
-  if (lastGraph) ws.send(JSON.stringify({ type: 'graph', graph: lastGraph }));
-  if (fdWarning) ws.send(JSON.stringify({ type: 'fd-warning', active: true, ...fdWarning }));
+  send({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION });
+  if (ws.deckApi) {
+    flushState({ except: ws });
+    const snapshot = stateStream.snapshot();
+    if (snapshot) ws.send(snapshot);
+  } else if (lastGraph) send({ type: 'graph', graph: lastGraph });
+  if (fdWarning) send({ type: 'fd-warning', active: true, ...fdWarning });
   agentsMessage()
-    .then((msg) => { if (ws.readyState === 1) ws.send(msg); })
+    .then((msg) => { if (ws.readyState === 1) send(msg); })
     .catch(() => {});
   // ctx is per-connection because reply() closes over this socket; the rest are
   // shared singletons + the graph-target resolvers.
@@ -1311,7 +1380,11 @@ controlWss.on('connection', (ws) => {
     socketFor,
     // Guarded like broadcast: this is the same socket, and a client swamped by
     // snapshots must not go on accruing per-request replies either.
-    reply: (obj) => { sendGuarded(ws, JSON.stringify(obj)); },
+    reply: (obj) => { sendGuarded(ws, JSON.stringify(ws.deckApi ? deckEvent(obj) : obj)); },
+    // The deck API's result frames, never wrapped.
+    send: (obj) => { sendGuarded(ws, JSON.stringify(obj)); },
+    readMarkdownFile,
+    openExtFile,
     broadcast,
     terminalRegistry,
     createShellSession: (cwd, socket, command) => createShellSession(cwd, socket, sessionManager.tmuxBin, command),
@@ -1367,6 +1440,7 @@ async function main() {
   // installed at module load, so a stop arriving during this slow startup is still
   // recorded — and one handler means one path down.
   shutdownLog.onShutdown(() => instanceLock.release());
+  deckId = loadDeckId(DATA_DIR);
   // An interrupted install leaves only a staging directory behind, so this is
   // the whole of its recovery — and the reason the install lock can be purely
   // in-memory. After the lock, so a duplicate instance never sweeps the running
