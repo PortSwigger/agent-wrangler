@@ -1,16 +1,29 @@
-// The server's own listening port. Single source of truth, shared by index.js
-// (bind) and the MCP client-config injection, so a launched session always
-// points back at the server that spawned it. AW_PORT first to match index.js's
-// bind precedence (instance isolation): a dev instance started with AW_PORT must
-// inject *that* port, not the default.
-export function serverPort() {
+const truthy = (v) => v != null && !['', '0', 'false', 'no'].includes(String(v).toLowerCase());
+
+// Deck-only mode (AW_DECK_ONLY): the deck API on its own port and no board
+// server, so another machine's or another instance's board can show its sessions.
+export function deckOnly() {
+  return truthy(process.env.AW_DECK_ONLY);
+}
+
+// The board's port. AW_PORT first to match index.js's bind precedence (instance
+// isolation): a dev instance started with AW_PORT must inject *that* port.
+export function boardPort() {
   return Number(process.env.AW_PORT) || Number(process.env.PORT) || 7878;
 }
 
 // The deck's own port, where the board talks to it cross-origin. AW_DECK_PORT,
 // or the board's port plus one so a dev instance on a free AW_PORT gets its own.
 export function deckPort() {
-  return Number(process.env.AW_DECK_PORT) || serverPort() + 1;
+  return Number(process.env.AW_DECK_PORT) || boardPort() + 1;
+}
+
+// The port launched sessions reach MCP and the PR hooks on, shared by index.js
+// and the MCP client-config injection so a session always points back at the
+// server that spawned it: the board's (which forwards them to the deck), or the
+// deck's own when there is no board.
+export function serverPort() {
+  return deckOnly() ? deckPort() : boardPort();
 }
 
 // The interface the server binds to. Loopback by default — /ws, /pty, and /mcp
