@@ -32,7 +32,7 @@ fs.writeFileSync(path.join(themeDir, 'route-sky', 'w.svg'), '<svg xmlns="http://
 const dirs = { checklist: extDir };
 let themeDirs = [{ id: 'sky-ext', dir: themeDir }];
 const deck = createDeckServer({
-  boardPort: 0,
+  boardPort: () => 0,
   mcpRequestHandler: (req, res) => res.end('mcp'),
   prAttachHandler: (req, res) => res.end(),
   prModelHandler: (req, res) => res.end('pr-model'),

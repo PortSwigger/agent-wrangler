@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer, connect as netConnect } from 'node:net';
+import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -10,9 +10,9 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const freePort = () => new Promise((res) => {
+const holdPort = () => new Promise((res) => {
   const s = createServer();
-  s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)); });
+  s.listen(0, '127.0.0.1', () => res(s));
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, { tries = 60, every = 250 } = {}) {
@@ -22,11 +22,6 @@ async function waitFor(fn, { tries = 60, every = 250 } = {}) {
   }
   return null;
 }
-const listening = (port) => new Promise((res) => {
-  const c = netConnect(port, '127.0.0.1');
-  c.once('connect', () => { c.destroy(); res(true); });
-  c.once('error', () => res(false));
-});
 
 function open(url, origin, headers) {
   const ws = new WebSocket(url, { ...(origin ? { origin } : {}), ...(headers ? { headers } : {}) });
@@ -40,27 +35,29 @@ async function startDeckOnly({ args = [], env = {}, config, tokens } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-deck-only-'));
   if (config) writeFileSync(join(dataDir, 'config.json'), JSON.stringify(config));
   if (tokens) writeFileSync(join(dataDir, 'session-tokens.json'), JSON.stringify({ cards: tokens }));
-  const deckPort = await freePort();
-  await freePort(); // left free: the session API takes the port next to the deck
-  const boardPort = await freePort();
+  const boardHold = await holdPort();
+  const boardPort = boardHold.address().port;
   let out = '';
-  const server = spawn(process.execPath, ['server/cli.js', '--deck-only', '--port', String(deckPort), '--data-dir', dataDir, ...args], {
+  const server = spawn(process.execPath, ['server/cli.js', '--deck-only', '--data-dir', dataDir, ...args], {
     cwd: REPO_ROOT,
-    env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_PORT: String(boardPort), AW_OPEN_BROWSER: '', AW_ALLOWED_ORIGINS: '', ...env },
+    env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_PORT: String(boardPort), AW_DECK_PORT: '0', AW_OPEN_BROWSER: '', AW_ALLOWED_ORIGINS: '', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (c) => { out += c; });
   server.stderr.on('data', (c) => { out += c; });
+  const deckPort = Number(await waitFor(() => out.match(/deck API at http:\/\/127\.0\.0\.1:(\d+)/)?.[1]));
   const base = `http://127.0.0.1:${deckPort}`;
-  const deck = await waitFor(async () => { const r = await fetch(`${base}/deck`); return r.ok && r.json(); });
+  const deck = deckPort ? await waitFor(async () => { const r = await fetch(`${base}/deck`); return r.ok && r.json(); }) : null;
   const sockets = [];
   return {
     dataDir, deckPort, boardPort, base, deck, sockets, out: () => out,
+    running: () => server.exitCode === null && server.signalCode === null,
     open: (path, origin, headers) => { const s = open(`ws://127.0.0.1:${deckPort}${path}`, origin, headers); sockets.push(s.ws); return s; },
     async stop() {
       for (const ws of sockets) try { ws.close(); } catch {}
       try { server.kill(); } catch {}
       await sleep(500);
+      await new Promise((res) => boardHold.close(res));
       rmSync(dataDir, { recursive: true, force: true });
     },
   };
@@ -73,7 +70,6 @@ test('a deck-only instance serves the deck API on its own port, no board, and on
     assert.ok(d.deck, `GET /deck never answered:\n${d.out()}`);
     assert.equal(d.deck.deckId, JSON.parse(readFileSync(join(d.dataDir, 'deck.json'), 'utf8')).deckId, 'its deckId lives in its own data dir');
     assert.ok(d.deck.actions.includes('session.file'));
-    assert.equal(await listening(d.boardPort), false, 'no board server on the board port');
 
     for (const p of ['/', '/index.html', '/app.js', '/deck-client.js', '/api/styles', '/ext/jobs/board.js']) {
       assert.equal((await fetch(`${d.base}${p}`)).status, 404, `${p} is not served`);
@@ -96,6 +92,7 @@ test('a deck-only instance serves the deck API on its own port, no board, and on
     assert.equal(await d.open('/ws?api=1', `http://localhost:${d.boardPort}`).opened, false, 'and so is the board port it does not serve');
     const post = await fetch(`${d.base}/mcp`, { method: 'POST', headers: { Origin: 'http://evil.example' }, body: '{}' });
     assert.equal(post.status, 403, 'a foreign POST /mcp is refused');
+    assert.ok(d.running(), `it never binds the board port, which this test holds:\n${d.out()}`);
   } finally {
     await d.stop();
   }
@@ -112,14 +109,14 @@ test('a deck-only instance takes its board allowlist from config.json too', { ti
   }
 });
 
-test('a deck-only instance serves its session API on the port next to its deck, behind the token check', { timeout: 60_000 }, async () => {
+test('a deck-only instance serves its session API on its own port, behind the token check', { timeout: 60_000 }, async () => {
   const token = 'awt_deck-only-test-token';
   const d = await startDeckOnly({ tokens: { 'deck-card': createHash('sha256').update(token).digest('hex') } });
   try {
     assert.ok(d.deck, `GET /deck never answered:\n${d.out()}`);
     const port = Number(await waitFor(() => d.out().match(/session API at http:\/\/127\.0\.0\.1:(\d+)/)?.[1]));
     assert.ok(port, `startup never named the session API port:\n${d.out()}`);
-    assert.equal(port, d.deckPort + 1, 'it takes the port next to the deck');
+    assert.notEqual(port, d.deckPort, 'not the deck port');
     const listSessions = (headers) => fetch(`http://127.0.0.1:${port}/mcp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers },
