@@ -164,7 +164,7 @@ test('retention: read mail evicted oldest-first past the per-box cap; unread is 
   const list = store.list('rcpt');
   assert.ok(list.length <= READ_RETENTION_MESSAGES + 1); // +1 for the still-unread message
   assert.ok(list.some((m) => m.id === unreadId)); // unread survives eviction
-  assert.ok(!list.some((m) => m.body === 'msg0')); // the oldest read message was evicted first
+  assert.ok(!list.some((m) => m.at === 0)); // the oldest read message was evicted first
 });
 
 test('retention: undeliverable mail is evictable too — it must count toward the same caps as read mail, not sit outside every cap forever', () => {
@@ -181,7 +181,7 @@ test('retention: undeliverable mail is evictable too — it must count toward th
   store.markUndeliverable('rcpt');
   const list = store.list('rcpt');
   assert.ok(list.length <= READ_RETENTION_MESSAGES);
-  assert.ok(!list.some((m) => m.body === 'msg0')); // the oldest evictable message was evicted first
+  assert.ok(!list.some((m) => m.at === 0)); // the oldest evictable message was evicted first
 });
 
 test('whole-store eviction can reclaim undeliverable mail across boxes when no read mail exists anywhere — this is exactly what was unreclaimable before the fix (the eviction loop broke on the first iteration and the whole-store cap was unenforceable)', () => {
@@ -365,7 +365,7 @@ test('load sweep: a box written over the CURRENT caps is trimmed at load, not le
   const store = new MailboxStore(file);
   assert.equal(store._evictableCount(store.boxes.get('rcpt')), READ_RETENTION_MESSAGES);
   assert.ok(store.list('rcpt').some((m) => m.id === 'mail_unread')); // unread never swept
-  assert.ok(!store.list('rcpt').some((m) => m.body === 'msg0')); // oldest read went first
+  assert.ok(!store.list('rcpt').some((m) => m.at === 0)); // oldest read went first
   // Persisted, not just trimmed in memory.
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(onDisk.rcpt.messages.length, READ_RETENTION_MESSAGES + 1);
@@ -549,7 +549,7 @@ test('expireStaleUnread: persists', () => {
   store.append('rcpt', { from: 'a', body: 'old' }, 1);
   store.append('rcpt', { from: 'b', body: 'new' }, 1_000_000);
   store.expireStaleUnread('rcpt', 500_000);
-  assert.deepEqual(new MailboxStore(file).list('rcpt').map((m) => m.body), ['new']);
+  assert.deepEqual(new MailboxStore(file).list('rcpt').map((m) => m.at), [1_000_000]);
 });
 
 // Regression: the per-box floor guarantees a drained batch survives its own
@@ -616,7 +616,7 @@ test('reconcileArchived: batches many recipients into ONE write, dropping evicta
   assert.equal(dropped, 2);
   assert.equal(writes, 1, 'one write for the whole run, not one (or two) per card');
   assert.deepEqual([...store.boxes.keys()], ['c']); // a and b emptied and pruned
-  assert.deepEqual(new MailboxStore(file).list('c').map((m) => m.body), ['current unread']);
+  assert.deepEqual(new MailboxStore(file).list('c').map((m) => m.at), [now]);
 });
 
 test('reconcileArchived: no staleBefore leaves unread mail alone entirely', () => {
@@ -645,4 +645,37 @@ test('sentSince sees read and unread mail from the child to the subscriber at or
   store.drain('p');
   assert.equal(store.sentSince('c', 'p', 1000), true);
   assert.equal(store.sentSince('c', 'missing', 0), false);
+});
+
+test('list: returns detached metadata for every state without body or excerpt', () => {
+  const store = new MailboxStore(tmpFile());
+  const { id: readId } = store.append('rcpt', { from: 'a', fromLabel: 'Alpha', body: 'private read' }, 100);
+  store.getOne('rcpt', readId, 101);
+  const { id: undeliverableId } = store.append('rcpt', { from: 'b', body: 'private undeliverable' }, 50);
+  store.markUndeliverable('rcpt');
+  const { id: unreadId } = store.append('rcpt', { from: 'c', body: 'private unread' }, 200);
+  const before = fs.readFileSync(store.file, 'utf8');
+  const listed = store.list('rcpt');
+  assert.deepEqual(listed, [
+    { id: undeliverableId, from: 'b', fromLabel: null, at: 50, size: 21, state: 'undeliverable', readAt: null },
+    { id: readId, from: 'a', fromLabel: 'Alpha', at: 100, size: 12, state: 'read', readAt: 101 },
+    { id: unreadId, from: 'c', fromLabel: null, at: 200, size: 14, state: 'unread', readAt: null },
+  ]);
+  listed[2].from = 'changed';
+  assert.equal(store.list('rcpt')[2].from, 'c');
+  assert.equal(fs.readFileSync(store.file, 'utf8'), before);
+  assert.equal(store.drain('rcpt')[0].body, 'private unread');
+  assert.equal(store.getOne('rcpt', readId).body, 'private read');
+});
+
+test('listWithExcerpts: bounds previews without returning bodies or marking mail read', () => {
+  const store = new MailboxStore(tmpFile());
+  store.append('rcpt', { from: 'later', body: 'short' }, 200);
+  store.append('rcpt', { from: 'earlier', body: 'x'.repeat(300) }, 100);
+  const before = fs.readFileSync(store.file, 'utf8');
+  const listed = store.listWithExcerpts('rcpt');
+  assert.deepEqual(listed.map((m) => m.excerpt), ['x'.repeat(200) + '…', 'short']);
+  assert.ok(listed.every((m) => !('body' in m) && m.state === 'unread'));
+  assert.equal(fs.readFileSync(store.file, 'utf8'), before);
+  assert.equal(store.drain('rcpt').length, 2);
 });

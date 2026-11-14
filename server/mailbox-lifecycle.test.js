@@ -48,7 +48,7 @@ test('archive: read and undeliverable mail is dropped, the box and its UNREAD ma
   mailStore.getOne('CARD1', readId);
   mailStore.append('CARD1', { from: 'peer', body: 'never delivered' }, now - 2000);
   mailStore.markUndeliverable('CARD1');
-  mailStore.append('CARD1', { from: 'peer', body: 'still waiting' }, now - 1000);
+  const { id: waitingId } = mailStore.append('CARD1', { from: 'peer', body: 'still waiting' }, now - 1000);
 
   sm.archive('CARD1');
 
@@ -57,7 +57,7 @@ test('archive: read and undeliverable mail is dropped, the box and its UNREAD ma
   // still be there for the card to read when it comes back. Read from a fresh
   // store: the prune has to have been persisted, not just applied in memory.
   const reloaded = new MailboxStore(file);
-  assert.deepEqual(reloaded.list('CARD1').map((m) => m.body), ['still waiting']);
+  assert.deepEqual(reloaded.list('CARD1').map((m) => m.id), [waitingId]);
   assert.equal(reloaded.unreadInfo('CARD1', now).unread, 1);
 });
 
@@ -85,10 +85,10 @@ test('archive → resume → archive: each live span\'s own read mail is pruned,
   delete sm.entryFor('CARD1').archivedAt;
   const { id: second } = mailStore.append('CARD1', { from: 'peer', body: 'span two' }, now - 2000);
   mailStore.getOne('CARD1', second);
-  mailStore.append('CARD1', { from: 'peer', body: 'unread at archive time' }, now - 1000);
+  const { id: unreadId } = mailStore.append('CARD1', { from: 'peer', body: 'unread at archive time' }, now - 1000);
 
   sm.archive('CARD1');
-  assert.deepEqual(mailStore.list('CARD1').map((m) => m.body), ['unread at archive time']);
+  assert.deepEqual(mailStore.list('CARD1').map((m) => m.id), [unreadId]);
 });
 
 test('archive: re-archiving an already-archived session is a no-op for the mailbox', () => {
@@ -134,9 +134,9 @@ test('archive: unread mail older than the conversation itself would be is expire
   // transcript and resolveResumeDir refuses to resume the card at all, so this
   // mail can never be read by the agent it was addressed to.
   mailStore.append('CARD1', { from: 'peer', body: 'stale' }, Date.now() - UNREAD_TTL_MS - 1000);
-  mailStore.append('CARD1', { from: 'peer', body: 'still current' }, Date.now());
+  const { id: currentId } = mailStore.append('CARD1', { from: 'peer', body: 'still current' }, Date.now());
   sm.archive('CARD1');
-  assert.deepEqual(mailStore.list('CARD1').map((m) => m.body), ['still current']);
+  assert.deepEqual(mailStore.list('CARD1').map((m) => m.id), [currentId]);
 });
 
 test('a LIVE card\'s unread mail is never expired, however old — the TTL is archived-only', () => {
