@@ -116,10 +116,10 @@ test('codex does not grant a writable --add-dir for the skills dir', () => {
   assert.doesNotMatch(cmd, /--add-dir' '[^']*agent-skills/);
 });
 
-test('codex launch injects the wrangler MCP server + bearer-token env keyed on the card id', () => {
+test('codex launch injects the wrangler MCP server, its bearer read from the token env', () => {
   const cmd = codex.buildLaunch({ sessionId: 'BID', intent: '' });
-  // Card id is exported to the bearer-token env var the MCP config reads.
-  assert.match(cmd, /AW_MCP_TOKEN='BID'/);
+  assert.doesNotMatch(cmd, /AW_SESSION_TOKEN=/);
+  assert.match(cmd, /bearer_token_env_var="AW_SESSION_TOKEN"/);
   assert.match(cmd, /mcp_servers\.agent-wrangler\.url=/);
   assert.match(cmd, /mcp_servers\.agent-wrangler\.bearer_token_env_var=/);
   assert.match(cmd, /mcp_servers\.agent-wrangler\.default_tools_approval_mode="approve"/);

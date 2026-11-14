@@ -533,24 +533,44 @@ import semver from 'semver';
 // older server ignores `board` and loads no board half, so a split manifest
 // declares `^1.74.0`.
 //
-// 1.75.0 adds manifest hooks `session.beforeSpawn` and `session.spawned` for
+// 1.75.0 names each card by deck and session: every session row the board
+// hands a board half (slot updates, the graph) carries `deckId`, the id of the
+// deck it is on (GET /deck), and `cardKey`, `<deckId>/<sessionId>`. Session ids
+// in the API (openSession, mountSession, actions) stay as they were. An older
+// board leaves both out, so a board half that reads them declares `^1.75.0`.
+//
+// 1.76.0 shows sessions from several decks on one board: while the board's
+// deck list (server/board-decks.js) holds more than one deck, every session
+// row a board half gets also carries `deckName` and `deckColour`, and
+// `deckUnreachable: true` while that deck is not connected. With one deck the
+// rows carry none of them, as before. A board half that reads them declares
+// `^1.76.0`.
+//
+// 1.77.0 shows each deck's tasks on a board with several decks: the
+// `board.tray` context's `tasks` also lists every other deck's tasks, with ids
+// scoped `<deckId>/<taskId>`, and with more than one deck each real task
+// carries `deckName`. `minimiseTask` and `setMinimisedTasks` take those ids.
+// With one deck the context is as before. A tray that reads `deckName`
+// declares `^1.77.0`.
+//
+// 1.78.0 adds manifest hooks `session.beforeSpawn` and `session.spawned` for
 // new-session launches across providers and launch sources. The first can
 // refuse with a reason or return extension-owned data; the second receives
 // that data and the new session id after launch. Both time out and fail open;
 // a timeout does not cancel extension code already running.
 //
-// 1.76.0 enforces the metadata-only contract of `host.mail.list(sessionId)`
+// 1.79.0 enforces the metadata-only contract of `host.mail.list(sessionId)`
 // under `mail:read`: id, from, fromLabel, at, size, state and readAt, without
 // bodies or excerpts. Core list_mail retains bounded previews through a
 // separate accessor that is not available on the extension facade. Extensions
-// relying on sender/time metadata without reading text can declare `^1.76.0`.
+// relying on sender/time metadata without reading text can declare `^1.79.0`.
 //
 // 1.77.0 adds approvalPolicy to sessions.spawn: on-request or never for
 // Codex, retaining its configured sandbox. The resolved codexPolicy persists
 // for launch, resume and fork; combined bypass/approve-for-me modes are resolved
 // to their underlying sandbox with the requested approval.
 // Extension Codex policy answers retain precedence.
-export const HOST_API_VERSION = '1.77.0';
+export const HOST_API_VERSION = '1.79.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

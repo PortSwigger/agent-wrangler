@@ -67,15 +67,24 @@ test('tagPrWithModel without a model touches nothing', async () => {
   assert.equal(calls.length, 0);
 });
 
-test('fetchFooterModel POSTs the session id and returns the model, or null', async () => {
+test('fetchFooterModel POSTs the given identity headers and returns the model, or null', async () => {
   let seen;
+  const headers = { Authorization: 'Bearer awt_x' };
   const fetchImpl = async (url, opts) => { seen = { url, opts }; return { ok: true, json: async () => ({ model: 'claude-opus-5-5' }) }; };
-  assert.equal(await fetchFooterModel({ url: 'http://127.0.0.1:1/pr-model', session: 'CARD', fetchImpl }), 'claude-opus-5-5');
+  assert.equal(await fetchFooterModel({ url: 'http://127.0.0.1:1/pr-model', headers, fetchImpl }), 'claude-opus-5-5');
   assert.equal(seen.opts.method, 'POST');
-  assert.equal(seen.opts.headers['X-AW-Session'], 'CARD');
-  assert.equal(await fetchFooterModel({ url: 'u', session: 'CARD', fetchImpl: json({ model: null }) }), null);
-  assert.equal(await fetchFooterModel({ url: 'u', session: 'CARD', fetchImpl: json({}, false) }), null);
-  assert.equal(await fetchFooterModel({ url: null, session: 'CARD', fetchImpl: json({ model: 'x' }) }), null);
+  assert.deepEqual(seen.opts.headers, headers);
+  assert.equal(await fetchFooterModel({ url: 'u', headers, fetchImpl: json({ model: null }) }), null);
+  assert.equal(await fetchFooterModel({ url: 'u', headers, fetchImpl: json({}, false) }), null);
+  assert.equal(await fetchFooterModel({ url: null, headers, fetchImpl: json({ model: 'x' }) }), null);
+  assert.equal(await fetchFooterModel({ url: 'u', headers: null, fetchImpl: json({ model: 'x' }) }), null);
+});
+
+test('runModelFooter sends the session token when the launch set one', async () => {
+  let seen;
+  const fetchImpl = async (url, opts) => { seen = opts; return { ok: true, json: async () => ({ model: null }) }; };
+  await runModelFooter({ prUrl: PR, env: { AW_PR_MODEL_URL: 'u', AW_SESSION_ID: 'CARD', AW_SESSION_TOKEN: 'awt_t' }, fetchImpl, gh: fakeGh('').gh });
+  assert.deepEqual(seen.headers, { Authorization: 'Bearer awt_t' });
 });
 
 test('runModelFooter: setting off (server answers null) leaves the PR untouched', async () => {

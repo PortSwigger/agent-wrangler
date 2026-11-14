@@ -1,4 +1,5 @@
 import { setProviderMetadata, providerMetadataFor, canSwitchProviderModel, needsYouTitle } from './provider-metadata.js';
+import { parseViewHash } from './hash-view.js';
 import { dispatchPick, readDispatchPick, saveDispatchPick } from './dispatch-preferences.js';
 import { createDispatchModelPicker } from './dispatch-model-picker.js';
 import { effortsOf } from './model-front.js';
@@ -58,11 +59,14 @@ import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onT
 import { toast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
+import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
+import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
+import { mountDecksPanel } from './decks-panel.js';
 import { withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
-import { prCheckToastOptions } from './pr-check-notification.js';
+import { prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
@@ -73,7 +77,7 @@ import { createPrLinkProvider } from './pr-links.js';
 import { createBoardOpen } from './board-open.js';
 import { onBoard } from './off-board.js';
 import { clearableSessions } from './clear-statuses.js';
-import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelSessionId, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
+import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPanelCard, onDiffPanelClosed, onDiff, onDiffCommentsResult, setDiffFullscreen, setDiffPanelWidth } from './diff-view.js';
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { CODEX_POLICY_FALLBACK, syncCodexPolicyControls, fillCodexPolicyControls, readCodexPolicyControls } from './codex-policy-field.js';
@@ -174,12 +178,29 @@ function restoreAll() {
 }
 
 export let latestSessions = [];
+// The board's own deck (GET /deck's deckId). Other decks in the board's deck
+// list add their sessions beside its own (decks.js).
+let boardDeckId = null;
+// The deck whose reply or event is being handled right now, while it is not
+// the board's own: a session id it names bare is one of its sessions.
+let msgDeckId = null;
+// The card key for a session id a deck sent bare (a deck event, an
+// extension's argument, a #session= link).
+export const cardOf = (sessionId) => cardKey(msgDeckId || boardDeckId, sessionId);
+export const sessionByCard = (card) => (card ? latestSessions.find((x) => x.cardKey === card) || null : null);
 export let latestHistory = [];
 export let latestTasks = { tasks: [], assignments: {} };
+// The other decks' tasks and schedules, ids scoped by deck (decks.js
+// remoteTaskView). Empty while the board shows only its own deck.
+let remoteBoard = remoteTaskView([]);
+// The own deck's name and colour for its task tiles, while the board shows
+// more than one deck; null otherwise.
+let ownTaskDeck = null;
 let trustCodexLaunchCwd = true; // server config flag, carried on every graph push
 let trustClaudeLaunchCwd = true; // likewise
 let autoFixPrChecksDefault = true; // server config flag, carried on every graph push
 let mailWakesDormant = false;
+let suppressNudgedPrToasts = true;
 let prModelFooter = true;
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
@@ -260,7 +281,7 @@ const notifications = createNotifications({ document });
 const boardTargets = createBoardTargets({
   doc: document,
   view: () => currentView,
-  session: () => selectedSessionId,
+  session: () => sessionIdOf(selectedCard),
   extOfView: (v) => (typeof v === 'string' && v.startsWith(EXT_VIEW_PREFIX) ? v.slice(EXT_VIEW_PREFIX.length).split(':')[0] : null),
   panel: () => openPanelView(),
   terminal: () => (openPanelView() === 'terminal' && current?.term.element
@@ -271,11 +292,11 @@ const boardTargets = createBoardTargets({
 // What the open session's panel shows, on the board or lent to an extension
 // view (api.mountSession): 'chat', 'terminal' (a live pane attached) or null.
 function openPanelView() {
-  const sid = selectedSessionId;
-  if (!sid || document.getElementById('sidebar')?.classList.contains('collapsed')) return null;
+  const card = selectedCard;
+  if (!card || document.getElementById('sidebar')?.classList.contains('collapsed')) return null;
   const shows = (el) => Boolean(el) && !el.hidden && el.checkVisibility?.() !== false;
   if (shows(document.getElementById('chat-wrap'))) return 'chat';
-  if (current?.sessionId === sid && shows(document.getElementById('term-wrap'))) return 'terminal';
+  if (current?.card === card && shows(document.getElementById('term-wrap'))) return 'terminal';
   return null;
 }
 
@@ -284,8 +305,8 @@ const WHEEL_NOTCHES_PER_TICK = 25;
 let wheelBurst = 0;
 const sessionPanel = createSessionPanel({
   view: openPanelView,
-  session: () => latestSessions.find((x) => x.sessionId === selectedSessionId) || null,
-  gateFor: (sid) => inputGates.get(sid),
+  session: () => sessionByCard(selectedCard),
+  gateFor: (card) => inputGates.get(card),
   chat: () => ({ stream: chatView.stream, append: (t) => chatView.appendText(t), submit: () => chatView.submit() }),
   terminal: () => {
     const t = current;
@@ -314,7 +335,7 @@ const sessionPanel = createSessionPanel({
       // xterm's own paste, bracketed as a human's paste is.
       paste: (text) => t.term.paste(text),
       enter: () => {
-        if (t.ws.readyState !== 1 || !inputGates.allow(t.sessionId, '\r')) return false;
+        if (t.ws.readyState !== 1 || !inputGates.allow(t.card, '\r')) return false;
         t.ws.send('\r');
         return true;
       },
@@ -364,19 +385,20 @@ const inputGates = createInputGates({
 });
 function refreshInputGates() {
   if (!inputGates.refresh(latestSessions)) return;
-  chatView.setInputGate(inputGates.get(selectedSessionId));
+  chatView.setInputGate(inputGates.get(selectedCard));
 }
 function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
   selectionBeforeView = null;
   setView('grid');
-  if (latestSessions.some((x) => x.sessionId === sessionId)) {
+  const card = cardOf(sessionId);
+  if (sessionByCard(card)) {
     const dropped = boardOpen.drop();
     if (dropped && pendingSelect === dropped) pendingSelect = null;
-    landOnCard(sessionId, { diff, onClose }, focusSession);
+    landOnCard(card, { diff, onClose }, focusSession);
     return;
   }
-  boardOpen.request(sessionId, { diff, onClose });
-  setPendingSelect(sessionId);
+  boardOpen.request(card, { diff, onClose });
+  setPendingSelect(card);
   send({ type: 'resume', sessionId });
   toast('Restoring…');
 }
@@ -387,23 +409,23 @@ function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
 // leave the card below the tile's fold — and `diff` then lays the card's diff
 // panel over the grid. The watch goes on first so a panel this replaces does not
 // fire the old caller's onClose (board-open.js).
-function landOnCard(sessionId, { diff, onClose }, select) {
-  if (diff) boardOpen.watchDiff(sessionId, onClose);
-  const tile = assignedTaskId(sessionId) || ADHOC_ID;
+function landOnCard(card, { diff, onClose }, select) {
+  if (diff) boardOpen.watchDiff(card, onClose);
+  const tile = assignedTaskId(sessionByCard(card) || sessionIdOf(card)) || ADHOC_ID;
   if (minimisedIds.has(tile)) unminimise(tile);
-  select(sessionId);
-  document.querySelector(`#grid .session-card[data-sid="${CSS.escape(sessionId)}"]`)
+  select(card);
+  document.querySelector(`#grid .session-card[data-card="${CSS.escape(card)}"]`)
     ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   if (!diff) return;
   // A maximised session pane and the diff panel each hide the other's surface.
   if (maximized) setMaximized(false);
-  openDiffPanel(sessionId);
+  openDiffPanel(card);
 }
 const boardOpen = createBoardOpen();
-onDiffPanelClosed((sid) => {
-  boardOpen.diffClosed(sid);
+onDiffPanelClosed((card) => {
+  boardOpen.diffClosed(card);
   // An embedded panel's Diff button goes back to Chat/Terminal (api.mountSession).
-  if (sessionEmbed.active() && selectedSessionId === sid) renderPanel(sid);
+  if (sessionEmbed.active() && selectedCard === card) renderPanel(card);
 });
 
 function scrollTaskIntoView(taskId) {
@@ -448,8 +470,8 @@ const extApi = {
   // Backs `api.styles()`.
   styles: loadedStyles,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
-  selectedSessionId: () => selectedSessionId,
-  requestPanelRender: () => { if (selectedSessionId) renderPanel(selectedSessionId); },
+  selectedSessionId: () => sessionIdOf(selectedCard),
+  requestPanelRender: () => { if (selectedCard) renderPanel(selectedCard); },
   // Show a card from an extension's own view (a job's session, say): the board's
   // grid, selected if it is there, otherwise resumed and selected when the next
   // graph brings it back — the same sequence as a Search result's Restore. openTask is the
@@ -526,10 +548,11 @@ const sessionEmbed = createSessionEmbed({
     diffAnchor: document.getElementById('term-wrap'),
   }),
   show: showEmbeddedSession,
+  cardOf,
   release: (o) => {
     if (isDiffPanelOpen()) closeDiffPanel();
-    if (pendingSelect === o.sessionId) pendingSelect = null;
-    if (selectedSessionId) deselectSession(); else hideSidebar();
+    if (pendingSelect === o.card) pendingSelect = null;
+    if (selectedCard) deselectSession(); else hideSidebar();
     document.querySelector('main').classList.remove('session-embedded');
   },
 });
@@ -537,19 +560,19 @@ const sessionEmbed = createSessionEmbed({
 // A live session is selected as a card click would; a dormant one is resumed
 // first, as its card does; one that is not on the board at all (archived) is
 // restored and selected when the next graph brings it back (tryFulfillPending).
-function showEmbeddedSession(sessionId, o) {
+function showEmbeddedSession(card, o) {
   document.querySelector('main').classList.add('session-embedded');
   o.wrap?.classList.remove('pending');
-  const s = latestSessions.find((x) => x.sessionId === sessionId);
-  if (s && !s.managed) { resumeDormant(sessionId); applyEmbedView(o); return; }
-  if (s) { selectSession(sessionId); applyEmbedView(o); return; }
-  if (selectedSessionId) deselectSession();
+  const s = sessionByCard(card);
+  if (s && !s.managed) { resumeDormant(card); applyEmbedView(o); return; }
+  if (s) { selectSession(card); applyEmbedView(o); return; }
+  if (selectedCard) deselectSession();
   if (isDiffPanelOpen()) closeDiffPanel();
   o.wrap?.classList.add('pending');
   showSidebar();
   document.getElementById('panel').innerHTML = '<div class="panel-empty">Restoring…</div>';
-  setPendingSelect(sessionId);
-  send({ type: 'resume', sessionId });
+  setPendingLink(o.sessionId);
+  send({ type: 'resume', sessionId: o.sessionId });
 }
 
 // The view a mount or show asked for (`{ view: 'diff' }`), applied once the
@@ -557,8 +580,8 @@ function showEmbeddedSession(sessionId, o) {
 function applyEmbedView(o) {
   if (o.view !== 'diff') return;
   o.view = null;
-  openDiffPanel(o.sessionId);
-  renderPanel(o.sessionId);
+  openDiffPanel(o.card);
+  renderPanel(o.card);
 }
 
 // Lend the panel to the current view if it holds the embed's element, take it
@@ -653,7 +676,7 @@ function pruneSampleHosts() {
 function renderSampleCard(el, _extId, hidden) {
   if (!el) return;
   pruneSampleHosts();
-  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedSessionId: null }, { expanded: true });
+  el.innerHTML = sessionCardHtml(SAMPLE_SESSION, { ...cardCtx(), hiddenChips: hidden, selectedCard: null }, { expanded: true });
   // Inert: never wired (no wireGridEvents), not focusable, not clickable.
   const card = el.querySelector('.session-card');
   if (card) {
@@ -715,8 +738,8 @@ function syncClientExtensions() {
   // A panel re-render is what draws the gap the unmount left, and what gives a
   // freshly-loaded contribution its host to mount into.
   if (unmounted) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); }
-  clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
-    .then((changed) => { if (changed) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); } });
+  trackExtLoad(clientExtensions.load(extClientManifest.filter((e) => enabled.has(e.id)))
+    .then((changed) => { if (changed) { extApi.requestPanelRender(); extApi.requestBoardRender(); renderExtViews(); syncDispatchExtFields(); } }));
 }
 let sessionsDir = '';
 let homeDir = ''; // server's home dir, so scratch paths display ~-collapsed
@@ -950,6 +973,7 @@ function applyGraph(graph) {
   trustClaudeLaunchCwd = graph.trustClaudeLaunchCwd !== false;
   autoFixPrChecksDefault = graph.autoFixPrChecksDefault !== false;
   mailWakesDormant = graph.mailWakesDormant === true;
+  suppressNudgedPrToasts = graph.suppressNudgedPrToasts !== false;
   prModelFooter = graph.prModelFooter !== false;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
@@ -996,6 +1020,9 @@ function applyGraph(graph) {
   // this banner is the wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  const hadRestartPending = restartPendingExts.length > 0;
+  restartPendingExts = (graph.extensions || []).filter((e) => e.restartPending).map((e) => e.label || e.id);
+  if (hadRestartPending && !restartPendingExts.length && !fdBannerActive) hideSystemBanner();
   // Unlike the quarantine line this one can clear while the page is open (the
   // Restart tmux button), and syncStandingBanner only ever shows, so hide it here.
   const wasStale = staleGuiSession;
@@ -1008,6 +1035,7 @@ function applyGraph(graph) {
   // can ask for reads that — and before the renderPanel further down, so the
   // panel is drawn against the contributions that survive this tick.
   if (latestExtensions.some((e) => e.id === 'sounds')) migrateSoundPreference(send);
+  extGraphSeen = true;
   syncClientExtensions();
   // After the sync above, so the Settings row offers exactly what #m-runtime does.
   setRuntimeOptions([...document.getElementById('m-runtime').options].map((o) => ({ value: o.value, label: o.textContent })));
@@ -1039,8 +1067,8 @@ function applyGraph(graph) {
 
   const active = document.activeElement;
   const editing = active && active.id === 'rename-input';
-  if (selectedSessionId && !editing) {
-    const sel = latestSessions.find((x) => x.sessionId === selectedSessionId);
+  if (selectedCard && !editing) {
+    const sel = sessionByCard(selectedCard);
     // The return half of the needs-you round trip, checked BEFORE renderPanel so
     // the panel it draws already shows the view we are switching to (otherwise
     // the Chat/Terminal toggle would render one tick behind the pane it labels).
@@ -1049,18 +1077,18 @@ function applyGraph(graph) {
     // free rather than leaving one attached behind the hidden pane.
     if (sel && shouldReturnToChat({
       armedFor: chatHandoffFor,
-      selected: selectedSessionId,
+      selected: selectedCard,
       status: displayStatus(sel),
-      view: viewForSession(selectedSessionId),
+      view: viewForSession(selectedCard),
     })) {
       disarmChatHandoff();
-      setSessionView(selectedSessionId, 'chat');
-      applySessionView(selectedSessionId);
+      setSessionView(selectedCard, 'chat');
+      applySessionView(selectedCard);
     }
-    renderPanel(selectedSessionId);
+    renderPanel(selectedCard);
     if (sel && holdForRestart(sel)) {
       // spinner held — don't attach the dying pane
-    } else if (sel && sel.managed && viewForSession(sel.sessionId) !== 'chat' && (!current || current.sessionId !== selectedSessionId)) {
+    } else if (sel && sel.managed && viewForSession(selectedCard) !== 'chat' && (!current || current.card !== selectedCard)) {
       // viewForSession guard: renderSidebar's chat branch calls closeTerminal(), which
       // nulls `current` — without this check, the very next ~4s graph tick re-attaches
       // a terminal into the hidden #term-wrap. FitAddon can't measure a display:none
@@ -1074,6 +1102,7 @@ function applyGraph(graph) {
 }
 
 function setView(view) {
+  awaitingExtView = null;
   if (currentView === 'search' && view === 'grid') clearSearch();
   currentView = view;
   // The diff panel overlays the board, so leaving grid must dismiss it. An
@@ -1091,15 +1120,15 @@ function setView(view) {
   // host created while another view was current starts hidden.
   for (const [key, host] of extViewHosts) host.classList.toggle('hidden', key !== view);
   syncSessionEmbed();
-  if (selectedSessionId && (view === 'search' || (isExtView(view) && !sessionEmbed.active()))) {
-    const previous = selectedSessionId;
+  if (selectedCard && (view === 'search' || (isExtView(view) && !sessionEmbed.active()))) {
+    const previous = selectedCard;
     deselectSession();
     selectionBeforeView = previous;
   }
   if (view === 'grid') {
     const previous = selectionBeforeView;
     selectionBeforeView = null;
-    if (previous && latestSessions.some((s) => s.sessionId === previous)) selectSession(previous);
+    if (previous && sessionByCard(previous)) selectSession(previous);
     else renderGrid();
   } else if (view === 'search') onEnterSearchView();
   // Mirror the view into the URL hash so a refresh re-lands here (Search is a
@@ -1174,9 +1203,39 @@ function renderExtViews() {
   updateExtViews();
   // A deep link can land before the extension's module has loaded, so the hash
   // is re-read once its view finally exists (hashView refuses an unknown one).
-  const deep = hashView();
-  if (deep && deep !== currentView && isExtView(deep)) setView(deep);
+  settleDeepView();
 }
+
+// A cold load of #view=ext:<id>:<view> names a view whose extension module has
+// not loaded yet. The grid stays hidden meanwhile (awaitingExtView) so the board
+// never flashes; this selects the view once it registers, or — when the
+// extensions have finished loading without it (off, unknown) — falls back to the
+// board and clears the hash.
+let awaitingExtView = null;
+let extGraphSeen = false;
+let extLoadsInFlight = 0;
+// A second sync mid-import resolves at once (the loader already marked the id
+// loaded), so the verdict waits for every load in flight, not the first to settle.
+function trackExtLoad(promise) {
+  extLoadsInFlight++;
+  return promise.finally(() => { if (--extLoadsInFlight === 0) settleDeepView(true); });
+}
+function settleDeepView(loaded = false) {
+  const deep = hashView();
+  if (deep && deep !== currentView && isExtView(deep)) { setView(deep); return; }
+  if (!awaitingExtView) return;
+  if (isExtView(awaitingExtView)) { setView(awaitingExtView); return; }
+  if (!loaded || !extGraphSeen) return;
+  releaseAwaitingView();
+}
+function releaseAwaitingView() {
+  if (!awaitingExtView) return;
+  awaitingExtView = null;
+  document.getElementById('grid').classList.remove('hidden');
+  renderGrid();
+  syncHash();
+}
+const AWAITING_EXT_VIEW_TIMEOUT_MS = 10000;
 
 // Hand every mounted view contribution the CURRENT graph. Split out of
 // renderExtViews and called from applyGraph as well, because a view is the one
@@ -1356,8 +1415,11 @@ let dragColumnGap = new Map();
 // mid-drag, an unchanged position can change nothing, so those are skipped.
 let lastDragPoint = null;
 
-function beginDragCaches(sessionId) {
-  dragNestTargets = nestTargetsFor(sessionId, latestSessions, assignedTaskId);
+function beginDragCaches(sessionId, card = null) {
+  // Nesting is worked out on the own deck's sessions; another deck's card
+  // moves between that deck's tasks only.
+  const remote = deckIdOf(card) && deckIdOf(card) !== boardDeckId;
+  dragNestTargets = remote ? new Set() : nestTargetsFor(sessionId, latestSessions, assignedTaskId);
   dragMultiColumn = new Map();
   dragColumnGap = new Map();
   lastDragPoint = null;
@@ -1835,10 +1897,31 @@ function cardState(s) {
   return phaseOf(s) === 'awake' ? `${base} snooze-alarm` : base;
 }
 
-// Which (still-existing) task a session belongs to, or null for No-task.
-function assignedTaskId(sessionId) {
-  const id = latestTasks.assignments[sessionId];
+// Which (still-existing) task a session belongs to, or null for No-task. Takes
+// a session id of the own deck's, or a session record: another deck's session
+// is in none of this board's tasks.
+function assignedTaskId(ref) {
+  if (ref && typeof ref === 'object') {
+    if (ref.deckId && ref.deckId !== boardDeckId) {
+      const rid = remoteBoard.assignments[ref.cardKey];
+      return rid && remoteBoard.tasks.some((t) => t.id === rid && !t.archivedAt) ? rid : null;
+    }
+    ref = ref.sessionId;
+  }
+  const id = latestTasks.assignments[ref];
   return id && latestTasks.tasks.some((t) => t.id === id && !t.archivedAt) ? id : null;
+}
+
+// Every task on the board: the own deck's, then each other deck's.
+const boardTasks = () => (remoteBoard.tasks.length ? [...latestTasks.tasks, ...remoteBoard.tasks] : latestTasks.tasks);
+const findTask = (id) => latestTasks.tasks.find((t) => t.id === id) || remoteBoard.tasks.find((t) => t.id === id) || null;
+const isRemoteTask = (id) => remoteBoard.tasks.some((t) => t.id === id);
+const bucketOrder = (id) => (latestTasks.sessionOrder || {})[id] || remoteBoard.sessionOrder[id];
+// A task as its tile draws it: with more than one deck on the board, each tile
+// names its deck, so the tasks read grouped under their decks' names.
+function tileTask(task) {
+  if (!task || task.deckName || !ownTaskDeck) return task;
+  return { ...task, ...ownTaskDeck };
 }
 
 export function taskForSession(sessionId) {
@@ -1908,7 +1991,7 @@ function toggleActivitySort(bucketId) {
 function sortBucketSessions(sessions, bucketId) {
   return activitySortedTasks.has(bucketId)
     ? sortByLastActivity(sessions)
-    : orderSessions(sessions, (latestTasks.sessionOrder || {})[bucketId]);
+    : orderSessions(sessions, bucketOrder(bucketId));
 }
 
 // Feeds tileSpan (layout.js) the secondary-weight counts it needs, all derived from
@@ -2031,7 +2114,8 @@ function flashPr(url) {
 // status helpers; cardCtx() snapshots them for a render pass.
 function cardCtx() {
   return {
-    selectedSessionId, selectedNewSlot, flashingPr, collapsedWorkflows, collapsedSnoozed, activitySortedTasks, restoredTaskId,
+    selectedCard, selectedNewSlot, flashingPr, collapsedWorkflows, collapsedSnoozed, activitySortedTasks, restoredTaskId,
+    ownDeckId: boardDeckId,
     justFinished, unread, cardState, barWord, phaseOf, ADHOC_ID,
     // Duck-types the old Set-based ctx.subagentShown (cards.js only ever calls
     // .has(id)) while actually resolving the default-vs-explicit-override split.
@@ -2054,6 +2138,8 @@ function currentOrder() {
   const order = [...new Set((Array.isArray(latestTasks.order) ? latestTasks.order : []).filter((id) => valid.has(id)))];
   for (const id of ids) if (!order.includes(id)) order.push(id);
   if (!order.includes(ADHOC_ID)) order.push(ADHOC_ID);
+  const live = new Set(remoteBoard.tasks.filter((t) => !t.archivedAt).map((t) => t.id));
+  for (const id of remoteBoard.order) if (live.has(id)) order.push(id);
   return order;
 }
 
@@ -2118,10 +2204,10 @@ function reconcileMinimised(orderIds) {
 
 function trayContext() {
   return {
-    tasks: currentOrder().map((id) => ({
-      id, name: id === ADHOC_ID ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === id).name,
-      adhoc: id === ADHOC_ID,
-    })),
+    tasks: currentOrder().map((id) => {
+      const task = id === ADHOC_ID ? null : tileTask(findTask(id));
+      return { id, name: task ? task.name : 'Unassigned', adhoc: !task, ...(task?.deckName ? { deckName: task.deckName } : {}) };
+    }),
     minimisedIds: [...minimisedIds],
   };
 }
@@ -2154,10 +2240,10 @@ function renderGrid(trayPass = 0, fitPass = 0) {
   // than one → the normal packed grid. The tray is appended by both paths.
   if (visible.length === 1) { renderFocusedTile(el, visible[0]); return; }
   el.classList.remove('focus-mode');
-  const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
+  const byTask = new Map(boardTasks().map((t) => [t.id, []]));
   const noTask = [];
   for (const s of onBoard(latestSessions)) {
-    const tid = assignedTaskId(s.sessionId);
+    const tid = assignedTaskId(s);
     if (tid) byTask.get(tid).push(s);
     else noTask.push(s);
   }
@@ -2173,14 +2259,14 @@ function renderGrid(trayPass = 0, fitPass = 0) {
   const rowHeight = gridRowHeight(el.clientHeight, trayHeight, { gap, paddingY });
   function buildTiles() {
     const tileById = new Map(
-      latestTasks.tasks.map((task) => {
+      boardTasks().map((task) => {
         const ordered = sortBucketSessions(byTask.get(task.id) || [], task.id);
         const sessions = sortAsleepLast(ordered, phaseOf);
         // Tile height the `task.body` extensions want (e.g. the TODO zone); 0
         // when none is registered, which is also what a disabled one contributes.
         const bodyPx = slots.taskBodyWeight(task.id, latestGraph);
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
-        return [task.id, { kind: 'task', id: task.id, task, sessions, estimate: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
+        return [task.id, { kind: 'task', id: task.id, task: tileTask(task), sessions, estimate: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
       })
     );
     const {
@@ -2285,14 +2371,14 @@ function renderFocusedTile(el, id) {
   const isAdhoc = id === ADHOC_ID;
   const sessions = sortAsleepLast(
     sortBucketSessions(
-      onBoard(latestSessions).filter((s) => isAdhoc ? !assignedTaskId(s.sessionId) : assignedTaskId(s.sessionId) === id),
+      onBoard(latestSessions).filter((s) => isAdhoc ? !assignedTaskId(s) : assignedTaskId(s) === id),
       id
     ),
     phaseOf
   );
   const tile = isAdhoc
     ? { kind: 'notask', id: ADHOC_ID, sessions, span: 1 }
-    : { kind: 'task', id, task: latestTasks.tasks.find((t) => t.id === id), sessions, span: 1 };
+    : { kind: 'task', id, task: tileTask(findTask(id)), sessions, span: 1 };
   el.classList.add('focus-mode');
   el.classList.remove('scrolling', 'single-column');
   el.style.gridTemplateColumns = '';
@@ -2326,13 +2412,13 @@ function trayHtml(visible) {
   const visibleSet = new Set(visible);
   const mins = currentOrder()
     .filter((id) => !visibleSet.has(id))
-    .map((id) => (id === ADHOC_ID ? { id: ADHOC_ID, name: 'Unassigned' } : latestTasks.tasks.find((t) => t.id === id)))
+    .map((id) => (id === ADHOC_ID ? { id: ADHOC_ID, name: 'Unassigned' } : findTask(id)))
     .filter(Boolean);
   if (!mins.length) return '';
   const pills = mins.map((t) => {
     const sessions = sortBucketSessions(
       onBoard(latestSessions).filter((s) => {
-        const tid = assignedTaskId(s.sessionId);
+        const tid = assignedTaskId(s);
         return (t.id === ADHOC_ID ? !tid : tid === t.id) && !isAsleep(s);
       }),
       t.id
@@ -2361,7 +2447,7 @@ function wireTray(el) {
     b.addEventListener('contextmenu', (e) => {
       const taskId = b.dataset.taskid;
       if (taskId === ADHOC_ID) return;
-      const task = latestTasks.tasks.find((t) => t.id === taskId);
+      const task = findTask(taskId);
       if (!task) return;
       e.preventDefault();
       e.stopPropagation();
@@ -2377,10 +2463,10 @@ function wireTray(el) {
 // Same select-or-resume behavior a plain click on a card triggers — shared
 // with the disabled sub-agent pill, which falls through to this instead of
 // toggling (see wireGridEvents).
-function focusSession(sid) {
-  const s = latestSessions.find((x) => x.sessionId === sid);
-  if (s && !s.managed) resumeDormant(sid);
-  else selectSession(sid);
+function focusSession(card) {
+  const s = sessionByCard(card);
+  if (s && !s.managed) resumeDormant(card);
+  else selectSession(card);
 }
 
 // The `card.pill` slot's hosts: one `.card-meta-ext` per rendered card
@@ -2391,14 +2477,14 @@ function focusSession(sid) {
 // ITS OWN card's session, never the selected one, which is the difference from
 // the panel slots' mountInto/update pair.
 //
-// A host whose data-sid is no longer in the graph is skipped rather than mounted
+// A host whose data-card is no longer in the graph is skipped rather than mounted
 // with a null session: a contribution reads the session it is handed, and the
 // card is about to disappear on the next render anyway.
 function mountCardPills(el) {
-  const byId = new Map(latestSessions.map((s) => [s.sessionId, s]));
+  const byCard = new Map(latestSessions.map((s) => [s.cardKey, s]));
   const entries = [];
   for (const host of el.querySelectorAll('.card-meta-ext')) {
-    const s = byId.get(host.closest('.session-card')?.dataset.sid);
+    const s = byCard.get(host.closest('.session-card')?.dataset.card);
     if (s) entries.push({ host, session: s });
   }
   pruneSampleHosts();
@@ -2457,10 +2543,10 @@ function wireGridEvents(el) {
       // A team-member row is not a session (it shares the lead's tmux, has no
       // card id): focus the lead so its shared session attaches.
       if (card.classList.contains('team-row')) {
-        focusSession(card.dataset.leadSid);
+        focusSession(card.dataset.leadCard);
         return;
       }
-      focusSession(card.dataset.sid);
+      focusSession(card.dataset.card);
     };
     card.addEventListener('click', activate);
     // Keyboard activation for the role="button"/tabindex on the row (and for
@@ -2473,7 +2559,7 @@ function wireGridEvents(el) {
     card.addEventListener('contextmenu', (e) => {
       if (card.classList.contains('subagent-row') || card.classList.contains('team-row') || bubbledFromRow(e)) return; // not a session — no card menu
       e.preventDefault();
-      openCardMenu(card.dataset.sid, e.clientX, e.clientY);
+      openCardMenu(card.dataset.card, e.clientX, e.clientY);
     });
     // Middle-click stops & archives in one gesture (same handler as the menu's
     // Stop & archive, no confirm — the post-archive toast offers immediate Resume).
@@ -2498,7 +2584,7 @@ function wireGridEvents(el) {
   el.querySelectorAll('.subagent-pill').forEach((pill) => {
     pill.addEventListener('click', (e) => {
       if (pill.getAttribute('aria-disabled') === 'true') {
-        focusSession(pill.dataset.sid);
+        focusSession(pill.dataset.card);
         return;
       }
       e.stopPropagation();
@@ -2524,7 +2610,7 @@ function wireGridEvents(el) {
   el.querySelectorAll('.snoozed-row').forEach((row) => {
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      openCardMenu(row.dataset.sid, e.clientX, e.clientY);
+      openCardMenu(row.dataset.card, e.clientX, e.clientY);
     });
   });
   // The wake-now sun on a snoozed row: the only way to unsnooze without right-clicking.
@@ -2533,7 +2619,7 @@ function wireGridEvents(el) {
   el.querySelectorAll('.snooze-wake').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      wakeSession(btn.dataset.sid);
+      wakeSession(btn.dataset.card);
     });
   });
   // Right-click anywhere on a task tile (but not on a card/row/button, which carry
@@ -2748,9 +2834,10 @@ function mountMenu(items, x, y) {
 // the row button, whose trailing slot holds the tick.
 // Every file link clicked in a session's chat or terminal: a `file.open`
 // extension may take it, otherwise the board's own preview opens.
-function openFile(path, { sessionId, source }) {
+function openFile(path, { card, source }) {
+  const sessionId = sessionIdOf(card);
   if (slots.fileOpen({ path, sessionId, source }, latestGraph, extApi)) return;
-  openFilePreview(path);
+  openFilePreview(path, { card });
 }
 
 // `card.action` extension items for one card, in the menu's own item shape.
@@ -2788,7 +2875,7 @@ function extTaskMenuItems(taskId, isNoTask) {
 
 function taskMinimiseMenuItem(taskId) {
   const adhoc = taskId === ADHOC_ID;
-  const task = { id: taskId, name: adhoc ? 'Unassigned' : latestTasks.tasks.find((t) => t.id === taskId)?.name, adhoc };
+  const task = { id: taskId, name: adhoc ? 'Unassigned' : findTask(taskId)?.name, adhoc };
   return slots.trayMinimiseItem(task, latestGraph, extApi)
     || { label: 'Minimise', icon: MINIMISE_ICON, run: () => minimise(taskId) };
 }
@@ -2914,8 +3001,8 @@ function attachSession(sessionId, parentSessionId) {
 function attachMenuItems(sessionId) {
   const s = latestSessions.find((sess) => sess.sessionId === sessionId);
   if (!s) return [];
-  const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
-  const candidates = orderAttachCandidates(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId), s.spawnedBy);
+  const byId = new Map(latestSessions.filter((sess) => sess.deckId === s.deckId).map((sess) => [sess.sessionId, sess]));
+  const candidates = orderAttachCandidates(attachCandidates(sessionId, onBoard(latestSessions).filter((x) => x.deckId === s.deckId), assignedTaskId), s.spawnedBy);
   return candidates.map((c) => {
     const depth = nestingDepth(c, byId);
     const prefix = depth ? '— '.repeat(depth) : '';
@@ -2924,23 +3011,25 @@ function attachMenuItems(sessionId) {
   });
 }
 
-function openCardMenu(sessionId, x, y) {
-  const s = latestSessions.find((sess) => sess.sessionId === sessionId);
+function openCardMenu(card, x, y) {
+  const s = sessionByCard(card);
   if (!s) return;
+  actingCard = card;
+  const { sessionId } = s;
   const snoozed = isAsleep(s);
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
   // Rename edits the panel title, so select first to open the panel — exactly
   // what the pencil button assumes. Fork/Archive act on the id directly.
   const items = [
-    { label: 'Rename', icon: PENCIL_ICON, action: 'session.rename', run: () => { selectSession(sessionId); beginRename(sessionId); } },
+    { label: 'Rename', icon: PENCIL_ICON, action: 'session.rename', run: () => { selectSession(card); beginRename(card); } },
     ...(!snoozed ? [{ label: 'Fork', icon: FORK_ICON, action: 'session.fork', run: () => openFork(sessionId) }] : []),
     ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', run: () => peerReviewSession(sessionId) }] : []),
-    { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => openDiffPanel(sessionId) },
+    { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => openDiffPanel(card) },
     { label: 'Copy reference', icon: COPY_ICON, run: () => copySessionReference(s) },
-    ...(s.exitOutput ? [{ label: 'Show last output', icon: ROBOT_ICON, run: () => selectSession(sessionId) }] : []),
+    ...(s.exitOutput ? [{ label: 'Show last output', icon: ROBOT_ICON, run: () => selectSession(card) }] : []),
     { sep: true },
     ...(snoozed ? [
-      { label: 'Unsnooze', icon: CLOCK_ICON, action: 'session.snooze-clear', run: () => wakeSession(sessionId) },
+      { label: 'Unsnooze', icon: CLOCK_ICON, action: 'session.snooze-clear', run: () => wakeSession(card) },
       { label: 'Extend snooze…', icon: CLOCK_ICON, action: 'session.snooze-set', run: () => openSnoozeMenu(sessionId, x, y) },
     ] : [
       { label: 'Snooze…', icon: CLOCK_ICON, action: 'session.snooze-set', run: () => openSnoozeMenu(sessionId, x, y) },
@@ -2964,7 +3053,7 @@ function openCardMenu(sessionId, x, y) {
     // "Full view" only makes sense for a genuine CHILD (parentSession set) — a
     // top-level session already renders full, whether or not it's `spawnedBy`.
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions).filter((x) => x.deckId === s.deckId), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Archive', icon: ARCHIVE_ICON, action: 'session.archive', danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
@@ -2983,15 +3072,17 @@ function copySessionReference(s) {
 // collapsed into one menu. Anchored under the Actions button; reuses the same
 // mountMenu primitive as the card right-click menu. Mirrors that menu's
 // fork/snooze entries but drops Rename (the title click owns it).
-function openActionsMenu(sessionId, x, y) {
-  const s = latestSessions.find((sess) => sess.sessionId === sessionId);
+function openActionsMenu(card, x, y) {
+  const s = sessionByCard(card);
   if (!s) return;
+  actingCard = card;
+  const { sessionId } = s;
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
   const items = [
     { label: 'Fork session', icon: FORK_ICON, action: 'session.fork', trailing: KBD_FORK, run: () => openFork(sessionId) },
     { label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
     // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
-    { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => { openDiffPanel(sessionId); if (sessionEmbed.active()) renderPanel(sessionId); } },
+    { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => { openDiffPanel(card); if (sessionEmbed.active()) renderPanel(card); } },
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
@@ -2999,7 +3090,7 @@ function openActionsMenu(sessionId, x, y) {
     // Terminal for this session.
     ...(s.cwd ? [{ label: 'Open terminal', icon: TERMINAL_ICON, action: 'session.open-terminal', trailing: KBD_TERMINAL, run: () => send({ type: 'open-terminal-for-session', sessionId }) }] : []),
     isAsleep(s)
-      ? { label: 'Unsnooze', icon: CLOCK_ICON, action: 'session.snooze-clear', trailing: KBD_SNOOZE, run: () => wakeSession(sessionId) }
+      ? { label: 'Unsnooze', icon: CLOCK_ICON, action: 'session.snooze-clear', trailing: KBD_SNOOZE, run: () => wakeSession(card) }
       : { label: 'Snooze…', icon: CLOCK_ICON, action: 'session.snooze-set', trailing: KBD_SNOOZE, run: () => openSnoozeMenu(sessionId, x, y) },
     autoFixMenuItem(s),
     autoMergeMenuItem(s),
@@ -3008,7 +3099,7 @@ function openActionsMenu(sessionId, x, y) {
     ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, action: 'session.detach', run: () => promoteSession(sessionId) }] : []),
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
-    ...(attachCandidates(sessionId, onBoard(latestSessions), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
+    ...(attachCandidates(sessionId, onBoard(latestSessions).filter((x) => x.deckId === s.deckId), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
     { label: 'Stop & archive', icon: ARCHIVE_ICON, action: 'session.archive', danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
@@ -3068,7 +3159,7 @@ function openModelMenu(sessionId, x, y) {
 function clearableInTask(taskId) {
   const isAdhoc = taskId === ADHOC_ID;
   const sessions = onBoard(latestSessions).filter((s) => {
-    const tid = assignedTaskId(s.sessionId);
+    const tid = assignedTaskId(s);
     return isAdhoc ? !tid : tid === taskId;
   });
   return clearableSessions(sessions, { justFinished, unread, isAcknowledged, phaseOf });
@@ -3081,7 +3172,7 @@ function clearTaskStatuses(taskId) {
     acknowledgedAt.set(s.sessionId, s.updatedAt ?? null);
     if (justFinished.delete(s.sessionId)) hadJustFinished = true;
     if (unread.delete(s.sessionId)) hadUnread = true;
-    if (phaseOf(s) === 'awake') send({ type: 'snooze-clear', sessionId: s.sessionId });
+    if (phaseOf(s) === 'awake') send({ type: 'snooze-clear', sessionId: s.sessionId, card: s.cardKey });
   }
   persistAcknowledged();
   if (hadJustFinished) persistJustFinished();
@@ -3099,9 +3190,10 @@ function clearStatusesMenuItems(taskId) {
 // Archive is available only for real tasks. Sort stays open as a ticked toggle.
 function openTaskActionsMenu(taskId, x, y) {
   const isAdhoc = taskId === ADHOC_ID;
-  const task = isAdhoc ? null : latestTasks.tasks.find((t) => t.id === taskId);
+  const task = isAdhoc ? null : findTask(taskId);
   if (!isAdhoc && !task) return;
-  const extItems = extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
+  // An extension's task actions act on this board's own deck's tasks.
+  const extItems = isRemoteTask(taskId) ? [] : extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
   const sortOn = activitySortedTasks.has(taskId);
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
@@ -3134,7 +3226,7 @@ function openSnoozeMenu(sessionId, x, y) {
     // Snoozing sets a session aside — if it's the one open, close its view (and
     // clear the #session deep link, so a refresh doesn't reopen it). Detaches the
     // terminal only; the tmux session keeps running.
-    if (sessionId === selectedSessionId) deselectSession();
+    if (cardOf(sessionId) === selectedCard) deselectSession();
   };
   const items = [
     { label: '1 hour', icon: CLOCK_ICON, run: () => setUntil(resolveUntil('1h', now)) },
@@ -3159,7 +3251,7 @@ function archiveTaskFromCell(cell) {
 // server's task-archived reply (not fired optimistically here) since the
 // cascade's kill-jobs-first wait can take several seconds per session.
 async function archiveTask(taskId, name) {
-  const liveCount = latestSessions.filter((s) => assignedTaskId(s.sessionId) === taskId).length;
+  const liveCount = latestSessions.filter((s) => assignedTaskId(s) === taskId).length;
   if (liveCount > 0) {
     const result = await confirmDialog({
       title: 'Archive this task?',
@@ -3281,10 +3373,11 @@ function wireGridDnd(el) {
       if (e.target.closest('.link-chip')) { e.preventDefault(); return; }
       e.stopPropagation();
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'session', sessionId: dragUnitSid(card) }));
+      const cardKeyOf = card.dataset.card || card.querySelector('[data-card]')?.dataset.card || null;
+      e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'session', sessionId: dragUnitSid(card), card: cardKeyOf }));
       draggedCard = card;
       dragActive = true;
-      beginDragCaches(dragUnitSid(card));
+      beginDragCaches(dragUnitSid(card), cardKeyOf);
       armNewTask(true); // reveal the "drop to create" landing area immediately
       // Defer one tick: the native drag image (the floating card) is
       // snapshotted synchronously now, so the card must still look intact. Then
@@ -3378,7 +3471,7 @@ function wireGridDnd(el) {
       g.classList.remove('drop');
       let p;
       try { p = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
-      if (p.kind === 'session') createTask(p.sessionId);
+      if (p.kind === 'session') createTask(p.sessionId, p.card);
     });
   });
 
@@ -3485,7 +3578,11 @@ function wireGridDnd(el) {
         // placeholder's slot and skipping its hidden source. Otherwise (re)assign
         // to this cell's task, or to Ad hoc when dropped on the unassigned tile.
         const bucket = isNoTask ? ADHOC_ID : taskId;
-        const sameBucket = isNoTask ? !assignedTaskId(p.sessionId) : assignedTaskId(p.sessionId) === taskId;
+        const dragged = sessionByCard(p.card) || p;
+        const remote = Boolean(dragged.deckId && dragged.deckId !== boardDeckId);
+        const sameBucket = isNoTask ? !assignedTaskId(dragged) : assignedTaskId(dragged) === taskId;
+        // Unassigned's order is the own deck's: another deck's card keeps its place there.
+        if (remote && sameBucket && isNoTask) return;
         // An activity-sorted bucket has no manual order to write — a same-bucket drop
         // is a no-op (dragend rebuilds from canonical order). Cross-bucket still reassigns.
         if (bucket && sameBucket && activitySortedTasks.has(bucket)) return;
@@ -3516,7 +3613,7 @@ function wireGridDnd(el) {
           latestTasks.sessionOrder = latestTasks.sessionOrder || {};
           latestTasks.sessionOrder[bucket] = order; // optimistic; server confirms on next graph
           send({ type: 'task-reorder-sessions', taskId: bucket, order });
-        } else if (releaseChildForMove(p.sessionId)) send({ type: 'task-assign', sessionId: p.sessionId, taskId: isNoTask ? null : taskId });
+        } else if (remote || releaseChildForMove(p.sessionId)) send({ type: 'task-assign', sessionId: p.sessionId, card: p.card || null, taskId: isNoTask ? null : taskId });
       }
       // Task drops are handled by the #grid drop handler (commits at the current
       // slot wherever the cursor lands).
@@ -3547,6 +3644,12 @@ function taskTargetAt(x, y) {
 
 function commitTaskReorder() {
   if (!draggedTaskId || !taskDropTargetId || taskDropTargetId === draggedTaskId) return;
+  // Each deck orders its own tasks; Unassigned sits among the own deck's.
+  const deckOfTile = (id) => findTask(id)?.deckId || null;
+  if (deckOfTile(draggedTaskId) !== deckOfTile(taskDropTargetId)) {
+    toast("Tasks stay with their own deck's tasks", true);
+    return;
+  }
   const order = currentOrder();
   const i = order.indexOf(draggedTaskId);
   const j = order.indexOf(taskDropTargetId);
@@ -3586,7 +3689,7 @@ function beginTaskRename(cell, isNew = false) {
     const name = input.value.trim();
     if (save && (isNew || (name && name !== current))) {
       send({ type: 'task-rename', taskId, name: name || current });
-      const t = latestTasks.tasks.find((x) => x.id === taskId);
+      const t = findTask(taskId);
       if (t) t.name = name || current; // optimistic; server confirms on next graph
     }
     renderGrid();
@@ -3685,8 +3788,8 @@ function wireTaskControls(el) {
 
 
 // Ask the server to create a task. Optionally seed it with a session.
-function createTask(sessionId) {
-  send({ type: 'task-create', sessionId, draft: true });
+function createTask(sessionId, card = null) {
+  send({ type: 'task-create', sessionId, draft: true, card });
 }
 
 function onTaskCreated(msg) {
@@ -3733,7 +3836,7 @@ function armNewTask(on) {
     let p;
     try { p = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { armNewTask(false); return; }
     armNewTask(false);
-    if (p.kind === 'session') createTask(p.sessionId);
+    if (p.kind === 'session') createTask(p.sessionId, p.card);
   });
 })();
 // Track working→idle transitions: a finished session enters the persisted
@@ -3803,8 +3906,9 @@ function trackJustFinished(sessions) {
 // is threaded to worktreeCleanupAction for a cascade, where every archived
 // descendant must be excluded from the "still in use" check too.
 function archivedToast(sessionId, text, worktree, archivedIds = [sessionId]) {
-  if (selectedSessionId === sessionId) selectAfterArchive(sessionId);
-  const actions = [{ label: 'Resume', onClick: () => { setPendingSelect(sessionId); send({ type: 'resume', sessionId }); } }];
+  const card = cardOf(sessionId);
+  if (selectedCard === card) selectAfterArchive(card);
+  const actions = [{ label: 'Resume', onClick: () => { setPendingSelect(card); send({ type: 'resume', sessionId }); } }];
   const cleanup = worktreeCleanupAction(sessionId, worktree, archivedIds);
   if (cleanup) actions.push(cleanup);
   const stopContainer = containerStopAction(sessionId, archivedIds);
@@ -3837,11 +3941,11 @@ function containerStopAction(sessionId, archivedIds = [sessionId]) {
 // don't light up its "new session" slot either; that reads as the board inviting
 // you to start something, when really nothing is left to point at. Just deselect.
 // A no-longer-present session (or an empty board) also just deselects.
-function selectAfterArchive(sessionId) {
-  const group = navTileGroups().find((g) => g.targets.some((t) => t.sid === sessionId));
-  const i = group ? group.targets.findIndex((t) => t.sid === sessionId) : -1;
+function selectAfterArchive(card) {
+  const group = navTileGroups().find((g) => g.targets.some((t) => t.card === card));
+  const i = group ? group.targets.findIndex((t) => t.card === card) : -1;
   const candidate = i < 0 ? null : (group.targets[i - 1] || group.targets[i + 1]);
-  const neighbour = candidate?.sid != null ? candidate : null;
+  const neighbour = candidate?.card != null ? candidate : null;
   // selectSession() re-renders the sidebar for a *live* session, which closes the
   // old terminal itself. deselectSession() closes it too, so either branch leaves
   // no stranded terminal behind (e.g. tmux's dead-pane "[exited]").
@@ -3965,7 +4069,7 @@ async function restartSession(sessionId) {
   beginRestart(sessionId, s, false);
 }
 
-// Sessions with a restart in flight → { tmux: pre-restart name, timer }. While an
+// Cards with a restart in flight → { tmux: pre-restart name, timer }. While an
 // entry is here, the open terminal shows a "Restarting…" spinner instead of the
 // dying tmux pane ("[exited]"): resume() kills the old pane (kept by remain-on-exit)
 // and relaunches under a NEW tmux name, and the /pty stays bound to the dead pane
@@ -3973,7 +4077,8 @@ async function restartSession(sessionId) {
 // DIFFERENT tmux name (the fresh pane) and only then attach to it — see holdForRestart.
 const restartingTerms = new Map();
 function beginRestart(sessionId, s, killJobsFirst) {
-  const prev = restartingTerms.get(sessionId);
+  const card = s.cardKey;
+  const prev = restartingTerms.get(card);
   if (prev) clearTimeout(prev.timer);
   send(killJobsFirst ? { type: 'resume', sessionId, killJobsFirst: true } : { type: 'resume', sessionId });
   toast('Restarting…');
@@ -3981,22 +4086,22 @@ function beginRestart(sessionId, s, killJobsFirst) {
   // not cancel each other's timeout, or a failed relaunch could strand a stuck
   // spinner. If the fresh tmux never shows, stop holding so the panel reverts to
   // whatever the session actually is now.
-  const timer = setTimeout(() => restartingTerms.delete(sessionId), 20000);
-  restartingTerms.set(sessionId, { tmux: s.tmux || '', timer });
+  const timer = setTimeout(() => restartingTerms.delete(card), 20000);
+  restartingTerms.set(card, { tmux: s.tmux || '', timer });
   // Swap the open terminal for the spinner immediately, so the [exited] pane never
   // flashes; the graph handler keeps it until the relaunched pane attaches.
-  if (selectedSessionId === sessionId) showRestartingPlaceholder();
+  if (selectedCard === card) showRestartingPlaceholder();
 }
 
 // True while we're still waiting for a restart's relaunched pane — the caller must
 // then NOT attach the old (dead) terminal. Clears the entry once the new tmux name
 // appears (or the session is gone), so the next attach is the fresh pane.
 function holdForRestart(s) {
-  const entry = restartingTerms.get(s.sessionId);
+  const entry = restartingTerms.get(s.cardKey);
   if (!entry) return false;
   if (s.managed && s.tmux && s.tmux !== entry.tmux) {
     clearTimeout(entry.timer);
-    restartingTerms.delete(s.sessionId);
+    restartingTerms.delete(s.cardKey);
     return false;
   }
   showRestartingPlaceholder();
@@ -4013,22 +4118,29 @@ function showRestartingPlaceholder() {
 
 // --- selection / panel ---
 
-export let selectedSessionId = null;
+export let selectedCard = null;
 let selectionBeforeView = null;
 // Keyboard nav can also land on a tile's "new session" slot rather than a session
 // card: this holds that tile's id (a task id, or ADHOC_ID for Unassigned), and is
-// mutually exclusive with selectedSessionId. Enter on it opens the dispatch dialog.
+// mutually exclusive with selectedCard. Enter on it opens the dispatch dialog.
 // Board-only — no panel/terminal/hash, just a highlight (re-derived each render).
 let selectedNewSlot = null;
-// A session we want to select as soon as the board contains it: set by a Resume
+// A card we want to select as soon as the board contains it: set by a Resume
 // click (jump to the restored session once it's back) and by the URL hash on
 // load / back-forward. Fulfilled in applyGraph; survives until the session shows.
 let pendingSelect = null;
+// A #session= link read before GET /deck has named the board's deck, so it
+// cannot be a card key yet; tryFulfillPending turns it into pendingSelect.
+let pendingLink = null;
 let pendingScheduledFocus = null;
 let scheduleNotificationId = 0;
 // Setter so split-out views (search.js) can arm a post-resume jump without
 // owning the binding (ES live bindings are read-only to importers).
-export function setPendingSelect(id) { selectionBeforeView = null; pendingSelect = id; }
+export function setPendingSelect(card) { selectionBeforeView = null; pendingLink = null; pendingSelect = card; }
+function setPendingLink(sessionId) {
+  if (boardDeckId) setPendingSelect(cardOf(sessionId));
+  else { selectionBeforeView = null; pendingSelect = null; pendingLink = sessionId; }
+}
 
 // In-app "maximize the agent window" view state: a transient toggle (no
 // persistence) that expands #sidebar to fill the content area, hiding the task
@@ -4076,29 +4188,35 @@ function toggleMaximize() {
 // User picked a session: show details + open terminal. Clicking a card is an
 // acknowledgement — persist it so the needs-you alarm stays quiet across a
 // refresh, not just while this card happens to be the selected one.
-function selectSession(sessionId) {
+function selectSession(card) {
+  if (cardUnreachable(card)) {
+    toast(`${deckNameOf(deckIdOf(card))} is unreachable — its cards come back when it does`, true);
+    return;
+  }
+  actingCard = null;
   selectionBeforeView = null;
   // Moving the selection to a DIFFERENT session dismisses a diff panel still
   // showing the previous one — the diff is coupled to a single session's terminal,
   // so it shouldn't linger over another. Re-selecting the same session keeps it.
-  if (isDiffPanelOpen() && diffPanelSessionId() !== sessionId) closeDiffPanel();
+  if (isDiffPanelOpen() && diffPanelCard() !== card) closeDiffPanel();
   // Selecting a different card ends any trip in progress. shouldReturnToChat
   // already refuses to fire for a card that isn't the open one, so this is
   // belt-and-braces — but it also means re-opening that card later doesn't
   // inherit a stale arm.
-  if (selectedSessionId !== sessionId) disarmChatHandoff();
-  selectedSessionId = sessionId;
+  if (selectedCard !== card) disarmChatHandoff();
+  selectedCard = card;
   selectedNewSlot = null;
+  const sessionId = sessionIdOf(card);
   acknowledge(sessionId);
   // Opening a session is "I've come back to it" — wake it for good. Harmless
   // (server no-ops) if it wasn't snoozed.
-  const s = latestSessions.find((x) => x.sessionId === sessionId);
-  if (s && s.snooze) send({ type: 'snooze-clear', sessionId });
+  const s = sessionByCard(card);
+  if (s && s.snooze) send({ type: 'snooze-clear', sessionId, card });
   // Opening an unread card is "I've read it" — drop the manual bookmark.
   setUnread(sessionId, false);
-  renderPanel(sessionId);
+  renderPanel(card);
   if (s) renderSidebar(s);
-  syncShellTerminal(sessionId);
+  syncShellTerminal(card);
   if (currentView === 'grid') renderGrid();
   syncHash();
 }
@@ -4110,25 +4228,26 @@ function selectSession(sessionId) {
 // invisible click-loop. The resume-needs-dir opt-in still interrupts server-side
 // when the launch dir is gone. selectSession also clears any snooze (waking a
 // card that was suspended by a >=1h snooze) — clicking it IS "wake now".
-// Sessions with a resume in flight. While a sid is in here, renderSidebar shows a
+// Cards with a resume in flight. While a card is in here, renderSidebar shows a
 // "Resuming…" placeholder instead of the dormant "Resume a copy" panel — otherwise
 // that panel flashes for the ~1s between sending the resume and the resumed tmux
 // appearing in the next graph (the session is still managed:false meanwhile).
 const resuming = new Set();
 let resumeFailTimer = null;
-function resumeDormant(sessionId) {
-  resuming.add(sessionId);
-  setPendingSelect(sessionId);
-  send({ type: 'resume', sessionId });
+function resumeDormant(card) {
+  if (cardUnreachable(card)) { selectSession(card); return; }
+  resuming.add(card);
+  setPendingSelect(card);
+  send({ type: 'resume', sessionId: sessionIdOf(card), card });
   toast('Resuming…');
-  selectSession(sessionId);
+  selectSession(card);
   // Re-arm a single timer so repeated clicks during the window don't stack
   // multiple failure toasts firing 8s apart.
   clearTimeout(resumeFailTimer);
   resumeFailTimer = setTimeout(() => {
     resumeFailTimer = null;
-    abandonResume(sessionId);
-    const s = latestSessions.find((x) => x.sessionId === sessionId);
+    abandonResume(card);
+    const s = sessionByCard(card);
     if (s && !s.managed) toast(s.exitOutput ? 'Resume failed — see last output' : 'Resume failed');
   }, 8000);
 }
@@ -4138,9 +4257,9 @@ function resumeDormant(sessionId) {
 // sidebar render, and a card that won't resume never triggers one. The server
 // sends `error` when it refuses a resume (relaunchRefusal, a missing
 // transcript), so that handler calls this too, rather than waiting out the timer.
-function abandonResume(sessionId) {
-  if (!resuming.delete(sessionId)) return;
-  if (selectedSessionId === sessionId) applySessionView(sessionId);
+function abandonResume(card) {
+  if (!resuming.delete(card)) return;
+  if (selectedCard === card) applySessionView(card);
 }
 
 // Wake a snoozed session (the sun button / "Unsnooze"). Clears the snooze, then —
@@ -4148,17 +4267,17 @@ function abandonResume(sessionId) {
 // the user on the dead "Resume a copy" panel. A still-running snoozed session just
 // re-opens. resumeDormant's own selectSession also clears the snooze, so the
 // dormant branch doesn't need the explicit send.
-function wakeSession(sessionId) {
-  const s = latestSessions.find((x) => x.sessionId === sessionId);
-  if (s && !s.managed) resumeDormant(sessionId);
-  else { send({ type: 'snooze-clear', sessionId }); selectSession(sessionId); }
+function wakeSession(card) {
+  const s = sessionByCard(card);
+  if (s && !s.managed) resumeDormant(card);
+  else { send({ type: 'snooze-clear', sessionId: sessionIdOf(card), card }); selectSession(card); }
 }
 
 // Drop the current selection: close its terminal and hide the sidebar. Used by
 // the Search view (no-session state) and when the selected session is archived.
 export function deselectSession() {
   selectionBeforeView = null;
-  selectedSessionId = null;
+  selectedCard = null;
   selectedNewSlot = null;
   closeTerminal();
   // Hide (don't destroy) the shell terminal pane — it restores when reselected.
@@ -4192,9 +4311,10 @@ function isHashView(view) {
   return HASH_VIEWS.includes(view) || isExtView(view);
 }
 function hashView() {
-  const m = (location.hash || '').match(/^#view=(.+)$/);
-  if (m && m[1] === 'history') return 'search';
-  return m && isHashView(m[1]) ? m[1] : null;
+  const parsed = parseViewHash(location.hash);
+  if (!parsed) return null;
+  if (parsed.view === 'history') return 'search';
+  return isHashView(parsed.view) ? parsed.view : null;
 }
 
 // Mirror the current view/selection into the hash so a refresh re-lands here.
@@ -4204,9 +4324,9 @@ function hashView() {
 function syncHash() {
   const target = isHashView(currentView)
     ? `#view=${currentView}`
-    : selectedSessionId ? `#session=${encodeURIComponent(selectedSessionId)}` : '';
+    : selectedCard ? `#session=${encodeURIComponent(sessionIdOf(selectedCard))}` : '';
   if (target) {
-    if (location.hash !== target) location.hash = target;
+    if (location.hash !== target && !location.hash.startsWith(`${target}&`)) location.hash = target;
   } else if (location.hash) {
     history.replaceState(null, '', location.pathname + location.search);
   }
@@ -4215,13 +4335,14 @@ function syncHash() {
 // Select pendingSelect once the board actually contains it (a Resume needs a
 // round-trip before the session reappears; a deep link needs the first graph).
 function tryFulfillPending() {
+  if (pendingLink && boardDeckId) setPendingLink(pendingLink);
   if (!pendingSelect) return;
-  if (!latestSessions.some((x) => x.sessionId === pendingSelect)) return;
+  if (!sessionByCard(pendingSelect)) return;
   const target = pendingSelect;
   selectionBeforeView = null;
   // An embed's restore lands in the embed, not on the board.
   const embed = sessionEmbed.active();
-  const embedded = embed?.sessionId === target;
+  const embedded = embed?.card === target;
   if (currentView !== 'grid' && !embedded) setView('grid');
   pendingSelect = null;
   if (embedded) { embed.wrap?.classList.remove('pending'); selectSession(target); applyEmbedView(embed); return; }
@@ -4231,14 +4352,19 @@ function tryFulfillPending() {
 }
 
 window.addEventListener('hashchange', () => {
+  if (awaitingExtView) {
+    if (parseViewHash(location.hash)?.view === awaitingExtView) return;
+    awaitingExtView = null;
+    document.getElementById('grid').classList.remove('hidden');
+  }
   const view = hashView();
   // Re-sync even when the view didn't change, so a legacy alias in the hash
   // (#view=history) is normalized to what syncHash would write.
   if (view) { if (currentView !== view) setView(view); else syncHash(); return; }
   const id = hashSessionId();
   if (id) {
-    if (id === selectedSessionId) return;
-    setPendingSelect(id);
+    if (selectedCard && sessionIdOf(selectedCard) === id) return;
+    setPendingLink(id);
     tryFulfillPending();
   } else {
     selectionBeforeView = null;
@@ -4256,7 +4382,7 @@ function focusModeActive() {
 // The flat keyboard-nav order: tiles in display order, each contributing its
 // session cards (asleep excluded — they render as non-clickable greyed rows a
 // click can't reach either) followed by a single virtual "new session" slot
-// (`sid: null`). So an empty tile still offers one target (its slot), and
+// (`card: null`). So an empty tile still offers one target (its slot), and
 // arrowing past a tile's last card lands on its slot before crossing into the
 // next tile. The Ad-hoc tile is included normally, in and out of focus mode
 // alike — it's a focusable tile like any other.
@@ -4268,10 +4394,10 @@ function focusModeActive() {
 // workers are dropped here rather than reordered — same rule as asleep, don't
 // offer the keyboard a target the board isn't drawing.
 function navTargets() {
-  const byTask = new Map(latestTasks.tasks.map((t) => [t.id, []]));
+  const byTask = new Map(boardTasks().map((t) => [t.id, []]));
   const noTask = [];
   for (const s of onBoard(latestSessions)) {
-    const tid = assignedTaskId(s.sessionId);
+    const tid = assignedTaskId(s);
     if (tid && byTask.has(tid)) byTask.get(tid).push(s);
     else noTask.push(s);
   }
@@ -4280,11 +4406,11 @@ function navTargets() {
     const arr = id === ADHOC_ID ? noTask : (byTask.get(id) || []);
     const active = sortBucketSessions(arr.filter((s) => phaseOf(s) !== 'asleep'), id);
     for (const { session, descendants } of sessionGroups(active)) {
-      targets.push({ tileId: id, sid: session.sessionId });
+      targets.push({ tileId: id, card: session.cardKey });
       if (isWorkflowRun(session) && collapsedWorkflows.has(session.sessionId)) continue;
-      for (const c of descendants) targets.push({ tileId: id, sid: c.sessionId });
+      for (const c of descendants) targets.push({ tileId: id, card: c.cardKey });
     }
-    targets.push({ tileId: id, sid: null }); // the tile's "new session" slot
+    targets.push({ tileId: id, card: null }); // the tile's "new session" slot
   }
   return targets;
 }
@@ -4301,10 +4427,10 @@ function navTileGroups() {
   return groups;
 }
 
-// The key identifying the current selection within navTargets — a session id, or
+// The key identifying the current selection within navTargets — a card key, or
 // `new:<tileId>` for a slot. navTargetKey produces the same key for a target.
-function navKey() { return selectedNewSlot != null ? `new:${selectedNewSlot}` : selectedSessionId; }
-function navTargetKey(t) { return t.sid == null ? `new:${t.tileId}` : t.sid; }
+function navKey() { return selectedNewSlot != null ? `new:${selectedNewSlot}` : selectedCard; }
+function navTargetKey(t) { return t.card == null ? `new:${t.tileId}` : t.card; }
 // The selection can sit on a session that is NOT a nav target: collapse a workflow
 // box (or snooze) while one of its workers is open and the row stops being drawn,
 // while the panel stays on it. Anchor on its nearest drawn ancestor so the next
@@ -4313,15 +4439,19 @@ function navAnchorKey(targets) {
   const key = navKey();
   if (selectedNewSlot != null) return key;
   const has = (k) => targets.some((t) => navTargetKey(t) === k);
-  const byId = new Map(latestSessions.map((s) => [s.sessionId, s]));
+  const byCard = new Map(latestSessions.map((s) => [s.cardKey, s]));
   const seen = new Set(); // parentSession shouldn't cycle; never hang if it does
-  let id = selectedSessionId;
-  while (id && !has(id) && !seen.has(id)) { seen.add(id); id = byId.get(id)?.parentSession; }
-  return id && has(id) ? id : key;
+  let card = selectedCard;
+  while (card && !has(card) && !seen.has(card)) {
+    seen.add(card);
+    const s = byCard.get(card);
+    card = s?.parentSession ? cardKey(s.deckId, s.parentSession) : null;
+  }
+  return card && has(card) ? card : key;
 }
 // Move the selection onto a nav target: a session card opens (terminal/panel), a
 // slot just highlights (Enter then dispatches into its tile).
-function applyNavTarget(t) { if (t.sid == null) selectNewSlot(t.tileId); else selectSession(t.sid); }
+function applyNavTarget(t) { if (t.card == null) selectNewSlot(t.tileId); else selectSession(t.card); }
 
 // Shift+Cmd+Left / Shift+Cmd+Right: move the selection to the previous / next
 // task (reverse / forward reading order), landing on that task's first
@@ -4356,7 +4486,7 @@ function moveSessionFocus(dir) {
 
 // Keyboard nav landed on a tile's "new session" slot. It carries no session, so we
 // just move the highlight there (renderGrid re-derives it) — crucially WITHOUT
-// touching selectedSessionId, so an open chat/terminal stays put while you aim at
+// touching selectedCard, so an open chat/terminal stays put while you aim at
 // the slot. Enter dispatches into the tile. Scroll the lit target into view: it's
 // appended after the last card and can sit just below the tile's fold, which is
 // what made it feel like an invisible element got selected "at the end".
@@ -4435,7 +4565,7 @@ function isTypingTargetForChords(el) {
 // #term-wrap/#chat-wrap, so it's visible either way) without reaching for the
 // mouse mid-conversation. Gated on `selectedSession?.cwd` (matching the
 // Actions menu row, and the only thing the server handler actually needs) —
-// NOT on `current.sessionId === selectedSessionId` (the agent's own terminal
+// NOT on `current.card === selectedCard` (the agent's own terminal
 // being attached) as it used to be, since that's false whenever the panel is
 // showing Chat instead of Terminal for a perfectly live session (openTerminal
 // deliberately skips attaching then, see viewForSession guard above) and made
@@ -4553,7 +4683,7 @@ function collectHintTargets() {
       ? `new:${taskBodyBucketId(el) || ADHOC_ID}`
       : el.classList.contains('subagent-row')
         ? `sa:${el.dataset.ownerSid}/${el.dataset.subagentId}`
-        : el.classList.contains('team-row') ? `team:${el.dataset.leadSid}` : `s:${el.dataset.sid}`;
+        : el.classList.contains('team-row') ? `team:${el.dataset.leadCard}` : `s:${el.dataset.card}`;
     const n = (seen.get(base) || 0) + 1;
     seen.set(base, n);
     out.push({ key: `${base}#${n}`, el, rect, side: isNew ? 'left' : 'corner' });
@@ -4723,7 +4853,7 @@ keybindings.configure({
   isBoardIdle: boardIdle,
 });
 keybindings.install(window);
-const withSelected = (fn) => ({ when: chordGate, run: () => { if (selectedSessionId) fn(selectedSessionId); } });
+const withSelected = (fn) => ({ when: chordGate, run: () => { if (selectedCard) fn(selectedCard); } });
 // Dispatch-dialog bindings only act on keys aimed at the dialog itself, like
 // the modal-scoped listener they replace.
 const inDispatchModal = (e) => Boolean(dispatchModalEl?.contains(e.target));
@@ -4747,22 +4877,21 @@ registerCoreBindings(keybindings, {
     run: () => openDispatch(selectedNewSlot === ADHOC_ID ? null : selectedNewSlot),
   },
   'chord.new': { when: chordGate, run: () => openDispatch(currentTaskSelection()) },
-  'chord.terminal': withSelected((sid) => {
-    if (currentShellTerm && currentShellTerm.sessionId === sid) { closeShellTerminal(); return; }
-    const ts = latestSessions.find((x) => x.sessionId === sid);
-    if (ts?.cwd) send({ type: 'open-terminal-for-session', sessionId: sid });
+  'chord.terminal': withSelected((card) => {
+    if (currentShellTerm && currentShellTerm.card === card) { closeShellTerminal(); return; }
+    if (sessionByCard(card)?.cwd) send({ type: 'open-terminal-for-session', sessionId: sessionIdOf(card), card });
   }),
-  'chord.fork': withSelected((sid) => openFork(sid)),
+  'chord.fork': withSelected((card) => openFork(sessionIdOf(card))),
   // Restart matches its menu gate — only a live (managed) session, since a dormant
   // one already offers Resume. Peer review works on any session, like its menu row.
-  'chord.restart': withSelected((sid) => {
-    if (latestSessions.find((x) => x.sessionId === sid)?.managed) restartSession(sid);
+  'chord.restart': withSelected((card) => {
+    if (sessionByCard(card)?.managed) restartSession(sessionIdOf(card));
   }),
-  'chord.peerReview': withSelected((sid) => peerReviewSession(sid)),
+  'chord.peerReview': withSelected((card) => peerReviewSession(sessionIdOf(card))),
   'chord.maximize': withSelected(() => toggleMaximize()),
-  'chord.snooze': withSelected((sid) => snoozeSelected(sid)),
-  'chord.diff': withSelected((sid) => toggleDiffPanel(sid)),
-  'chord.archive': withSelected((sid) => archiveSession(sid)),
+  'chord.snooze': withSelected((card) => snoozeSelected(card)),
+  'chord.diff': withSelected((card) => toggleDiffPanel(card)),
+  'chord.archive': withSelected((card) => archiveSession(sessionIdOf(card))),
   // A toggle: while hint mode is up the same chord takes the labels down,
   // whatever else is going on. Stops immediate propagation so hint mode's own
   // capture listener doesn't also see it.
@@ -4798,13 +4927,13 @@ registerCoreBindings(keybindings, {
 // keyboard shortcut has no click position to anchor the duration picker at —
 // anchor it under the panel's Actions button instead (present whenever a
 // session is selected, regardless of managed state — see renderPanel).
-function snoozeSelected(sessionId) {
-  const s = latestSessions.find((x) => x.sessionId === sessionId);
+function snoozeSelected(card) {
+  const s = sessionByCard(card);
   if (!s) return;
-  if (isAsleep(s)) { wakeSession(sessionId); return; }
+  if (isAsleep(s)) { wakeSession(card); return; }
   const btn = document.getElementById('actions-btn');
   const r = btn ? btn.getBoundingClientRect() : { left: 20, bottom: 20 };
-  openSnoozeMenu(sessionId, r.left, r.bottom + 4);
+  openSnoozeMenu(s.sessionId, r.left, r.bottom + 4);
 }
 
 // The task the keyboard selection currently sits in, for pre-selecting the
@@ -4813,7 +4942,7 @@ function snoozeSelected(sessionId) {
 // selection — same shape openDispatch expects.
 function currentTaskSelection() {
   if (selectedNewSlot != null) return selectedNewSlot === ADHOC_ID ? null : selectedNewSlot;
-  if (selectedSessionId) return assignedTaskId(selectedSessionId);
+  if (selectedCard) return assignedTaskId(sessionByCard(selectedCard) || sessionIdOf(selectedCard));
   return null;
 }
 
@@ -4926,7 +5055,7 @@ function renderSidebar(s) {
   // terminal lifecycle (openTerminal / closeTerminal / the dormant + exited notes
   // it writes into #term), so branching anywhere else would let a terminal attach
   // land on top of the chat view.
-  if (viewForSession(s.sessionId) === 'chat') {
+  if (viewForSession(s.cardKey) === 'chat') {
     // Chat renders from the transcript on disk, so it works for dormant and exited
     // sessions alike — none of the managed/unmanaged handling below applies, and
     // that is the point: this view shows sessions the terminal cannot. NOT archived:
@@ -4934,8 +5063,8 @@ function renderSidebar(s) {
     // look the session up in latestSessions, which excludes archived sessions.
     document.getElementById('term-wrap').hidden = true;
     closeTerminal(); // no-op when nothing is attached
-    chatView.mount(s.sessionId);
-    chatView.setInputGate(inputGates.get(s.sessionId));
+    chatView.mount(s.cardKey);
+    chatView.setInputGate(inputGates.get(s.cardKey));
     // AFTER mount, which resets the view's cached status to null: selectSession calls
     // renderPanel (the only other setStatus caller) BEFORE this function, so without
     // re-seeding here an already-working session shows no "Working — running X" line
@@ -4955,7 +5084,7 @@ function renderSidebar(s) {
   document.getElementById('term-wrap').hidden = false;
   if (s.managed) {
     if (holdForRestart(s)) return; // restart in flight — hold the spinner, not the dead pane
-    resuming.delete(s.sessionId); // resumed — drop the in-flight placeholder
+    resuming.delete(s.cardKey); // resumed — drop the in-flight placeholder
     openTerminal(s);
     return;
   }
@@ -4963,7 +5092,7 @@ function renderSidebar(s) {
   const term = document.getElementById('term');
   // A resume we just kicked off: show a placeholder, not the dormant panel, so the
   // "Resume a copy" page doesn't flash before the live terminal attaches.
-  if (resuming.has(s.sessionId)) {
+  if (resuming.has(s.cardKey)) {
     term.innerHTML = '<div class="term-note"><p>Resuming…</p></div>';
     return;
   }
@@ -4982,7 +5111,7 @@ function renderSidebar(s) {
     <p class="muted">${esc(providerMetadataFor(s?.agent).forkHelp || 'Branch this conversation into a fresh session. The original keeps running independently.')}</p>
   </div>`;
   term.querySelector('#resume-btn').addEventListener('click', () => {
-    send({ type: 'resume', sessionId: s.sessionId });
+    send({ type: 'resume', sessionId: s.sessionId, card: s.cardKey });
     toast('Resuming…');
   });
 }
@@ -4990,17 +5119,18 @@ function renderSidebar(s) {
 // Re-apply the current view choice for a session already selected — what the
 // Chat/Terminal toggle calls. Routes through renderSidebar so there is exactly ONE
 // place that decides which view is showing.
-function applySessionView(sessionId) {
-  const s = latestSessions.find((x) => x.sessionId === sessionId);
+function applySessionView(card) {
+  const s = sessionByCard(card);
   if (s) renderSidebar(s);
 }
 
 // Swap the panel title for an input to rename the session. Enter/blur commits,
 // Escape cancels. An empty value clears the custom name (reverts to default).
-function beginRename(sessionId) {
+function beginRename(card) {
   const titleEl = document.getElementById('session-name');
   if (!titleEl || titleEl.querySelector('input')) return;
-  const s = latestSessions.find((x) => x.sessionId === sessionId);
+  const s = sessionByCard(card);
+  const sessionId = sessionIdOf(card);
   // The "[FORK] " marker is added server-side (withForkMark) for un-renamed forks;
   // strip it when seeding so the edit field is just the name. Renaming makes the
   // name user-chosen, which drops the marker server-side.
@@ -5017,12 +5147,12 @@ function beginRename(sessionId) {
       const name = input.value.trim();
       // Unchanged: skip the send and toast, and keep an un-renamed fork's marker.
       if (name !== seed.trim()) {
-        send({ type: 'rename', sessionId, name });
+        send({ type: 'rename', sessionId, name, card });
         if (s && name) s.label = name; // optimistic (rename drops the marker); server confirms on next graph
         toast(name ? 'Renamed' : 'Name reset');
       }
     }
-    renderPanel(sessionId);
+    renderPanel(card);
   };
   input.addEventListener('keydown', (e) => {
     // stopPropagation: finish() synchronously re-renders this input away, so a
@@ -5050,9 +5180,10 @@ function beginRename(sessionId) {
 // on every fresh page load — there's no session-switch reset to write here at
 // all (contrast the old code, which had to remember to reset a transient flag);
 // each session's own state is just looked up fresh from its Map/Set.
-// Which view each session's sidebar shows. Keyed on the CARD id (never the live
-// id) like every other per-session field, and persisted so a reload keeps your
-// choice. A session toggled by hand keeps it no matter how chatViewDefault moves.
+// Which view each session's sidebar shows. Asked by card key; stored under the
+// session's CARD id (never the live id) like every other per-session field, and
+// persisted so a reload keeps your choice. A session toggled by hand keeps it no
+// matter how chatViewDefault moves.
 const CHAT_VIEW_KEY = 'cm-session-view';
 // Type-checked like panelSubagentShownOverrides below: a corrupted/tampered
 // value that still parses as valid JSON (a bare string, number, etc.) is not an
@@ -5065,13 +5196,13 @@ function readSessionViews() {
     return (parsed && typeof parsed === 'object') ? parsed : {};
   } catch { return {}; }
 }
-function viewForSession(sessionId) {
-  const stored = readSessionViews()[sessionId];
+function viewForSession(card) {
+  const stored = readSessionViews()[sessionIdOf(card)];
   return resolveSessionView(stored, getSetting('chatViewDefault'));
 }
-function setSessionView(sessionId, view) {
+function setSessionView(card, view) {
   const all = readSessionViews();
-  all[sessionId] = view;
+  all[sessionIdOf(card)] = view;
   try { localStorage.setItem(CHAT_VIEW_KEY, JSON.stringify(all)); } catch {}
 }
 
@@ -5119,9 +5250,10 @@ function togglePanelSubagentShowFinished(sessionId) {
 // every meta segment, plus the sub-agent zone — collapsible via its own pill,
 // styled and labelled (active/total) like the board card's, but never disabled
 // and never sharing the card's state (see comment above).
-function renderPanel(sessionId) {
-  const s = latestSessions.find((x) => x.sessionId === sessionId);
+function renderPanel(card) {
+  const s = sessionByCard(card);
   if (!s) return;
+  const { sessionId } = s;
   // Extension panel sections (#panel-sections, a #panel SIBLING) are
   // mounted once and updated from the same call site, for the same reason. The
   // meta-chip slot is mounted further down, once the chips row it lives in has
@@ -5132,19 +5264,19 @@ function renderPanel(sessionId) {
   // on every render, no reset-on-session-switch bookkeeping needed.
   const panelSubagentShown = isPanelSubagentShown(sessionId);
   const panelSubagentShowFinished = panelSubagentShowFinishedIds.has(sessionId);
-  const view = viewForSession(sessionId);
+  const view = viewForSession(card);
   // Lent to an extension view (api.mountSession): the diff is a third view in
   // place rather than a panel over the board, the extension owns leaving (no
   // Close), and Fullscreen is offered only when it said what that means.
   const embed = sessionEmbed.active();
-  const diffing = Boolean(embed) && isDiffPanelOpen() && diffPanelSessionId() === sessionId;
+  const diffing = Boolean(embed) && isDiffPanelOpen() && diffPanelCard() === card;
   const segOn = (v) => (diffing ? v === 'diff' : v === view);
   const showMax = !embed || Boolean(embed.onMaximize);
   const maxOn = embed ? embed.maximized : maximized;
   // Mirror the card's transient cyan "just-finished" edge in the header.
-  const stateClass = justFinished.has(s.sessionId) ? 'just-finished' : displayStatus(s);
+  const stateClass = justFinished.has(sessionId) ? 'just-finished' : displayStatus(s);
   if (view === 'chat') {
-    chatView.setInputGate(inputGates.get(s.sessionId));
+    chatView.setInputGate(inputGates.get(card));
     chatView.setStatus(displayStatus(s), s.waitingFor, s.waitingReason);
     chatView.setModel(s.modelPill, { switchable: canSwitchModel(s) });
     chatView.setExitNotice(s.exitOutput);
@@ -5213,7 +5345,7 @@ function renderPanel(sessionId) {
   // throb mid-cycle (a visible "jump"). So on the same session, refresh the state
   // class + bar word + body and leave the bar element itself be.
   const hdr = panel.querySelector('.sess-hdr');
-  if (hdr && hdr.dataset.sid === sessionId) {
+  if (hdr && hdr.dataset.card === card) {
     hdr.className = `sess-hdr ${esc(stateClass)}`;
     const barSpan = hdr.querySelector('.sess-bar > span');
     if (barSpan) barSpan.textContent = barWordPanel;
@@ -5227,7 +5359,7 @@ function renderPanel(sessionId) {
       if (newZone) newZone.scrollTop = prevScroll;
     }
   } else {
-    panel.innerHTML = `<div class="sess-hdr ${esc(stateClass)}" data-sid="${esc(sessionId)}"${throbDelayStyle(stateClass)}><span class="sess-bar"><span>${esc(barWordPanel)}</span></span><div class="sess-body">${body}</div></div>`;
+    panel.innerHTML = `<div class="sess-hdr ${esc(stateClass)}" data-card="${esc(card)}"${throbDelayStyle(stateClass)}><span class="sess-bar"><span>${esc(barWordPanel)}</span></span><div class="sess-body">${body}</div></div>`;
   }
   const closeBtn = panel.querySelector('#panel-close');
   if (closeBtn) closeBtn.addEventListener('click', closePanel);
@@ -5236,14 +5368,14 @@ function renderPanel(sessionId) {
     if (!embed) { toggleMaximize(); return; }
     embed.maximized = !embed.maximized;
     embed.onMaximize(embed.maximized);
-    renderPanel(sessionId);
+    renderPanel(card);
   });
   const nameEl = panel.querySelector('#session-name');
-  if (nameEl) nameEl.addEventListener('click', () => beginRename(sessionId));
+  if (nameEl) nameEl.addEventListener('click', () => beginRename(card));
   const saPill = panel.querySelector('#panel-sa-pill');
-  if (saPill) saPill.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShowFinished(sessionId); renderPanel(sessionId); });
+  if (saPill) saPill.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShowFinished(sessionId); renderPanel(card); });
   const saToggle = panel.querySelector('#panel-sa-toggle');
-  if (saToggle) saToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShown(sessionId); renderPanel(sessionId); });
+  if (saToggle) saToggle.addEventListener('click', (e) => { e.stopPropagation(); togglePanelSubagentShown(sessionId); renderPanel(card); });
   // The chips row above was just rebuilt via innerHTML, so its .sess-meta-ext
   // host (between the core chips and the right-aligned links) is a fresh
   // element every render: mountInto re-mounts each extension chip into it
@@ -5261,7 +5393,7 @@ function renderPanel(sessionId) {
   if (actionsBtn) actionsBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const r = actionsBtn.getBoundingClientRect();
-    openActionsMenu(sessionId, r.left, r.bottom + 4);
+    openActionsMenu(card, r.left, r.bottom + 4);
   });
   panel.querySelectorAll('.chat-seg-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -5272,12 +5404,12 @@ function renderPanel(sessionId) {
       // all. Clearing after the return would ignore the one gesture that most
       // needs to be honoured.
       disarmChatHandoff();
-      if (next === 'diff') { openDiffPanel(sessionId); renderPanel(sessionId); return; }
+      if (next === 'diff') { openDiffPanel(card); renderPanel(card); return; }
       if (diffing) closeDiffPanel();
-      if (next === viewForSession(sessionId)) { if (diffing) renderPanel(sessionId); return; }
-      setSessionView(sessionId, next);
-      applySessionView(sessionId);
-      renderPanel(sessionId);
+      if (next === viewForSession(card)) { if (diffing) renderPanel(card); return; }
+      setSessionView(card, next);
+      applySessionView(card);
+      renderPanel(card);
     });
   });
 }
@@ -5369,7 +5501,7 @@ function closeTerminal() {
 }
 
 // --- shell terminal pane ---
-let currentShellTerm = null; // { pane, term, ws }
+let currentShellTerm = null; // { pane, handle, term, fit, ws, card }
 
 function closeShellTerminal() {
   if (!currentShellTerm) return;
@@ -5380,10 +5512,10 @@ function closeShellTerminal() {
   currentShellTerm = null;
 }
 
-// Show or hide the shell terminal pane based on whether it belongs to sessionId.
-function syncShellTerminal(sessionId) {
+// Show or hide the shell terminal pane based on whether it belongs to the card.
+function syncShellTerminal(card) {
   if (!currentShellTerm) return;
-  const visible = currentShellTerm.sessionId === sessionId;
+  const visible = currentShellTerm.card === card;
   currentShellTerm.pane.style.display = visible ? '' : 'none';
   if (currentShellTerm.handle) currentShellTerm.handle.style.display = visible ? '' : 'none';
   if (visible) try { currentShellTerm.fit.fit(); } catch {}
@@ -5391,8 +5523,8 @@ function syncShellTerminal(sessionId) {
 
 // A registered shell tmux attached into `body`: the xterm, its /pty socket and
 // the size sync. `onEnd(ws)` runs when that socket closes.
-// `sessionId` is the session a sidebar shell belongs to, so its lock covers it.
-function connectShellXterm(body, terminalId, onEnd, sessionId = null) {
+// `card` is the card a sidebar shell belongs to, so its lock covers it.
+function connectShellXterm(body, terminalId, onEnd, card = null, deckId = null) {
   const term = new Terminal({
     fontSize: termFontSize(), fontFamily: readTerminalFont(),
     theme: readTerminalTheme(), cursorBlink: true,
@@ -5412,10 +5544,11 @@ function connectShellXterm(body, terminalId, onEnd, sessionId = null) {
   syncTermFont(term, fit);
   term.focus();
 
-  const ws = new WebSocket(`${deckOrigin().ws}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
+  const shellDeck = card ? deckIdOf(card) : deckId;
+  const ws = new WebSocket(`${originForDeck(shellDeck).ws}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
-  term.onData((d) => ws.readyState === 1 && inputGates.allow(sessionId, d) && ws.send(d));
+  term.onData((d) => ws.readyState === 1 && inputGates.allow(card, d) && ws.send(d));
   ws.onclose = () => onEnd(ws);
 
   // Assert our true size once the socket is open so tmux's idea of our size can't
@@ -5459,7 +5592,7 @@ function closeTerminalDialog() {
   focusReturnTarget(opener, document, scope)?.focus();
 }
 
-function openTerminalDialog({ terminalId, command, title }) {
+function openTerminalDialog({ terminalId, command, title, deckId = null }) {
   if (terminalDialog?.terminalId === terminalId) { terminalDialog.term.focus(); return; }
   const prior = terminalModal.contains(document.activeElement) ? null : document.activeElement;
   const { opener = prior, scope = prior?.closest?.('[id$="-modal"]') ?? null } = detachTerminalDialog() ?? {};
@@ -5473,7 +5606,7 @@ function openTerminalDialog({ terminalId, command, title }) {
   const body = document.getElementById('terminal-modal-body');
   const conn = connectShellXterm(body, terminalId, (closed) => {
     if (terminalDialog?.ws === closed) ended.classList.remove('hidden');
-  });
+  }, null, deckId);
   terminalDialog = { terminalId, ...conn, opener, scope };
 }
 
@@ -5483,7 +5616,7 @@ terminalModal.addEventListener('cancel', (e) => e.preventDefault());
 // Open (or replace) the shell terminal pane below #term-wrap in the sidebar.
 // `command` (if non-empty) is already pre-populated server-side; we show it
 // in a DOM preview so it's immune to ANSI tricks inside the xterm canvas.
-function openShellTerminal({ terminalId, command, sessionId }) {
+function openShellTerminal({ terminalId, command, sessionId, deckId = null }) {
   closeShellTerminal();
   showSidebar();
 
@@ -5537,18 +5670,19 @@ function openShellTerminal({ terminalId, command, sessionId }) {
   const body = pane.querySelector('.shell-terminal-body');
   // Server-side kill on disconnect removes the registry entry; client-side close
   // removes the pane from DOM. No reconnect — shell terminals are one-shot.
+  const card = sessionId ? cardKey(deckId || boardDeckId, sessionId) : null;
   const { term, fit, ws } = connectShellXterm(body, terminalId, (closed) => {
     if (currentShellTerm && currentShellTerm.ws === closed) closeShellTerminal();
-  }, sessionId);
+  }, card, deckId);
 
   // Hide immediately if the terminal belongs to a session other than the currently selected one.
-  const visible = !sessionId || sessionId === selectedSessionId;
+  const visible = !card || card === selectedCard;
   if (!visible) {
     pane.style.display = 'none';
     if (handle) handle.style.display = 'none';
   }
 
-  currentShellTerm = { pane, handle, term, fit, ws, sessionId: sessionId || null };
+  currentShellTerm = { pane, handle, term, fit, ws, card };
 }
 
 // tmux runs with `mouse on` (so the wheel scrolls its copy-mode scrollback). In a
@@ -5595,6 +5729,7 @@ function attachUnicode11(term) {
 }
 
 function openTerminal(s) {
+  if (!originForDeck(s.deckId)) return;
   closeTerminal();
   showSidebar();
   const term = new Terminal({
@@ -5637,7 +5772,7 @@ function openTerminal(s) {
   // looks like an http(s) URL, and vice-versa. s.cwd is the base a relative
   // path (docs/x.md) resolves against.
   try {
-    term.registerLinkProvider(createMarkdownLinkProvider(term, (p) => openFile(p, { sessionId: s.sessionId, source: 'terminal' }), s.cwd));
+    term.registerLinkProvider(createMarkdownLinkProvider(term, (p) => openFile(p, { card: s.cardKey, source: 'terminal' }), s.cwd));
   } catch (err) {
     console.error('[term-links]', err);
   }
@@ -5668,11 +5803,11 @@ function openTerminal(s) {
   term.textarea?.addEventListener('focus', () => acknowledge(s.sessionId));
   // Text that rode along with a pasted image goes through xterm's own paste, so
   // it is bracketed exactly as a plain text paste would be.
-  const detachImagePaste = terminalImagePaste.attach(el, { sessionId: s.sessionId, pasteText: (t) => term.paste(t) });
-  const ws = new WebSocket(`${deckOrigin().ws}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
+  const detachImagePaste = terminalImagePaste.attach(el, { sessionId: s.sessionId, card: s.cardKey, pasteText: (t) => term.paste(t) });
+  const ws = new WebSocket(`${originForDeck(s.deckId).ws}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
-  term.onData((d) => ws.readyState === 1 && inputGates.allow(s.sessionId, d) && ws.send(d));
+  term.onData((d) => ws.readyState === 1 && inputGates.allow(s.cardKey, d) && ws.send(d));
   // The pty socket can drop without us asking — a server restart (launchd), the
   // server-side `tmux attach` exiting, or a network blip. Unlike the control
   // socket it has no re-poll, so a silent drop leaves the terminal dead: the
@@ -5685,10 +5820,10 @@ function openTerminal(s) {
   // stops a reconnect storm when the tmux is genuinely gone (the next graph poll
   // flips the panel to the Resume view).
   ws.onclose = () => {
-    if (!current || current.ws !== ws || selectedSessionId !== s.sessionId) return;
+    if (!current || current.ws !== ws || selectedCard !== s.cardKey) return;
     setTimeout(() => {
-      if (!current || current.ws !== ws || selectedSessionId !== s.sessionId) return;
-      const sel = latestSessions.find((x) => x.sessionId === s.sessionId);
+      if (!current || current.ws !== ws || selectedCard !== s.cardKey) return;
+      const sel = sessionByCard(s.cardKey);
       if (sel && sel.managed) openTerminal(sel);
     }, 1200);
   };
@@ -5747,7 +5882,7 @@ function openTerminal(s) {
   ws.onopen = () => syncSize(true);
   const ro = new ResizeObserver(() => syncSize(false));
   ro.observe(el);
-  current = { term, ws, fit, ro, clickHandler, detachImagePaste, sessionId: s.sessionId };
+  current = { term, ws, fit, ro, clickHandler, detachImagePaste, sessionId: s.sessionId, card: s.cardKey };
   // Selecting a session lands keyboard focus on the Claude input so the user can
   // type immediately — without this they'd have to click the terminal a second
   // time. The textarea focus listener above marks the session user-attended.
@@ -5758,7 +5893,7 @@ function openTerminal(s) {
 // graph refresh doesn't silently re-open the sidebar for the still-selected card.
 function closePanel() {
   selectionBeforeView = null;
-  selectedSessionId = null;
+  selectedCard = null;
   closeTerminal();
   hideSidebar();
   if (currentView === 'grid') renderGrid();
@@ -6463,7 +6598,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   // Folders dismissed from the recents list are skipped here too.
   const cwdForTask = (sel) => {
     const hidden = hiddenRecents();
-    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s.sessionId) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd, s.worktree)))));
+    const pick = (list) => mostCommonCwd(list.filter((s) => assignedTaskId(s) === sel && !(s.cwd && hidden.has(repoRoot(s.cwd, s.worktree)))));
     return pick(latestSessions) || pick(latestHistory);
   };
   cwdInput.value = schedule
@@ -6782,6 +6917,7 @@ applyChatFontSize(chatFontSize());
 // namespace of its own, though system-banner.js now has one for the producers
 // that do.
 let quarantinedBuiltins = [];
+let restartPendingExts = [];
 // #system-banner is one slot and the fd watchdog is the more urgent producer, so
 // it wins while active and this line is re-asserted when it clears.
 let fdBannerActive = false;
@@ -6824,6 +6960,10 @@ function syncStandingBanner() {
   if (staleGuiSession) {
     if (tmuxRestarting) showSystemBanner('Restarting tmux…');
     else showSystemBanner('⚠ Agents are in an old macOS login session, so windows they open (such as a Playwright browser) can\'t take focus.', { level: 1, kind: 'gui-session', action: { label: 'Restart tmux', onClick: restartTmux } });
+    return;
+  }
+  if (restartPendingExts.length) {
+    showSystemBanner(`⚠ Extension update installed but not loaded (${restartPendingExts.join(', ')}) — restart the wrangler so sessions see its new tools`);
     return;
   }
   const rollback = rolledBackText(rolledBackUpdate);
@@ -7264,6 +7404,7 @@ initSettings({
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
+      if (id === 'suppressNudgedPrToasts') return suppressNudgedPrToasts;
       if (id === 'mailWakesDormant') return mailWakesDormant;
       if (id === 'prModelFooter') return prModelFooter;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
@@ -7291,6 +7432,9 @@ initSettings({
       } else if (id === 'autoFixPrChecksDefault') {
         autoFixPrChecksDefault = Boolean(value);
         send({ type: 'set-auto-fix-pr-checks-default', enabled: autoFixPrChecksDefault });
+      } else if (id === 'suppressNudgedPrToasts') {
+        suppressNudgedPrToasts = Boolean(value);
+        send({ type: 'set-suppress-nudged-pr-toasts', enabled: suppressNudgedPrToasts });
       } else if (id === 'mailWakesDormant') {
         mailWakesDormant = Boolean(value);
         send({ type: 'set-mail-wakes-dormant', enabled: mailWakesDormant });
@@ -7347,6 +7491,7 @@ initSettings({
   },
   extensions: { mount: openExtensionsPanel },
   updates: { mount: mountUpdatePanel },
+  decks: { mount: (el) => mountDecksPanel(el, decksPanelBridge) },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', () => submitDispatch());
@@ -7479,21 +7624,25 @@ function closeSchedulesPanel() { schedulesModal.classList.add('hidden'); }
 function renderSchedules() {
   const el = document.getElementById('schedules-list');
   if (!el) return;
-  const list = latestSchedules.schedules || [];
+  const list = [...(latestSchedules.schedules || []), ...remoteBoard.schedules];
   if (!list.length) {
     el.innerHTML = '<div class="sched-empty">No schedules yet. Create one to launch, resume, or message a session on a one-off or recurring cadence.</div>';
     return;
   }
-  const labelFor = (id) => latestSessions.find((x) => x.sessionId === id)?.label;
-  el.innerHTML = list.map((s) => {
-    const meta = [cadenceSummary(s.when), truncate(actionSummary(s.action, labelFor), 44)].filter(Boolean).join(' · ');
+  const labelFor = (deckId) => (id) => latestSessions.find((x) => x.sessionId === id && (!deckId || x.deckId === deckId))?.label;
+  const rowHtml = (s) => {
+    const remote = Boolean(s.deckId);
+    const meta = [cadenceSummary(s.when), truncate(actionSummary(s.action, labelFor(s.deckId)), 44)].filter(Boolean).join(' · ');
     const next = s.enabled ? formatNextRun(s.nextRunAt, Date.now()) : '';
     const badge = s.missed ? '<span class="sched-badge">missed</span>' : '';
     const nextHtml = s.enabled
       ? `<span class="sched-next">${esc(next) || '—'}</span>`
       : '<span class="sched-next off">disabled</span>';
-    return `<div class="sched-row${s.enabled ? '' : ' disabled'}" data-id="${esc(s.id)}">
-      <label class="sched-enable" title="${s.enabled ? 'Disable' : 'Enable'}"><input type="checkbox" ${s.enabled ? 'checked' : ''} /></label>
+    // Another deck's schedule is edited from that deck's own board: the
+    // editor's folders, tasks and agents are this deck's.
+    const edit = remote ? '' : '<button class="sched-edit" title="Edit" aria-label="Edit">✎</button>';
+    return `<div class="sched-row${s.enabled ? '' : ' disabled'}${s.deckUnreachable ? ' deck-unreachable' : ''}" data-id="${esc(s.id)}">
+      <label class="sched-enable" title="${s.enabled ? 'Disable' : 'Enable'}"><input type="checkbox" ${s.enabled ? 'checked' : ''}${s.deckUnreachable ? ' disabled' : ''} /></label>
       <div class="sched-main">
         <div class="sched-name">${esc(s.name)}${badge}</div>
         <div class="sched-meta">${esc(meta)}</div>
@@ -7501,28 +7650,39 @@ function renderSchedules() {
       ${nextHtml}
       <div class="sched-actions">
         <button class="sched-run" title="Run now" aria-label="Run now">▶</button>
-        <button class="sched-edit" title="Edit" aria-label="Edit">✎</button>
+        ${edit}
         <button class="sched-del" title="Delete" aria-label="Delete">✕</button>
       </div>
     </div>`;
-  }).join('');
+  };
+  // With more than one deck, each deck's schedules sit under its name.
+  if (ownTaskDeck) {
+    const groups = [{ ...ownTaskDeck, rows: latestSchedules.schedules || [] }];
+    for (const s of remoteBoard.schedules) {
+      let g = groups.find((x) => x.deckId === s.deckId);
+      if (!g) groups.push(g = { deckId: s.deckId, deckName: s.deckName, deckColour: s.deckColour, deckUnreachable: s.deckUnreachable, rows: [] });
+      g.rows.push(s);
+    }
+    el.innerHTML = groups.filter((g) => g.rows.length).map((g) => `<div class="sched-deck"${g.deckColour ? ` style="--deck-colour:${esc(g.deckColour)}"` : ''}>
+      <div class="sched-deck-name">${esc(g.deckName)}${g.deckUnreachable ? ' · unreachable' : ''}</div>
+      ${g.rows.map(rowHtml).join('')}
+    </div>`).join('');
+  } else el.innerHTML = list.map(rowHtml).join('');
   const byId = (id) => list.find((s) => s.id === id);
   el.querySelectorAll('.sched-row').forEach((row) => {
     const id = row.dataset.id;
     row.querySelector('.sched-enable input').addEventListener('change', (e) =>
       send({ type: 'schedule-toggle', id, enabled: e.target.checked }));
     row.querySelector('.sched-run').addEventListener('click', () => {
-      send({ type: 'schedule-run-now', id });
-      toast(`Running "${byId(id)?.name || 'schedule'}" now…`);
+      if (send({ type: 'schedule-run-now', id })) toast(`Running "${byId(id)?.name || 'schedule'}" now…`);
     });
-    row.querySelector('.sched-edit').addEventListener('click', () => {
+    row.querySelector('.sched-edit')?.addEventListener('click', () => {
       closeSchedulesPanel();
       openScheduleEditor(byId(id));
     });
     row.querySelector('.sched-del').addEventListener('click', () => {
       const name = byId(id)?.name || 'schedule';
-      send({ type: 'schedule-delete', id });
-      toast(`Schedule "${name}" deleted`);
+      if (send({ type: 'schedule-delete', id })) toast(`Schedule "${name}" deleted`);
     });
   });
 }
@@ -7536,7 +7696,7 @@ schedulesModal.addEventListener('mousedown', (e) => { if (e.target === schedules
 
 function onScheduleFired(msg) {
   const viewSession = () => {
-    pendingScheduledFocus = { sessionId: msg.sessionId, expiresAt: Date.now() + 8000 };
+    pendingScheduledFocus = { card: cardOf(msg.sessionId), expiresAt: Date.now() + 8000 };
     tryFulfillScheduledFocus();
   };
   if (msg.focus === true && msg.sessionId) {
@@ -7561,8 +7721,8 @@ function tryFulfillScheduledFocus() {
     pendingScheduledFocus = null;
     return;
   }
-  if (!latestSessions.some((s) => s.sessionId === pendingScheduledFocus.sessionId && s.managed)) return;
-  const target = pendingScheduledFocus.sessionId;
+  if (!sessionByCard(pendingScheduledFocus.card)?.managed) return;
+  const target = pendingScheduledFocus.card;
   pendingScheduledFocus = null;
   if (isDiffPanelOpen()) closeDiffPanel();
   disarmChatHandoff();
@@ -7587,11 +7747,15 @@ let idleReapply = null;
 function armIdleReapply() {
   clearTimeout(idleReapply);
   idleReapply = setTimeout(() => {
-    if (latestGraph) applyGraph(latestGraph);
+    applyDecks();
     armIdleReapply();
   }, IDLE_REAPPLY_MS);
 }
 let deckStatus = 'connecting';
+// The own deck's last graph, before the other decks' sessions join it.
+let ownGraph = null;
+// The board server's deck list (decks.js createDeckList); the own deck first.
+let deckEntries = [];
 const deck = createDeckClient({
   onStatus: (status) => {
     const was = deckStatus;
@@ -7599,8 +7763,16 @@ const deck = createDeckClient({
     if (was === 'incompatible') hideSystemBanner();
     syncStandingBanner();
     syncDeckControls();
+    if (deckEntries.length > 1) applyDecks();
+    remountDecksPanel();
   },
-  onState: (frame) => { slots.setExtState(frame.ext); applyGraph(stateToGraph(frame, { restore: withCompatFields })); armIdleReapply(); },
+  onState: (frame) => {
+    boardDeckId = deck.descriptor()?.deckId || boardDeckId;
+    slots.setExtState(frame.ext);
+    ownGraph = stampDeck(stateToGraph(frame, { restore: withCompatFields }), boardDeckId);
+    applyDecks();
+    armIdleReapply();
+  },
   onEvent: (frame) => onDeckMessage(frame.data),
   // A #view=search deep link runs setView before this socket exists, so its
   // index-status request is dropped. Re-issue it on open — which also refreshes
@@ -7608,9 +7780,74 @@ const deck = createDeckClient({
   onOpen: () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); },
   onClose: () => chatView.onConnectionClosed(),
 });
-// Whether the deck can do `action` for this card: it advertises the action
-// and the card does not list it as unsupported.
-const canAct = (action, s = null) => deck.supports(action, s);
+const DECK_CACHE_PREFIX = 'aw-deck-cache-';
+const remoteDeckCache = {
+  get: (entry) => { try { return JSON.parse(localStorage.getItem(DECK_CACHE_PREFIX + entry.id) || 'null'); } catch { return null; } },
+  set: (entry, value) => { try { localStorage.setItem(DECK_CACHE_PREFIX + entry.id, JSON.stringify(value)); } catch {} },
+  drop: (entry) => { try { localStorage.removeItem(DECK_CACHE_PREFIX + entry.id); } catch {} },
+};
+const remoteDecks = createRemoteDecks({
+  ownDeckId: () => boardDeckId,
+  cache: remoteDeckCache,
+  onChange: () => { applyDecks(); remountDecksPanel(); },
+  onEvent: (deckId, frame) => onRemoteDeckMessage(deckId, frame.data),
+});
+const deckList = createDeckList({
+  onList: (list) => {
+    deckEntries = list;
+    remoteDecks.sync(list);
+    applyDecks();
+    remountDecksPanel();
+  },
+});
+const ownDeckEntry = () => deckEntries.find((e) => e.own) || { id: OWN_ENTRY, own: true, name: '', colour: null };
+// Every deck on the board as the deck list and settings show it: the own deck
+// first, then each other deck in list order.
+function boardDecks() {
+  const own = ownDeckEntry();
+  return [
+    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, descriptor: deck.descriptor(), name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
+    ...remoteDecks.list(),
+  ];
+}
+const deckNameOf = (deckId) => boardDecks().find((d) => d.deckId === deckId)?.name || 'That deck';
+function applyDecks() {
+  if (!ownGraph) return;
+  const [own, ...remotes] = boardDecks();
+  const multi = deckEntries.length > 1;
+  remoteBoard = remoteTaskView(multi ? remotes : []);
+  ownTaskDeck = multi ? { deckId: boardDeckId, deckName: own.name, deckColour: own.colour } : null;
+  applyGraph(mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi }));
+}
+function clientForDeck(deckId) {
+  return !deckId || deckId === boardDeckId ? deck : remoteDecks.clientFor(deckId);
+}
+// Where a deck's API is: the own deck's loopback port, or the URL another
+// deck was added by. Null for a deck no longer on the board.
+export function originForDeck(deckId) {
+  return !deckId || deckId === boardDeckId ? deckOrigin() : remoteDecks.originFor(deckId);
+}
+// A card is disabled while its deck is not connected; its last state stays.
+const cardUnreachable = (card) => Boolean(sessionByCard(card)?.deckUnreachable) || (deckIdOf(card) && !clientForDeck(deckIdOf(card)));
+function withDeckContext(deckId, fn) {
+  const was = msgDeckId;
+  msgDeckId = deckId && deckId !== boardDeckId ? deckId : null;
+  try { fn(); } finally { msgDeckId = was; }
+}
+// The card a person last opened a menu on: when two decks hold the same
+// session id, a call naming it bare goes to this card's deck.
+let actingCard = null;
+const deckForCall = (sessionId, card = null) => routeDeck({
+  card, sessionId, sessions: latestSessions, hint: actingCard || selectedCard, context: msgDeckId, own: boardDeckId, deckIdOf,
+});
+// Whether the card's deck can do `action` for it: it advertises the action,
+// the card does not list it as unsupported, and (for another deck than the
+// board's own) it is connected.
+const canAct = (action, s = null) => {
+  const client = clientForDeck(s?.deckId);
+  if (!client || (client !== deck && client.status() !== 'ready')) return false;
+  return client.supports(action, s);
+};
 // Board-wide controls name their action in data-deck-action. Before the first
 // handshake answers, nothing is hidden.
 function syncDeckControls() {
@@ -7624,24 +7861,66 @@ function syncDeckControls() {
 // when the deck is not connected or does not offer the action. The reply a
 // handler makes is the result's data and goes through the same ladder as an
 // event; a refused or failed action arrives there as an `error`.
+// `card` (a card key) names the card the message is about, which decides the
+// deck it goes to; without it the session id does (deckForCall).
 export function send(obj, extId = null) {
-  const call = toActionCall(obj, extId);
-  if (!call) return false;
-  if (!deck.canSend(call.action)) {
-    if (deckStatus === 'ready') toast(`This deck does not offer ${call.action}`, true);
+  const { card = null, ...named } = obj || {};
+  // A task or schedule id names its deck (decks.js scopeCall); a call that
+  // would move a session or task onto another deck's is refused here.
+  const scope = scopeCall(named);
+  let deckId = deckForCall(named.sessionId, card);
+  const owner = scope.deckId === undefined ? deckId : scope.deckId || boardDeckId;
+  if (scope.conflict || ((card || named.sessionId) && deckId !== owner)) {
+    toast('Tasks stay on their own deck: move it to a task on the same deck', true);
     return false;
   }
-  deck.act(call.action, call).then((r) => {
-    if (r.ok) { if (r.data && typeof r.data.type === 'string') onDeckMessage(r.data); }
+  deckId = owner;
+  const frame = scope.frame;
+  const call = toActionCall(frame, extId);
+  if (!call) return false;
+  const client = clientForDeck(deckId);
+  if (!client || !client.canSend(call.action)) {
+    if (client === deck) { if (deckStatus === 'ready') toast(`This deck does not offer ${call.action}`, true); }
+    else toast(client?.status() === 'ready' ? `${deckNameOf(deckId)} does not offer ${call.action}` : `${deckNameOf(deckId)} is unreachable`, true);
+    return false;
+  }
+  const remote = deckId && deckId !== boardDeckId ? deckId : null;
+  client.act(call.action, call).then((r) => withDeckContext(deckId, () => {
+    if (r.ok) { if (r.data && typeof r.data.type === 'string') onDeckMessage(scopeReply(r.data, remote)); }
     else onDeckMessage({ type: 'error', message: r.error?.message || 'The action failed' });
-  });
+  }));
   return true;
 }
-export function deckAct(action, opts) {
-  return deck.act(action, opts);
+export function deckAct(action, { card = null, ...opts } = {}) {
+  const client = clientForDeck(deckForCall(opts.session, card));
+  if (!client) return Promise.resolve({ ok: false, data: null, error: { code: 'failed', message: 'That deck is not on this board' } });
+  return client.act(action, opts);
 }
+// What another deck may tell the board: news about its own sessions. Its
+// settings, extensions and updates are its own and stay off this board.
+const REMOTE_DECK_MESSAGES = new Set([
+  'notify', 'diff', 'diff-comments-result', 'pr-checks', 'pr-merge', 'pr-dirty', 'pr-unresolved',
+  'auto-archived', 'archived', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
+  'forked', 'resume-needs-dir', 'open-terminal', 'subagent-detail', 'chat', 'message-result',
+  'paste-image-result', 'interrupt-restore', 'model-set', 'error',
+  'schedule-fired', 'schedule-error', 'schedule-missed',
+]);
+function onRemoteDeckMessage(deckId, msg) {
+  if (!msg || !REMOTE_DECK_MESSAGES.has(msg.type)) return;
+  withDeckContext(deckId, () => onDeckMessage(msg));
+}
+function remountDecksPanel() {
+  const el = document.getElementById('settings-decks');
+  if (el) mountDecksPanel(el, decksPanelBridge);
+}
+const decksPanelBridge = {
+  decks: boardDecks,
+  change: (op) => deckList.change(op),
+  toast,
+};
 function connect() {
   deck.start();
+  deckList.start();
 }
 function onDeckMessage(msg) {
   if (!msg || typeof msg.type !== 'string') return;
@@ -7772,7 +8051,7 @@ function onDeckMessage(msg) {
   else if (msg.type === 'prepare-warnings') toastLaunchWarnings(msg.warnings || []);
   else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
   else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
-  else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true);
+  else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true, prAlertToastOptions());
   else if (msg.type === 'fd-warning') {
     // #system-banner is one slot, so the producers have to take turns: an
     // fd leak is the most urgent and wins while it is active, and clearing it
@@ -7821,39 +8100,42 @@ function onDeckMessage(msg) {
     flashRestoredTask(msg.taskId);
   }
   else if (msg.type === 'worktree-removed') {
-    if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId }) }], duration: 15000 });
+    const card = cardOf(msg.sessionId);
+    if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId, card }) }], duration: 15000 });
     else toast('Worktree removed');
   }
   else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop');
   else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`, 'success');
   else if (msg.type === 'branch-delete-blocked') {
+    const card = cardOf(msg.sessionId);
     confirmDialog({
       title: 'Branch has unmerged commits',
       body: `Git wouldn't delete branch ${msg.branch}:\n\n${msg.reason}\n\nForce-delete it anyway? Its unmerged commits will be lost.`,
       okLabel: 'Force delete',
-    }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true }); });
+    }).then((result) => { if (result === 'ok') send({ type: 'branch-delete', sessionId: msg.sessionId, force: true, card }); });
   }
-  else if (msg.type === 'forked') { setPendingSelect(msg.sessionId); tryFulfillPending(); }
+  else if (msg.type === 'forked') { setPendingSelect(cardOf(msg.sessionId)); tryFulfillPending(); }
   // Search adopted an off-board conversation onto the board (or found it already
   // had a card). The card id is minted server-side, so this reply is the first
   // moment the view knows what to jump to — same deferred select as a fork.
-  else if (msg.type === 'adopted') { setPendingSelect(msg.sessionId); tryFulfillPending(); onAdopted(msg); }
+  else if (msg.type === 'adopted') { setPendingSelect(cardOf(msg.sessionId)); tryFulfillPending(); onAdopted(msg); }
   else if (msg.type === 'adopt-failed') { toast(msg.message); onAdoptFailed(msg); }
   else if (msg.type === 'resume-needs-dir') {
     const forking = msg.action === 'fork';
     const verb = forking ? 'fork' : 'resume';
+    const card = cardOf(msg.sessionId);
     confirmDialog({
       title: 'Original folder was deleted',
       body: `The folder this session ran in is gone:\n\n${tildeCollapse(msg.dir)}\n\nRecreate it and ${verb} anyway? The full conversation is restored from the transcript — but the working files that were in that folder won't be.`,
       okLabel: `Recreate & ${verb}`,
     }).then((result) => {
       if (result !== 'ok') { toast(`${forking ? 'Fork' : 'Resume'} cancelled — original folder is gone.`); return; }
-      if (forking) send({ type: 'fork', sessionId: msg.sessionId, recreateDir: true, prompt: msg.prompt || '', name: msg.name || '' });
-      else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true });
+      if (forking) send({ type: 'fork', sessionId: msg.sessionId, recreateDir: true, prompt: msg.prompt || '', name: msg.name || '', card });
+      else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true, card });
     });
   }
-  else if (msg.type === 'open-terminal' && msg.presentation === 'dialog') openTerminalDialog({ terminalId: msg.terminalId, command: msg.command || '', title: msg.title || '' });
-  else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null });
+  else if (msg.type === 'open-terminal' && msg.presentation === 'dialog') openTerminalDialog({ terminalId: msg.terminalId, command: msg.command || '', title: msg.title || '', deckId: msgDeckId || boardDeckId });
+  else if (msg.type === 'open-terminal') openShellTerminal({ terminalId: msg.terminalId, command: msg.command || '', sessionId: msg.sessionId || null, deckId: msgDeckId || boardDeckId });
   else if (msg.type === 'styles') { setCustomStyles(msg.styles); refreshThemeRows(); }
   else if (msg.type === 'subagent-detail') onSubagentDetail(msg);
   else if (msg.type === 'chat') chatView.onChatReply(msg);
@@ -7930,7 +8212,7 @@ function notify(session) {
   slots.notificationCue('needs-you', extApi);
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(needsYouTitle(session), { body });
-    n.onclick = () => { window.focus(); selectSession(session.sessionId); };
+    n.onclick = () => { window.focus(); selectSession(session.cardKey); };
   }
   toast(`⚠ ${body}`, false);
 }
@@ -7953,7 +8235,7 @@ function prRepoName(url) {
   return m ? m[1] : '';
 }
 function onPrChecks(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const isErr = msg.status === 'failing' || msg.status === 'changes-requested';
   // Omit the `(<repo>)` segment entirely for an enterprise/malformed url (prRepoName
   // returns '') rather than rendering bare `()` — mirrors the server's prPaneNudge.
@@ -7975,11 +8257,11 @@ function onPrChecks(msg) {
 // Success → accent toast; failure → red .err toast + a one-shot dot flash, so a
 // blocked merge (branch protection, conflicts) is visible rather than silent.
 function onPrMerge(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const text = msg.ok
     ? `PR #${msg.number} auto-merged`
     : `PR #${msg.number} auto-merge failed: ${msg.error}`;
-  toast(text, !msg.ok);
+  toast(text, !msg.ok, msg.ok ? undefined : prAlertToastOptions());
   if (!msg.ok) flashPr(msg.url);
 }
 
@@ -7987,14 +8269,14 @@ function onPrMerge(msg) {
 // an alert, unlike onPrChecks where only some statuses are errors. Mirrors
 // onPrChecks' shape (focus-suppressed toast + browser Notification + dot flash).
 function onPrDirty(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
-  toast(text, true);
+  toast(text, true, prAlertToastOptions());
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
-    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(msg.sessionId); };
+    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(cardOf(msg.sessionId)); };
   }
   flashPr(msg.url);
 }
@@ -8005,15 +8287,15 @@ function onPrDirty(msg) {
 // toast + browser Notification + dot flash). Notification-only — no new
 // persistent PR-dot/card UI beyond the existing transient flash.
 function onPrComments(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const phrase = `${msg.delta} new unresolved review thread${msg.delta === 1 ? '' : 's'} (${msg.count} unresolved total)`;
   const text = `[Agent Wrangler] ${label}: ${phrase}`;
-  toast(text, true);
+  toast(text, true, prAlertToastOptions());
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
-    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(msg.sessionId); };
+    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(cardOf(msg.sessionId)); };
   }
   flashPr(msg.url);
 }
@@ -8053,24 +8335,25 @@ const intentImages = createIntentImages({
 // and the WS dispatch below feeds it every 'chat' poll reply.
 const chatView = initChatView({
   send,
-  onSubagentClick: (sid, subagentId) => openSubagentModal(sid, subagentId),
-  onOpenDiff: (sid) => openDiffPanel(sid),
+  cardOf,
+  onSubagentClick: (card, subagentId) => openSubagentModal(sessionIdOf(card), subagentId),
+  onOpenDiff: (card) => openDiffPanel(card),
+  onPickModel: (card, rect) => openModelMenu(sessionIdOf(card), rect.left, rect.bottom + 6),
   // Arms the round trip before switching: applyGraph brings the view back once
   // the session leaves needs-you, i.e. once the prompt has been answered.
-  onPickModel: (sid, rect) => openModelMenu(sid, rect.left, rect.bottom + 6),
-  onGoTerminal: (sid) => {
-    chatHandoffFor = sid;
-    setSessionView(sid, 'terminal');
-    applySessionView(sid);
-    renderPanel(sid);
+  onGoTerminal: (card) => {
+    chatHandoffFor = card;
+    setSessionView(card, 'terminal');
+    applySessionView(card);
+    renderPanel(card);
   },
   // The same destination the terminal's .md link provider uses, so a path opens
   // the same preview whichever view it was clicked in.
-  onOpenFile: (path, sessionId) => openFile(path, { sessionId, source: 'chat' }),
+  onOpenFile: (path, card) => openFile(path, { card, source: 'chat' }),
   // Looked up per click/render rather than pushed in on mount: the chat view only
   // ever needs the cwd of the session it is showing, and latestSessions is already
   // the live answer.
-  cwdFor: (sid) => latestSessions.find((x) => x.sessionId === sid)?.cwd || null,
+  cwdFor: (card) => sessionByCard(card)?.cwd || null,
 });
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();
@@ -8079,6 +8362,13 @@ if (window.Notification && Notification.permission === 'default') Notification.r
 // a #session link is fulfilled once the first graph contains it.
 initSearchView();
 if (hashView()) setView(hashView());
-else setPendingSelect(hashSessionId());
+else {
+  const coldView = parseViewHash(location.hash)?.view;
+  if (coldView?.startsWith(EXT_VIEW_PREFIX)) {
+    awaitingExtView = coldView;
+    document.getElementById('grid').classList.add('hidden');
+    setTimeout(releaseAwaitingView, AWAITING_EXT_VIEW_TIMEOUT_MS);
+  } else setPendingLink(hashSessionId());
+}
 populateModelSelect();
 connect();

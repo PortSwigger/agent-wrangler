@@ -1,11 +1,14 @@
 import http from 'node:http';
 import { isAllowedOrigin, corsHeaders } from '../origin-check.js';
+import { carriesSessionCredential } from '../session-api/check.js';
 
 // The deck's plain-HTTP surface, on its own loopback port: GET /deck (the API
 // descriptor, readable cross-origin by the board origins in the allowlist),
-// POST /mcp, /pr-attach and /pr-model (MCP and the launch hook's callbacks), and
+// POST /mcp, /pr-attach and /pr-model (the session API's legacy routes, for
+// sessions launched before it had its own port; server/session-api), and
 // the GET /file and /ext-file adapters. It serves no UI. WS upgrades (/ws, /pty)
-// are wired on the returned server in index.js.
+// are wired on the returned server in index.js. GET /deck, like /ws and /pty,
+// refuses a request carrying a session credential (refuseSessionCredential).
 //
 // `boardPort` names the board origins the allowlist holds.
 export function createDeckServer({ boardPort, mcpRequestHandler, prAttachHandler, prModelHandler, fileHandler, extFileHandler, deckHandler }) {
@@ -26,6 +29,7 @@ export function createDeckServer({ boardPort, mcpRequestHandler, prAttachHandler
     }
 
     if (req.method === 'GET' && urlPath === '/deck') {
+      if (carriesSessionCredential(req)) { refuseSessionCredential(res); return; }
       for (const [k, v] of Object.entries(corsHeaders(req.headers.origin, boardPort))) res.setHeader(k, v);
       deckHandler(req, res);
       return;
@@ -43,4 +47,16 @@ export function createDeckServer({ boardPort, mcpRequestHandler, prAttachHandler
 
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'not-found' }));
   });
+}
+
+export const SESSION_CREDENTIAL_REFUSAL = { error: 'session-credential', reason: 'the deck API takes no session token; a session calls the session API' };
+
+export function refuseSessionCredential(res) {
+  res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify(SESSION_CREDENTIAL_REFUSAL));
+}
+
+// The same refusal on a /ws or /pty upgrade, written to the raw socket.
+export function refuseSessionCredentialUpgrade(socket) {
+  const body = JSON.stringify(SESSION_CREDENTIAL_REFUSAL);
+  socket.end(`HTTP/1.1 403 Forbidden\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
 }

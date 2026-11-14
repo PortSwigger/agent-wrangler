@@ -1,5 +1,5 @@
 import { providerMetadataFor, providerChoices } from './provider-metadata.js';
-import { send, setPendingSelect, latestTasks, latestSessions, latestHistory, restoreTaskWithPrompt } from './app.js';
+import { send, setPendingSelect, cardOf, latestTasks, latestSessions, latestHistory, restoreTaskWithPrompt } from './app.js';
 import { toast } from './toast.js';
 import { openFork } from './modals.js';
 import { timeAgo, truncate, fmtDuration } from './util.js';
@@ -360,7 +360,7 @@ function appendActions(head, g) {
     const b = document.createElement('button');
     b.className = 'search-act';
     b.textContent = 'Open';
-    b.addEventListener('click', () => { setPendingSelect(g.cardId); location.hash = `#session=${encodeURIComponent(g.cardId)}`; });
+    b.addEventListener('click', () => { setPendingSelect(cardOf(g.cardId)); location.hash = `#session=${encodeURIComponent(g.cardId)}`; });
     head.appendChild(b);
   } else if (g.cardId) {
     // "Restore", not "Resume" — from the archived/board toggle a user sees, this
@@ -371,7 +371,7 @@ function appendActions(head, g) {
     resume.className = 'search-act';
     resume.textContent = 'Restore';
     resume.title = 'Restore this session to the board';
-    resume.addEventListener('click', () => { setPendingSelect(g.cardId); send({ type: 'resume', sessionId: g.cardId }); toast('Restoring…'); });
+    resume.addEventListener('click', () => { setPendingSelect(cardOf(g.cardId)); send({ type: 'resume', sessionId: g.cardId }); toast('Restoring…'); });
     head.appendChild(resume);
     const fork = document.createElement('button');
     fork.className = 'search-act search-act--icon';

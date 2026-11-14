@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { SETTINGS_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, extensionFlipNote, getSetting, EXT_SETTING_PREFIX, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS } from './settings.js';
 
-test('settings are grouped into six ordered tabs', () => {
+test('settings are grouped into seven ordered tabs', () => {
   assert.deepEqual(SETTINGS_TABS.map(({ id, label }) => ({ id, label })), [
     { id: 'appearance', label: 'Appearance' },
+    { id: 'decks', label: 'Decks' },
     { id: 'sessions', label: 'Sessions' },
     { id: 'automation', label: 'Automation' },
     { id: 'extensions', label: 'Extensions' },
@@ -30,6 +31,7 @@ test('each registered setting appears in exactly one tab', () => {
     'codexDefaultApproveForMe',
     'codexDefaultBypass',
     'autoFixPrChecksDefault',
+    'suppressNudgedPrToasts',
     'trustCodexLaunchCwd',
     'trustClaudeLaunchCwd',
     'mailWakesDormant',

@@ -278,6 +278,18 @@ A board half reads only its own state and the session view, and acts only throug
   with the reply arriving through `api.onMessage`.
 - `api.styles()` resolves with the board's contributed styles, the list `/api/styles` serves.
 
+Every session row the board hands a board half carries two fields of the board's own (1.75.0):
+`deckId`, the id of the deck the session is on (from `GET /deck`), and `cardKey`,
+`<deckId>/<sessionId>`. The board names a card by that pair, since two decks can each hold a session
+the other does not know about. The session ids in the API itself (`openSession`, `mountSession`,
+`api.act`'s `session`) are unchanged. An older board leaves both fields out, so a board half that
+reads them declares `^1.75.0`.
+
+A board can show several decks' sessions ([Add a deck to the board](board-and-sessions.md#add-a-deck-to-the-board)).
+While its deck list holds more than one deck, each session row also carries `deckName` and
+`deckColour` (`#rrggbb`), and `deckUnreachable: true` while that deck is not connected (1.76.0).
+With one deck the rows carry none of them. A board half that reads them declares `^1.76.0`.
+
 ### Ports and origins
 
 The deck and the board listen on separate ports, so the board talks to the deck cross-origin. The
@@ -285,8 +297,18 @@ board server is on `AW_PORT` (default `7878`), the address you open: it serves t
 scripts, each extension's board half under `/ext/<id>/`, and styles (`/api/styles`, `/styles/*`).
 The deck listens on loopback only, on `AW_DECK_PORT` (default `AW_PORT` + 1), and the board page names
 that port in `<meta name="aw-deck-port">`. The deck accepts a browser only from the board origins in
-its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS`. A board
-opened from another host (with `AW_BIND_HOST`) reaches the deck through the board server instead.
+its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS` (or
+`--allowed-origins`, or `allowedOrigins` in `config.json`). A board opened from another host (with
+`AW_BIND_HOST`) reaches the deck through the board server instead.
+Launched sessions reach MCP and the PR hooks on a third port, the session API (`AW_SESSION_API_PORT`,
+default the deck's port + 1, so `AW_PORT` + 2 with a board), with a token per session; an MCP tool's `caller` is the card that token
+belongs to ([session-api.md](session-api.md)). The deck's own surfaces (`GET /deck`, `/ws`, `/pty`)
+refuse any request carrying a session token, as an `Authorization` bearer or an `X-AW-Session`
+header, so a session never drives the board's interface.
+
+A deck started with `--deck-only` has no board server: it serves only the deck API on its own port
+and 404s board pages, and its allowlist is only the origins configured for it. See
+[Running a second deck](../README.md#running-a-second-deck).
 
 Board pages are sent with `Content-Security-Policy-Report-Only: script-src 'self'; object-src 'none';
 base-uri 'self'`. Nothing is blocked yet: an inline `onclick` or `<script>` in a board half still
@@ -1000,7 +1022,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension does NOT own, and it is a VETO that fails OPEN** — `buildMcpServer`
   filters `activeTools()` per request through `deps.ext.hideTool`, a throwing
   filter hides nothing and is logged, because this is a UX narrowing over an
-  ADVISORY identity (`extractCaller` is not auth) and a bug must degrade to the
+  identity the session API's token check already settled (`server/session-api`), and a bug must degrade to the
   full tool list, never to a session that can do nothing. `--allowedTools` is
   baked into launch argv and unaffected: granting a tool the listing does not
   advertise is inert.
@@ -1332,6 +1354,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Unassigned (`id: 'adhoc', adhoc: true`) and excluding archived/deleted tasks;
   `minimisedIds` is an array of the browser's current minimised task ids.
   Both are fresh snapshots. Core owns that set; enabling a tray does not change it.
+  On a board showing several decks (1.77.0), `tasks` also lists each other deck's
+  tasks after the board's own, with ids scoped `<deckId>/<taskId>`, and every real
+  task carries `deckName`; `minimiseTask` and `setMinimisedTasks` take those ids.
+  With one deck the context is unchanged.
   `mount` receives the initial context, then `update` runs on every board render,
   including graph changes, reorder, Focus, keyboard focus navigation, task/session
   opening and bulk minimisation. New tasks are visible until explicitly minimised.
@@ -1832,7 +1858,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 ## Launch context, events and lifecycle
 
-- **`hooks['session.beforeSpawn']`** (1.75.0), called with `{ spawnedBy,
+- **`hooks['session.beforeSpawn']`** (1.78.0), called with `{ spawnedBy,
   parentSession, spawner, agent, model, effort, cwd, intent, source, taskId, host }` before
   a new session's directory, worktree or process is created. All providers use
   it: MCP spawns (including workflows), scheduled dispatches when they fire,
@@ -1863,7 +1889,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   fire reports a board `schedule-error` toast, without messaging the scheduling
   agent. A recurring schedule tries again at its next fire. Data is transient,
   kept per launch and per extension, and never saved by core.
-- **`hooks['session.spawned']`** (1.75.0) receives the same launch fields plus
+- **`hooks['session.spawned']`** (1.78.0) receives the same launch fields plus
   `{ sessionId, data }`, with `cwd` set to the actual launch directory, after
   the process launches and its session entry is saved. Only that extension's
   `data` is supplied (`undefined` if it supplied none). The notification is
@@ -2018,6 +2044,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   skipped. Resume and fork never fire it. For a short admission check that also
   covers forks and can pass data to `session.spawned`, use `session.beforeSpawn`
   above. `server/session-prepare.js`.
+- **Metadata-only mail lists** (`mail:read`, 1.79.0):
+  `host.mail.list(sessionId)` returns `id`, `from`, `fromLabel`, `at`, `size`,
+  `state` and `readAt`, without message bodies or excerpts. Extensions that
+  depend on this contract declare `^1.79.0`. Core's `list_mail` tool retains
+  bounded previews through a separate accessor unavailable to extensions.
 - **Session status projections** (`sessions:read`, 1.59.0): `host.sessions.get(id)`,
   `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
   `hasBackgroundShell` from the latest board graph. Without a graph node, status

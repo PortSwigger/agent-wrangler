@@ -61,6 +61,14 @@ export const SETTINGS = [
     default: true,
   },
   {
+    id: 'suppressNudgedPrToasts',
+    type: 'toggle',
+    scope: 'server',
+    label: 'Hide PR toasts the session already got',
+    help: 'Skip the board toast for a PR status change (checks, merge conflict, review threads, auto-merge) once the owning session has the same notice in its pane. The toast still shows when the session was not nudged (auto-fix off, a task-level PR, no live session) or when the notice is held back, for example behind a draft or a dialog.',
+    default: true,
+  },
+  {
     id: 'trustCodexLaunchCwd',
     type: 'toggle',
     scope: 'server',
@@ -208,6 +216,7 @@ export const SETTINGS = [
 // no settings.js edit at all.
 export const SETTINGS_TABS = [
   { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide'] },
+  { id: 'decks', label: 'Decks', settingIds: [] },
   {
     id: 'sessions',
     label: 'Sessions',
@@ -220,7 +229,7 @@ export const SETTINGS_TABS = [
   {
     id: 'automation',
     label: 'Automation',
-    settingIds: ['autoFixPrChecksDefault', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'mailWakesDormant', 'backgroundModel'],
+    settingIds: ['autoFixPrChecksDefault', 'suppressNudgedPrToasts', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'mailWakesDormant', 'backgroundModel'],
   },
   { id: 'extensions', label: 'Extensions', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
@@ -350,6 +359,7 @@ let changeBridge = () => {};
 // keeps every settings test free of the extensions panel.
 let extensionsBridge = { mount: () => {} };
 let updatesBridge = { mount: () => {} };
+let decksBridge = { mount: () => {} };
 let openModal = () => {};
 
 const byId = new Map(SETTINGS.map((s) => [s.id, s]));
@@ -506,6 +516,10 @@ function tabPanelHtml(tab, selected) {
     // installed extensions in one list instead of the two that repeated each
     // other's name and description.
     inner += '<div class="ext-installed" id="settings-ext-installed"></div>';
+  } else if (tab.id === 'decks') {
+    // Deck names and URLs are typed by people, so decks-panel.js builds the
+    // rows with textContent, as the extensions tab does.
+    inner = '<div id="settings-decks" class="decks-panel"></div>';
   } else if (tab.id === 'updates') {
     inner = `<div id="settings-updates"></div>${inner}`;
   }
@@ -638,12 +652,13 @@ function selectTab(body, tabId, focus = false) {
 // `server` is the { get(id), set(id, value) } bridge for scope:'server' entries;
 // `appearance` is the theme/font-size bridge described above; `onChange(id, value)`
 // fires after every write, either scope.
-export function initSettings({ server, appearance, onChange, extensions, updates } = {}) {
+export function initSettings({ server, appearance, onChange, extensions, updates, decks } = {}) {
   if (server) serverBridge = server;
   if (appearance) appearanceBridge = appearance;
   if (onChange) changeBridge = onChange;
   if (extensions) extensionsBridge = extensions;
   if (updates) updatesBridge = updates;
+  if (decks) decksBridge = decks;
   const btn = document.getElementById('settings-btn');
   const modal = document.getElementById('settings-modal');
   const body = document.getElementById('settings-body');
@@ -663,6 +678,7 @@ export function initSettings({ server, appearance, onChange, extensions, updates
     // changed since the last open is current without any subscription here.
     extensionsBridge.mount(body.querySelector('#settings-ext-installed'));
     updatesBridge.mount(body.querySelector('#settings-updates'));
+    decksBridge.mount(body.querySelector('#settings-decks'));
     modal.classList.remove('hidden');
     closeBtn?.focus();
   };

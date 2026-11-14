@@ -17,7 +17,7 @@ function payload(command, output) {
 async function withServer(fn) {
   const requests = [];
   const server = http.createServer((req, res) => {
-    requests.push({ method: req.method, url: req.url, session: req.headers['x-aw-session'] });
+    requests.push({ method: req.method, url: req.url, session: req.headers['x-aw-session'], auth: req.headers.authorization });
     res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"model":null}');
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -29,7 +29,8 @@ async function withServer(fn) {
 }
 
 function runHook(stdin, env) {
-  return spawnSync(process.execPath, [HOOK], { input: stdin, encoding: 'utf8', env: { ...process.env, ...env } });
+  const { AW_SESSION_ID: _id, AW_SESSION_TOKEN: _token, ...inherited } = process.env;
+  return spawnSync(process.execPath, [HOOK], { input: stdin, encoding: 'utf8', env: { ...inherited, ...env } });
 }
 
 async function waitFor(check, ms = 5000) {
@@ -47,7 +48,16 @@ test('after gh pr create, the hook asks the wrangler for the model, never attach
     assert.equal(r.status, 0);
     assert.equal(r.stdout, '');
     assert.ok(await waitFor(() => requests.length > 0), 'footer never called the wrangler');
-    assert.deepEqual(requests, [{ method: 'POST', url: '/pr-model', session: 'card-1' }]);
+    assert.deepEqual(requests, [{ method: 'POST', url: '/pr-model', session: 'card-1', auth: undefined }]);
+  });
+});
+
+test('a session launched with a token sends it as the bearer and no card id', async () => {
+  await withServer(async (base, requests) => {
+    const r = runHook(payload('gh pr create --title T --body B', `${PR}\n`), { AW_SESSION_ID: 'card-1', AW_SESSION_TOKEN: 'awt_t', AW_PR_MODEL_URL: `${base}/pr-model` });
+    assert.equal(r.status, 0);
+    assert.ok(await waitFor(() => requests.length > 0), 'footer never called the wrangler');
+    assert.deepEqual(requests, [{ method: 'POST', url: '/pr-model', session: undefined, auth: 'Bearer awt_t' }]);
   });
 });
 

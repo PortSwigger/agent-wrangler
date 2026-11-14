@@ -24,7 +24,7 @@ function editor({ initial = true, name = 'New task' } = {}) {
   };
   const cell = { dataset: { taskid: task.id }, querySelector: () => nameEl };
   const scope = {
-    latestTasks: { tasks: [task] }, send: (msg) => messages.push(msg),
+    latestTasks: { tasks: [task] }, findTask: (id) => (id === task.id ? task : null), send: (msg) => messages.push(msg),
     renderGrid: () => { renders++; }, esc: (s) => s,
     el: { querySelector: () => cell }, CSS: { escape: (s) => s },
   };

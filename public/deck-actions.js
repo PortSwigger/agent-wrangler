@@ -55,6 +55,7 @@ export const BOARD_ACTIONS = {
   'set-auto-fix-pr-checks-default': 'admin.set-auto-fix-pr-checks-default',
   'set-trust-codex-launch-cwd': 'admin.set-trust-codex-launch-cwd',
   'set-trust-claude-launch-cwd': 'admin.set-trust-claude-launch-cwd',
+  'set-suppress-nudged-pr-toasts': 'admin.set-suppress-nudged-pr-toasts',
   'set-mail-wakes-dormant': 'admin.set-mail-wakes-dormant',
   'set-pr-model-footer': 'admin.set-pr-model-footer',
   'set-default-session-cwd': 'admin.set-default-session-cwd',

@@ -21,6 +21,7 @@ import { ensureCodexTrust } from './codex-trust.js';
 import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
 import { launchEnvOf, launchSecretEnvOf, withoutSecretEnv } from './launch-context.js';
 import { writeSecretEnvFile } from './launch-secrets.js';
+import { SESSION_TOKEN_ENV } from './mcp/client-config.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
@@ -519,6 +520,11 @@ export class SessionManager {
     // Seam for writing a launch's secretEnv file (launch-secrets.js), so a test
     // can point it at its own directory or observe it.
     this._writeSecretEnv = writeSecretEnvFile;
+    // Seams for the session API's per-card token (server/session-api/tokens.js),
+    // bound by server/index.js: issued at every dispatch, resume and fork,
+    // revoked when the card is purged. Unbound, a launch carries no token.
+    this._issueSessionToken = () => null;
+    this._revokeSessionToken = () => {};
     // Seam for the `session.prepare` hook (server/session-prepare.js): asked by
     // a NEW dispatch before any worktree or pane exists, answering
     // `{ abort, warnings }`. server/index.js binds collectPrepare and toasts the
@@ -582,6 +588,22 @@ export class SessionManager {
     return this._writeSecretEnv(tmux, launchSecretEnvOf(launchContext));
   }
 
+  // The launch context plus this launch's session API token: a secret where the
+  // runtime takes secrets, plain env otherwise (that runtime's command line
+  // carries it, as it would any variable). An extension's variable of the same
+  // name is dropped, so it can never override the token. A runtime that builds
+  // its own launch runs none of our agent commands and gets no token.
+  _withSessionToken(rt, sessionId, launchContext) {
+    if (rt?.buildLaunch) return launchContext;
+    const token = this._issueSessionToken(sessionId);
+    if (!token) return launchContext;
+    const { [SESSION_TOKEN_ENV]: _ext, ...env } = launchEnvOf(launchContext);
+    if (rt?.secretEnv) {
+      return { ...launchContext, env, secretEnv: { ...launchSecretEnvOf(launchContext), [SESSION_TOKEN_ENV]: token } };
+    }
+    return { ...launchContext, env: { ...env, [SESSION_TOKEN_ENV]: token } };
+  }
+
   _launched(payload) {
     try {
       Promise.resolve(this._onLaunched(payload)).catch((err) => logError('[telemetry] launch', err));
@@ -639,6 +661,7 @@ export class SessionManager {
   forget(sessionId) {
     if (!this.map.delete(sessionId)) return;
     this._save();
+    this._revokeSessionToken(sessionId);
     // Fire-and-forget after the delete; forget() stays synchronous for its
     // callers. This is the ONE "card purged from mappings.json" moment an
     // extension's per-session state (the checklist) is tied to.
@@ -1316,10 +1339,10 @@ export class SessionManager {
     // Awaited before the command is built: the hook may bind state (task-memory
     // repoints the session's symlink) that the launch reads. A resume's reason is
     // passed through when it is one a hook distinguishes, else plain 'resume'.
-    const launchContext = await this._launchContext({
+    const launchContext = this._withSessionToken(runtime, sessionId, await this._launchContext({
       sid: sessionId, task: this._taskFor(sessionId) || null, agent, runtime: prev?.runtime || 'local',
       reason: ['message', 'snooze-wake'].includes(reason) ? reason : 'resume',
-    });
+    }));
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
     await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
@@ -1417,9 +1440,9 @@ export class SessionManager {
     // The fork lands in its parent's task, so the launch context is asked with
     // that task before the command is built (an extension that binds per-task
     // state, like task-memory, must see it first).
-    const launchContext = await this._launchContext({
+    const launchContext = this._withSessionToken(runtimeFor(parentEntry?.runtime), sessionId, await this._launchContext({
       sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork', parentId,
-    });
+    }));
     const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
     await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
@@ -2103,9 +2126,9 @@ export class SessionManager {
     // collected before the command is built. dispatch mints sessionId, so the
     // caller names the task by `taskId` (before its own assign lands) rather than
     // handing in anything pre-built.
-    const launchContext = await this._launchContext({
+    const launchContext = this._withSessionToken(rt, sessionId, await this._launchContext({
       sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
-    });
+    }));
     const ownLaunch = ownLaunchRefusal(rt, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
     await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext });
