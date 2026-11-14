@@ -1079,3 +1079,36 @@ test('an update auto-update left for the human keeps its button and says why', (
     assert.equal(byClass(extensionsPanelEl({ entries: [EXT1], statuses: { ext1: status } }), 'ext-btn-square').length, 1);
   });
 });
+
+
+test('URL installs accept an optional exact ref', () => {
+  withDom(() => {
+    const calls = [];
+    const panel = extensionsPanelEl({ entries: [], addMode: 'url', onInstall: (...args) => calls.push(args) });
+    byClass(panel, 'ext-install-url')[0].value = 'https://example.com/ext.git';
+    byClass(panel, 'ext-install-ref')[0].value = ' v1.2.3 ';
+    byClass(panel, 'ext-btn-primary')[0].fire('click');
+    assert.deepEqual(calls, [['https://example.com/ext.git', 'v1.2.3']]);
+  });
+});
+
+test('downgrade consent says explicitly which commit is being replaced', () => {
+  withDom(() => {
+    const payload = { id: 'notes', update: true, downgrade: true, previousSha: 'b'.repeat(40), sha: 'a'.repeat(40) };
+    assert.ok(texts(consentBodyEl(payload)).some((t) => /downgrade/i.test(t) && t.includes('bbbbbbbb') && t.includes('aaaaaaaa')));
+    assert.match(consentButtonLabels(payload, false).ok, /downgrade/i);
+    assert.match(consentButtonLabels(payload, true).later, /downgrade/i);
+  });
+});
+
+
+test('the Source panel shows both full receipt SHAs even when they match', () => {
+  withDom(() => {
+    const sha = 'a'.repeat(40);
+    const panel = showing({ ...INSTALLED, runningSha: sha, installedSha: sha });
+    const all = texts(detailOf(panel));
+    assert.ok(all.includes('Running'));
+    assert.ok(all.includes('Installed'));
+    assert.equal(all.filter((value) => value === sha).length, 2);
+  });
+});

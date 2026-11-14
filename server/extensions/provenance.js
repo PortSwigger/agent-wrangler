@@ -150,6 +150,7 @@ function normalise(id, rec) {
     id,
     originUrl: typeof rec.originUrl === 'string' ? rec.originUrl : null,
     sha: typeof rec.sha === 'string' ? rec.sha : null,
+    ...(typeof rec.ref === 'string' ? { ref: rec.ref } : {}),
     installedAt: typeof rec.installedAt === 'string' ? rec.installedAt : null,
     requires: strings(rec.requires),
     dependencies: strings(rec.dependencies),

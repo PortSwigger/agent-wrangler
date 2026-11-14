@@ -207,8 +207,14 @@ function sourceEl(entry) {
     }
     kvRow(list, 'Repository', repo);
   }
-  if (entry.sha) kvRow(list, entry.restartPending ? 'Running' : 'Commit', el('span', 'ext-mono', entry.sha.slice(0, 8)));
-  if (entry.restartPending) kvRow(list, 'Installed', el('span', 'ext-mono', `${entry.installedSha.slice(0, 8)} — ${RESTART_PENDING_NOTE}`));
+  if (entry.external && entry.runningSha !== undefined) {
+    kvRow(list, 'Running', el('span', 'ext-mono', entry.runningSha || 'Unknown'));
+    const installed = entry.installedSha || 'Unknown';
+    kvRow(list, 'Installed', el('span', 'ext-mono', entry.restartPending ? `${installed} — ${RESTART_PENDING_NOTE}` : installed));
+  } else {
+    if (entry.sha) kvRow(list, entry.restartPending ? 'Running' : 'Commit', el('span', 'ext-mono', entry.sha.slice(0, 8)));
+    if (entry.restartPending) kvRow(list, 'Installed', el('span', 'ext-mono', `${entry.installedSha.slice(0, 8)} — ${RESTART_PENDING_NOTE}`));
+  }
   return list;
 }
 
@@ -335,16 +341,26 @@ function urlInstallEl({ busy, onInstall }) {
   input.placeholder = 'https://github.com/…';
   input.setAttribute('aria-label', 'Extension git URL');
   input.dataset.refocus = 'url';
+  const ref = el('input', 'ext-install-ref');
+  ref.type = 'text';
+  ref.placeholder = 'Tag or full commit SHA (optional)';
+  ref.setAttribute('aria-label', 'Exact extension ref (optional)');
+  ref.dataset.refocus = 'ref';
+  ref.disabled = busy;
   const go = el('button', 'ext-btn ext-btn-primary', 'Install…');
   go.type = 'button';
   go.disabled = busy;
   const submit = () => {
     const url = input.value.trim();
-    if (url) onInstall?.(url);
+    if (url) {
+      if (ref.value.trim()) onInstall?.(url, ref.value.trim());
+      else onInstall?.(url);
+    }
   };
   go.addEventListener('click', submit);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
-  form.append(input, go);
+  ref.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  form.append(input, ref, go);
   pane.append(form);
   return pane;
 }
@@ -1004,6 +1020,11 @@ export function updateStatusText(status) {
 // so where the wrangler can restart itself an update's primary button does both
 // and `later` keeps the plain update; an install goes live without one.
 export function consentButtonLabels(payload, canRestart) {
+  if (payload.downgrade || payload.requiresDowngradeConfirmation) {
+    return canRestart && payload.update
+      ? { ok: 'Confirm downgrade & restart', later: 'Confirm downgrade without restarting' }
+      : { ok: 'Confirm downgrade & install', later: null };
+  }
   if (payload.update && canRestart) {
     return { ok: payload.reconsentNeeded ? 'Approve, update & restart' : 'Update & restart', later: 'Update without restarting' };
   }
@@ -1016,7 +1037,12 @@ export function consentButtonLabels(payload, canRestart) {
 // the caller's Approve/Cancel. An UPDATE shows CHANGES only — the decision on
 // an update is what changed, and the full list is noise that hides it.
 export function consentBodyEl(payload) {
-  return payload.update ? updateConsentEl(payload) : installConsentEl(payload);
+  const body = payload.update ? updateConsentEl(payload) : installConsentEl(payload);
+  if (payload.downgrade || payload.requiresDowngradeConfirmation) {
+    const reason = payload.downgrade ? 'Downgrade' : 'Possible downgrade (history could not establish a forward update)';
+    body.append(el('div', 'ext-consent-note', `${reason}: replace ${(payload.previousSha || '').slice(0, 8)} with ${(payload.sha || '').slice(0, 8)}. Confirm explicitly to install this version.`));
+  }
+  return body;
 }
 
 function trustEl(lead) {

@@ -25,10 +25,11 @@ import { V1_BUILDERS } from './v1.js';
 // selected by the manifest's declared range, rather than editing builders in
 // place — see version.js.
 
-// Merged onto every façade whatever it declares. None of the five reaches server
-// state on the extension's behalf, which is why none is gated:
+// Merged onto every façade whatever it declares. These expose only the
+// extension's own identity and state, which is why none is gated:
 //   id       — its own id, so a log line or a broadcast payload can name itself.
 //   version  — what it is talking to, matching the range it declared.
+//   extension — ITS OWN installed/running commit receipts.
 //   stores   — ITS OWN stores only. The pre-façade `extStores` was one flat
 //              object shared by every manifest; the narrowing is the loader's
 //              per-manifest store-name list applied here.
@@ -62,10 +63,11 @@ export function buildExtSettings({ id, settingDefs = [], readSettings = () => ({
   });
 }
 
-function alwaysPresent({ id, stores = {}, log = () => {}, settingDefs = [], readSettings = () => ({}) }) {
+function alwaysPresent({ id, stores = {}, log = () => {}, settingDefs = [], readSettings = () => ({}), readExtensionReceipt = () => ({ installedSha: '', runningSha: '', restartPending: false }) }) {
   return {
     id,
     version: HOST_API_VERSION,
+    extension: { receipt: () => ({ ...readExtensionReceipt(id) }) },
     stores: Object.freeze({ ...stores }),
     settings: buildExtSettings({ id, settingDefs, readSettings }),
     log: (...args) => (typeof args[0] === 'string' ? log(`[ext:${id}] ${args[0]}`, ...args.slice(1)) : log(`[ext:${id}]`, ...args)),

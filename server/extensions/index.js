@@ -560,6 +560,7 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // the board needs on every tick.
     origin: provenance?.originUrl || '',
     sha: provenance?.sha || '',
+    runningSha: provenance?.sha || '',
     // What is on disk NOW, from the live record, against `sha` above, which is
     // what this process loaded. They differ after an in-place update, whose code
     // only loads on a restart; `restartPending` is the board's persistent

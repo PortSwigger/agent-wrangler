@@ -104,7 +104,7 @@ function fakeClone({
 }
 
 function useFakes(opts = {}) {
-  _setInstallRunnersForTests({ clone: fakeClone(opts), head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, commits: opts.commits || (async () => ({ commits: [], truncated: false })) });
+  _setInstallRunnersForTests({ clone: fakeClone(opts), head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, relation: async () => 'upgrade', commits: opts.commits || (async () => ({ commits: [], truncated: false })) });
 }
 
 const URL_NOTES = 'https://example.invalid/notes.git';
@@ -666,7 +666,7 @@ function useCloneSpy(opts = {}) {
   const clone = fakeClone(opts);
   _setInstallRunnersForTests({
     clone: async (url, dest, o = {}) => { clones.push({ url, branch: o.branch ?? null }); return clone(url, dest); },
-    head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, commits: async () => ({ commits: [], truncated: false }),
+    head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, relation: async () => 'upgrade', commits: async () => ({ commits: [], truncated: false }),
   });
   return clones;
 }
@@ -744,5 +744,75 @@ test('ext-set-early-adopter replies a refusal on its reqId, and refuses builtin 
   assert.match(refused.error, /not installed from a git URL/);
   await assert.rejects(extSetEarlyAdopterHandler.handler({ id: 'core', on: true }, c), /ships with the wrangler/);
   assert.equal(c.calls.rebuild, 0);
+  reset();
+});
+
+
+test('pinned install passes the exact ref and returns installed and running receipts', async () => {
+  reset();
+  const sha = 'd'.repeat(40);
+  const c = ctx();
+  let options;
+  const clone = fakeClone();
+  _setInstallRunnersForTests({ clone: async (url, dir, opts) => { options = opts; await clone(url, dir); }, head: async () => sha, npm: async () => {} });
+  await extInstallHandler.handler({ url: URL_NOTES, ref: sha }, c);
+  assert.equal(options.ref, sha);
+  const disclosure = reply(c, 'ext-install-disclosure');
+  assert.equal(disclosure.ref, sha);
+  await extConsentHandler.handler({ tempId: disclosure.tempId, approve: true }, c);
+  const done = reply(c, 'ext-install-done');
+  assert.equal(done.installedSha, sha);
+  assert.equal(done.runningSha, sha);
+  assert.equal(done.restartPending, false);
+  assert.equal(readProvenance().notes.ref, sha);
+  reset();
+});
+
+test('a downgrade requires a distinct acknowledgement and leaves the old install intact on refusal', async () => {
+  for (const allowDowngrade of [undefined, false, 'true', true]) {
+    reset();
+    putRecord({ id: 'notes', originUrl: URL_NOTES, sha: 'e'.repeat(40), requires: [], dependencies: [] });
+    const c = ctx([{ id: 'notes', label: 'Notes', external: true, provenance: { sha: 'e'.repeat(40) } }]);
+    useFakes();
+    _setInstallRunnersForTests({ clone: fakeClone(), head: async () => 'c'.repeat(40), npm: async () => {}, relation: async () => 'upgrade', commits: async () => null, relation: async () => 'downgrade' });
+    await extInstallHandler.handler({ url: URL_NOTES, ref: 'v1' }, c);
+    const disclosure = reply(c, 'ext-install-disclosure');
+    assert.equal(disclosure.downgrade, true);
+    const consent = extConsentHandler.handler({ tempId: disclosure.tempId, approve: true, allowDowngrade }, c);
+    if (allowDowngrade === true) {
+      await consent;
+      assert.equal(readProvenance().notes.sha, 'c'.repeat(40));
+      assert.equal(reply(c, 'ext-install-done').runningSha, 'e'.repeat(40));
+      assert.equal(reply(c, 'ext-install-done').restartPending, true);
+    } else {
+      await assert.rejects(consent, /downgrade/i);
+      assert.equal(readProvenance().notes.sha, 'e'.repeat(40));
+    }
+  }
+  reset();
+});
+
+
+test('an explicit invalid ref is refused before cloning or acquiring the install lock', async () => {
+  reset();
+  let clones = 0;
+  _setInstallRunnersForTests({ clone: async () => { clones++; } });
+  for (const ref of ['', null, 'HEAD~1', 'abc1234']) await assert.rejects(extInstallHandler.handler({ url: URL_NOTES, ref }, ctx()), /ref|SHA|tag/i);
+  assert.equal(clones, 0);
+  await install(ctx());
+  reset();
+});
+
+test('auto-update leaves a downgrade or uncertain history for explicit human consent', async () => {
+  for (const relation of ['downgrade', 'unknown', 'diverged']) {
+    reset();
+    putRecord({ id: 'notes', originUrl: URL_NOTES, sha: 'e'.repeat(40), requires: [], dependencies: [], autoUpdate: true });
+    const c = ctx([{ id: 'notes', label: 'Notes', external: true, provenance: { sha: 'e'.repeat(40) } }]);
+    _setInstallRunnersForTests({ clone: fakeClone(), head: async () => 'c'.repeat(40), npm: async () => { assert.fail('no dependency install without consent'); }, commits: async () => null, relation: async () => relation });
+    const result = await autoUpdateExtension('notes', c);
+    assert.equal(result.applied, false);
+    assert.match(result.reason, /downgrade/i);
+    assert.equal(readProvenance().notes.sha, 'e'.repeat(40));
+  }
   reset();
 });

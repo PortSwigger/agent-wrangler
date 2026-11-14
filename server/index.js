@@ -479,6 +479,11 @@ function activateExtension(id, { startSweeps = true } = {}) {
       // code, never from rebuildOnce.
       settingDefs: e.settings,
       readSettings: (extId) => extensionSettings(extId),
+      readExtensionReceipt: () => {
+        const installedSha = readProvenance()[id]?.sha || '';
+        const runningSha = e.provenance?.sha || '';
+        return { installedSha, runningSha, restartPending: Boolean(installedSha && installedSha !== runningSha) };
+      },
       log: logError,
       // Per-EXTENSION now, so the resume log line names which extension woke a
       // card (`ext:<id>`) rather than a shared 'extension' — see ext-deliver.js.

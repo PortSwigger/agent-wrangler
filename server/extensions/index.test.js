@@ -1351,3 +1351,16 @@ test('spawn hooks register and unload through manifest hooks', () => {
   unregisterExtension(loaded, loaded.list[0].id);
   for (const name of Object.keys(hooks)) assert.deepEqual(loaded.hooks[name], []);
 });
+
+
+test('graph receipts explicitly name the loaded commit', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ external: true, provenance: { sha: 'a'.repeat(40) } })] });
+  const [row] = extensionsForGraph(loaded.list, () => true, () => ({}), { fake: { sha: 'b'.repeat(40) } });
+  assert.equal(row.runningSha, 'a'.repeat(40));
+  assert.equal(row.installedSha, 'b'.repeat(40));
+  assert.equal(row.restartPending, true);
+  const restarted = loadExtensions({ cfg: {}, builtin: [manifest({ external: true, provenance: { sha: 'b'.repeat(40) } })] });
+  const [after] = extensionsForGraph(restarted.list, () => true, () => ({}), { fake: { sha: 'b'.repeat(40) } });
+  assert.equal(after.runningSha, after.installedSha);
+  assert.equal(after.restartPending, false);
+});

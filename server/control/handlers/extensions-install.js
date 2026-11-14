@@ -6,7 +6,7 @@ import semver from 'semver';
 import { validateManifest } from '../../extensions/index.js';
 import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord, setAutoUpdate, setEarlyAdopter, trackedBranch } from '../../extensions/provenance.js';
 import { unconsentedCapabilities, admitExternal, importViolation } from '../../extensions/external.js';
-import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
+import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, assertExactRef, commitRelation, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
 import { HOST_API_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
 import { log } from '../../log.js';
 
@@ -66,7 +66,7 @@ const pending = new Map();
 // with no process and no network. Deliberately a MODULE seam and never an option
 // on the incoming frame: a control frame is browser-supplied, so a `_clone` a
 // client could set would be arbitrary code execution offered as an API.
-const REAL_RUNNERS = { clone: cloneTo, head: readHead, npm: npmCi, lsRemote: lsRemoteHead, commits: commitsSince };
+const REAL_RUNNERS = { clone: cloneTo, head: readHead, npm: npmCi, lsRemote: lsRemoteHead, commits: commitsSince, relation: commitRelation };
 let runners = REAL_RUNNERS;
 
 export function _setInstallRunnersForTests(next = null) {
@@ -304,6 +304,7 @@ export const extInstallHandler = {
     }
     if (busy) reclaim(busy);
     const url = assertAllowedUrl(String(msg.url || '').trim());
+    const ref = msg.ref === undefined ? undefined : assertExactRef(msg.ref);
     busy = { url, since: Date.now(), tempId: null, awaitingConsent: false };
     const tempId = crypto.randomBytes(8).toString('hex');
     busy.tempId = tempId;
@@ -314,8 +315,8 @@ export const extInstallHandler = {
       // An installed extension from this URL that opted in to early-adopter
       // builds is reinstalled from its EA branch. Looked up server-side from the
       // record, never taken from the frame.
-      const branch = earlyAdopterBranchFor(url);
-      await runners.clone(url, dir, { branch });
+      const branch = ref === undefined ? earlyAdopterBranchFor(url) : null;
+      await runners.clone(url, dir, { branch, ...(ref === undefined ? {} : { ref }) });
       progress(ctx, 'resolving');
       // Static read — the manifest module is NOT imported until after consent.
       let declared;
@@ -336,6 +337,7 @@ export const extInstallHandler = {
         return;
       }
       const sha = await runners.head(dir);
+      if (ref && /^[0-9a-f]{40}$/i.test(ref) && sha !== ref.toLowerCase()) throw new Error('The checked out commit does not match the exact ref');
       // Refused BEFORE consent and before any registry fetch: an extension
       // whose dependency set is unpinned cannot be disclosed honestly, so there
       // is nothing to consent to.
@@ -348,18 +350,26 @@ export const extInstallHandler = {
       }
       const existing = recordFor(declared.id);
       // Best effort: a missing list costs the human context, not the update.
+      const relation = existing?.sha && existing.sha !== sha ? await runners.relation(dir, existing.sha).catch(() => 'unknown') : 'same';
+      const downgrade = relation === 'downgrade';
+      const requiresDowngradeConfirmation = ['downgrade', 'diverged', 'unknown'].includes(relation);
       const history = existing ? await runners.commits(dir, existing.sha || '').catch(() => null) : null;
       const reply = {
         type: 'ext-install-disclosure',
         tempId,
         sha,
+        ...(ref === undefined ? {} : { ref }),
+        previousSha: existing?.sha || '',
+        downgrade,
+        requiresDowngradeConfirmation,
+        relation,
         ...discloseDeclared(declared),
         dependencies: deps.direct,
         dependencyCount: deps.all.length,
         ...(existing ? updateDiff(existing, declared, deps) : { update: false, reconsentNeeded: true }),
         ...(history ? { commits: history.commits, commitsTruncated: history.truncated } : {}),
       };
-      pending.set(tempId, { url, sha, declared, deps, dir, branch });
+      pending.set(tempId, { url, sha, declared, deps, dir, branch, ref, requiresDowngradeConfirmation });
       busy.awaitingConsent = true;
       busy.since = Date.now();
       // The lock is HELD across the human's decision, deliberately: the staging
@@ -383,7 +393,7 @@ export const extConsentHandler = {
     const staged = pending.get(msg.tempId);
     if (!staged) throw new Error('That install is no longer pending — start it again.');
     pending.delete(msg.tempId);
-    const { url, sha, declared, deps, dir, branch } = staged;
+    const { url, sha, declared, deps, dir, branch, ref, requiresDowngradeConfirmation } = staged;
     try {
       if (!msg.approve) {
         rmQuiet(dir);
@@ -391,6 +401,7 @@ export const extConsentHandler = {
         ctx.reply({ type: 'ext-install-done', id: declared.id, installed: false, cancelled: true });
         return;
       }
+      if (requiresDowngradeConfirmation && msg.allowDowngrade !== true) throw new Error('This install needs explicit downgrade confirmation (allowDowngrade: true).');
       progress(ctx, 'installing', { id: declared.id });
       await runners.npm(dir);
       // First point at which the manifest's imports resolve, and the first at
@@ -423,6 +434,7 @@ export const extConsentHandler = {
         id: manifest.id,
         originUrl: url,
         sha,
+        ...(ref === undefined ? {} : { ref }),
         installedAt: new Date().toISOString(),
         // The CONSENTED set — the DISCLOSED list, not the manifest's, because
         // that is what the human saw and approved. The two are asserted equal
@@ -438,8 +450,9 @@ export const extConsentHandler = {
       });
       log(`[agent-wrangler] extension ${manifest.id} installed from ${url}${branch ? ` (early-adopter branch ${branch} if present)` : ''} at ${sha.slice(0, 8)}`);
       if (registered) {
+        const runningSha = ctx.ext.list.find((e) => e.id === manifest.id)?.provenance?.sha || '';
         progress(ctx, 'done', { id: manifest.id, restartRequired: true });
-        ctx.reply({ type: 'ext-install-done', id: manifest.id, installed: true, sha, restartRequired: true });
+        ctx.reply({ type: 'ext-install-done', id: manifest.id, installed: true, sha, installedSha: sha, runningSha, restartPending: sha !== runningSha, restartRequired: true });
         await ctx.rebuild();
         return;
       }
@@ -449,7 +462,7 @@ export const extConsentHandler = {
       // is off — `defaultEnabled` absent or false, or a stale `extensions.<id>`
       // left behind by an earlier uninstall. It is registered and one toggle
       // away, and saying "installed and live" there would be a lie.
-      ctx.reply({ type: 'ext-install-done', id: manifest.id, installed: true, sha, active: Boolean(entry.enabled) });
+      ctx.reply({ type: 'ext-install-done', id: manifest.id, installed: true, sha, installedSha: sha, runningSha: sha, restartPending: false, active: Boolean(entry.enabled) });
       await ctx.rebuild();
     } catch (err) {
       // On ANY failure at any point the staging dir goes — it is never left
@@ -613,6 +626,7 @@ export async function autoUpdateExtension(id, ctx) {
     // A repository that now declares a different id would install as a new
     // extension, which is never an update.
     if (!disclosure.update || disclosure.id !== id) reason = `its repository now declares the id "${disclosure.id}"`;
+    else if (disclosure.requiresDowngradeConfirmation) reason = 'the target may be a downgrade and needs explicit confirmation';
     else if (disclosure.reconsentNeeded) reason = `it now asks for ${disclosure.addedCapabilities.join(', ')}, which needs your consent`;
     if (reason) {
       await extConsentHandler.handler({ tempId: disclosure.tempId, approve: false }, quiet);

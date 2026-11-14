@@ -14,7 +14,7 @@ import { createEventBus } from '../events.js';
 import { createExtFiles } from '../ext-files.js';
 import { runWithOrigin } from '../request-origin.js';
 
-const ALWAYS = ['id', 'version', 'stores', 'settings', 'log'];
+const ALWAYS = ['id', 'version', 'stores', 'settings', 'log', 'extension'];
 
 function wiring(overrides = {}) {
   return {
@@ -726,7 +726,7 @@ test('CLIENT_CAPABILITIES is disjoint from CAPABILITIES and builds no façade ke
   for (const c of CLIENT_CAPABILITIES) assert.equal(CAPABILITIES.has(c), false, c);
   const host = buildHostApi({ id: 'demo', requires: ['cards:hideChips'] });
   assert.equal('cards' in host, false);
-  assert.deepEqual(Object.keys(host).sort(), ['id', 'log', 'settings', 'stores', 'version']);
+  assert.deepEqual(Object.keys(host).sort(), [...ALWAYS].sort());
 });
 
 test('tasks:read serves the Unassigned id, equal to the core ADHOC constant', async () => {
@@ -1061,4 +1061,19 @@ test('mail:read lists sender and time metadata without exposing message text', (
   assert.equal('excerpt' in listed[0], false);
   assert.deepEqual(Object.keys(host.mail).sort(), ['list', 'unread']);
   assert.equal(mailStore.drain('recipient')[0].body, 'private message');
+});
+
+
+test('an extension can read only its own live install receipt', () => {
+  let installedSha = 'b'.repeat(40);
+  const runningSha = 'a'.repeat(40);
+  const asked = [];
+  const host = buildHostApi({ id: 'x', ...wiring(), readExtensionReceipt: (id) => { asked.push(id); return { installedSha, runningSha, restartPending: installedSha !== runningSha }; } });
+  assert.deepEqual(host.extension.receipt('other'), { installedSha, runningSha, restartPending: true });
+  installedSha = runningSha;
+  assert.equal(host.extension.receipt().restartPending, false);
+  assert.deepEqual(asked, ['x', 'x']);
+  const receipt = host.extension.receipt();
+  receipt.runningSha = 'changed';
+  assert.equal(host.extension.receipt().runningSha, runningSha);
 });
