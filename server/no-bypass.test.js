@@ -5,16 +5,17 @@ import { tmpdir } from 'node:os';
 import { join, relative, resolve, dirname, sep } from 'node:path';
 import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from './browser-harness.js';
 
-// The board reaches its deck only through the deck API: GET /deck, /ws and
-// /pty on the deck's own origin. Its one same-origin call is the board
-// server's /api/styles, since styles come from the board's own install. And no
-// board code imports from server/. Board code is public/ and each builtin
-// extension's board half.
-const DECK_ROUTE = /^`\$\{(?:deckOrigin\(\)|origin\(\))\.(http|ws)\}\/(deck|ws|pty)[?`]/;
-const BOARD_ROUTES = new Set(["'/api/styles'"]);
+// The board reaches each deck only through the deck API: GET /deck, /ws and
+// /pty on that deck's own origin (its own deck's, or the URL another deck was
+// added by, through originForDeck). Its same-origin calls are the board
+// server's /api/styles, since styles come from the board's own install, and
+// its deck list (/api/decks and its stream). And no board code imports from
+// server/. Board code is public/ and each builtin extension's board half.
+const DECK_ROUTE = /^`\$\{(?:deckOrigin\(\)|origin\(\)|originForDeck\([\w.]+\))\.(http|ws)\}\/(deck|ws|pty)[?`]/;
+const BOARD_ROUTES = new Set(["'/api/styles'", "'/api/decks'", "'/api/decks/stream'"]);
 // Calls that never reach a deck, by file: a pasted image's own URL.
 const NOT_DECK = { [join('public', 'clipboard-images.js')]: ['source.url'] };
-const CALL = /\b(fetch|fetchImpl|WebSocket|WebSocketImpl|EventSource|sendBeacon|\.open)\(\s*/g;
+const CALL = /\b(fetch|fetchImpl|WebSocket|WebSocketImpl|EventSource|EventSourceImpl|sendBeacon|\.open)\(\s*/g;
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|^\s*import\s*)(['"])([^'"]+)\1/gm;
 
 function walk(dir, out = []) {
@@ -89,6 +90,7 @@ test('board code reaches the deck only through /deck, /ws and /pty on the deck o
   const files = boardFiles();
   assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}app.js`)) && files.some((f) => f.includes(`builtin${sep}todos${sep}public`)));
   assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}card-key.js`)), 'the card-key module is board code');
+  assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}decks.js`)) && files.some((f) => f.endsWith(`${sep}public${sep}decks-panel.js`)), 'the multi-deck modules are board code');
   const all = files.flatMap((f) => bypasses(readFileSync(f, 'utf8'), f).map((b) => `${relative(REPO_ROOT, f)}:${b}`));
   assert.deepEqual(all, []);
 });
@@ -104,6 +106,9 @@ test('the scan catches each kind of bypass', () => {
   assert.deepEqual(bypasses("const m = await import('../../index.js');", ext), ['1: import ../../index.js']);
   assert.deepEqual(bypasses("import { y } from './dom.js';", ext), []);
   assert.deepEqual(bypasses('fetch(`${deckOrigin().http}/deck`); new WebSocket(`${origin().ws}/ws?api=1`); new WebSocket(`${deckOrigin().ws}/pty?sessionId=${id}`)', f), []);
+  assert.deepEqual(bypasses('new WebSocket(`${originForDeck(s.deckId).ws}/pty?sessionId=${id}`); fetchImpl(\'/api/decks\'); new EventSourceImpl(\'/api/decks/stream\')', f), []);
+  assert.deepEqual(bypasses('new WebSocket(`${originForDeck(d).ws}/mcp`)', f), ['1: WebSocket(`${originForDeck(d).ws}/mcp`)']);
+  assert.deepEqual(bypasses("new EventSourceImpl('/events')", f), ["1: EventSourceImpl('/events')"]);
 });
 
 // The same rule on the running board: every request the page makes either

@@ -538,7 +538,14 @@ import semver from 'semver';
 // deck it is on (GET /deck), and `cardKey`, `<deckId>/<sessionId>`. Session ids
 // in the API (openSession, mountSession, actions) stay as they were. An older
 // board leaves both out, so a board half that reads them declares `^1.75.0`.
-export const HOST_API_VERSION = '1.75.0';
+//
+// 1.76.0 shows sessions from several decks on one board: while the board's
+// deck list (server/board-decks.js) holds more than one deck, every session
+// row a board half gets also carries `deckName` and `deckColour`, and
+// `deckUnreachable: true` while that deck is not connected. With one deck the
+// rows carry none of them, as before. A board half that reads them declares
+// `^1.76.0`.
+export const HOST_API_VERSION = '1.76.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

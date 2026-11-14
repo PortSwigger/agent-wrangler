@@ -285,6 +285,11 @@ the other does not know about. The session ids in the API itself (`openSession`,
 `api.act`'s `session`) are unchanged. An older board leaves both fields out, so a board half that
 reads them declares `^1.75.0`.
 
+A board can show several decks' sessions ([Add a deck to the board](board-and-sessions.md#add-a-deck-to-the-board)).
+While its deck list holds more than one deck, each session row also carries `deckName` and
+`deckColour` (`#rrggbb`), and `deckUnreachable: true` while that deck is not connected (1.76.0).
+With one deck the rows carry none of them. A board half that reads them declares `^1.76.0`.
+
 ### Ports and origins
 
 The deck and the board listen on separate ports, so the board talks to the deck cross-origin. The

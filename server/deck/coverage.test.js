@@ -97,10 +97,12 @@ test('every session-record field is either in the session view or dropped on pur
 });
 
 // The board stamps each session row with the deck it came from and the card key
-// it names the card by (public/card-key.js stampDeck), so a deck field of either
-// name would be overwritten on the board without a word.
+// it names the card by (public/card-key.js stampDeck), and, while it shows more
+// than one deck, the deck's name, colour and reachability (public/decks.js
+// mergeDeckGraphs), so a deck field of any of those names would be overwritten
+// on the board without a word.
 test('no session-record field takes a name the board stamps on its cards', async (t) => {
   const sessions = await sampleSessions(t);
   const fields = new Set([...SESSION_VIEW_FIELDS, ...SESSION_VIEW_DROPPED, ...sessions.flatMap((s) => Object.keys(s))]);
-  for (const name of ['deckId', 'cardKey']) assert.ok(!fields.has(name), `${name} is the board's own field on a session row`);
+  for (const name of ['deckId', 'cardKey', 'deckName', 'deckColour', 'deckUnreachable']) assert.ok(!fields.has(name), `${name} is the board's own field on a session row`);
 });
