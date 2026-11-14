@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import semver from 'semver';
 import { validateManifest } from '../../extensions/index.js';
-import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord, setAutoUpdate, setEarlyAdopter, trackedBranch } from '../../extensions/provenance.js';
+import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord, setAutoUpdate, setEarlyAdopter, trackedBranch, pinnedUpdateReason } from '../../extensions/provenance.js';
 import { unconsentedCapabilities, admitExternal, importViolation } from '../../extensions/external.js';
 import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, assertExactRef, commitRelation, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
 import { HOST_API_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
@@ -522,7 +522,7 @@ export const extCheckUpdatesHandler = {
       const branch = trackedBranch(record);
       try {
         const head = await runners.lsRemote(record.originUrl, { branch });
-        out.push({ id: entry.id, updatable: true, originUrl: record.originUrl, branch, sha: record.sha || '', remoteSha: head, behind: Boolean(record.sha) && head !== record.sha });
+        out.push({ id: entry.id, updatable: true, originUrl: record.originUrl, branch, pinnedRef: record.ref || null, autoUpdateBlocked: pinnedUpdateReason(record), sha: record.sha || '', remoteSha: head, behind: Boolean(record.sha) && head !== record.sha });
       } catch (err) {
         out.push({ id: entry.id, updatable: true, originUrl: record.originUrl, error: String(err?.message || err) });
       }
@@ -603,6 +603,8 @@ function earlyAdopterBranchFor(url) {
 export async function autoUpdateExtension(id, ctx) {
   const record = recordFor(id);
   if (!record?.autoUpdate || !record.originUrl) return { applied: false, reason: 'Auto-update is off.' };
+  const pinned = pinnedUpdateReason(record);
+  if (pinned) return { applied: false, reason: pinned };
   if (busy) return { applied: false, reason: 'another extension install was running; it is tried again at the next check' };
   const replies = [];
   const quiet = {

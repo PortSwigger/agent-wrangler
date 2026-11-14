@@ -1112,3 +1112,12 @@ test('the Source panel shows both full receipt SHAs even when they match', () =>
     assert.equal(all.filter((value) => value === sha).length, 2);
   });
 });
+
+
+test('a pin reports why automatic updates are blocked without waiting for a remote check', () => {
+  withDom(() => {
+    const reason = 'Pinned to v1. Install without an exact ref to resume automatic updates.';
+    const panel = showing({ ...INSTALLED, pinnedRef: 'v1', autoUpdate: true, autoUpdateBlocked: reason });
+    assert.ok(texts(detailOf(panel)).includes(reason));
+  });
+});

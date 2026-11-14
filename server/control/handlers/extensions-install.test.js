@@ -774,7 +774,7 @@ test('a downgrade requires a distinct acknowledgement and leaves the old install
     putRecord({ id: 'notes', originUrl: URL_NOTES, sha: 'e'.repeat(40), requires: [], dependencies: [] });
     const c = ctx([{ id: 'notes', label: 'Notes', external: true, provenance: { sha: 'e'.repeat(40) } }]);
     useFakes();
-    _setInstallRunnersForTests({ clone: fakeClone(), head: async () => 'c'.repeat(40), npm: async () => {}, relation: async () => 'upgrade', commits: async () => null, relation: async () => 'downgrade' });
+    _setInstallRunnersForTests({ clone: fakeClone(), head: async () => 'c'.repeat(40), npm: async () => {}, commits: async () => null, relation: async () => 'downgrade' });
     await extInstallHandler.handler({ url: URL_NOTES, ref: 'v1' }, c);
     const disclosure = reply(c, 'ext-install-disclosure');
     assert.equal(disclosure.downgrade, true);
@@ -814,5 +814,22 @@ test('auto-update leaves a downgrade or uncertain history for explicit human con
     assert.match(result.reason, /downgrade/i);
     assert.equal(readProvenance().notes.sha, 'e'.repeat(40));
   }
+  reset();
+});
+
+
+test('a recorded ref blocks automatic installs until an install without a ref clears it', async () => {
+  reset();
+  putRecord({ id: 'notes', originUrl: URL_NOTES, sha: 'e'.repeat(40), ref: 'v1', requires: [], dependencies: [], autoUpdate: true });
+  const c = ctx([{ id: 'notes', label: 'Notes', external: true, provenance: { sha: 'e'.repeat(40), ref: 'v1', autoUpdate: true } }]);
+  _setInstallRunnersForTests({ clone: async () => assert.fail('a pinned extension must not clone automatically') });
+  const blocked = await autoUpdateExtension('notes', c);
+  assert.equal(blocked.applied, false);
+  assert.match(blocked.reason, /pinned to v1/i);
+  await install(c);
+  assert.equal(readProvenance().notes.ref, undefined);
+  assert.equal(readProvenance().notes.autoUpdate, true);
+  useFakes({ sha: 'd'.repeat(40) });
+  assert.equal((await autoUpdateExtension('notes', c)).applied, true);
   reset();
 });

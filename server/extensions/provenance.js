@@ -99,6 +99,10 @@ export function putRecord(record) {
   return all[id];
 }
 
+export function pinnedUpdateReason(record) {
+  return record?.ref ? `Pinned to ${record.ref}. Install without an exact ref to resume automatic updates.` : null;
+}
+
 export function removeRecord(id) {
   if (!isValidExtensionId(id)) return false;
   const all = readProvenance();

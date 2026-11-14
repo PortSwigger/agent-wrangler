@@ -282,6 +282,7 @@ function autoUpdateRowEl(entry, onAutoUpdate) {
   const copy = el('div', 'setting-copy');
   copy.append(el('div', 'setting-label', 'Auto-update'));
   copy.append(el('div', 'setting-help', AUTO_UPDATE_HELP));
+  if (entry.autoUpdateBlocked) copy.append(el('div', 'setting-help', entry.autoUpdateBlocked));
   const actions = el('div', 'ext-row-actions');
   const on = Boolean(entry.autoUpdate);
   const toggle = el('button', `setting-toggle${on ? ' on' : ''}`);

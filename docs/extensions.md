@@ -618,11 +618,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `{ type: 'ext-install', url, ref }`; omit `ref` to follow the default branch or
   the installed extension's opted-in early-adopter branch. An explicit empty,
   invalid, missing or ambiguous ref is refused. Branch names, abbreviated SHAs
-  and revision expressions are not accepted as exact refs. A name shared by a
+  and revision expressions are not accepted as exact refs. Tags consisting only
+  of 4–39 hexadecimal characters (such as `2024` or `deadbeef`) are refused
+  because they resemble abbreviated SHAs. A name shared by a
   branch and a tag is ambiguous. Annotated tags resolve to their commit; the
   disclosed `sha` is the commit fetched and checked out, with no fallback to HEAD.
-  The requested `ref` is recorded alongside `sha` for that install. This selects
-  one install; it does not change the extension's auto-update or branch opt-ins.
+  The requested `ref` is recorded alongside `sha` and blocks automatic updates
+  until an install without a ref clears the pin. The auto-update and branch
+  opt-ins are preserved. `graph.extensions[]` and update-check results expose
+  `pinnedRef` and an `autoUpdateBlocked` reason; the panel shows that reason
+  even before a remote check. A manual update without a ref clears the pin.
+  A remote's ability to serve a SHA does not prove that its owner authored or
+  published it: GitHub can serve commits that exist only in a fork in the same
+  repository network. Verify the exact commit and its provenance before consent.
 - **Replacing a newer commit needs explicit downgrade confirmation.** The
   disclosure includes `previousSha`, `relation` (`same`, `upgrade`, `downgrade`,
   `diverged` or `unknown`), `downgrade` and `requiresDowngradeConfirmation`.
