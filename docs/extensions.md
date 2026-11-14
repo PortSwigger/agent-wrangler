@@ -1354,6 +1354,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Unassigned (`id: 'adhoc', adhoc: true`) and excluding archived/deleted tasks;
   `minimisedIds` is an array of the browser's current minimised task ids.
   Both are fresh snapshots. Core owns that set; enabling a tray does not change it.
+  On a board showing several decks (1.77.0), `tasks` also lists each other deck's
+  tasks after the board's own, with ids scoped `<deckId>/<taskId>`, and every real
+  task carries `deckName`; `minimiseTask` and `setMinimisedTasks` take those ids.
+  With one deck the context is unchanged.
   `mount` receives the initial context, then `update` runs on every board render,
   including graph changes, reorder, Focus, keyboard focus navigation, task/session
   opening and bulk minimisation. New tasks are visible until explicitly minimised.

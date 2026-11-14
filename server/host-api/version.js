@@ -545,7 +545,14 @@ import semver from 'semver';
 // `deckUnreachable: true` while that deck is not connected. With one deck the
 // rows carry none of them, as before. A board half that reads them declares
 // `^1.76.0`.
-export const HOST_API_VERSION = '1.76.0';
+//
+// 1.77.0 shows each deck's tasks on a board with several decks: the
+// `board.tray` context's `tasks` also lists every other deck's tasks, with ids
+// scoped `<deckId>/<taskId>`, and with more than one deck each real task
+// carries `deckName`. `minimiseTask` and `setMinimisedTasks` take those ids.
+// With one deck the context is as before. A tray that reads `deckName`
+// declares `^1.77.0`.
+export const HOST_API_VERSION = '1.77.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
