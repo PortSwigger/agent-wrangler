@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve, dirname, sep } from 'node:path';
-import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from './browser-harness.js';
+import { REPO_ROOT, browserTestSkipReason, findChrome, waitFor, startInstance, openTab, sleep } from './browser-harness.js';
 
 // The board reaches each deck only through the deck API: GET /deck, /ws and
 // /pty on that deck's own origin (its own deck's, or the URL another deck was
@@ -119,7 +119,7 @@ test('the scan catches each kind of bypass', () => {
 // The same rule on the running board: every request the page makes either
 // fetches a static board asset from the board's port or goes to the deck's
 // port on /deck, /ws or /pty.
-test('the running board loads from the board port and talks to the deck cross-origin', { timeout: 120_000 }, async (t) => {
+test('the running board loads from the board port and talks to the deck cross-origin', { timeout: 120_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
