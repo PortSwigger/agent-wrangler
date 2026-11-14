@@ -515,7 +515,7 @@ export function workerRowHtml(s, ctx, spine) {
 // same as a plain parent's card yielding to childGroupHtml — see `nested` there).
 // A child (any session absorbed into a parent's spine — a workflow worker or a
 // plain nested child) draws as a compact `.worker-row` by default; "Full view"
-// (ctx.isChildFullView — a per-child override, or the server-wide new-child
+// (ctx.isChildFullView — a per-child override, or the board's child
 // default) instead draws it as an ordinary top-level card, wrapped in a bare
 // `.spine-full-row` div purely so it can carry the same elbow connector a
 // `.worker-row` draws (see styles.css) without borrowing that class's own

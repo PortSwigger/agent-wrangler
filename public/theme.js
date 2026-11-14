@@ -253,5 +253,12 @@ export function initStyles() {
   localStorage.setItem('cm-style', currentStyleId);
   applyStyle(BUILT_IN_STYLES.find((s) => s.id === currentStyleId) || BUILT_IN_STYLES[0]);
 
-  fetch('/api/styles').then((r) => r.json()).then((d) => setCustomStyles(d.styles)).catch(() => {});
+  stylesLoaded = fetch('/api/styles').then((r) => r.json()).then((d) => setCustomStyles(d.styles)).catch(() => {});
+}
+
+let stylesLoaded = null;
+// The contributed styles once the startup load has answered (what an
+// extension's api.styles() resolves with).
+export function loadedStyles() {
+  return Promise.resolve(stylesLoaded).then(() => customStyles);
 }

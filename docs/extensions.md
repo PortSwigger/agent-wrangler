@@ -166,14 +166,14 @@ Supported manifest contributions are:
 | Runtimes | `runtimes`: where a session's agent runs, offered in the dispatch dialog's Runtime select and `spawn_session`. See [Runtimes](#runtimes) |
 | Agent skills | `skills/<name>/SKILL.md` plus the manifest's `skills` list |
 | Extension settings | `settings` (`text`, `textarea`, `number`, `toggle`, `select`, `list`), read through `host.settings` |
-| Browser UI | `client`, optional `styles`, and slots from `public/slots.js` |
-| Themes | `themes`: a directory of `<id>/theme.json` + assets, offered in Settings › Appearance. See [Themes](#themes) |
+| Browser UI | `board: { client, styles }` beside `boardApi`, and slots from `public/slots.js`. See [Deck and board halves](#deck-and-board-halves) |
+| Themes | `board: { themes }`: a directory of `<id>/theme.json` + assets, offered in Settings › Appearance. See [Themes](#themes) |
 | Core access | `requires`, served through the versioned host API in `server/host-api/` |
 | Telemetry | `telemetry.events` to emit typed usage events, which core sends to its built-in collector. See [Telemetry](#telemetry) |
 
 ### Themes
 
-`themes` (1.43.0) names a directory inside the extension, such as `themes: 'themes'`. Each
+`themes` (1.43.0) names a directory inside the extension, such as `board: { themes: 'themes' }`. Each
 subdirectory is one theme: `<id>/theme.json` with
 `name`, `icon` and `base` (`dark` or `light`), optional `colors`, `font` and `background`, and
 `assets` (`wallpaper`, `iconImage`) naming files beside it. The folder name is the theme's id, which
@@ -237,6 +237,97 @@ name and a strip of its accent, green and red. The button handles no clicks itse
 For development, place it under `<AW_DATA_DIR>/extensions/<id>/` and restart. Hand-placed extensions
 have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 
+## Deck and board halves
+
+Agent Wrangler is two parts: the deck, which runs sessions, tasks and schedules, and the board, the
+browser front end, which talks to the deck only through the deck API (`GET /deck`, then `/ws?api=1`
+for state frames, actions and events). An extension splits the same way (1.74.0):
+
+- The **deck half** is everything that runs beside sessions: `tools`, `handlers`, `stores`, `graph`,
+  `session`, `sweeps`, `runtimes`, `skills`, `settings`, `requires` and `telemetry`.
+- The **board half** is what the browser loads: `client`, `styles` and `themes`, declared under
+  `board`.
+
+The two are paired by `id` and `boardApi`. `boardApi` is the board API range the board half was
+written against, such as `^1.74.0`; an extension whose `boardApi` this Agent Wrangler does not serve
+is not loaded, exactly as for `engines.wranglerApi`. `GET /deck` lists each enabled extension as
+`{ id, version, boardApi }`, and the board mounts the board half it holds for that id only when the
+two name the same `boardApi`. When the deck and the board start together they share one install, so
+they always pair.
+
+```js
+export default {
+  id: 'example',
+  label: 'Example',
+  boardApi: '^1.74.0',
+  handlers: [{ type: 'example-save', handler: (msg, host, reply) => reply({ saved: true }) }],
+  graph: ({ host }) => ({ example: host.stores.example.snapshot() }),
+  board: { client: 'public/index.js', styles: 'public/styles.css' },
+};
+```
+
+A board half reads only its own state and the session view, and acts only through its own actions:
+
+- `api.state()` is this extension's own state from the deck's state frame (`ext.<id>`): the object its
+  `graph` contributor returned, as a frozen copy, or `null` before the first frame.
+  `api.onState(fn)` calls `fn` with it each time it changes and returns the unsubscribe function.
+- `api.act(name, args, { session })` runs one of this extension's own handlers as the deck action
+  `ext.<id>.<name>` and resolves with the result frame `{ ok, data, error }`, where `data` is what
+  the handler replied and `error` is `{ code, message }`. It never rejects.
+- `api.send(frame)` still sends a frame to one of this extension's own handlers, as the same action,
+  with the reply arriving through `api.onMessage`.
+- `api.styles()` resolves with the board's contributed styles, the list `/api/styles` serves.
+
+### Ports and origins
+
+The deck and the board listen on separate ports, so the board talks to the deck cross-origin. The
+board server is on `AW_PORT` (default `7878`), the address you open: it serves the board's HTML and
+scripts, each extension's board half under `/ext/<id>/`, and styles (`/api/styles`, `/styles/*`).
+The deck listens on loopback only, on `AW_DECK_PORT` (default `AW_PORT` + 1), and the board page names
+that port in `<meta name="aw-deck-port">`. The deck accepts a browser only from the board origins in
+its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS`. A board
+opened from another host (with `AW_BIND_HOST`) reaches the deck through the board server instead.
+
+Board pages are sent with `Content-Security-Policy-Report-Only: script-src 'self'; object-src 'none';
+base-uri 'self'`. Nothing is blocked yet: an inline `onclick` or `<script>` in a board half still
+runs, and the browser reports it as a violation in the console. Load board code as modules from your
+`public/` directory so it keeps working once the policy is enforced.
+
+Routes that board code reached on its own origin before the split are forwarded by the board server
+to the deck unchanged: `GET /file`, `GET /ext-file`, `GET /deck`, `POST /mcp`, `/pr-attach` and
+`/pr-model`, and the `/ws` and `/pty` sockets. The deck still applies its own origin and host checks
+to each.
+
+### Migrating an unsplit manifest
+
+A manifest with `client`, `styles` or `themes` at the top level is unsplit. It still loads exactly as
+before, read as both halves, and the deck logs one warning naming the split form. Every member of the
+board half's `api` keeps working with the same shape. To move to the split form:
+
+1. Move `client`, `styles` and `themes` under `board: { … }`. A manifest that has `board` may not also
+   carry them at the top level.
+2. Add `boardApi: '^1.74.0'` (or the lowest version whose board API you use), and raise
+   `engines.wranglerApi` to at least `^1.74.0` so an older Agent Wrangler refuses it rather than
+   loading no board half.
+3. Read your own state with `api.state()` instead of the `graph` argument a contribution is handed.
+   Optimistic edits go on a copy, replaced when the next state frame arrives.
+4. Use `api.act` where you need a handler's reply as a result, and `api.styles()` instead of fetching
+   `/api/styles`.
+5. Keep board code on the extension `api`: fetch no route and open no socket of your own.
+
+Until then, these older surfaces still work, each through an adapter over the deck API, and each logs
+one console warning on first use naming its replacement:
+
+| Old surface | Replacement |
+| --- | --- |
+| An unsplit manifest (deck log) | `board: { client, styles, themes }` beside `boardApi` |
+| An extension's state read off the `graph` a contribution is handed | `api.state()` |
+| A `/ws` connection without `?api=` (deck log) | `GET /deck` and `/ws?api=1` |
+| `GET /file` (deck log) | the `session.file` action |
+| `GET /ext-file` (deck log) | the `deck.ext-file` action, through `api.openFile` |
+| `GET /deck`, `/ws?api=` or `/pty` on the board's port (deck log) | the same route on the deck's port |
+| The session fields the session view leaves out (`pid`, `socket`, `jobId`, `liveSessionId`, `hasTranscript`, `currentModel`, `launchedCodeVersion`, `autoBlockSeconds`, `suspendedAt`) | the fields the session view carries |
+
 ## Authoring rules
 
 - Keep manifest imports independent of the server entry, `session-manager`, `state-reader`,
@@ -251,6 +342,11 @@ have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
   consented to and recorded, so a reinstall can clone that branch before any manifest is imported.
 - Put browser assets under `public/`. Third-party strings render as text; homepages must use `https://`.
 - Handle cleanup explicitly: uninstall removes the extension and provenance, not files it wrote elsewhere.
+- Declare the board half under `board` with a `boardApi`, and keep board code on the extension `api`
+  (`api.state`, `api.act`, `api.send`, `api.openFile`, `api.styles` and the session fields the board
+  draws from). The older surfaces listed under
+  [Migrating an unsplit manifest](#migrating-an-unsplit-manifest) still work through adapters, and
+  log one warning on first use naming the replacement.
 
 ### Session launch capabilities
 
@@ -701,7 +797,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   object is a LIVE REGISTRY, not a boot snapshot.** A manifest
   (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
   default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
-  skillsFor, codexPolicy, hideTool, graph, session, sweeps, client, styles, themes}`) is validated at boot (`validateManifest`,
+  skillsFor, codexPolicy, hideTool, graph, session, sweeps, boardApi, board: {client, styles, themes}}`)
+  is read as its deck and board halves (`manifest-halves.js`; an unsplit manifest's top-level
+  `client`/`styles`/`themes` are its board half) and validated at boot (`validateManifest`,
   every throw names the id) and `index.js` exits 1 on a bad one — a manifest
   colliding with a core tool name or handler type is a config error a human must
   see, not something to limp past. Enabled is `extensions.<id>` in config.json
@@ -2102,6 +2200,17 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   without the stack. All text is set as text. Use `ui.notify` instead for
   something the human did not ask about and must not miss. An extension using
   it declares `^1.71.0`, or checks for `api.ui.toast`.
+- **Client `api.state()`, `api.onState(fn)`, `api.act(name, args, opts)` and `api.styles()`**
+  (1.74.0) are the board half's reads and actions on the deck API. `state()` is the extension's
+  own `ext.<id>` slice of the latest state frame, deep-frozen and cached until the next frame
+  (`slots.setExtState`, fed by app.js before each `applyGraph`); `onState` listeners hear only their
+  own extension's slice, and only when it changed. `act` is bound to `ext.<own id>.*` by
+  construction, so a board half cannot reach another extension's or core's actions through it.
+  Each graph a contribution is handed is a per-extension `Proxy` (`graphFor`) whose reads of a
+  key some extension's state carries log the one `graph.<key>` warning; the graph itself is
+  unchanged. The loader (`extensions.js`) mounts a board half only when `pairs(entry)` is true: app.js
+  answers from the `GET /deck` descriptor, null (not listed yet, wait quietly) or false (listed with
+  another `boardApi`, reported).
 - **`host.tasks.archive(taskId)`** (capability `tasks:archive`, 1.23.0) archives a
   task as its tile's Archive does: the task and every live session assigned to it.
   Resolves `{ archived, sessionIds, unclean }`; `archived` is false for an unknown or

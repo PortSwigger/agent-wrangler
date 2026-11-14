@@ -35,8 +35,8 @@ test('manifest: first builtin shape — enabled by default, owns its handlers, s
   assert.equal(typeof extension.session.onPurge, 'function');
   assert.ok(extension.stores.taskMemory() instanceof MemoryStore);
   assert.ok(fs.existsSync(path.join(extension.dir, 'skills', 'task-memory', 'SKILL.md')));
-  assert.ok(fs.existsSync(path.join(extension.dir, extension.client)));
-  assert.ok(fs.existsSync(path.join(extension.dir, extension.styles)));
+  assert.ok(fs.existsSync(path.join(extension.dir, extension.board.client)));
+  assert.ok(fs.existsSync(path.join(extension.dir, extension.board.styles)));
 });
 
 test('launchContext (claude): binds the session, hands back the STABLE symlink path and dir', () => {

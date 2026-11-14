@@ -77,6 +77,7 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.71.0 the client `api.ui.toast`,
 // and 1.72.0 `telemetry:emit`, the manifest `telemetry` block and `version`,
 // and 1.73.0 the telemetry `ms` type up to 366 days,
+// and 1.74.0 split manifests and the board half's state, onState, act and styles,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.

@@ -78,17 +78,18 @@ test('extension-enabled writes extensions.<id>, preserving sibling extensions an
   });
 });
 
-test('an unknown extension id throws — and reaches the client as the router\'s error envelope', async () => {
+test('an unknown extension id throws — and reaches the client as a failed result', async () => {
   await withConfig({}, async () => {
     const c = ctx([manifest('checklist')]);
     await assert.rejects(
       () => extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'nope', enabled: true }, c),
       /Unknown extension: nope/,
     );
-    await routeControlMessage(JSON.stringify({ type: 'extension-enabled', id: 'nope', enabled: true }), c);
+    await routeControlMessage(JSON.stringify({ type: 'action', id: 1, action: 'admin.extension-enabled', args: { id: 'nope', enabled: true } }), c);
     assert.equal(c.calls.replies.length, 1);
-    assert.equal(c.calls.replies[0].type, 'error');
-    assert.match(c.calls.replies[0].message, /Unknown extension: nope/);
+    assert.equal(c.calls.replies[0].type, 'result');
+    assert.equal(c.calls.replies[0].error.code, 'failed');
+    assert.match(c.calls.replies[0].error.message, /Unknown extension: nope/);
     assert.equal(c.calls.rebuild, 0);
     assert.deepEqual(readConfig(), {}, 'nothing written');
   });

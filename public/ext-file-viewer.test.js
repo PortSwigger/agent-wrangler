@@ -35,9 +35,14 @@ function harness(replies) {
   modal.close = () => { modal.open = false; modal.calls.push('close'); };
   doc.getElementById = (id) => els[id];
   doc.createElement = (tag) => ({ tag });
-  const fetchImpl = async () => ({ json: async () => (typeof replies === 'function' ? replies() : replies) });
-  const viewer = createExtFileViewer({ document: doc, fetchImpl, renderMarkdown: (md) => `<p>${md}</p>` });
-  return { viewer, modal, els, doc };
+  const calls = [];
+  const act = async (action, opts) => {
+    calls.push({ action, ...opts });
+    const r = await (typeof replies === 'function' ? replies() : replies);
+    return r.ok ? { ok: true, data: r, error: null } : { ok: false, data: null, error: { code: 'not-found', message: r.reason } };
+  };
+  const viewer = createExtFileViewer({ document: doc, act, renderMarkdown: (md) => `<p>${md}</p>` });
+  return { viewer, modal, els, doc, calls };
 }
 
 const MD = { ok: true, kind: 'markdown', path: '/w/out/report.md', text: 'hi' };
@@ -48,8 +53,9 @@ test('index.html declares the viewer as a <dialog>, so showModal puts it in the 
 });
 
 test('open shows the file with showModal, focuses Close and replies { ok:true }', async () => {
-  const { viewer, modal, els, doc } = harness(MD);
+  const { viewer, modal, els, doc, calls } = harness(MD);
   assert.deepEqual(await viewer.open('ext', MD.path), { ok: true });
+  assert.deepEqual(calls, [{ action: 'deck.ext-file', args: { ext: 'ext', path: MD.path } }]);
   assert.deepEqual(modal.calls, ['showModal']);
   assert.equal(els['ext-file-title'].textContent, 'report.md');
   assert.equal(els['ext-file-body'].innerHTML, '<p>hi</p>');
@@ -107,4 +113,11 @@ test('a slow reply does not reopen the viewer after it was closed', async () => 
   release();
   assert.deepEqual(await pending, { ok: true });
   assert.deepEqual(modal.calls, []);
+});
+
+test('a deck that is not connected reads as unavailable', async () => {
+  const doc = { activeElement: null, getElementById: () => ({ addEventListener() {}, focus() {} }), createElement: () => ({}) };
+  const act = async () => ({ ok: false, data: null, error: { code: 'failed', message: 'Not connected to the deck' } });
+  const viewer = createExtFileViewer({ document: doc, act, renderMarkdown: (md) => md });
+  assert.deepEqual(await viewer.open('ext', '/w/a.md'), { ok: false, reason: 'unavailable' });
 });

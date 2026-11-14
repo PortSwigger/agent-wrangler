@@ -14,14 +14,11 @@ import { snoozeSetHandler, snoozeClearHandler } from './snooze.js';
 import { autoFixPrChecksHandler } from './auto-fix-pr-checks.js';
 import { autoFixPrChecksDefaultHandler } from './auto-fix-pr-checks-default.js';
 import { autoMergeOnPassHandler } from './auto-merge-on-pass.js';
-import { subagentsExpandedByDefaultHandler } from './subagents-expanded-by-default.js';
 import { trustCodexLaunchCwdHandler } from './trust-codex-launch-cwd.js';
 import { trustClaudeLaunchCwdHandler } from './trust-claude-launch-cwd.js';
 import { mailWakesDormantHandler } from './mail-wakes-dormant.js';
 import { prModelFooterHandler } from './pr-model-footer.js';
 import { childFullViewHandler } from './child-full-view.js';
-import { childFullViewDefaultHandler } from './child-full-view-default.js';
-import { chatViewDefaultHandler } from './chat-view-default.js';
 import { defaultSessionCwdHandler } from './default-session-cwd.js';
 import { defaultRuntimeHandler } from './default-runtime.js';
 import { backgroundModelHandler } from './background-model.js';
@@ -89,14 +86,11 @@ export const CONTROL_HANDLERS = [
   autoFixPrChecksHandler,
   autoFixPrChecksDefaultHandler,
   autoMergeOnPassHandler,
-  subagentsExpandedByDefaultHandler,
   trustCodexLaunchCwdHandler,
   trustClaudeLaunchCwdHandler,
   mailWakesDormantHandler,
   prModelFooterHandler,
   childFullViewHandler,
-  childFullViewDefaultHandler,
-  chatViewDefaultHandler,
   defaultSessionCwdHandler,
   defaultRuntimeHandler,
   backgroundModelHandler,

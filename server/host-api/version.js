@@ -523,6 +523,16 @@ import semver from 'semver';
 // throws on an `ms` value past 24 hours, so an emitter sending one declares
 // `^1.73.0`.
 //
+// 1.74.0 splits a manifest into a deck half and a board half: `board: {
+// client, styles, themes }` beside a `boardApi` range, paired with the deck's
+// GET /deck entry by id and boardApi (server/extensions/manifest-halves.js). An
+// unsplit manifest still loads as both halves. The board half gains
+// `api.state()` / `api.onState(fn)` (its own `ext.<id>` state from the state
+// frame), `api.act(name, args, { session })` (its own `ext.<id>.<name>` action,
+// resolving with the result) and `api.styles()` (the board's style list). An
+// older server ignores `board` and loads no board half, so a split manifest
+// declares `^1.74.0`.
+//
 // 1.74.0 adds manifest hooks `session.beforeSpawn` and `session.spawned` for
 // new-session launches across providers and launch sources. The first can
 // refuse with a reason or return extension-owned data; the second receives
