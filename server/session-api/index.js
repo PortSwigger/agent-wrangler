@@ -27,7 +27,7 @@ export function createSessionApi({ dataDir, cardState, handlers, resolve, log = 
     const handle = guarded(check, h, { legacy: true, onRefuse });
     return [route, (req, res) => {
       const at = bound.port ? `http://${bound.host}:${bound.port}` : 'its own port';
-      warnLegacy('POST /mcp, /pr-attach and /pr-model on the deck\'s or board\'s port', `the session API at ${at} (sessions launched before it move there when resumed)`, logWarn);
+      warnLegacy('POST /mcp, /pr-attach and /pr-model on the deck\'s or board\'s port', `the session API at ${at} (sessions launched before it move there when resumed)`, { use: 'route.session', log: logWarn });
       return handle(req, res);
     }];
   }));

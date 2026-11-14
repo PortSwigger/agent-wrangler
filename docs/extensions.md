@@ -366,6 +366,7 @@ a [`core.deprecated`](#core-events) event under the surface id in the last colum
 | `GET /deck` on the board's port (deck log) | the same route on the deck's port | `board-port.deck` |
 | `/pty` on the board's port (deck log) | the same route on the deck's port | `board-port.pty` |
 | `/ws?api=` on the board's port (deck log) | the same route on the deck's port | `board-port.ws-api` |
+| `POST /mcp`, `/pr-attach` and `/pr-model` on the deck's or board's port (deck log) | the same routes on the session API's port | `route.session` |
 | The session fields the session view leaves out (`pid`, `socket`, `jobId`, `liveSessionId`, `hasTranscript`, `currentModel`, `launchedCodeVersion`, `autoBlockSeconds`, `suspendedAt`) | the fields the session view carries | `board.session-field` |
 
 ## Authoring rules
@@ -2459,8 +2460,8 @@ adapters' use; the board reports its adapters' use through the `deck.deprecation
 
 | Field | Values |
 | --- | --- |
-| `surface` | `manifest.unsplit`, `board.graph-key`, `board.session-field`, `ws.legacy`, `route.file`, `route.ext-file`, `board-port.deck`, `board-port.pty` or `board-port.ws-api` |
-| `extension` | the extension's id when it is a builtin; `installed` for any other; `unknown` when the use names no extension: `GET /file`, a `/ws` connection before it sends a message, a route on the board's port, or a board read outside a contribution's own call |
+| `surface` | `manifest.unsplit`, `board.graph-key`, `board.session-field`, `ws.legacy`, `route.file`, `route.ext-file`, `route.session`, `board-port.deck`, `board-port.pty` or `board-port.ws-api` |
+| `extension` | the extension's id when it is a builtin; `installed` for any other; `unknown` when the use names no extension: `GET /file`, a `/ws` connection before it sends a message, a route on the board's port, a session route off the session API's port, or a board read outside a contribution's own call |
 | `extensionRef` | for `installed`: a ref of the extension's id; `null` otherwise |
 
 **How prompts are typed.** Each prompt the wrangler delivers (a chat send, a dispatch, mail, an

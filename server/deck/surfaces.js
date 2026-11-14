@@ -10,6 +10,7 @@ export const DECK_SURFACES = [
   'manifest.unsplit',
   'route.file',
   'route.ext-file',
+  'route.session',
   'ws.legacy',
   'board-port.deck',
   'board-port.pty',
