@@ -1,8 +1,14 @@
 // Results land on window.__compatProbe and in the view, for the test and for a
-// person looking at the board.
-const results = { fields: null, file: null, extFile: null, legacyWs: null };
+// person looking at the board. The button's inline onclick is what a strict
+// CSP would block; the board's is Report-Only, so it runs and is reported.
+const results = { fields: null, file: null, extFile: null, legacyWs: null, inline: null, csp: null };
 window.__compatProbe = results;
+document.addEventListener('securitypolicyviolation', (e) => {
+  results.csp = { directive: e.effectiveDirective, disposition: e.disposition };
+  render();
+});
 let host = null;
+window.__compatRender = () => render();
 
 function render() {
   if (!host) return;
@@ -12,7 +18,9 @@ function render() {
     + row('GET /file', results.file)
     + row('GET /ext-file', results.extFile)
     + row('legacy /ws (no ?api=)', results.legacyWs)
-  }</table></div>`;
+    + row('inline onclick handler', results.inline)
+    + row('CSP violation reported', results.csp)
+  }</table><button id="compat-inline" onclick="window.__compatProbe.inline = 'ran'; window.__compatRender()">Run inline handler</button></div>`;
 }
 
 async function probeOnce(note) {

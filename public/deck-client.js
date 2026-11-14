@@ -1,3 +1,5 @@
+import { deckOrigin } from './deck-origin.js';
+
 // The board's only connection to a deck: GET /deck, then /ws?api=1 for the
 // state stream, actions with results, and events. A deck whose major version
 // differs is shown as incompatible and is never sent an action.
@@ -45,6 +47,7 @@ export function createDeckClient({
   fetchImpl = (...a) => fetch(...a),
   WebSocketImpl = globalThis.WebSocket,
   location = globalThis.location,
+  origin = () => deckOrigin(location),
   onStatus = () => {},
   onState = () => {},
   onEvent = () => {},
@@ -70,7 +73,7 @@ export function createDeckClient({
   };
 
   async function readDescriptor() {
-    const res = await fetchImpl('/deck', { cache: 'no-store' });
+    const res = await fetchImpl(`${origin().http}/deck`, { cache: 'no-store' });
     if (!res.ok) throw new Error(`GET /deck answered ${res.status}`);
     return res.json();
   }
@@ -93,8 +96,7 @@ export function createDeckClient({
   }
 
   function openSocket() {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const sock = new WebSocketImpl(`${proto}://${location.host}/ws?api=${DECK_API_MAJOR}`);
+    const sock = new WebSocketImpl(`${origin().ws}/ws?api=${DECK_API_MAJOR}`);
     ws = sock;
     sock.onopen = () => { setStatus('ready'); onOpen(); };
     sock.onmessage = (ev) => {

@@ -57,6 +57,7 @@ import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
+import { deckOrigin } from './deck-origin.js';
 import { withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
@@ -5411,8 +5412,7 @@ function connectShellXterm(body, terminalId, onEnd, sessionId = null) {
   syncTermFont(term, fit);
   term.focus();
 
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
+  const ws = new WebSocket(`${deckOrigin().ws}/pty?terminalId=${encodeURIComponent(terminalId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
   term.onData((d) => ws.readyState === 1 && inputGates.allow(sessionId, d) && ws.send(d));
@@ -5669,8 +5669,7 @@ function openTerminal(s) {
   // Text that rode along with a pasted image goes through xterm's own paste, so
   // it is bracketed exactly as a plain text paste would be.
   const detachImagePaste = terminalImagePaste.attach(el, { sessionId: s.sessionId, pasteText: (t) => term.paste(t) });
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
+  const ws = new WebSocket(`${deckOrigin().ws}/pty?sessionId=${encodeURIComponent(s.sessionId)}&cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = 'arraybuffer';
   ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data));
   term.onData((d) => ws.readyState === 1 && inputGates.allow(s.sessionId, d) && ws.send(d));

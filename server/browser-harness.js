@@ -37,7 +37,8 @@ export async function waitFor(fn, { tries = 80, every = 250 } = {}) {
 }
 
 // Starts server/index.js on `dataDir` and a free port, resolving once GET /deck
-// answers. `out()` is everything it has printed.
+// answers. `out()` is everything it has printed; `deckPort()` the port the
+// deck said it listens on.
 export async function startInstance(dataDir) {
   const port = await freePort();
   let out = '';
@@ -49,11 +50,13 @@ export async function startInstance(dataDir) {
   server.stdout.on('data', (c) => { out += c; });
   server.stderr.on('data', (c) => { out += c; });
   const up = await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/deck`)).ok);
-  return { port, server, up: Boolean(up), out: () => out };
+  const deckPort = () => Number(/deck API at http:\/\/127\.0\.0\.1:(\d+)/.exec(out)?.[1]) || null;
+  return { port, deckPort, server, up: Boolean(up), out: () => out };
 }
 
 // Opens `url` in a headless Chrome tab with the console captured. `evaluate`
-// returns an expression's value.
+// returns an expression's value. `requests` lists every URL the page asked
+// for, WebSockets included.
 export async function openTab(chromePath, url) {
   const profile = mkdtempSync(join(tmpdir(), 'aw-chrome-'));
   const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-sandbox', '--disable-gpu', '--window-size=1400,900', 'about:blank'], { stdio: 'ignore' });
@@ -76,6 +79,7 @@ export async function openTab(chromePath, url) {
   const pending = new Map();
   const warnings = [];
   const errors = [];
+  const requests = [];
   cdp.on('message', (raw) => {
     const m = JSON.parse(raw);
     if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
@@ -84,11 +88,14 @@ export async function openTab(chromePath, url) {
       if (m.params.type === 'warning') warnings.push(text);
       if (m.params.type === 'error') errors.push(text);
     }
+    if (m.method === 'Network.requestWillBeSent') requests.push(m.params.request.url);
+    if (m.method === 'Network.webSocketCreated') requests.push(m.params.url);
     if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
   });
   const send = (method, params = {}) => new Promise((res) => { const i = ++id; pending.set(i, res); cdp.send(JSON.stringify({ id: i, method, params })); });
   await send('Runtime.enable');
+  await send('Network.enable');
   await send('Page.reload');
   const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true })).result?.result?.value;
-  return { send, evaluate, warnings, errors, close: () => close(cdp) };
+  return { send, evaluate, warnings, errors, requests, close: () => close(cdp) };
 }

@@ -44,9 +44,10 @@ import { dispatchModels } from './agents/listing.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
-import { bindHost } from './runtime.js';
+import { bindHost, deckPort } from './runtime.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
-import { createHttpServer } from './http-handler.js';
+import { createBoardServer } from './http-handler.js';
+import { createDeckServer } from './deck/http.js';
 import { resolveMarkdownPath } from './file-preview.js';
 import { createExtFiles } from './ext-files.js';
 import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
@@ -98,8 +99,15 @@ import { VERSION } from './version.js';
 
 const open = openModule.default || openModule;
 
+// PORT is the board's: the address people open, and the one launched sessions
+// reach MCP and the PR hooks on (forwarded to the deck). The deck listens on
+// loopback on its own port; DECK_PORT is what it asks for, and deckListenPort
+// what it got.
 const PORT = Number(process.env.AW_PORT) || Number(process.env.PORT) || 7878;
 const HOST = bindHost();
+const DECK_HOST = '127.0.0.1';
+const DECK_PORT = deckPort();
+let deckListenPort = DECK_PORT;
 
 // Last-resort guards: a single bad PTY/AppleScript/parse must never take the
 // whole dashboard down. Log and keep serving.
@@ -996,7 +1004,7 @@ const openExtFile = async (id, p) => (hostApis.has(id) ? extFiles.open(id, p) : 
 const legacyFileRoutes = createLegacyFileRoutes({
   registry: deckActions,
   ctx: () => ({ readMarkdownFile, openExtFile }),
-  allowedHost: (host) => isAllowedHost(host, PORT),
+  allowedHost: (host) => isAllowedHost(host, [PORT, deckListenPort]),
   logError,
 });
 
@@ -1042,7 +1050,7 @@ const mcpRequestHandler = createMcpRequestHandler({
 
 // GET /deck — the deck API's descriptor. Host-pinned like /file.
 function deckHandler(req, res) {
-  if (!isAllowedHost(req.headers.host, PORT)) {
+  if (!isAllowedHost(req.headers.host, [PORT, deckListenPort])) {
     res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: 'forbidden' }));
     return;
@@ -1059,11 +1067,16 @@ function deckHandler(req, res) {
   res.end(JSON.stringify(body));
 }
 
+const deckServer = createDeckServer({
+  boardPort: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, deckHandler,
+  fileHandler: legacyFileRoutes.file, extFileHandler: legacyFileRoutes.extFile,
+});
+
 // /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
 // extensions alone — so a disabled extension's client is a 404, never served.
-const server = createHttpServer({
-  port: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, deckHandler,
-  fileHandler: legacyFileRoutes.file, extFileHandler: legacyFileRoutes.extFile,
+const boardServer = createBoardServer({
+  boardPort: () => PORT,
+  deckPort: () => deckListenPort,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
   extensionThemes: () => themeSources(ext.themeDirs),
 });
@@ -1072,7 +1085,7 @@ const server = createHttpServer({
 const controlWss = new WebSocketServer({ noServer: true });
 const ptyWss = new WebSocketServer({ noServer: true });
 
-server.on('upgrade', (req, socket, head) => {
+deckServer.on('upgrade', (req, socket, head) => {
   // CSRF gate: a cross-origin browser page can open a WS without a preflight, so
   // reject before handleUpgrade (an absent Origin is a non-browser client — allow).
   if (!isAllowedOrigin(req.headers.origin, PORT)) {
@@ -1523,13 +1536,37 @@ async function main() {
   // KeepAlive never notices. The lock is released by its own exit handler.
   // Detached once listening: the server also emits 'error' for a failed accept
   // (EMFILE under fd pressure), which must stay a logged, survivable event.
+  // The deck binds first, so the board's page names a port that answers. A
+  // taken default deck port falls back to one the OS picks; one set with
+  // AW_DECK_PORT is held to.
+  await new Promise((resolve) => {
+    let tryPort = DECK_PORT;
+    const onDeckError = (err) => {
+      if (err?.code === 'EADDRINUSE' && !process.env.AW_DECK_PORT && tryPort !== 0) {
+        tryPort = 0;
+        deckServer.listen(0, DECK_HOST);
+        return;
+      }
+      logError(listenErrorMessage(err, tryPort, 'set AW_DECK_PORT to use another'));
+      process.exit(1);
+    };
+    deckServer.on('error', onDeckError);
+    deckServer.once('listening', () => {
+      deckServer.off('error', onDeckError);
+      deckListenPort = deckServer.address().port;
+      log(`[agent-wrangler] deck API at http://${DECK_HOST}:${deckListenPort}`);
+      resolve();
+    });
+    deckServer.listen(DECK_PORT, DECK_HOST);
+  });
+
   const onListenError = (err) => {
     logError(listenErrorMessage(err, PORT));
     process.exit(1);
   };
-  server.once('error', onListenError);
-  server.listen(PORT, HOST, () => {
-    server.off('error', onListenError);
+  boardServer.once('error', onListenError);
+  boardServer.listen(PORT, HOST, () => {
+    boardServer.off('error', onListenError);
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;
     const url = `http://${host}:${PORT}`;
