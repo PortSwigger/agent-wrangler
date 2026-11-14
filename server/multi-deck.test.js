@@ -346,3 +346,115 @@ test('the new-session dialog starts a session on the deck picked, in that deck\'
     rmSync(dirB, { recursive: true, force: true });
   }
 });
+
+// New tasks and schedules on a board with two decks: each lands only on the
+// deck picked, and with one deck neither asks for a deck.
+const MENU = `JSON.stringify([...document.querySelectorAll('.context-menu > *')].map((e) => [e.textContent.trim(), Boolean(e.disabled)]))`;
+
+test('a new task or schedule lands on the deck picked, and an unreachable deck cannot be picked', { timeout: 180_000 }, async (t) => {
+  const chromePath = findChrome();
+  if (!chromePath) {
+    assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
+    return t.skip('no Chrome/Chromium found (set CHROME_BIN to enable)');
+  }
+  const dirA = mkdtempSync(join(tmpdir(), 'aw-multinew-a-'));
+  const dirB = mkdtempSync(join(tmpdir(), 'aw-multinew-b-'));
+  seedSessions(dirA, [['a-1', 'Login form']]);
+  seedTasks(dirA, [['t_00000001', 'Auth revamp']], { 'a-1': 't_00000001' });
+  seedSessions(dirB, [['b-1', 'Importer profiling']]);
+  seedTasks(dirB, [['t_00000001', 'Data pipeline'], ['t_00000002', 'Flaky tests']], { 'b-1': 't_00000001' });
+  cpSync(join(REPO_ROOT, 'server', 'fixtures', 'deck-runtime-probe'), join(dirB, 'extensions', 'deck-runtime-probe'), { recursive: true });
+  let a, b, tab;
+  try {
+    a = await startInstance(dirA);
+    assert.ok(a.up, `deck A never started:\n${a.out()}`);
+    const board = `http://127.0.0.1:${a.port}`;
+    b = await startDeckOnly(dirB, `${board},http://localhost:${a.port}`);
+    const portB = b.port;
+    assert.ok(await waitFor(async () => (await (await fetch(`http://127.0.0.1:${portB}/deck`)).json()).runtimes.some((r) => r.id === 'probe-shell')), `deck B never offered its runtime:\n${b.out()}`);
+    const deckB = (await (await fetch(`http://127.0.0.1:${portB}/deck`)).json()).deckId;
+    const dialog = async () => JSON.parse(await tab.evaluate(DIALOG));
+    const taskNames = async (port) => (await deckState(port)).tasks.tasks.map((x) => x.name);
+    const scheduleNames = async (port) => (await deckState(port)).schedules.schedules.map((x) => x.name);
+
+    // With only its own deck, New task makes a task straight away and the
+    // schedule dialog has no picker.
+    tab = await openTab(chromePath, `${board}/`);
+    assert.ok(await waitFor(async () => JSON.parse(await tab.evaluate(TILES) || '[]').length === 1), 'the board never drew its task');
+    await tab.evaluate(`document.getElementById('new-task').click()`);
+    assert.ok(await waitFor(async () => (await taskNames(a.deckPort())).length === 2), 'one deck: New task made a task on the board\'s own deck');
+    assert.deepEqual(JSON.parse(await tab.evaluate(MENU)), [], 'one deck: New task opens no deck menu');
+    await tab.evaluate(`document.activeElement?.blur?.(); document.body.click()`);
+    await tab.evaluate(`document.getElementById('schedules-btn').click(); document.getElementById('schedules-new').click()`);
+    const alone = await dialog();
+    assert.equal(alone.open, true);
+    assert.equal(alone.pickerShown, false, 'one deck: no deck picker in the schedule dialog');
+    await tab.evaluate(`document.getElementById('m-cancel').click(); document.getElementById('schedules-close')?.click()`);
+
+    const post = (body) => fetch(`${board}/api/decks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: board }, body: JSON.stringify(body) });
+    assert.equal((await post({ op: 'update', id: 'own', name: 'Laptop A' })).status, 200);
+    assert.equal((await post({ op: 'add', url: `http://127.0.0.1:${portB}`, name: 'Laptop B' })).status, 200);
+    const tiles = await waitFor(async () => { const x = JSON.parse(await tab.evaluate(TILES) || '[]'); return x.filter((y) => y.deck === 'Laptop B').length === 2 && x; });
+    assert.ok(tiles, `the board never showed deck B's tasks: ${await tab.evaluate(TILES)}`);
+    const flakyB = tiles.find((x) => x.name === 'Flaky tests');
+    const tasksA = await taskNames(a.deckPort());
+
+    // New task asks for a deck; picking deck B makes the task there alone.
+    await tab.evaluate(`document.getElementById('new-task').click()`);
+    assert.deepEqual(JSON.parse(await tab.evaluate(MENU)), [['New task on', false], ['Laptop A', false], ['Laptop B', false]]);
+    await tab.evaluate(`[...document.querySelectorAll('.context-menu-item')].find((x) => x.textContent.trim() === 'Laptop B').click()`);
+    const madeB = await waitFor(async () => { const names = await taskNames(portB); return names.length === 3 && names; });
+    assert.ok(madeB, 'deck B made the new task');
+    assert.deepEqual(await taskNames(a.deckPort()), tasksA, 'deck A made nothing');
+    const newTile = await waitFor(async () => JSON.parse(await tab.evaluate(TILES)).filter((y) => y.deck === 'Laptop B').length === 3);
+    assert.ok(newTile, 'the new task shows under deck B');
+
+    // The schedule dialog's picker: deck B offers its tasks, runtimes and sessions.
+    await tab.evaluate(`document.getElementById('schedules-btn').click(); document.getElementById('schedules-new').click()`);
+    const sched = await dialog();
+    assert.equal(sched.pickerShown, true);
+    assert.deepEqual(sched.decks, [['', 'Laptop A', false], [deckB, 'Laptop B', false]]);
+    assert.equal(sched.deck, '', 'the board\'s own deck is picked by default');
+    await tab.evaluate(`(() => { const s = document.getElementById('m-deck'); s.value = ${JSON.stringify(deckB)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const schedB = await dialog();
+    assert.deepEqual(schedB.tasks.slice(0, 3), ['Unassigned (no task)', 'Data pipeline', 'Flaky tests'], 'deck B\'s tasks only');
+    assert.ok(schedB.runtimes.includes('probe-shell'), `deck B's own runtime is offered: ${schedB.runtimes}`);
+    assert.deepEqual(JSON.parse(await tab.evaluate(`JSON.stringify([...document.getElementById('m-sch-target').options].map((o) => o.value))`)), ['b-1'], 'deck B\'s sessions only');
+    const schedulesA = await scheduleNames(a.deckPort());
+    await tab.evaluate(`(() => {
+      document.getElementById('m-sch-name').value = 'Nightly flake sweep';
+      const c = document.getElementById('m-sch-cadence'); c.value = 'daily'; c.dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('m-task').value = ${JSON.stringify(flakyB.id)};
+      document.getElementById('m-intent').value = 'Rerun the flaky suite';
+      const rt = document.getElementById('m-runtime'); rt.value = 'probe-shell'; rt.dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('m-go').click();
+    })()`);
+    const savedB = await waitFor(async () => (await deckState(portB)).schedules.schedules.find((x) => x.name === 'Nightly flake sweep'));
+    assert.ok(savedB, `deck B saved the schedule:\n${b.out().slice(-2000)}`);
+    assert.equal(savedB.action.kind, 'dispatch');
+    assert.equal(savedB.action.dispatch.taskId, 't_00000002', 'named by deck B\'s own task id');
+    assert.equal(savedB.action.dispatch.runtime, 'probe-shell');
+    assert.deepEqual(await scheduleNames(a.deckPort()), schedulesA, 'deck A saved nothing');
+    const SCHED = `JSON.stringify([...document.querySelectorAll('.sched-deck')].map((g) => [g.querySelector('.sched-deck-name').textContent, [...g.querySelectorAll('.sched-name')].map((n) => n.textContent)]))`;
+    assert.ok(await waitFor(async () => JSON.parse(await tab.evaluate(SCHED) || '[]').some(([deck, names]) => deck === 'Laptop B' && names.includes('Nightly flake sweep'))), `listed under deck B: ${await tab.evaluate(SCHED)}`);
+
+    // Deck B stops: both pickers list it, disabled.
+    b.proc.kill();
+    assert.ok(await waitFor(async () => tab.evaluate(`document.querySelector('.task-cell[data-taskid="${flakyB.id}"]').classList.contains('deck-unreachable')`)), 'deck B\'s tiles turned unreachable');
+    await tab.evaluate(`document.getElementById('schedules-new').click()`);
+    const down = await dialog();
+    assert.deepEqual(down.decks, [['', 'Laptop A', false], [deckB, 'Laptop B (unreachable)', true]]);
+    assert.equal(down.deck, '');
+    await tab.evaluate(`document.getElementById('m-cancel').click()`);
+    await tab.evaluate(`document.getElementById('new-task').click()`);
+    assert.deepEqual(JSON.parse(await tab.evaluate(MENU)), [['New task on', false], ['Laptop A', false], ['Laptop B (unreachable)', true]]);
+    assert.deepEqual(tab.errors, [], 'no console errors');
+  } finally {
+    await tab?.close();
+    try { b?.proc.kill(); } catch {}
+    try { a?.server.kill(); } catch {}
+    await sleep(500);
+    rmSync(dirA, { recursive: true, force: true });
+    rmSync(dirB, { recursive: true, force: true });
+  }
+});
