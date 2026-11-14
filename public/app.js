@@ -57,12 +57,12 @@ import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChips
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
-import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
+import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
 import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
 import { mountDecksPanel } from './decks-panel.js';
-import { withCompatFields } from './legacy-surface.js';
+import { setLegacyReporter, withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
@@ -7765,6 +7765,7 @@ function armIdleReapply() {
 let deckStatus = 'connecting';
 // The own deck's last graph, before the other decks' sessions join it.
 let ownGraph = null;
+let ownCompatFields = null;
 // The own deck's last `ext` state map, for api.decks().
 let ownExt = null;
 // The board server's deck list (decks.js createDeckList); the own deck first.
@@ -7784,7 +7785,8 @@ const deck = createDeckClient({
     boardDeckId = deck.descriptor()?.deckId || boardDeckId;
     ownExt = frame.ext && typeof frame.ext === 'object' ? frame.ext : null;
     slots.setExtState(frame.ext);
-    ownGraph = stampDeck(stateToGraph(frame, { restore: withCompatFields }), boardDeckId);
+    ownGraph = stampDeck(stateToGraph(frame), boardDeckId);
+    ownCompatFields = frame.compat?.sessionFields || null;
     applyDecks();
     armIdleReapply();
   },
@@ -7795,6 +7797,8 @@ const deck = createDeckClient({
   onOpen: () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); },
   onClose: () => chatView.onConnectionClosed(),
 });
+// An extension's use of a board adapter, reported to the deck as telemetry.
+setLegacyReporter((surface, ext) => deck.act('deck.deprecation', { args: { surface, ext } }).then((r) => r.ok || r.error?.code === 'unsupported' || r.error?.code === 'invalid'));
 const DECK_CACHE_PREFIX = 'aw-deck-cache-';
 const remoteDeckCache = {
   get: (entry) => { try { return JSON.parse(localStorage.getItem(DECK_CACHE_PREFIX + entry.id) || 'null'); } catch { return null; } },
@@ -7833,7 +7837,8 @@ function applyDecks() {
   const multi = deckEntries.length > 1;
   remoteBoard = remoteTaskView(multi ? remotes : []);
   ownTaskDeck = multi ? { deckId: boardDeckId, deckName: own.name, deckColour: own.colour } : null;
-  applyGraph(mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi }));
+  const merged = mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi });
+  applyGraph(restoreCompat(merged, ownCompatFields, withCompatFields, (r) => r.deckId === boardDeckId));
 }
 // Hands every board half the decks that report its extension (api.decks()).
 function syncExtDecks() {

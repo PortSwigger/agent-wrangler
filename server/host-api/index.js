@@ -1,5 +1,5 @@
 import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
-import { HOST_API_VERSION, servesRange } from './version.js';
+import { HOST_API_VERSION, servedVersion, servesRange } from './version.js';
 import { V1_BUILDERS } from './v1.js';
 
 // The per-extension `host` façade: what an extension's tools, handlers, hooks,
@@ -62,10 +62,10 @@ export function buildExtSettings({ id, settingDefs = [], readSettings = () => ({
   });
 }
 
-function alwaysPresent({ id, stores = {}, log = () => {}, settingDefs = [], readSettings = () => ({}) }) {
+function alwaysPresent({ id, version = HOST_API_VERSION, stores = {}, log = () => {}, settingDefs = [], readSettings = () => ({}) }) {
   return {
     id,
-    version: HOST_API_VERSION,
+    version,
     stores: Object.freeze({ ...stores }),
     settings: buildExtSettings({ id, settingDefs, readSettings }),
     log: (...args) => (typeof args[0] === 'string' ? log(`[ext:${id}] ${args[0]}`, ...args.slice(1)) : log(`[ext:${id}]`, ...args)),
@@ -94,7 +94,7 @@ export function buildHostApi({ id, requires = [], range = null, boardApi = null,
   if (!servesRange(boardApi)) {
     throw new Error(`Extension ${id}: its board half needs board API ${boardApi}, this server serves ${HOST_API_VERSION}`);
   }
-  const facade = alwaysPresent({ id, ...wiring });
+  const facade = alwaysPresent({ id, ...wiring, version: servedVersion(range) });
   // `settingDefs`/`readSettings` ride in on `wiring` with no signature change,
   // so they reach the capability builders too. No builder reads them and none
   // should: `host.settings` is already built above, ungated, and is not a

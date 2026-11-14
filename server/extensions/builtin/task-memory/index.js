@@ -75,7 +75,7 @@ export default {
   description: 'A shared markdown note per task that you and the agents on it edit together.',
   author: 'Agent Wrangler',
   defaultEnabled: true,
-  engines: { wranglerApi: '^1.57.0' },
+  engines: { wranglerApi: '^2.0.0' },
   dir,
   requires: ['board:rebuild', 'board:broadcast', 'events'],
   settings: [{
@@ -97,6 +97,6 @@ export default {
   graph,
   activate,
   deactivate,
-  boardApi: '^1.81.0',
+  boardApi: '^2.0.0',
   board: { client: 'public/index.js', styles: 'public/styles.css' },
 };

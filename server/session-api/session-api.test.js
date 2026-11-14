@@ -6,7 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { createTokenStore, hashToken } from './tokens.js';
 import { createLaptopCheck, REFUSALS, carriesSessionCredential } from './check.js';
-import { resetLegacyWarnings } from '../deck/legacy.js';
+import { resetLegacyWarnings, setLegacyReporter } from '../deck/legacy.js';
 import { createSessionApi } from './index.js';
 import { createMcpRequestHandler } from '../mcp/server.js';
 import { SessionManager } from '../session-manager.js';
@@ -175,7 +175,11 @@ test('legacy routes: a pre-token card id still works there, a token works too, a
   });
 });
 
-test('legacy routes: an adapter onto the session API that logs one deprecation warning naming its port', async () => {
+test('legacy routes: an adapter onto the session API that logs one deprecation warning naming its port', async (t) => {
+  const reports = [];
+  resetLegacyWarnings();
+  setLegacyReporter((use, ext) => reports.push([use, ext]));
+  t.after(() => setLegacyReporter(null));
   await withApi({ OLD: 'running', LIVE: 'running' }, async ({ api, port, legacyPort, warnings }) => {
     const token = api.tokens.issue('LIVE');
     const post = (route, headers) => fetch(`http://127.0.0.1:${legacyPort}${route}`, { method: 'POST', headers }).then((r) => r.status);
@@ -186,6 +190,7 @@ test('legacy routes: an adapter onto the session API that logs one deprecation w
     const deprecations = warnings.filter((m) => m.includes('deprecated'));
     assert.equal(deprecations.length, 1, warnings.join('\n'));
     assert.match(deprecations[0], new RegExp(`POST /mcp, /pr-attach and /pr-model on the deck's or board's port is deprecated.*session API at http://127\\.0\\.0\\.1:${port}`));
+    assert.deepEqual(reports, Array(4).fill(['route.session', null]), 'every use is reported as the route.session surface');
   });
 });
 

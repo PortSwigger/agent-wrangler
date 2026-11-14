@@ -12,6 +12,7 @@ export default {
   dir,
   label: 'Compat probe',
   defaultEnabled: true,
+  engines: { wranglerApi: '^1.0.0' },
   requires: ['files:view'],
   client: 'public/client.js',
   handlers: [{ type: 'compat-probe-ping', handler: (msg, _host, reply) => reply({ pong: msg.n }) }],

@@ -858,7 +858,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   if (ext.dir) out.dirs[ext.id] = ext.dir;
   // Kept in list order, not push order: a re-enable re-stages at the row's own
   // index, and must not move its themes behind another extension's on an id tie.
-  if (unsplitBoard) warnLegacy(`An unsplit manifest (${ext.id}: top-level client, styles or themes)`, 'a board: { client, styles, themes } half beside boardApi');
+  if (unsplitBoard) warnLegacy(`An unsplit manifest (${ext.id}: top-level client, styles or themes)`, 'a board: { client, styles, themes } half beside boardApi', { use: 'manifest.unsplit', ext: ext.id });
   if (board.themes) {
     const order = (id) => out.list.findIndex((e) => e.id === id);
     const toggles = Object.fromEntries((ext.settings || []).filter((d) => d.theme).map((d) => [d.theme, d.key]));

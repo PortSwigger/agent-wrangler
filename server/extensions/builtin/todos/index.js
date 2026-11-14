@@ -45,7 +45,7 @@ export default {
   help: 'Per-task board TODOs: un-started work you can park on a task and turn into a session later.',
   description: 'Board TODOs for each task and the Unassigned tile, with MCP tools for agents and the archive-to-todo handoff skill.',
   defaultEnabled: true,
-  engines: { wranglerApi: '^1.15.0' },
+  engines: { wranglerApi: '^2.0.0' },
   requires: ['tasks:read', 'board:rebuild'],
   stores: { todos: createTodoStore },
   handlers: todoHandlers,
@@ -60,6 +60,6 @@ export default {
     host.stores.todos.dropBucket(taskId);
   },
   skills: ['archive-to-todo'],
-  boardApi: '^1.81.0',
+  boardApi: '^2.0.0',
   board: { client: 'public/client.js', styles: 'public/styles.css' },
 };

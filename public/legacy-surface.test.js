@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stateToGraph } from './deck-client.js';
-import { resetLegacyWarnings, withCompatFields } from './legacy-surface.js';
+import { restoreCompat, stateToGraph } from './deck-client.js';
+import { mergeDeckGraphs } from './decks.js';
+import { actingAs, resetLegacyWarnings, setLegacyReporter, warnLegacy, withCompatFields } from './legacy-surface.js';
 
 const frame = {
   type: 'state', rev: 3,
@@ -38,4 +39,53 @@ test('without restore the board view stays as the deck sent it', () => {
   const g = stateToGraph(frame);
   assert.ok(!('pid' in g.sessions[0]));
   assert.ok(!('compat' in g));
+});
+
+test('compat fields restored after a multi-deck merge reach only the own deck\'s records, and the merge reads none', () => {
+  resetLegacyWarnings();
+  const reads = [];
+  const restore = (r, f) => withCompatFields(r, f, (surface) => reads.push(surface));
+  const own = { graph: { sessions: [{ sessionId: 'a', deckId: 'own' }] }, status: 'ready' };
+  const remote = { graph: { sessions: [{ sessionId: 'a', deckId: 'other' }] }, status: 'ready' };
+  const merged = mergeDeckGraphs(own, [remote], { multi: true });
+  const g = restoreCompat(merged, { a: { pid: 12 } }, restore, (r) => r.deckId === 'own');
+  assert.deepEqual(reads, [], 'merging and restoring read nothing');
+  assert.equal(g.sessions[0].pid, 12);
+  assert.ok(!('pid' in g.sessions[1]), 'another deck\'s session with the same id is untouched');
+  assert.deepEqual(reads, ['session.pid']);
+});
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+test('each extension\'s first use of a surface is reported once a page load, after the reporter is set', async () => {
+  resetLegacyWarnings();
+  const quiet = { log: () => {} };
+  actingAs('old-ext', () => warnLegacy('session.pid', 'x', { ...quiet, use: 'board.session-field' }));
+  const reports = [];
+  setLegacyReporter(async (use, ext) => { reports.push([use, ext]); return true; });
+  await tick();
+  assert.deepEqual(reports, [['board.session-field', 'old-ext']], 'a use before the deck was reachable is sent once it is');
+  actingAs('old-ext', () => warnLegacy('session.socket', 'x', { ...quiet, use: 'board.session-field' }));
+  actingAs('other-ext', () => warnLegacy('session.pid', 'x', { ...quiet, use: 'board.session-field' }));
+  warnLegacy('graph.todos', 'x', { ...quiet, use: 'board.graph-key', ext: 'old-ext' });
+  await tick();
+  assert.deepEqual(reports, [['board.session-field', 'old-ext'], ['board.session-field', 'other-ext'], ['board.graph-key', 'old-ext']]);
+  resetLegacyWarnings();
+});
+
+test('a report the deck refused is tried again on the next use', async () => {
+  resetLegacyWarnings();
+  let ok = false;
+  const reports = [];
+  setLegacyReporter(async (use, ext) => { reports.push([use, ext]); return ok; });
+  const use = () => warnLegacy('graph.todos', 'x', { log: () => {}, use: 'board.graph-key', ext: 'old-ext' });
+  use();
+  await tick();
+  ok = true;
+  use();
+  await tick();
+  use();
+  await tick();
+  assert.equal(reports.length, 2);
+  resetLegacyWarnings();
 });

@@ -68,9 +68,9 @@ const FORWARDED_UPGRADES = new Set(['/ws', '/pty']);
 // port they work through the forwarder, and say so once. The legacy routes
 // (/file, /ext-file, /ws without ?api=) warn on the deck itself.
 function warnForwarded(method, pathname, search) {
-  if (method === 'GET' && pathname === '/deck') warnLegacy('GET /deck on the board\'s port', 'GET /deck on the deck\'s port');
-  else if (pathname === '/pty') warnLegacy('/pty on the board\'s port', '/pty on the deck\'s port');
-  else if (pathname === '/ws' && new URLSearchParams(search).has('api')) warnLegacy('/ws?api= on the board\'s port', '/ws?api=1 on the deck\'s port');
+  if (method === 'GET' && pathname === '/deck') warnLegacy('GET /deck on the board\'s port', 'GET /deck on the deck\'s port', { use: 'board-port.deck' });
+  else if (pathname === '/pty') warnLegacy('/pty on the board\'s port', '/pty on the deck\'s port', { use: 'board-port.pty' });
+  else if (pathname === '/ws' && new URLSearchParams(search).has('api')) warnLegacy('/ws?api= on the board\'s port', '/ws?api=1 on the deck\'s port', { use: 'board-port.ws-api' });
 }
 
 function rawRequestHead(req) {
