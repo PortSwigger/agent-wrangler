@@ -26,6 +26,17 @@ export function serverPort() {
   return deckOnly() ? deckPort() : boardPort();
 }
 
+// The session API's port: where launched sessions reach /mcp, /pr-attach and
+// /pr-model. The port it actually bound once listening (setSessionApiPort),
+// else AW_SESSION_API_PORT, else the board's port plus two.
+let sessionApiListenPort = null;
+export function setSessionApiPort(port) {
+  sessionApiListenPort = port;
+}
+export function sessionApiPort() {
+  return sessionApiListenPort ?? (Number(process.env.AW_SESSION_API_PORT) || serverPort() + 2);
+}
+
 // The interface the server binds to. Loopback by default — /ws, /pty, and /mcp
 // can launch arbitrary processes, so the dashboard must never be reachable off
 // the host. AW_BIND_HOST is a deliberate opt-in for the user who actually wants

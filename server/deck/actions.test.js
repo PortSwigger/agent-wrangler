@@ -164,3 +164,20 @@ test('deckEvent takes the session from the payload, then from the action', () =>
   assert.equal(deckEvent({ type: 'chat' }, { session: 's2' }).session, 's2');
   assert.equal(deckEvent({ type: 'x', sessionId: 's3' }, { session: 's2' }).session, 's3');
 });
+
+test('the board can change PR toast suppression through a deck action', async () => {
+  const { toActionCall } = await import('../../public/deck-actions.js');
+  const { readConfig } = await import('../config-store.js');
+  const sent = [];
+  let rebuilt = false;
+  for (const enabled of [false, true]) {
+    const call = toActionCall({ type: 'set-suppress-nudged-pr-toasts', enabled });
+    assert.equal(call.action, 'admin.set-suppress-nudged-pr-toasts');
+    await routeControlMessage(action({ id: 20, ...call }), ctx({
+      sent, send: (frame) => sent.push(frame), rebuild: async () => { rebuilt = true; },
+    }));
+    assert.equal(sent.at(-1).ok, true);
+    assert.equal(readConfig().suppressNudgedPrToasts, enabled);
+    assert.equal(rebuilt, true);
+  }
+});

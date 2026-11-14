@@ -793,7 +793,7 @@ function boardOpenHarness(sessions = [], { minimised = [], tiles = {}, embed = n
       setView: (v) => { log.push(`view:${v}`); app.state.view = v; },
       send: (f) => log.push(`send:${f.type}:${f.sessionId}`),
       toast: () => {},
-      assignedTaskId: (sid) => tiles[sid] || null,
+      assignedTaskId: (ref) => tiles[typeof ref === 'object' ? ref.sessionId : ref] || null,
       unminimise: (id) => { minimisedIds.delete(id); log.push(`unminimise:${id}`); },
       focusSession: (sid) => log.push(`focus:${sid}`),
       selectSession: (sid) => log.push(`select:${sid}`),

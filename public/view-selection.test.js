@@ -59,10 +59,11 @@ function harness() {
     hideSidebar: () => { node('sidebar').style.display = 'none'; },
     renderGrid: noop,
     boardOpen: { claim: () => null }, applyEmbedView: noop,
+    cardUnreachable: () => false,
   };
   const app = new Function(...Object.keys(scope), `
     let currentView = 'grid', selectedCard = null, selectedNewSlot = null;
-    let selectionBeforeView = null, pendingSelect = null, pendingLink = null, currentShellTerm = null;
+    let selectionBeforeView = null, pendingSelect = null, pendingLink = null, currentShellTerm = null, actingCard = null;
     let boardDeckId = 'd1';
     const cardOf = (sessionId) => cardKey(boardDeckId, sessionId);
     const stamp = (list) => list.map((x) => ({ ...x, cardKey: cardOf(x.sessionId) }));

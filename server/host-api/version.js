@@ -539,6 +539,13 @@ import semver from 'semver';
 // in the API (openSession, mountSession, actions) stay as they were. An older
 // board leaves both out, so a board half that reads them declares `^1.75.0`.
 //
+// 1.76.0 shows sessions from several decks on one board: while the board's
+// deck list (server/board-decks.js) holds more than one deck, every session
+// row a board half gets also carries `deckName` and `deckColour`, and
+// `deckUnreachable: true` while that deck is not connected. With one deck the
+// rows carry none of them, as before. A board half that reads them declares
+// `^1.76.0`.
+//
 // 2.0.0 is the major the deck API makes. The 2.x contract is what the deck
 // API offers: a board half beside `boardApi` in a split manifest, its state
 // through `api.state()`, the session view without the fields it drops, files
@@ -554,7 +561,7 @@ import semver from 'semver';
 export const HOST_API_VERSION = '2.0.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
-export const V1_SHIM_VERSION = '1.75.0';
+export const V1_SHIM_VERSION = '1.76.0';
 
 // The version this server serves `range` as: HOST_API_VERSION, the v1 shim, or
 // null for neither. A null/absent range is "no constraint" and gets the

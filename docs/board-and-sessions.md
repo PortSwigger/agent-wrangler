@@ -272,6 +272,30 @@ Claude mail delivered through its messaging socket does not touch the terminal c
 
 **Open terminal** creates an independent shell; it does not replace or interrupt the agent terminal.
 
+## Add a deck to the board
+
+A board can show sessions from more than one deck, for example a second laptop's. The deck is the
+half that runs sessions; each card's actions, terminal and file reads go to the deck the card is on,
+and decks never talk to each other.
+
+1. Start the other deck so it lets this board in: its `--allowed-origins` (or `AW_ALLOWED_ORIGINS`,
+   or `allowedOrigins` in its `config.json`) must name the origin you open the board on, for example
+   `--allowed-origins http://localhost:7878,http://127.0.0.1:7878`. See
+   [Running a second deck](../README.md#running-a-second-deck) to start one with no board of its own.
+2. Open **Settings › Decks**, enter the deck's URL (for example `http://127.0.0.1:7890`) and an
+   optional name, and press **Add deck**.
+
+The deck list is kept by the board server, so every browser on this board shows the same decks.
+The board's own deck is always first: you can rename and recolour it, but not remove it. Each row
+shows its connection: **Connecting**, **Ready**, **Incompatible** (its deck API version is one this
+board does not speak, or the URL reaches a deck already on the board) or **Unreachable** (the board
+cannot reach `GET /deck` there, often because the deck does not allow this board's origin).
+
+With more than one deck on the board, each card shows its deck's name and colour. A card whose deck
+is unreachable stays on the board, greyed out and disabled, until the deck is back. Another deck's
+cards sit in the **Ad hoc** tile: this board's tasks and new sessions belong to its own deck.
+**Remove** takes a deck off the board; its sessions keep running on it.
+
 ## Snooze, suspend, archive, and search
 
 - **Snooze** hides a session until a chosen time. When automatic suspension is enabled, snoozes of at
@@ -287,9 +311,11 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 
 ## Settings worth knowing about
 
-**Settings** has Appearance, Sessions, Automation, Extensions, Shortcuts and Updates tabs, covering:
+**Settings** has Appearance, Decks, Sessions, Automation, Extensions, Shortcuts and Updates tabs, covering:
 
 - Theme, terminal side, terminal font size, and chat font size.
+- The decks this board shows, with each one's name, colour and connection (see
+  [Add a deck to the board](#add-a-deck-to-the-board)).
 - Child-card and Chat defaults, the default folder for new sessions, and the Codex sandbox and approval
   defaults a new Codex session starts from (workspace-write and never unless you change them).
 - PR auto-fix, Codex and Claude folder trust, and the **Background model**: the agent and model

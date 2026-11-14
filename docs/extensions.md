@@ -286,6 +286,11 @@ the other does not know about. The session ids in the API itself (`openSession`,
 `api.act`'s `session`) are unchanged. An older board leaves both fields out, so a board half that
 reads them declares `^1.75.0`.
 
+A board can show several decks' sessions ([Add a deck to the board](board-and-sessions.md#add-a-deck-to-the-board)).
+While its deck list holds more than one deck, each session row also carries `deckName` and
+`deckColour` (`#rrggbb`), and `deckUnreachable: true` while that deck is not connected (1.76.0).
+With one deck the rows carry none of them. A board half that reads them declares `^1.76.0`.
+
 ### Host API 2.0 and the v1 shim
 
 Agent Wrangler serves host API **2.0.0**. Version 2 is the deck API contract: a split manifest, a
@@ -294,9 +299,9 @@ board half that reads `api.state()` and the session view, files through the `ses
 method changed shape, so moving to 2.0 is the migration below plus raising your ranges to `^2.0.0`.
 
 A manifest declaring a `^1` range (`engines.wranglerApi` or `boardApi`) still boots, on the **v1
-shim**: its `host.version` reads `1.75.0`, the last 1.x, and every surface 1.x offered keeps working,
+shim**: its `host.version` reads `1.76.0`, the last 1.x, and every surface 1.x offered keeps working,
 the older ones through the adapters listed under
-[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.75.0` is
+[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.76.0` is
 refused, as before. The adapters stay until 3.0, which removes them once their use has gone quiet:
 each use is reported as the [`core.deprecated`](#core-events) telemetry event, so the maintainers can
 see which surfaces are still in use.
@@ -311,6 +316,9 @@ that port in `<meta name="aw-deck-port">`. The deck accepts a browser only from 
 its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS` (or
 `--allowed-origins`, or `allowedOrigins` in `config.json`). A board opened from another host (with
 `AW_BIND_HOST`) reaches the deck through the board server instead.
+Launched sessions reach MCP and the PR hooks on a third port, the session API (`AW_SESSION_API_PORT`,
+default `AW_PORT` + 2), with a token per session; an MCP tool's `caller` is the card that token
+belongs to ([session-api.md](session-api.md)).
 
 A deck started with `--deck-only` has no board server: it serves only the deck API on its own port
 and 404s board pages, and its allowlist is only the origins configured for it. See
@@ -955,7 +963,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`host-api/version.js`) is what the server serves and a breaking reshape adds
   `v2.js` keeping `v1.js` as the shim, selected by the declared range — never
   edit builders in place. 2.0.0 reshaped no builder, so both majors still build
-  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.75.0) and its
+  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.76.0) and its
   older surfaces through the adapters (see [Host API 2.0 and the v1
   shim](#host-api-20-and-the-v1-shim)). `semver` is a real dependency, so
   `scripts/sync-deps.sh` means the SERVICE needs a restart for it to land
@@ -1033,7 +1041,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension does NOT own, and it is a VETO that fails OPEN** — `buildMcpServer`
   filters `activeTools()` per request through `deps.ext.hideTool`, a throwing
   filter hides nothing and is logged, because this is a UX narrowing over an
-  ADVISORY identity (`extractCaller` is not auth) and a bug must degrade to the
+  identity the session API's token check already settled (`server/session-api`), and a bug must degrade to the
   full tool list, never to a session that can do nothing. `--allowedTools` is
   baked into launch argv and unaffected: granting a tool the listing does not
   advertise is inert.

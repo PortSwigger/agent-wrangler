@@ -6,7 +6,7 @@ import { loadExtensions, BUILTIN } from '../extensions/index.js';
 // assert the core grant itself.
 const NO_EXT = { allowedToolNames: [] };
 import {
-  MCP_SERVER_NAME, MCP_TOKEN_ENV, mcpUrl,
+  MCP_SERVER_NAME, SESSION_TOKEN_ENV, mcpUrl,
   claudeMcpConfigArg, codexMcpConfigArgs, allowedToolName, allowedToolsArg,
 } from './client-config.js';
 
@@ -14,19 +14,19 @@ test('mcpUrl points at the loopback /mcp on the given port', () => {
   assert.equal(mcpUrl(7777), 'http://127.0.0.1:7777/mcp');
 });
 
-test('claudeMcpConfigArg embeds the card id as the X-AW-Session header', () => {
-  const json = JSON.parse(claudeMcpConfigArg('CARD9', 7777));
+test('claudeMcpConfigArg sends the token from the env as a bearer, never the token itself', () => {
+  const json = JSON.parse(claudeMcpConfigArg(7777));
   const entry = json.mcpServers[MCP_SERVER_NAME];
   assert.equal(entry.type, 'http');
   assert.equal(entry.url, 'http://127.0.0.1:7777/mcp');
-  assert.equal(entry.headers['X-AW-Session'], 'CARD9');
+  assert.deepEqual(entry.headers, { Authorization: `Bearer \${${SESSION_TOKEN_ENV}}` });
 });
 
 test('codexMcpConfigArgs declares the http server and bearer-token env var', () => {
   const args = codexMcpConfigArgs(7777);
   assert.deepEqual(args, [
     '-c', `mcp_servers.${MCP_SERVER_NAME}.url="http://127.0.0.1:7777/mcp"`,
-    '-c', `mcp_servers.${MCP_SERVER_NAME}.bearer_token_env_var="${MCP_TOKEN_ENV}"`,
+    '-c', `mcp_servers.${MCP_SERVER_NAME}.bearer_token_env_var="${SESSION_TOKEN_ENV}"`,
     '-c', `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
   ]);
 });

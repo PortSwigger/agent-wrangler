@@ -15,6 +15,7 @@ docs/*
 !docs/board-and-sessions.md
 !docs/reviews-and-prs.md
 !docs/install-signals.md
+!docs/session-api.md
 !.claude/
 .claude/*
 !.claude/skills/
