@@ -538,3 +538,26 @@ for (const [flags, caller, expected] of [
     assert.deepEqual(d.calls.dispatch[0].statusNotify, expected);
   });
 }
+
+test('spawn_session validates approval_policy and forwards it without inheriting the caller policy', async () => {
+  const d = deps({ entries: { CARD1: { agent: 'codex', codexPolicy: { approval: 'never' } } } });
+  for (const approval_policy of ['on-request', 'never']) {
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex', approval_policy });
+    assert.equal(out.isError, undefined);
+    assert.equal(d.calls.dispatch.at(-1).approvalPolicy, approval_policy);
+    assert.equal('codexPolicy' in d.calls.dispatch.at(-1), false);
+  }
+  await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex' });
+  assert.equal('codexPolicy' in d.calls.dispatch.at(-1), false);
+  for (const approval_policy of ['untrusted', 'on-failure', '', null, 42, {}]) {
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent: 'codex', approval_policy });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /approval_policy.*on-request.*never/);
+  }
+  for (const agent of [undefined, 'claude', 'gemini']) {
+    const out = await spawnSessionTool.handler({ deps: d, caller: 'CARD1' }, { intent: 'x', agent, approval_policy: 'never' });
+    assert.equal(out.isError, true);
+    assert.match(out.content[0].text, /approval_policy.*Codex/);
+  }
+  assert.equal(d.calls.dispatch.length, 3);
+});

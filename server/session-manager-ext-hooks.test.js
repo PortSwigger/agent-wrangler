@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import { SessionManager } from './session-manager.js';
+import { buildHostApi } from './host-api/index.js';
+import { spawnSessionTool } from './mcp/tools/spawn-session.js';
+import { runDispatch } from './dispatch-runner.js';
 
 // The extension session hooks (server/extensions/index.js `sessionHooks`) are
 // bound onto `sm._extHooks` by server/index.js. Their contract: sequential, in
@@ -306,4 +309,66 @@ test('a Claude dispatch stores no Codex policy, whatever the dialog sent', async
   const sm = manager();
   const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'claude', codexPolicy: { bypass: true } });
   assert.equal(sm.entryFor(sessionId).codexPolicy, undefined);
+});
+
+for (const surface of ['host', 'mcp']) {
+  for (const [defaults, sandbox] of [
+    [{ sandbox: 'read-only' }, 'read-only'],
+    [{ sandbox: 'workspace-write' }, 'workspace-write'],
+    [{ bypass: true }, 'danger-full-access'],
+    [{ approveForMe: true }, 'workspace-write'],
+  ]) {
+    for (const approval of ['on-request', 'never']) {
+      test(`${surface} spawn approval ${approval} preserves ${JSON.stringify(defaults)} sandbox across resume and fork`, async () => {
+        const sm = codexManager();
+        sm._codexPolicyDefaults = () => defaults;
+        const built = [];
+        sm._newSession = async (_t, _d, inner) => { built.push(inner); };
+        let sessionId;
+        if (surface === 'host') {
+          const host = buildHostApi({ id: 'test', requires: ['sessions:spawn'], core: { sessionManager: sm } });
+          ({ sessionId } = await host.sessions.spawn({ cwd: os.tmpdir(), intent: 'x', agent: 'codex', approvalPolicy: approval }));
+        } else {
+          const out = await spawnSessionTool.handler({ caller: null, deps: {
+            sessionManager: sm, dispatch: (opts) => runDispatch(opts, { sessionManager: sm }),
+            taskStore: { taskFor: () => null }, rebuild: async () => {},
+          } }, { cwd: os.tmpdir(), intent: 'x', agent: 'codex', approval_policy: approval });
+          assert.equal(out.isError, undefined);
+          sessionId = out.structuredContent.sessionId;
+        }
+        const expected = { sandbox, approval };
+        assert.deepEqual(sm.entryFor(sessionId).codexPolicy, expected);
+        sm._codexPolicyDefaults = () => ({ sandbox: 'read-only', approval: approval === 'never' ? 'on-request' : 'never' });
+        await sm.resume(sessionId, os.tmpdir());
+        assert.deepEqual(sm.entryFor(sessionId).codexPolicy, expected);
+        const fork = await sm.fork({ sourceId: 'live-codex', parentId: sessionId, parentEntry: sm.entryFor(sessionId), cwd: os.tmpdir() });
+        assert.deepEqual(sm.entryFor(fork.sessionId).codexPolicy, expected);
+        assert.notEqual(sm.entryFor(fork.sessionId).codexPolicy, sm.entryFor(sessionId).codexPolicy);
+        assert.equal(built.length, 3);
+        for (const cmd of built) {
+          assert.ok(cmd.includes(`'--sandbox' '${sandbox}' '--ask-for-approval' '${approval}'`));
+          assert.doesNotMatch(cmd, /--dangerously-bypass|--approve-for-me/);
+        }
+      });
+    }
+  }
+}
+
+test('extension Codex policy overrides an approvalPolicy spawn on launch, resume and fork without replacing its stored request', async () => {
+  const sm = codexManager();
+  sm._extCodexPolicy = () => ({ sandbox: 'read-only', approval: 'on-request' });
+  const built = [];
+  sm._newSession = async (_t, _d, inner) => { built.push(inner); };
+  const host = buildHostApi({ id: 'test', requires: ['sessions:spawn'], core: { sessionManager: sm } });
+  const { sessionId } = await host.sessions.spawn({ cwd: os.tmpdir(), intent: 'x', agent: 'codex', approvalPolicy: 'never' });
+  assert.equal(sm.entryFor(sessionId).codexPolicy.approval, 'never');
+  await sm.resume(sessionId, os.tmpdir());
+  assert.equal(sm.entryFor(sessionId).codexPolicy.approval, 'never');
+  const fork = await sm.fork({ sourceId: 'live-codex', parentId: sessionId, parentEntry: sm.entryFor(sessionId), cwd: os.tmpdir() });
+  assert.equal(sm.entryFor(fork.sessionId).codexPolicy.approval, 'never');
+  assert.equal(built.length, 3);
+  for (const cmd of built) {
+    assert.match(cmd, /'--sandbox' 'read-only' '--ask-for-approval' 'on-request'/);
+    assert.doesNotMatch(cmd, /'--ask-for-approval' 'never'/);
+  }
 });

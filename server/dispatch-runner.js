@@ -77,6 +77,7 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     model: opts.model,
     effort: opts.effort,
     autoCompactTokens: opts.autoCompactTokens,
+    ...(opts.approvalPolicy === undefined ? {} : { approvalPolicy: opts.approvalPolicy }),
     agent: opts.agent ?? 'claude',
     runtime: opts.runtime || 'local',
     addDirs: opts.addDirs || [],

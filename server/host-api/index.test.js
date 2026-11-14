@@ -1031,6 +1031,24 @@ test('without core telemetry wired, host.telemetry is inert', () => {
   assert.equal(host.telemetry.emit('a', {}), false);
 });
 
+test('spawn validates Codex approvalPolicy and forwards only the approval selection', async () => {
+  const { seen, host } = spawnWiring();
+  for (const approvalPolicy of ['on-request', 'never']) {
+    await host.sessions.spawn({ agent: 'codex', approvalPolicy });
+    assert.equal(seen.dispatch.at(-1).approvalPolicy, approvalPolicy);
+    assert.equal('codexPolicy' in seen.dispatch.at(-1), false);
+  }
+  await host.sessions.spawn({ agent: 'codex' });
+  assert.equal('codexPolicy' in seen.dispatch.at(-1), false);
+  for (const approvalPolicy of ['untrusted', 'on-failure', '', null, 42, {}]) {
+    await assert.rejects(() => host.sessions.spawn({ agent: 'codex', approvalPolicy }), /approvalPolicy.*on-request.*never/);
+  }
+  for (const agent of [undefined, 'claude', 'gemini']) {
+    await assert.rejects(() => host.sessions.spawn({ agent, approvalPolicy: 'never' }), /approvalPolicy.*Codex/);
+  }
+  assert.equal(seen.dispatch.length, 3);
+});
+
 test('mail:read lists sender and time metadata without exposing message text', () => {
   const mailStore = new MailboxStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-host-mail-')), 'mail.json'));
   mailStore.append('recipient', { from: 'sender', body: 'private message' }, 123);
