@@ -278,6 +278,13 @@ A board half reads only its own state and the session view, and acts only throug
   with the reply arriving through `api.onMessage`.
 - `api.styles()` resolves with the board's contributed styles, the list `/api/styles` serves.
 
+Every session row the board hands a board half carries two fields of the board's own (1.75.0):
+`deckId`, the id of the deck the session is on (from `GET /deck`), and `cardKey`,
+`<deckId>/<sessionId>`. The board names a card by that pair, since two decks can each hold a session
+the other does not know about. The session ids in the API itself (`openSession`, `mountSession`,
+`api.act`'s `session`) are unchanged. An older board leaves both fields out, so a board half that
+reads them declares `^1.75.0`.
+
 ### Ports and origins
 
 The deck and the board listen on separate ports, so the board talks to the deck cross-origin. The
@@ -285,8 +292,13 @@ board server is on `AW_PORT` (default `7878`), the address you open: it serves t
 scripts, each extension's board half under `/ext/<id>/`, and styles (`/api/styles`, `/styles/*`).
 The deck listens on loopback only, on `AW_DECK_PORT` (default `AW_PORT` + 1), and the board page names
 that port in `<meta name="aw-deck-port">`. The deck accepts a browser only from the board origins in
-its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS`. A board
-opened from another host (with `AW_BIND_HOST`) reaches the deck through the board server instead.
+its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS` (or
+`--allowed-origins`, or `allowedOrigins` in `config.json`). A board opened from another host (with
+`AW_BIND_HOST`) reaches the deck through the board server instead.
+
+A deck started with `--deck-only` has no board server: it serves only the deck API on its own port
+and 404s board pages, and its allowlist is only the origins configured for it. See
+[Running a second deck](../README.md#running-a-second-deck).
 
 Board pages are sent with `Content-Security-Policy-Report-Only: script-src 'self'; object-src 'none';
 base-uri 'self'`. Nothing is blocked yet: an inline `onclick` or `<script>` in a board half still

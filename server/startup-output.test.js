@@ -40,3 +40,9 @@ for (const { name, err, match } of listenErrors) {
     assert.match(listenErrorMessage(err, 7878), match);
   });
 }
+
+test('bannerLines for a deck-only instance names the deck API, not a board', () => {
+  const lines = bannerLines({ version: '0.1.0', url: 'http://localhost:7900', dataDir: 'd', deckOnly: true });
+  assert.match(lines[1], /deck only$/);
+  assert.ok(lines.includes('  Deck API: http://localhost:7900/deck'));
+});

@@ -37,8 +37,8 @@ function rig(over = {}) {
   const stream = { scrollTop: 800, scrollHeight: 2000, clientHeight: 400 };
   const panel = createSessionPanel({
     view: () => state.view,
-    session: () => (state.view ? { sessionId: 's1' } : null),
-    gateFor: (sid) => (sid === 's1' ? state.gate : null),
+    session: () => (state.view ? { sessionId: 's1', cardKey: 'd1/s1' } : null),
+    gateFor: (card) => (card === 'd1/s1' ? state.gate : null),
     chat: () => ({
       stream,
       append: (t) => { calls.push(['append', t]); return state.composerOpen; },

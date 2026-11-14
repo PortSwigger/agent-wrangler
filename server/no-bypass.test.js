@@ -88,6 +88,7 @@ export function bypasses(src, file, root = REPO_ROOT) {
 test('board code reaches the deck only through /deck, /ws and /pty on the deck origin, and imports nothing from server/', () => {
   const files = boardFiles();
   assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}app.js`)) && files.some((f) => f.includes(`builtin${sep}todos${sep}public`)));
+  assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}card-key.js`)), 'the card-key module is board code');
   const all = files.flatMap((f) => bypasses(readFileSync(f, 'utf8'), f).map((b) => `${relative(REPO_ROOT, f)}:${b}`));
   assert.deepEqual(all, []);
 });

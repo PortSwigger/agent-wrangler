@@ -10,37 +10,39 @@
 //   - `watch`: the diff panel openDiff opened, and the onClose to call when THAT
 //     panel closes. diff-view.js reports every close, whatever caused it.
 //
+// Cards are named by card key (card-key.js).
+//
 // The latest request always wins: asking for another card drops a pending one
 // (and its onClose, which never fires — its panel never opened), and a new
 // openDiff replaces the watch BEFORE it touches the panel, so the old onClose
 // does not fire for a close the new request itself caused.
 export function createBoardOpen() {
-  let pending = null; // { sessionId, diff, onClose }
-  let watch = null;   // { sessionId, onClose }
+  let pending = null; // { card, diff, onClose }
+  let watch = null;   // { card, onClose }
   return {
-    request(sessionId, { diff = false, onClose = null } = {}) {
-      pending = { sessionId, diff, onClose };
+    request(card, { diff = false, onClose = null } = {}) {
+      pending = { card, diff, onClose };
     },
     // Called with whatever pendingSelect has just selected. Anything else
     // selected first means the user (or a deep link) moved on, so a stale
     // request is dropped rather than left to fire on a later restore.
-    claim(sessionId) {
+    claim(card) {
       const p = pending;
       pending = null;
-      return p && p.sessionId === sessionId ? p : null;
+      return p && p.card === card ? p : null;
     },
     // A later request that needed no restore: forget the pending one, and say
     // which card it was so app.js can disarm the pendingSelect it armed.
     drop() {
-      const sid = pending?.sessionId ?? null;
+      const card = pending?.card ?? null;
       pending = null;
-      return sid;
+      return card;
     },
-    watchDiff(sessionId, onClose) {
-      watch = typeof onClose === 'function' ? { sessionId, onClose } : null;
+    watchDiff(card, onClose) {
+      watch = typeof onClose === 'function' ? { card, onClose } : null;
     },
-    diffClosed(sessionId) {
-      if (!watch || watch.sessionId !== sessionId) return;
+    diffClosed(card) {
+      if (!watch || watch.card !== card) return;
       const { onClose } = watch;
       watch = null;
       onClose();

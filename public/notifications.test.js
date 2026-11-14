@@ -82,12 +82,12 @@ test('scheduled runs stack independently and stay until viewed or closed', async
   const doc = fakeDocument();
   const notifications = createNotifications({ document: doc });
   const selected = [];
-  const fire = new Function('notifications', 'tryFulfillScheduledFocus', `
+  const fire = new Function('notifications', 'tryFulfillScheduledFocus', 'cardOf', `
     let pendingScheduledFocus;
     let scheduleNotificationId = 0;
     ${source.slice(start, end)}
     return onScheduleFired;
-  `)(notifications, () => selected.push('viewed'));
+  `)(notifications, () => selected.push('viewed'), (sid) => `d1/${sid}`);
   fire({ id: 'daily', name: 'Daily work', sessionId: 'CARD1' });
   fire({ id: 'daily', name: 'Daily work', sessionId: 'CARD2' });
   assert.equal(cards(doc).length, 2);

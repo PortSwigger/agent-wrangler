@@ -59,8 +59,9 @@ function harness() {
   const embed = createSessionEmbed({
     document: dom.document,
     parts: () => ({ sidebar: dom.sidebar, diffPanel: dom.diffPanel, diffAnchor: dom.termWrap }),
-    show: (sid) => log.push(`show ${sid}`),
+    show: (card) => log.push(`show ${card}`),
     release: (o) => log.push(`release ${o.sessionId}`),
+    cardOf: (sid) => `d1/${sid}`,
   });
   const ids = (n) => n.children.map((c) => c.id);
   return { ...dom, embed, log, ids };
@@ -77,7 +78,8 @@ test('mount lends the panel to the element, with the diff under the header, and 
   assert.deepEqual(h.ids(h.main), ['grid', 'ext-views']);
   assert.equal(handle.sessionId, 's1');
   assert.equal(h.embed.active()?.sessionId, 's1');
-  assert.deepEqual(h.log, ['show s1']);
+  assert.equal(h.embed.active()?.card, 'd1/s1', 'the owner holds the card key');
+  assert.deepEqual(h.log, ['show d1/s1']);
 
   handle.unmount();
   assert.deepEqual(h.ids(h.main), before);
@@ -85,9 +87,9 @@ test('mount lends the panel to the element, with the diff under the header, and 
   assert.deepEqual(h.viewA.children, [], 'the wrapper went with it');
   assert.equal(handle.sessionId, null);
   assert.equal(h.embed.active(), null);
-  assert.deepEqual(h.log, ['show s1', 'release s1'], 'released before the move');
+  assert.deepEqual(h.log, ['show d1/s1', 'release s1'], 'released before the move');
   handle.unmount();
-  assert.deepEqual(h.log, ['show s1', 'release s1'], 'a second unmount is a no-op');
+  assert.deepEqual(h.log, ['show d1/s1', 'release s1'], 'a second unmount is a no-op');
 });
 
 test('show and a repeat mount into the same element swap the session without moving anything', () => {
@@ -97,7 +99,7 @@ test('show and a repeat mount into the same element swap the session without mov
   assert.equal(h.embed.mount(h.viewA, 's3'), handle);
   assert.equal(h.viewA.children.length, 1);
   assert.equal(handle.sessionId, 's3');
-  assert.deepEqual(h.log, ['show s1', 'show s2', 'show s3']);
+  assert.deepEqual(h.log, ['show d1/s1', 'show d1/s2', 'show d1/s3']);
 });
 
 test('a mount into another element takes the panel over and the older handle goes inert', () => {
@@ -110,7 +112,7 @@ test('a mount into another element takes the panel over and the older handle goe
   assert.equal(a.show('s9'), false);
   a.unmount();
   assert.equal(b.sessionId, 's2', 'the stale handle cannot take it back');
-  assert.deepEqual(h.log, ['show s1', 'release s1', 'show s2']);
+  assert.deepEqual(h.log, ['show d1/s1', 'release s1', 'show d1/s2']);
 });
 
 test('park sends the panel home for the board and unpark lends it back on the same session', () => {
@@ -123,10 +125,10 @@ test('park sends the panel home for the board and unpark lends it back on the sa
   handle.show('s2');
   h.embed.unpark();
   assert.deepEqual(h.ids(h.viewA.children[0]), ['sidebar']);
-  assert.deepEqual(h.log, ['show s1', 'release s1', 'show s2']);
+  assert.deepEqual(h.log, ['show d1/s1', 'release s1', 'show d1/s2']);
   h.embed.park();
   handle.unmount();
-  assert.deepEqual(h.log, ['show s1', 'release s1', 'show s2', 'release s2'], 'unmounting a parked embed releases nothing twice');
+  assert.deepEqual(h.log, ['show d1/s1', 'release s1', 'show d1/s2', 'release s2'], 'unmounting a parked embed releases nothing twice');
   h.embed.unpark();
   assert.equal(h.embed.owner(), null);
 });
@@ -137,7 +139,7 @@ test('a mount whose view is not on screen starts parked', () => {
   assert.deepEqual(h.viewA.children, []);
   assert.deepEqual(h.log, []);
   h.embed.unpark();
-  assert.deepEqual(h.log, ['show s1']);
+  assert.deepEqual(h.log, ['show d1/s1']);
 });
 
 test('an element dropped from the document is reclaimed, and an extension switched off takes its embed', () => {
@@ -178,6 +180,22 @@ test('a view asked for while parked waits for the view to come back on screen', 
   assert.deepEqual(h.log, []);
   assert.equal(h.embed.owner().view, 'diff');
   h.embed.unpark();
-  assert.deepEqual(h.log, ['show s1']);
+  assert.deepEqual(h.log, ['show d1/s1']);
   assert.equal(h.embed.active().view, 'diff');
+});
+
+test('a mount made before the board knows its deck keys its card once the deck is known', () => {
+  const dom = stubDom();
+  let deck = null;
+  const embed = createSessionEmbed({
+    document: dom.document,
+    parts: () => ({ sidebar: dom.sidebar, diffPanel: dom.diffPanel, diffAnchor: dom.termWrap }),
+    show() {},
+    release() {},
+    cardOf: (sid) => (deck ? `${deck}/${sid}` : null),
+  });
+  embed.mount(dom.viewA, 's1');
+  assert.equal(embed.active()?.card, null);
+  deck = 'd1';
+  assert.equal(embed.active()?.card, 'd1/s1');
 });
