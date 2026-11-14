@@ -46,11 +46,11 @@ import { createMcpRequestHandler } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
 import { bindHost, deckPort, deckOnly, sessionApiPort } from './runtime.js';
-import { createSessionApi } from './session-api/index.js';
+import { createSessionApi, carriesSessionCredential } from './session-api/index.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createBoardServer } from './http-handler.js';
 import { createBoardDecks } from './board-decks.js';
-import { createDeckServer } from './deck/http.js';
+import { createDeckServer, refuseSessionCredentialUpgrade } from './deck/http.js';
 import { resolveMarkdownPath } from './file-preview.js';
 import { createExtFiles } from './ext-files.js';
 import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
@@ -1098,7 +1098,8 @@ function deckHandler(req, res) {
 
 // The session API (server/session-api): /mcp, /pr-attach and /pr-model behind
 // the per-card token check, on a port of its own. The deck keeps the same routes
-// for sessions launched before tokens, whose URLs name the board's port.
+// as an adapter onto it (same check, one deprecation warning) for sessions
+// launched before it had its own port, whose URLs name the board's port.
 const sessionApi = createSessionApi({
   dataDir: DATA_DIR,
   cardState: (id) => {
@@ -1147,6 +1148,10 @@ deckServer.on('upgrade', (req, socket, head) => {
     return;
   }
   const { pathname, search } = new URL(req.url, 'http://localhost');
+  if ((pathname === '/ws' || pathname === '/pty') && carriesSessionCredential(req)) {
+    refuseSessionCredentialUpgrade(socket);
+    return;
+  }
   if (pathname === '/ws') {
     const mode = wsApiMode(search);
     if (!mode) {

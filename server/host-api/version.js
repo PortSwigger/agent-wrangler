@@ -546,6 +546,13 @@ import semver from 'semver';
 // rows carry none of them, as before. A board half that reads them declares
 // `^1.76.0`.
 //
+// 1.77.0 shows each deck's tasks on a board with several decks: the
+// `board.tray` context's `tasks` also lists every other deck's tasks, with ids
+// scoped `<deckId>/<taskId>`, and with more than one deck each real task
+// carries `deckName`. `minimiseTask` and `setMinimisedTasks` take those ids.
+// With one deck the context is as before. A tray that reads `deckName`
+// declares `^1.77.0`.
+//
 // 1.78.0 adds manifest hooks `session.beforeSpawn` and `session.spawned` for
 // new-session launches across providers and launch sources. The first can
 // refuse with a reason or return extension-owned data; the second receives

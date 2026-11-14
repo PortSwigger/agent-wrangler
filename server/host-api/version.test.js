@@ -80,7 +80,8 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.74.0 split manifests and the board half's state, onState, act and styles,
 // and 1.75.0 `deckId` and `cardKey` on the board's session rows,
 // and 1.76.0 `deckName`, `deckColour` and `deckUnreachable` on them,
-// and 1.78.0 the beforeSpawn and spawned hooks,
+// 1.77.0 every deck's tasks, with `deckName`, in the `board.tray` context,
+// 1.78.0 the beforeSpawn and spawned hooks
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
