@@ -84,6 +84,50 @@ export function remoteTaskView(remotes = []) {
   return view;
 }
 
+// The new-session dialog's deck picker, from the board's decks (own first):
+// `value` is '' for the board's own deck and the deck id for another. Only a
+// connected deck can be picked; any other is listed, disabled, with why.
+export function deckPickerOptions(decks = []) {
+  const out = [];
+  for (const d of decks) {
+    if (!d) continue;
+    if (d.own) { out.push({ value: '', label: d.name, colour: d.colour ?? null, disabled: false }); continue; }
+    const status = d.duplicate ? 'incompatible' : d.status;
+    const why = status === 'ready' && d.deckId ? '' : status === 'incompatible' ? 'incompatible' : 'unreachable';
+    out.push({ value: d.deckId || `entry:${d.id}`, label: why ? `${d.name} (${why})` : d.name, colour: d.colour ?? null, disabled: Boolean(why) });
+  }
+  return out;
+}
+
+// The runtimes a deck's descriptor offers, each with the agents it runs (null
+// for every agent). A descriptor that lists none still runs sessions locally.
+export function deckRuntimes(descriptor) {
+  const list = Array.isArray(descriptor?.runtimes) ? descriptor.runtimes : [];
+  const out = [];
+  for (const r of list) {
+    if (typeof r?.id !== 'string' || !r.id || out.some((x) => x.id === r.id)) continue;
+    out.push({ id: r.id, label: typeof r.label === 'string' && r.label ? r.label : r.id, agents: Array.isArray(r.agents) ? r.agents.filter((a) => typeof a === 'string') : null });
+  }
+  return out.length ? out : [{ id: 'local', label: 'Local (host)', agents: null }];
+}
+
+// Whether any of a deck's runtimes runs `agent`.
+export const deckRunsAgent = (runtimes, agent) => runtimes.some((r) => r.agents === null || r.agents.includes(agent));
+
+// The sessions a deck holds: another deck's by its id, the board's own (null)
+// those stamped with the board's deck id or with none.
+export function sessionsOnDeck(sessions = [], deckId = null, ownDeckId = null) {
+  return sessions.filter((s) => (deckId ? s?.deckId === deckId : s && (!s.deckId || s.deckId === ownDeckId)));
+}
+
+// A schedule action as another deck stores it: a dispatch names its task by
+// that deck's own id, not the board's scoped one.
+export function scheduleActionForDeck(action, tasks = []) {
+  if (action?.kind !== 'dispatch' || !action.dispatch?.taskId) return action;
+  const task = tasks.find((t) => t.id === action.dispatch.taskId);
+  return { ...action, dispatch: { ...action.dispatch, taskId: task?.localId } };
+}
+
 // Where a task or schedule call goes, from the ids it names: a scoped id names
 // another deck and is sent there bare; any other id is the board's own deck's
 // (`deckId: null`). `deckId` is undefined when the call names none, and

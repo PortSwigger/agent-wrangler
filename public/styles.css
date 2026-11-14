@@ -302,6 +302,7 @@ main { flex: 1; display: flex; min-width: 0; min-height: 0; }
 .context-menu-hint { color: var(--fg-subtle); font-size: 11px; }
 /* Ctrl+Cmd+<key> board-shortcut hint shown next to an Actions-menu row. */
 .kbd-hint { font-size: 11px; color: var(--fg-subtle); letter-spacing: .02em; white-space: nowrap; }
+.context-menu-item:disabled { opacity: .5; cursor: default; background: transparent; }
 .context-menu-item.danger { color: var(--red-fg); }
 .context-menu-item.danger:hover, .context-menu-item.danger:focus-visible { background: var(--danger-bg); color: var(--danger-strong); outline: none; }
 .context-menu-sep { height: 1px; margin: 3px 2px; background: var(--border-muted); }
@@ -492,6 +493,8 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    sheet — every user declares its own line. A plain block wrapper: the fields
    inside lay out exactly as they did unwrapped. */
 .dispatch-field.hidden { display: none; }
+/* The new-session dialog's deck picker, shown only with more than one deck. */
+#m-deck-row.hidden { display: none; }
 
 /* The Codex sandbox/approval controls in Advanced options (codex-policy-field.js). */
 #m-codex-policy-row label.check-row { margin-top: 10px; }

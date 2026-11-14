@@ -235,11 +235,15 @@ export function codexUpdateState(paneText) {
 // so this runs before the working check and carries waitingReason 'permission'
 // like a Claude permission prompt.
 export function codexApprovalState(recent) {
-  if (
-    /^[\s›]*1\.\s*yes,\s*proceed\b/im.test(recent)
+  const legacy = /^[\s›]*1\.\s*yes,\s*proceed\b/im.test(recent)
     && /^[\s›]*\d\.\s*no,\s*and\s+tell\s+codex\s+what\s+to\s+do\s+differently\b/im.test(recent)
-    && /^\s*press\s+enter\s+to\s+confirm\s+or\s+esc\s+to\s+cancel\b/im.test(recent)
-  ) {
+    && /^\s*press\s+enter\s+to\s+confirm\s+or\s+esc\s+to\s+cancel\b/im.test(recent);
+  const modern = /^[\s›]*1\.\s*Allow\s+Run the tool and continue\s*$/im.test(recent)
+    && /^[\s›]*2\.\s*Allow for this session\b/im.test(recent)
+    && /^[\s›]*3\.\s*Always allow\b/im.test(recent)
+    && /^[\s›]*4\.\s*Cancel\s+Cancel this tool call\s*$/im.test(recent)
+    && /(?:^|\n)\s*enter to submit\s*\|\s*esc to cancel\s*$/i.test(recent);
+  if (legacy || modern) {
     return { status: 'needs-you', waitingFor: 'Codex is asking for approval', waitingReason: 'permission' };
   }
   return null;

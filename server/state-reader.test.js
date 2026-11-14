@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { liveState, sessionLabel, withForkMark, buildGraph, apiErrorPromotion, apiErrorReason, applyRuntimeCost, resolveRuntimeForGraph } from './state-reader.js';
+import { projectSession } from './host-api/project.js';
 import { SessionManager } from './session-manager.js';
 import { workerStatusWord } from '../public/cards.js';
 import { SESSIONS_DIR as HOOK_SESSIONS_DIR } from './claude-paths.js';
@@ -1253,3 +1254,29 @@ test('buildGraph: a discovered session captures by its pane id, else its tmux na
     assert.deepEqual(targets, [want]);
   }
 });
+
+
+for (const managed of [false, true]) {
+  test(`buildGraph: modern Codex approval reaches host status for a ${managed ? 'managed' : 'discovered'} session`, async (t) => {
+    const entry = { sessionId: 'modern-codex-approval', agent: 'codex', liveSessionId: 'missing-modern-approval' };
+    const mgr = managed ? makeDormantManager([entry]) : makeDiscoveredManager(entry, 'cx_modern');
+    if (managed) {
+      mgr.tmuxNameFor = (id) => id === entry.sessionId ? 'cx_modern' : null;
+      mockHookSession(t, { sessionId: entry.sessionId, pid: process.pid });
+    }
+    const pane = fs.readFileSync(new URL('./fixtures/codex-approval/mcp-modern.txt', import.meta.url), 'utf8');
+    const graph = await buildGraph(mgr, async () => ({}), {
+      discover: async () => [{ tmuxName: 'cx_modern', claudePid: managed ? process.pid : 4243, agent: 'codex', command: 'codex' }],
+      runtimeResolver: () => ({ analyze: async () => ({}) }),
+      capture: async () => pane,
+    });
+    const node = graph.sessions.find((s) => s.sessionId === entry.sessionId);
+    assert.equal(node.status, 'needs-you');
+    assert.equal(node.waitingFor, 'Codex is asking for approval');
+    assert.equal(node.waitingReason, 'permission');
+    const row = projectSession(entry, entry.sessionId, { node });
+    assert.equal(row.status, 'needs-you');
+    assert.equal(row.waitingReason, 'permission');
+    assert.equal(row.dormant, false);
+  });
+}
