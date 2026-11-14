@@ -617,6 +617,21 @@ test('tileHtml: an empty tile keeps its empty-state hint (extensions hide it the
   assert.match(html, /cell-empty-body/);
 });
 
+test('tileHtml: with several decks a task tile names its deck; another deck\'s tile offers no new session or extension body', () => {
+  const tile = (task) => ({ kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { links: [], ...task } });
+  const plain = tileHtml(tile({ id: 'T1', name: 'T' }), ctx({ ownDeckId: 'deck-a' }));
+  assert.doesNotMatch(plain, /task-deck|on-deck/, 'one deck: no deck name');
+  const own = tileHtml(tile({ id: 'T1', name: 'T', deckId: 'deck-a', deckName: 'Laptop A', deckColour: '#336699' }), ctx({ ownDeckId: 'deck-a' }));
+  assert.match(own, /<span class="task-deck"[^>]*>Laptop A<\/span><span class="task-name"/);
+  assert.match(own, /--deck-colour:#336699;/);
+  assert.match(own, /task-new-sess/);
+  assert.match(own, /data-task-body="T1"/);
+  const remote = tileHtml(tile({ id: 'deck-b/T1', name: 'T', deckId: 'deck-b', deckName: 'Laptop B', deckUnreachable: true }), ctx({ ownDeckId: 'deck-a' }));
+  assert.match(remote, /task-cell on-deck deck-unreachable"/);
+  assert.match(remote, />Laptop B · unreachable</);
+  assert.doesNotMatch(remote, /task-new-sess|data-task-body/);
+});
+
 test('visibleTaskLinkCount: keeps every link that fits and reserves the overflow badge only when needed', () => {
   assert.equal(visibleTaskLinkCount([30, 40, 50], 132, 20, 6), 3);
   assert.equal(visibleTaskLinkCount([30, 40, 50], 104, 20, 6), 2);

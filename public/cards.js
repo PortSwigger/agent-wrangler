@@ -416,7 +416,7 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   // `.child-group` (it has children and/or a live team), the GROUP becomes the
   // drag unit instead — same reasoning as `wf`, just without the violet tint.
   const wfCls = wf ? ' wf-orchestrator' : '';
-  const draggable = (wf || nested || !onOwnDeck(s, ctx)) ? 'false' : 'true';
+  const draggable = (wf || nested || s.deckUnreachable) ? 'false' : 'true';
   return `<div class="session-card ${state}${dormant}${selected}${expanded ? ' expanded' : ''}${wfCls}${deckCardClass(s)}" data-sid="${esc(s.sessionId)}" draggable="${draggable}" data-card="${esc(s.cardKey)}" role="button" tabindex="0"${deckCardStyle(s, throbDelayStyle(state))}>
     <span class="card-bar"${bwTitle}><span>${esc(bwShown)}</span></span>
     <div class="card-name-row">
@@ -449,6 +449,14 @@ export function deckBadgeHtml(s) {
   if (!s.deckName) return '';
   const title = s.deckUnreachable ? `${s.deckName} is unreachable` : `On ${s.deckName}`;
   return `<span class="deck-badge" title="${esc(title)}">${esc(s.deckName)}${s.deckUnreachable ? ' · unreachable' : ''}</span>`;
+}
+
+// A task tile's deck, named ahead of the task while the board shows more than
+// one deck, so each deck's tasks read as grouped under its name.
+export function taskDeckHtml(task) {
+  if (!task?.deckName) return '';
+  const title = task.deckUnreachable ? `${task.deckName} is unreachable` : `A task on ${task.deckName}`;
+  return `<span class="task-deck" title="${esc(title)}">${esc(task.deckName)}${task.deckUnreachable ? ' · unreachable' : ''}</span>`;
 }
 
 // The status word for a worker's spine row — no longer shown as a visible label
@@ -703,7 +711,7 @@ export function snoozedRowHtml(s, ctx = null) {
   const label = wakeLabel(s.snooze.until, Date.now());
   const wakeBtn = `<button class="snooze-wake" data-card="${esc(s.cardKey)}" title="Wake now"><span class="wake-moon">${MOON_ICON}</span><span class="wake-sun">${WAKE_ICON}</span></button>`;
   const wakeChip = `<span class="snooze-chip">${CLOCK_ICON}${esc(label)}</span>`;
-  return `<div class="snoozed-row${s.deckUnreachable ? ' deck-unreachable' : ''}" data-sid="${esc(s.sessionId)}" data-card="${esc(s.cardKey)}" draggable="${onOwnDeck(s, ctx) ? 'true' : 'false'}"${deckCardStyle(s)}>
+  return `<div class="snoozed-row${s.deckUnreachable ? ' deck-unreachable' : ''}" data-sid="${esc(s.sessionId)}" data-card="${esc(s.cardKey)}" draggable="${s.deckUnreachable ? 'false' : 'true'}"${deckCardStyle(s)}>
     ${wakeBtn}
     ${deckBadgeHtml(s)}<span class="snoozed-name">${esc(s.label)}</span>
     ${wakeChip}
@@ -727,11 +735,14 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   const active = tile.sessions.filter((s) => ctx.phaseOf(s) !== 'asleep');
   const asleep = listedAsleep(tile.sessions, ctx.phaseOf);
   const tileKey = tile.kind === 'notask' ? ctx.ADHOC_ID : tile.task.id;
+  // Another deck's task: its sessions are started, and its extensions run, on
+  // that deck, so the tile offers neither.
+  const remoteTask = tile.kind === 'task' && !onOwnDeck(tile.task, ctx);
   const snoozedCollapsed = ctx.collapsedSnoozed.has(tileKey);
   const snoozePill = `<button class="snooze-label snooze-toggle" data-tile="${esc(tileKey)}" title="${snoozedCollapsed ? 'Show snoozed' : 'Hide snoozed'}">snoozed ${asleep.length}<span class="snooze-toggle-icon">${snoozedCollapsed ? PLUS_ICON : MINUS_ICON}</span></button>`;
   const cards = renderTileCards(active, ctx, { focusMode })
     + (asleep.length ? `<div class="snooze-divider">${snoozePill}</div>${snoozedCollapsed ? '' : asleep.map((s) => snoozedRowHtml(s, ctx)).join('')}` : '');
-  const bodyHost = taskBodyHostHtml(tileKey);
+  const bodyHost = remoteTask ? '' : taskBodyHostHtml(tileKey);
   // Keyboard "new session" slot (Cmd+Shift+arrows lands here past the last card).
   // The lit target must sit where nav lands it — the *end* of the body — so on a
   // truly-empty tile we ring its big empty-state CTA, otherwise we append a compact
@@ -739,7 +750,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   // affordance: ringing it read as nothing, since it sits at the top, not the end).
   const showEmpty = !cards;
   const slotSel = ctx.selectedNewSlot === tileKey;
-  const newSess = `<button class="task-new-sess" title="New session in this task">${ROBOT_ICON}</button>`;
+  const newSess = remoteTask ? '' : `<button class="task-new-sess" title="New session in this task">${ROBOT_ICON}</button>`;
   const emptyBody = (hint) =>
     `<div class="cell-empty-body"><button class="empty-new-sess${slotSel ? ' selected' : ''}">${ROBOT_ICON}<span>New session</span></button><span class="empty-hint">${hint}</span></div>`;
   const slotRow = slotSel && !showEmpty
@@ -766,9 +777,11 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
       + `<button class="link-overflow" hidden></button></span>`
     : '';
   const restoredFlash = tile.task.id === ctx.restoredTaskId ? ' task-restored-flash' : '';
-  return `<div class="task-cell${restoredFlash}${moveClass}" data-taskid="${esc(tile.task.id)}" style="${pos}">
+  const deckCls = tile.task.deckName ? ` on-deck${tile.task.deckUnreachable ? ' deck-unreachable' : ''}` : '';
+  const deckStyle = tile.task.deckName && DECK_COLOUR.test(tile.task.deckColour || '') ? `--deck-colour:${tile.task.deckColour};` : '';
+  return `<div class="task-cell${restoredFlash}${moveClass}${deckCls}" data-taskid="${esc(tile.task.id)}" style="${pos}${deckStyle}">
     <div class="task-head" draggable="true">
-      <span class="task-name" title="Double-click to rename">${esc(tile.task.name)}</span>
+      ${taskDeckHtml(tile.task)}<span class="task-name" title="Double-click to rename">${esc(tile.task.name)}</span>
       ${linkBadge}
       ${newSess}
       <button class="task-actions-btn" title="Task actions">${KEBAB_ICON}</button>

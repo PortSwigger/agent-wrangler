@@ -70,6 +70,9 @@ test('new tasks stay visible, while Focus, open-task restore and Restore all rem
 test('tray read model follows live display order, includes Unassigned and drops archived tasks', () => {
   const scope = { latestTasks: { tasks: [{ id: 'a', name: 'Alpha' }, { id: 'gone', name: 'Old', archivedAt: 1 }, { id: 'b', name: 'Beta' }], order: ['b', 'gone', 'adhoc', 'a'] } };
   const read = new Function('latestTasks', `const ADHOC_ID = 'adhoc'; let minimisedIds = new Set(['a']);
+    const remoteBoard = { tasks: [], order: [] };
+    const findTask = (id) => latestTasks.tasks.find((t) => t.id === id) || null;
+    const tileTask = (t) => t;
     ${declaration('currentOrder')}
     ${declaration('trayContext')}
     return trayContext;
@@ -99,6 +102,7 @@ for (const adhoc of [false, true]) test(`both task menus preserve extension acti
   const id = adhoc ? 'adhoc' : 'a';
   const scope = {
     ADHOC_ID: 'adhoc', latestTasks: { tasks: [{ id: 'a', name: 'Alpha' }] }, latestGraph: {}, extApi: {},
+    findTask: (id) => (id === 'a' ? { id: 'a', name: 'Alpha' } : null), isRemoteTask: () => false,
     activitySortedTasks: new Set(), slots,
     mountMenu: (value) => { items = value; },
     FOCUS_ICON: '', MINIMISE_ICON: '', SORT_ICON: '', CHECK_ICON: '', ARCHIVE_ICON: '', TERMINAL_ICON: '', PENCIL_ICON: '',
@@ -178,6 +182,7 @@ for (const result of ['cancel', 'ok']) test(`drawer archive ${result} preserves 
   const pill = { dataset: { taskid: 'a' }, addEventListener: (type, handler) => { listeners[type] = handler; } };
   const scope = {
     ADHOC_ID: 'adhoc', latestTasks: { tasks: [{ id: 'a', name: 'Alpha' }] },
+    findTask: (id) => (id === 'a' ? { id: 'a', name: 'Alpha' } : null),
     latestSessions: [{ sessionId: 's' }], assignedTaskId: () => 'a', ARCHIVE_ICON: 'archive-icon',
     mountMenu: (value, x, y) => { items = value; position = [x, y]; },
     confirmDialog: async (value) => { confirmation = value; return result; },
