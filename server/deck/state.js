@@ -33,6 +33,21 @@ export function sessionView(session) {
   return out;
 }
 
+// The dropped fields of each session that has any, keyed by sessionId. Carried
+// on the state frame under `compat` so the extension adapters (the legacy /ws
+// graph frame and the board's extension graph) can hand extensions the full
+// record without the board's own view holding them.
+export function droppedSessionFields(sessions) {
+  const out = {};
+  for (const s of sessions || []) {
+    if (typeof s?.sessionId !== 'string') continue;
+    const fields = {};
+    for (const k of SESSION_VIEW_DROPPED) if (k in s) fields[k] = s[k];
+    if (Object.keys(fields).length) out[s.sessionId] = fields;
+  }
+  return out;
+}
+
 export const SETTINGS_KEYS = [
   'trustCodexLaunchCwd',
   'trustClaudeLaunchCwd',
@@ -66,6 +81,7 @@ export function toState(graph, ext = {}) {
     settings: pick(graph, SETTINGS_KEYS),
     ext,
     status: pick(graph, STATUS_KEYS),
+    compat: { sessionFields: droppedSessionFields(graph.sessions) },
     generatedAt: graph.generatedAt,
   };
 }

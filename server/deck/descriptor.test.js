@@ -21,8 +21,8 @@ test('the descriptor carries the id, api 1.0, sorted actions and enabled extensi
   });
 });
 
-test('/ws needs ?api= with a major this deck serves', () => {
-  assert.equal(wsApiMode(''), null);
+test('/ws?api= picks the legacy protocol, the deck API, or refuses a major it cannot serve', () => {
+  assert.equal(wsApiMode(''), 'legacy');
   assert.equal(wsApiMode('?api=1'), 'deck');
   assert.equal(wsApiMode('?api=1.0'), 'deck');
   assert.equal(wsApiMode('?api=2'), null);

@@ -57,6 +57,7 @@ import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
+import { withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
@@ -3001,7 +3002,7 @@ function openActionsMenu(sessionId, x, y) {
 // inline conditions because the two sides have to agree: a mismatch here shows a
 // menu whose every choice fails.
 function canSwitchModel(s) {
-  return canSwitchProviderModel(s && { ...s, status: displayStatus(s) });
+  return canSwitchProviderModel(s && { managed: s.managed, agent: s.agent, status: displayStatus(s) });
 }
 
 // What this browser last asked for, per card id. Needed only to break one
@@ -7584,7 +7585,7 @@ const deck = createDeckClient({
     syncStandingBanner();
     syncDeckControls();
   },
-  onState: (frame) => { applyGraph(stateToGraph(frame)); armIdleReapply(); },
+  onState: (frame) => { applyGraph(stateToGraph(frame, { restore: withCompatFields })); armIdleReapply(); },
   onEvent: (frame) => onDeckMessage(frame.data),
   // A #view=search deep link runs setView before this socket exists, so its
   // index-status request is dropped. Re-issue it on open — which also refreshes

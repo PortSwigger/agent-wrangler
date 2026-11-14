@@ -34,7 +34,7 @@ function connect(port, query = '') {
   return { ws, frames, opened };
 }
 
-test('the deck API: descriptor, state stream, actions with results; no legacy protocol or file routes', { timeout: 60_000 }, async () => {
+test('the deck API: descriptor, state stream, actions with results; the legacy protocol and file routes answer through adapters', { timeout: 60_000 }, async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-deck-'));
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
@@ -62,11 +62,21 @@ test('the deck API: descriptor, state stream, actions with results; no legacy pr
     const refused = connect(port, '?api=2');
     sockets.push(legacy.ws, client.ws, refused.ws);
     assert.equal(await refused.opened, false, 'a major this deck cannot serve is refused');
-    assert.equal(await legacy.opened, false, 'a board that names no API version is refused');
-    for (const p of [`/file?path=${encodeURIComponent(note)}`, '/ext-file?ext=checklist&path=a.md']) {
-      assert.equal((await fetch(`${base}${p}`)).status, 404, `${p} is gone; the board reads files through actions`);
-    }
+    assert.equal(await legacy.opened, true, 'a client that names no API version gets the legacy adapter');
+    const file = await fetch(`${base}/file?path=${encodeURIComponent(note)}`);
+    assert.equal(file.status, 200);
+    assert.deepEqual(await file.json(), { path: realpathSync(note), content: '# Deck note\n' }, 'GET /file answers as it always did');
+    const missing = await fetch(`${base}/file?path=${encodeURIComponent(join(dataDir, 'nope.md'))}`);
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await (await fetch(`${base}/ext-file?ext=no-such-ext&path=a.md`)).json(), { ok: false, reason: 'not-permitted' }, 'GET /ext-file answers as it always did');
     assert.equal(await client.opened, true);
+
+    const graph = await waitFor(() => legacy.frames.find((f) => f.type === 'graph'));
+    assert.ok(graph, 'a legacy client gets a graph frame built from the state frame');
+    for (const k of ['sessions', 'history', 'nodes', 'edges', 'tasks', 'schedules', 'defaultRuntime', 'extensions', 'codeVersion']) assert.ok(k in graph.graph, `graph carries ${k}`);
+    for (const k of ['rev', 'settings', 'status', 'ext', 'compat']) assert.ok(!(k in graph.graph), `graph has no ${k}`);
+    assert.ok(legacy.frames.some((f) => f.type === 'config'), 'a legacy client gets announcements unwrapped');
+    assert.ok(!legacy.frames.some((f) => f.type === 'state' || f.type === 'event'));
 
     const state = await waitFor(() => client.frames.find((f) => f.type === 'state'));
     assert.ok(state, 'no state frame on connect');
@@ -96,6 +106,12 @@ test('the deck API: descriptor, state stream, actions with results; no legacy pr
     await sleep(1500);
     assert.equal(client.frames.filter((f) => f.type === 'result').length, resultsBefore, 'a legacy message gets no answer');
     assert.ok(!client.frames.some((f) => f.type === 'state' && f.tasks.tasks.some((t) => t.name === 'Legacy task')), 'and does nothing');
+
+    legacy.ws.send(JSON.stringify({ type: 'task-create', name: 'Adapted task' }));
+    const reply = await waitFor(() => legacy.frames.find((f) => f.type === 'task-created'));
+    assert.ok(reply?.taskId, 'on a legacy connection it runs as task.create and gets its old reply');
+    assert.ok(await waitFor(() => legacy.frames.find((f) => f.type === 'graph' && f.graph.tasks.tasks.some((t) => t.id === reply.taskId))), 'and the next graph frame carries it');
+    assert.ok(await waitFor(() => client.frames.find((f) => f.type === 'state' && f.tasks.tasks.some((t) => t.id === reply.taskId))), 'the same state reaches the deck client');
   } finally {
     for (const ws of sockets) try { ws.close(); } catch {}
     try { server?.kill(); } catch {}

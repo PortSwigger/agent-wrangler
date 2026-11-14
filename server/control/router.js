@@ -2,6 +2,7 @@ import { activeHandlers } from './handlers/index.js';
 import { runWithOrigin } from '../request-origin.js';
 import { buildActionRegistry, handleAction } from '../deck/actions.js';
 import { NATIVE_ACTIONS } from '../deck/native-actions.js';
+import { routeLegacyMessage } from '../deck/legacy.js';
 
 // The deck API's action registry. Built lazily on the first frame rather than
 // at import: the active list includes every enabled extension's handlers, and
@@ -42,22 +43,25 @@ export async function invokeHandler(entry, msg, ctx) {
   }
 }
 
-// Parse one control-WS frame and dispatch it. `{type:'action'}` is the only
-// frame a board sends, and it always gets a `{type:'result'}`: an unknown
-// action is refused with `unsupported`, and any handler throw becomes a
-// `failed` result, so a single bad action never tears down the socket. A
-// malformed frame or any other type is dropped silently.
+// Parse one control-WS frame and dispatch it. `{type:'action'}` is the frame a
+// board sends, and it always gets a `{type:'result'}`: an unknown action is
+// refused with `unsupported`, and any handler throw becomes a `failed` result,
+// so a single bad action never tears down the socket. On a `legacy` connection
+// (a /ws upgrade without ?api=) any other type goes through the legacy adapter,
+// which runs it as the action its handler backs; otherwise it is dropped, as is
+// a malformed frame.
 // `handlers` is injectable so a test can pin the set (including an extension's
 // tagged handler) without writing config.json — the same escape hatch
 // buildMcpServer's `tools` gives, and it bypasses the process-wide memo.
-export async function routeControlMessage(raw, ctx, { handlers = null } = {}) {
+export async function routeControlMessage(raw, ctx, { handlers = null, legacy = false } = {}) {
   let msg;
   try {
     msg = JSON.parse(raw.toString());
   } catch {
     return;
   }
-  if (msg?.type !== 'action') return;
+  if (!msg || typeof msg !== 'object') return;
   const registry = handlers ? buildActionRegistry({ handlers, native: NATIVE_ACTIONS }) : deckActions();
-  await handleAction(msg, ctx, { registry, invoke: invokeHandler });
+  if (msg.type === 'action') await handleAction(msg, ctx, { registry, invoke: invokeHandler });
+  else if (legacy) await routeLegacyMessage(msg, ctx, { registry, invoke: invokeHandler });
 }

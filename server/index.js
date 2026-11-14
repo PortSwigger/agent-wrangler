@@ -57,6 +57,7 @@ import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
 import { archiveTaskCascade } from './control/handlers/tasks.js';
 import { createTargets } from './control/targets.js';
 import { routeControlMessage, invalidateHandlerMap, deckActions } from './control/router.js';
+import { createLegacyFileRoutes, legacyGraphFrame, legacyReply, warnLegacy } from './deck/legacy.js';
 import { loadDeckId } from './deck/deck-id.js';
 import { deckDescriptor, wsApiMode } from './deck/descriptor.js';
 import { deckEvent } from './deck/actions.js';
@@ -989,6 +990,15 @@ async function readMarkdownFile(raw) {
 // (host.files) decides what opens.
 const openExtFile = async (id, p) => (hostApis.has(id) ? extFiles.open(id, p) : { ok: false, reason: 'not-permitted' });
 
+// GET /file and GET /ext-file, kept for extensions that fetch them: adapters
+// over the two actions above, answering as those routes always did.
+const legacyFileRoutes = createLegacyFileRoutes({
+  registry: deckActions,
+  ctx: () => ({ readMarkdownFile, openExtFile }),
+  allowedHost: (host) => isAllowedHost(host, PORT),
+  logError,
+});
+
 // spawn_session creates a full board session, mirroring the /ws dispatch path:
 // dispatch (mints the card id, collects the launch context pre-launch) → assign →
 // rebuild.
@@ -1052,6 +1062,7 @@ function deckHandler(req, res) {
 // extensions alone — so a disabled extension's client is a 404, never served.
 const server = createHttpServer({
   port: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, deckHandler,
+  fileHandler: legacyFileRoutes.file, extFileHandler: legacyFileRoutes.extFile,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
   extensionThemes: () => themeSources(ext.themeDirs),
 });
@@ -1069,11 +1080,15 @@ server.on('upgrade', (req, socket, head) => {
   }
   const { pathname, search } = new URL(req.url, 'http://localhost');
   if (pathname === '/ws') {
-    if (!wsApiMode(search)) {
+    const mode = wsApiMode(search);
+    if (!mode) {
       socket.destroy();
       return;
     }
-    controlWss.handleUpgrade(req, socket, head, (ws) => controlWss.emit('connection', ws, req));
+    controlWss.handleUpgrade(req, socket, head, (ws) => {
+      ws.legacy = mode === 'legacy';
+      controlWss.emit('connection', ws, req);
+    });
   } else if (pathname === '/pty') {
     ptyWss.handleUpgrade(req, socket, head, (ws) => ptyWss.emit('connection', ws, req));
   } else {
@@ -1111,17 +1126,31 @@ function broadcastAgents() {
     .catch(() => {});
 }
 
-// Every broadcast reaches a board as an event.
+// Every broadcast reaches a board as an event, and a legacy client as the
+// event's payload (deck/legacy.js).
 function broadcast(obj) {
-  sendToClients(JSON.stringify(deckEvent(obj)));
+  const event = deckEvent(obj);
+  let deck = null;
+  let legacy = null;
+  for (const client of controlWss.clients) {
+    if (client.legacy) sendGuarded(client, legacy ??= JSON.stringify(legacyReply(event)));
+    else sendGuarded(client, deck ??= JSON.stringify(event));
+  }
 }
 
 // readyState alone is not enough: a client that stops reading stays OPEN
 // forever, so every snapshot we send it is queued in our own heap until the
 // process OOMs. sendGuarded drops such a peer instead — see ws-backpressure.js
 // for why terminate (not skip, not close) is the only safe option here.
-function sendToClients(msg, { except = null } = {}) {
-  for (const client of controlWss.clients) if (client !== except) sendGuarded(client, msg);
+// A state frame goes to each deck API client as it is, and to each legacy
+// client as the graph frame built from it.
+function sendStateToClients(frame, { except = null } = {}) {
+  let legacy = null;
+  for (const client of controlWss.clients) {
+    if (client === except) continue;
+    if (client.legacy) sendGuarded(client, legacy ??= legacyGraphFrame(JSON.parse(frame)));
+    else sendGuarded(client, frame);
+  }
 }
 
 // Sends any change the stream holds to the boards already connected. Run on
@@ -1130,7 +1159,7 @@ function sendToClients(msg, { except = null } = {}) {
 function flushState({ except = null } = {}) {
   if (!controlWss.clients.size) return;
   const frame = stateStream.next();
-  if (frame) sendToClients(frame, { except });
+  if (frame) sendStateToClients(frame, { except });
 }
 
 // Module-scope so its "have I already sent this?" memory spans every rebuild, not
@@ -1276,8 +1305,12 @@ controlWss.on('connection', (ws) => {
   // `canRestart` gates the board's own "Restart the wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
-  // Announcements reach the board as events, then the state stream follows.
-  const send = (obj) => ws.send(JSON.stringify(deckEvent(obj)));
+  // Announcements reach the board as events, then the state stream follows. A
+  // legacy client is sent each event's payload, and graph frames built from
+  // the state frames.
+  if (ws.legacy) warnLegacy('A /ws connection without ?api=', 'GET /deck and /ws?api=1 (action frames)');
+  const wire = (obj) => JSON.stringify(ws.legacy ? legacyReply(deckEvent(obj)) : deckEvent(obj));
+  const send = (obj) => ws.send(wire(obj));
   send({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() });
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
@@ -1287,7 +1320,7 @@ controlWss.on('connection', (ws) => {
   send({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION });
   flushState({ except: ws });
   const snapshot = stateStream.snapshot();
-  if (snapshot) ws.send(snapshot);
+  if (snapshot) ws.send(ws.legacy ? legacyGraphFrame(JSON.parse(snapshot)) : snapshot);
   if (fdWarning) send({ type: 'fd-warning', active: true, ...fdWarning });
   agentsMessage()
     .then((msg) => { if (ws.readyState === 1) send(msg); })
@@ -1313,7 +1346,7 @@ controlWss.on('connection', (ws) => {
     socketFor,
     // Guarded like broadcast: this is the same socket, and a client swamped by
     // snapshots must not go on accruing per-request replies either.
-    reply: (obj) => { sendGuarded(ws, JSON.stringify(deckEvent(obj))); },
+    reply: (obj) => { sendGuarded(ws, wire(obj)); },
     // Result frames, never wrapped.
     send: (obj) => { sendGuarded(ws, JSON.stringify(obj)); },
     readMarkdownFile,
@@ -1331,7 +1364,7 @@ controlWss.on('connection', (ws) => {
     staleGuiSession: () => staleGuiSession,
     recheckGuiSession: async () => { staleGuiSession = await sessionManager.checkGuiSession(); },
   };
-  ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx); });
+  ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx, { legacy: ws.legacy }); });
 });
 
 // --- PTY channel: stream a tmux attach to xterm.js ---

@@ -11,10 +11,18 @@ export function apiMajor(api) {
 // One state frame as the graph the board has always drawn from: settings,
 // status and each extension's state sit at the top level, as they did on the
 // legacy graph frame. `history` stays absent when the frame leaves it out.
-export function stateToGraph(frame) {
-  const { type: _t, rev: _r, settings, status, ext, ...rest } = frame;
+// `restore(record, fields)` puts a session's compat fields back onto it, for
+// the graph extensions see; without it the board's own view stays as sent.
+export function stateToGraph(frame, { restore = null } = {}) {
+  const { type: _t, rev: _r, settings, status, ext, compat, ...rest } = frame;
   const graph = { ...rest, ...(settings || {}), ...(status || {}) };
   for (const v of Object.values(ext || {})) if (v && typeof v === 'object') Object.assign(graph, v);
+  const fields = compat?.sessionFields;
+  if (restore && fields && typeof fields === 'object') {
+    const put = (r) => (r && Object.hasOwn(fields, r.sessionId) ? restore(r, fields[r.sessionId]) : r);
+    if (Array.isArray(graph.sessions)) graph.sessions = graph.sessions.map(put);
+    if (Array.isArray(graph.nodes)) graph.nodes = graph.nodes.map((n) => (n?.type === 'session' ? put(n) : n));
+  }
   return graph;
 }
 

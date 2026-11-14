@@ -26,7 +26,7 @@ export function isAllowedOrigin(originHeader, port) {
 }
 
 // A Host-header allowlist for a browser-reachable GET that returns sensitive
-// data (GET /deck) and so can't lean on the Origin gate: a same-origin GET
+// data (GET /file, GET /deck) and so can't lean on the Origin gate: a same-origin GET
 // carries no Origin, and DNS rebinding lets an attacker page reach the loopback
 // server as "same origin". The rebound request still arrives with a foreign Host
 // header, so pinning Host to the app's own authorities (loopback on our port,
