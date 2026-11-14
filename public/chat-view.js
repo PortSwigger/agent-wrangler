@@ -741,7 +741,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
     }
     const sentAttachments = attachments;
     const accepted = send({
-      type: 'message', sessionId: pending.sessionId, text,
+      type: 'message', sessionId: pending.sessionId, text, card: pending.card,
       requestId,
       ...(attachments.length ? { imageNames: attachments.map((a) => a.name) } : {}),
       ...(pending.clearComposer ? { clearComposer: true } : {}),
@@ -810,7 +810,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
     // and a prompt they are part-way through must not be overwritten by a restore
     // they asked for a moment earlier.
     restoreOverDraft = Boolean(input.value.trim());
-    send({ type: 'interrupt', sessionId: sessionIdOf(card), token: restoreToken });
+    send({ type: 'interrupt', sessionId: sessionIdOf(card), token: restoreToken, card });
     renderSuggestion();
   }
 
@@ -942,7 +942,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
         (frame) => {
           // Gone stale while the image was being read or converted.
           if (!pendingPastes.has(token)) return;
-          send({ type: 'paste-image', sessionId: sessionIdOf(card), token, ...frame });
+          send({ type: 'paste-image', sessionId: sessionIdOf(card), token, ...frame, card });
         },
         (err) => {
           if (!pendingPastes.delete(token)) return;
@@ -1075,7 +1075,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
 
   function poll() {
     if (!card) return;
-    send({ type: 'chat', sessionId: sessionIdOf(card), token: generation, ...(offset == null ? {} : { sinceOffset: offset }) });
+    send({ type: 'chat', sessionId: sessionIdOf(card), token: generation, ...(offset == null ? {} : { sinceOffset: offset }), card });
   }
 
   function clearBurst() {

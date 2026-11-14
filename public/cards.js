@@ -416,11 +416,11 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
   // `.child-group` (it has children and/or a live team), the GROUP becomes the
   // drag unit instead — same reasoning as `wf`, just without the violet tint.
   const wfCls = wf ? ' wf-orchestrator' : '';
-  const draggable = (wf || nested) ? 'false' : 'true';
-  return `<div class="session-card ${state}${dormant}${selected}${expanded ? ' expanded' : ''}${wfCls}" data-sid="${esc(s.sessionId)}" draggable="${draggable}" data-card="${esc(s.cardKey)}" role="button" tabindex="0"${throbDelayStyle(state)}>
+  const draggable = (wf || nested || !onOwnDeck(s, ctx)) ? 'false' : 'true';
+  return `<div class="session-card ${state}${dormant}${selected}${expanded ? ' expanded' : ''}${wfCls}${deckCardClass(s)}" data-sid="${esc(s.sessionId)}" draggable="${draggable}" data-card="${esc(s.cardKey)}" role="button" tabindex="0"${deckCardStyle(s, throbDelayStyle(state))}>
     <span class="card-bar"${bwTitle}><span>${esc(bwShown)}</span></span>
     <div class="card-name-row">
-      <span class="card-name">${esc(s.label)}</span>
+      ${deckBadgeHtml(s)}<span class="card-name">${esc(s.label)}</span>
       ${mailBadgeHtml(s)}
       <span class="agent-ico" title="${esc(agentName)}">${agentIcon(s.agent)}</span>
     </div>
@@ -428,6 +428,27 @@ export function sessionCardHtml(s, ctx, { expanded, wf, nested } = {}) {
     <div class="card-meta">${keyChip(age, 'core:age', ctx)}${keyChip(costEl, 'core:cost', ctx)}${keyChip(modelPill, 'core:model', ctx)}${keyChip(tokenChip, 'core:tokens', ctx)}${keyChip(compactPill, 'core:compact', ctx)}${keyChip(subAgentPill, 'core:subagents', ctx)}${keyChip(restarting, 'core:restarting', ctx)}${keyChip(automerge, 'core:automerge', ctx)}${keyChip(runtimeChip, 'core:runtime', ctx)}${keyChip(wt, 'core:worktree', ctx)}${mailBlockedHtml(s)}${statusNoticeBlockedHtml(s)}${cardPillHostHtml()}${metaLinks}</div>
     ${subAgentZone}
   </div>`;
+}
+
+// A card's deck, drawn only while the board shows more than one deck (the
+// board stamps deckName/deckColour then, public/decks.js): a coloured edge and
+// a badge naming the deck. A card whose deck is not connected is greyed and
+// says so, and keeps its last state.
+const DECK_COLOUR = /^#[0-9a-f]{6}$/i;
+export const onOwnDeck = (s, ctx) => !s.deckId || !ctx?.ownDeckId || s.deckId === ctx.ownDeckId;
+export function deckCardClass(s) {
+  return `${s.deckName ? ' on-deck' : ''}${s.deckUnreachable ? ' deck-unreachable' : ''}`;
+}
+export function deckCardStyle(s, style = '') {
+  if (!s.deckName || !DECK_COLOUR.test(s.deckColour || '')) return style;
+  const colour = `--deck-colour:${s.deckColour}`;
+  const m = /^ style="(.*)"$/.exec(style);
+  return m ? ` style="${m[1]};${colour}"` : ` style="${colour}"`;
+}
+export function deckBadgeHtml(s) {
+  if (!s.deckName) return '';
+  const title = s.deckUnreachable ? `${s.deckName} is unreachable` : `On ${s.deckName}`;
+  return `<span class="deck-badge" title="${esc(title)}">${esc(s.deckName)}${s.deckUnreachable ? ' · unreachable' : ''}</span>`;
 }
 
 // The status word for a worker's spine row — no longer shown as a visible label
@@ -498,7 +519,7 @@ export function workerRowHtml(s, ctx, spine) {
   // the violet box (`wf-child`) with the workflow symbol leading the row.
   const wf = isWorkflowRun(s);
   const wfIco = wf ? `<span class="wf-ico" title="Workflow">${WORKFLOW_ICON}</span>` : '';
-  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}${wf ? ' wf-child' : ''}${spineClass(spine)}" data-sid="${esc(s.sessionId)}" data-card="${esc(s.cardKey)}"${childDragAttrs(s, spine)} title="${esc(s.label)}" role="button" tabindex="0"${spineStyle(spine, throbDelayStyle(state))}>${spineGuidesHtml(spine)}
+  return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}${wf ? ' wf-child' : ''}${s.deckUnreachable ? ' deck-unreachable' : ''}${spineClass(spine)}" data-sid="${esc(s.sessionId)}" data-card="${esc(s.cardKey)}"${childDragAttrs(s, spine)} title="${esc(s.label)}" role="button" tabindex="0"${spineStyle(spine, throbDelayStyle(state))}>${spineGuidesHtml(spine)}
     ${wfIco}<span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
     ${mailBadge}
@@ -678,13 +699,13 @@ export function renderTileCards(active, ctx, opts = {}) {
 }
 
 // One asleep session: a greyed, name-only row with an amber wake-time chip.
-export function snoozedRowHtml(s) {
+export function snoozedRowHtml(s, ctx = null) {
   const label = wakeLabel(s.snooze.until, Date.now());
   const wakeBtn = `<button class="snooze-wake" data-card="${esc(s.cardKey)}" title="Wake now"><span class="wake-moon">${MOON_ICON}</span><span class="wake-sun">${WAKE_ICON}</span></button>`;
   const wakeChip = `<span class="snooze-chip">${CLOCK_ICON}${esc(label)}</span>`;
-  return `<div class="snoozed-row" data-sid="${esc(s.sessionId)}" data-card="${esc(s.cardKey)}" draggable="true">
+  return `<div class="snoozed-row${s.deckUnreachable ? ' deck-unreachable' : ''}" data-sid="${esc(s.sessionId)}" data-card="${esc(s.cardKey)}" draggable="${onOwnDeck(s, ctx) ? 'true' : 'false'}"${deckCardStyle(s)}>
     ${wakeBtn}
-    <span class="snoozed-name">${esc(s.label)}</span>
+    ${deckBadgeHtml(s)}<span class="snoozed-name">${esc(s.label)}</span>
     ${wakeChip}
   </div>`;
 }
@@ -709,7 +730,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   const snoozedCollapsed = ctx.collapsedSnoozed.has(tileKey);
   const snoozePill = `<button class="snooze-label snooze-toggle" data-tile="${esc(tileKey)}" title="${snoozedCollapsed ? 'Show snoozed' : 'Hide snoozed'}">snoozed ${asleep.length}<span class="snooze-toggle-icon">${snoozedCollapsed ? PLUS_ICON : MINUS_ICON}</span></button>`;
   const cards = renderTileCards(active, ctx, { focusMode })
-    + (asleep.length ? `<div class="snooze-divider">${snoozePill}</div>${snoozedCollapsed ? '' : asleep.map((s) => snoozedRowHtml(s)).join('')}` : '');
+    + (asleep.length ? `<div class="snooze-divider">${snoozePill}</div>${snoozedCollapsed ? '' : asleep.map((s) => snoozedRowHtml(s, ctx)).join('')}` : '');
   const bodyHost = taskBodyHostHtml(tileKey);
   // Keyboard "new session" slot (Cmd+Shift+arrows lands here past the last card).
   // The lit target must sit where nav lands it — the *end* of the body — so on a

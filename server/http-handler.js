@@ -48,6 +48,11 @@ const MIME = {
 //
 // `deckPort()` is where the deck listens on loopback, read per request so the
 // page always names the deck's current port.
+//
+// `decks` (server/board-decks.js) is the board's deck list: GET /api/decks
+// reads it, POST /api/decks changes it, and GET /api/decks/stream is an event
+// stream that sends it on connect and after every change, so every browser on
+// the board shows the same list.
 
 // Report-Only: extension board halves with inline handlers keep running while
 // the browser reports what a strict policy would block.
@@ -79,7 +84,42 @@ export function withDeckPort(html, port) {
   return html.replace('<meta charset="utf-8" />', `<meta charset="utf-8" />\n  <meta name="aw-deck-port" content="${Number(port)}" />`);
 }
 
-export function createBoardServer({ boardPort, deckPort, extensionAssets = () => null, extensionThemes = () => [] }) {
+const DECK_LIST_BODY_MAX = 4096;
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+// A change to the deck list comes only from a board page: a JSON body (which a
+// cross-origin page cannot send without a preflight) from an allowed origin.
+function deckListPost(req, res, decks, boardPort) {
+  if (!isAllowedOrigin(req.headers.origin, boardPort()) || !/^application\/json\b/.test(req.headers['content-type'] || '')) {
+    sendJson(res, 403, { error: 'forbidden' });
+    return;
+  }
+  let body = '';
+  req.setEncoding('utf8');
+  req.on('data', (c) => {
+    body += c;
+    if (body.length > DECK_LIST_BODY_MAX) { sendJson(res, 413, { error: 'too large' }); req.destroy(); }
+  });
+  req.on('end', () => {
+    if (res.headersSent) return;
+    let op;
+    try { op = JSON.parse(body); } catch { sendJson(res, 400, { error: 'not JSON' }); return; }
+    const out = decks.apply(op);
+    sendJson(res, out.error ? 400 : 200, out);
+  });
+}
+
+export function createBoardServer({ boardPort, deckPort, extensionAssets = () => null, extensionThemes = () => [], decks = null }) {
+  const deckStreams = new Set();
+  const announceDecks = (snapshot) => {
+    const frame = `data: ${JSON.stringify(snapshot)}\n\n`;
+    for (const res of deckStreams) res.write(frame);
+  };
+
   const forward = (req, res) => {
     const up = http.request({ host: '127.0.0.1', port: deckPort(), method: req.method, path: req.url, headers: req.headers }, (r) => {
       res.writeHead(r.statusCode, r.headers);
@@ -108,6 +148,19 @@ export function createBoardServer({ boardPort, deckPort, extensionAssets = () =>
 
     // Custom styles: the compiled manifest list, and a manifest-gated asset route.
     // theme.json is never served — assetPath only resolves manifest-declared assets.
+    if (decks && urlPath === '/api/decks') {
+      if (req.method === 'POST') deckListPost(req, res, decks, boardPort);
+      else if (req.method === 'GET') sendJson(res, 200, decks.list());
+      else sendJson(res, 405, { error: 'method not allowed' });
+      return;
+    }
+    if (decks && urlPath === '/api/decks/stream' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+      res.write(`data: ${JSON.stringify(decks.list())}\n\n`);
+      deckStreams.add(res);
+      req.on('close', () => deckStreams.delete(res));
+      return;
+    }
     if (urlPath === '/api/styles') {
       res.writeHead(200, { 'Content-Type': MIME['.json'] });
       res.end(JSON.stringify({ styles: listStyles(extensionThemes()) }));
@@ -193,5 +246,6 @@ export function createBoardServer({ boardPort, deckPort, extensionAssets = () =>
     socket.on('close', end);
   });
 
+  server.announceDecks = announceDecks;
   return server;
 }
