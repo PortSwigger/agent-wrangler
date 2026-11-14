@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { REPO_ROOT, findChrome, freePort, openTab, sleep, startInstance, waitFor } from './browser-harness.js';
+import { REPO_ROOT, findChrome, openTab, sleep, startInstance, waitFor } from './browser-harness.js';
 
 // One board, two decks, in a real browser: the board's own instance (deck A)
 // and a deck-only instance (deck B), each holding a session with the same id.
@@ -20,16 +20,17 @@ function seedSessions(dataDir, sessions) {
   )));
 }
 
-function startDeckOnly(dataDir, port, origins) {
+async function startDeckOnly(dataDir, origins, port = 0) {
   let out = '';
-  const proc = spawn(process.execPath, ['server/cli.js', '--deck-only', '--port', String(port), '--data-dir', dataDir, '--allowed-origins', origins], {
+  const proc = spawn(process.execPath, ['server/cli.js', '--deck-only', '--data-dir', dataDir, '--allowed-origins', origins], {
     cwd: REPO_ROOT,
-    env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_OPEN_BROWSER: '', AW_ALLOWED_ORIGINS: '' },
+    env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_DECK_PORT: String(port), AW_OPEN_BROWSER: '', AW_ALLOWED_ORIGINS: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   proc.stdout.on('data', (c) => { out += c; });
   proc.stderr.on('data', (c) => { out += c; });
-  return { proc, out: () => out };
+  const bound = Number(await waitFor(() => /deck API at http:\/\/127\.0\.0\.1:(\d+)/.exec(out)?.[1])) || null;
+  return { proc, port: bound, out: () => out };
 }
 
 async function deckState(port) {
@@ -82,9 +83,8 @@ test('one board shows two decks\' cards, routes each card\'s action to its own d
     a = await startInstance(dirA);
     assert.ok(a.up, `deck A never started:\n${a.out()}`);
     const board = `http://127.0.0.1:${a.port}`;
-    const portB = await freePort();
-    const origins = `${board},http://localhost:${a.port}`;
-    b = startDeckOnly(dirB, portB, origins);
+    b = await startDeckOnly(dirB, `${board},http://localhost:${a.port}`);
+    const portB = b.port;
     assert.ok(await waitFor(async () => (await fetch(`http://127.0.0.1:${portB}/deck`)).ok), `deck B never started:\n${b.out()}`);
 
     const post = (body) => fetch(`${board}/api/decks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: board }, body: JSON.stringify(body) });
@@ -120,7 +120,7 @@ test('one board shows two decks\' cards, routes each card\'s action to its own d
       return onB.length === 2 && onB.every(([, off]) => off) && rows;
     });
     assert.ok(down, 'deck B\'s cards stayed on the board, marked unreachable');
-    b = startDeckOnly(dirB, portB, origins);
+    b = await startDeckOnly(dirB, `${board},http://localhost:${a.port}`, portB);
     const back = await waitFor(async () => { const c = JSON.parse(await tab.evaluate(CARDS)); return c.length >= 3 && c.every((x) => !x.unreachable) && c; });
     assert.ok(back, 'deck B\'s cards were live again once it restarted');
     assert.deepEqual(tab.errors, [], 'no console errors');
@@ -159,8 +159,8 @@ test('each deck\'s tasks and schedules show under its name, and each task or sch
     a = await startInstance(dirA);
     assert.ok(a.up, `deck A never started:\n${a.out()}`);
     const board = `http://127.0.0.1:${a.port}`;
-    const portB = await freePort();
-    b = startDeckOnly(dirB, portB, `${board},http://localhost:${a.port}`);
+    b = await startDeckOnly(dirB, `${board},http://localhost:${a.port}`);
+    const portB = b.port;
     assert.ok(await waitFor(async () => (await fetch(`http://127.0.0.1:${portB}/deck`)).ok), `deck B never started:\n${b.out()}`);
 
     tab = await openTab(chromePath, `${board}/`);

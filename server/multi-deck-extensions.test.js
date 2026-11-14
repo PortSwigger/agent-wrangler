@@ -5,7 +5,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { REPO_ROOT, findChrome, freePort, openTab, sleep, startInstance, waitFor } from './browser-harness.js';
+import { REPO_ROOT, findChrome, openTab, sleep, startInstance, waitFor } from './browser-harness.js';
 
 // One board half serving several decks, in a real browser: the board's own
 // instance (deck A) and two deck-only instances (B, and C, whose copy of the
@@ -41,16 +41,17 @@ function seedDeck(dataDir, { sessions, checklists, boardApi = null, task = null 
   writeFileSync(join(dataDir, 'extensions.json'), JSON.stringify({ 'per-deck-probe': { id: 'per-deck-probe', requires: ['board:rebuild'] } }));
 }
 
-function startDeckOnly(dataDir, port, origins) {
+async function startDeckOnly(dataDir, origins) {
   let out = '';
-  const proc = spawn(process.execPath, ['server/cli.js', '--deck-only', '--port', String(port), '--data-dir', dataDir, '--allowed-origins', origins], {
+  const proc = spawn(process.execPath, ['server/cli.js', '--deck-only', '--data-dir', dataDir, '--allowed-origins', origins], {
     cwd: REPO_ROOT,
-    env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_OPEN_BROWSER: '', AW_ALLOWED_ORIGINS: '' },
+    env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_DECK_PORT: '0', AW_OPEN_BROWSER: '', AW_ALLOWED_ORIGINS: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   proc.stdout.on('data', (c) => { out += c; });
   proc.stderr.on('data', (c) => { out += c; });
-  return { proc, out: () => out };
+  const port = Number(await waitFor(() => /deck API at http:\/\/127\.0\.0\.1:(\d+)/.exec(out)?.[1])) || null;
+  return { proc, port, out: () => out };
 }
 
 // One extension's state as the deck itself reports it on its state frame.
@@ -89,12 +90,10 @@ test('one board half shows a section per deck, acts on that deck alone, and mark
     assert.ok(a.up, `deck A never started:\n${a.out()}`);
     const board = `http://127.0.0.1:${a.port}`;
     const origins = `${board},http://localhost:${a.port}`;
-    // A deck's session API takes the port after its own, so B's and C's are kept apart.
-    const portB = await freePort();
-    let portC = await freePort();
-    while (Math.abs(portC - portB) < 2) portC = await freePort();
-    b = startDeckOnly(dirs[1], portB, origins);
-    c = startDeckOnly(dirs[2], portC, origins);
+    b = await startDeckOnly(dirs[1], origins);
+    c = await startDeckOnly(dirs[2], origins);
+    const portB = b.port;
+    const portC = c.port;
     for (const [port, d] of [[portB, b], [portC, c]]) {
       assert.ok(await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/deck`)).ok), `a deck never started:\n${d.out()}`);
     }

@@ -2,11 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import WebSocket from 'ws';
+import { startInstance } from './browser-harness.js';
 
 // The board is only really "working" if a browser can load it, and two blank-dashboard
 // regressions shipped through a green CI in one afternoon (a deleted element the module
@@ -25,7 +24,6 @@ import WebSocket from 'ws';
 // the live board's tmux sessions — see the run-dev skill) and SKIPS when no Chrome is
 // present, so a contributor without one still gets a green `npm test`.
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 function findChrome() {
   // An explicitly-set CHROME_BIN is authoritative: falling back to some other browser
@@ -41,10 +39,6 @@ function findChrome() {
   return candidates.find((p) => existsSync(p)) || null;
 }
 
-const freePort = () => new Promise((res) => {
-  const s = createServer();
-  s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)); });
-});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Bounds a HUNG call; it is not a latency budget. Every real CDP call here answers in
 // single-digit ms, so this is deliberately far above any plausible slow-CI figure: the
@@ -130,18 +124,12 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     action: { kind: 'dispatch', dispatch: { agent: 'claude', model: 'opus', effort: 'low' } },
   }] }));
   const profile = mkdtempSync(join(tmpdir(), 'aw-chrome-'));
-  const port = await freePort();
-  const url = `http://127.0.0.1:${port}/`;
-  let server, chrome, ws;
+  let instance, chrome, ws;
 
   try {
-    server = spawn(process.execPath, ['server/index.js'], {
-      cwd: REPO_ROOT,
-      env: { ...process.env, AW_DEV: '1', AW_DATA_DIR: dataDir, AW_PORT: String(port), AW_OPEN_BROWSER: '' },
-      stdio: 'ignore',
-    });
-    const up = await waitFor(async () => (await fetch(url)).ok);
-    assert.ok(up, 'dev instance never started serving');
+    instance = await startInstance(dataDir);
+    assert.ok(instance.up, `dev instance never started serving:\n${instance.out()}`);
+    const url = `http://127.0.0.1:${instance.port}/`;
 
     const launched = await launchChrome(chromePath, profile);
     chrome = launched.proc;
@@ -586,7 +574,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
   } finally {
     try { ws?.close(); } catch {}
     try { chrome?.kill(); } catch {}
-    try { server?.kill(); } catch {}
+    try { instance?.server.kill(); } catch {}
     await sleep(500);
     // Cleanup must never fail the test — Chrome writes to its profile as it exits.
     for (const dir of [profile, dataDir]) { try { rmSync(dir, { recursive: true, force: true }); } catch {} }

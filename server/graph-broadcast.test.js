@@ -1,12 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import WebSocket from 'ws';
+import { startInstance } from './browser-harness.js';
 
 // deck/state.test.js proves the state stream drops an unchanged list or state; this
 // proves the LIVE server's state actually IS unchanged tick to tick. Those are
@@ -18,11 +16,6 @@ import WebSocket from 'ws';
 // with ARCHIVED-ONLY entries: socketsToScan only adds the legacy/default socket for a
 // socket-less entry that is NOT archived, so this can never see the live board's tmux.
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const freePort = () => new Promise((res) => {
-  const s = createServer();
-  s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)); });
-});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function waitFor(fn, { tries = 60, every = 250 } = {}) {
@@ -35,9 +28,7 @@ async function waitFor(fn, { tries = 60, every = 250 } = {}) {
 
 test('the archived list rides the first state frame, and an idle server sends no frame after it', { timeout: 60_000 }, async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-hist-'));
-  const port = await freePort();
-  const url = `http://127.0.0.1:${port}/`;
-  let server, ws;
+  let instance, ws;
 
   const now = Date.now();
   const archived = (n, over) => [`0000000${n}-0000-0000-0000-00000000000${n}`, {
@@ -49,12 +40,9 @@ test('the archived list rides the first state frame, and an idle server sends no
   ])));
 
   try {
-    server = spawn(process.execPath, ['server/index.js'], {
-      cwd: REPO_ROOT,
-      env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_DATA_DIR: dataDir, AW_PORT: String(port), AW_OPEN_BROWSER: '' },
-      stdio: 'ignore',
-    });
-    assert.ok(await waitFor(async () => (await fetch(url)).ok), 'dev instance never started serving');
+    instance = await startInstance(dataDir);
+    assert.ok(instance.up, `dev instance never started serving:\n${instance.out()}`);
+    const { port } = instance;
 
     // No trailing slash: origin-check.js compares the Origin header exactly, and a
     // `http://host:port/` form is rejected by the CSRF gate.
@@ -78,7 +66,7 @@ test('the archived list rides the first state frame, and an idle server sends no
     assert.deepEqual(frames.slice(1), [], 'nothing changed between these ticks, so none may be broadcast');
   } finally {
     try { ws?.close(); } catch {}
-    try { server?.kill(); } catch {}
+    try { instance?.server.kill(); } catch {}
     await sleep(500);
     rmSync(dataDir, { recursive: true, force: true });
   }
