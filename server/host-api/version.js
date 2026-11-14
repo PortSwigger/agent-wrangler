@@ -583,6 +583,10 @@ import semver from 'semver';
 // subject carries `deckId` and `deckTaskId`. An older board has no
 // `api.decks`, so a board half that uses any declares `^1.81.0`.
 //
+// 1.82.0 lets the client `api.openDispatch({ taskId })` name another deck's task
+// by its board id (`<deckId>/<id>`): the dialog opens on that deck, in that task,
+// and the session starts there. A board half that does declares `^1.82.0`.
+//
 // 2.0.0 is the major the deck API makes. The 2.x contract is what the deck
 // API offers: a board half beside `boardApi` in a split manifest, its state
 // through `api.state()`, the session view without the fields it drops, files
@@ -598,7 +602,7 @@ import semver from 'semver';
 export const HOST_API_VERSION = '2.0.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
-export const V1_SHIM_VERSION = '1.81.0';
+export const V1_SHIM_VERSION = '1.82.0';
 
 // The version this server serves `range` as: HOST_API_VERSION, the v1 shim, or
 // null for neither. A null/absent range is "no constraint" and gets the

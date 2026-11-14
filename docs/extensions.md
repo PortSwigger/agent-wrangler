@@ -317,6 +317,9 @@ runs its extension (1.81.0):
   the task's id on that deck (the board shows it as `<deckId>/<id>`), and `weight(taskId, graph,
   task)` gets that subject as its third argument. The board's own deck's tasks carry neither, and
   a contribution without `decks: true` sees only them, as before.
+- `api.openDispatch({ taskId })` may name another deck's task by its board id, `<deckId>/<id>`
+  (1.82.0): the dialog opens on that deck, in that task, and the session starts there. While that
+  deck is unreachable it shows a toast and resolves `null` without opening.
 
 A per-session board half reads the open card's deck from its session row:
 
@@ -366,9 +369,9 @@ board half that reads `api.state()` and the session view, files through the `ses
 method changed shape, so moving to 2.0 is the migration below plus raising your ranges to `^2.0.0`.
 
 A manifest declaring a `^1` range (`engines.wranglerApi` or `boardApi`) still boots, on the **v1
-shim**: its `host.version` reads `1.81.0`, the last 1.x, and every surface 1.x offered keeps working,
+shim**: its `host.version` reads `1.82.0`, the last 1.x, and every surface 1.x offered keeps working,
 the older ones through the adapters listed under
-[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.81.0` is
+[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.82.0` is
 refused, as before. The adapters stay until 3.0, which removes them once their use has gone quiet:
 each use is reported as the [`core.deprecated`](#core-events) telemetry event, so the maintainers can
 see which surfaces are still in use.
@@ -1033,7 +1036,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`host-api/version.js`) is what the server serves and a breaking reshape adds
   `v2.js` keeping `v1.js` as the shim, selected by the declared range — never
   edit builders in place. 2.0.0 reshaped no builder, so both majors still build
-  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.81.0) and its
+  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.82.0) and its
   older surfaces through the adapters (see [Host API 2.0 and the v1
   shim](#host-api-20-and-the-v1-shim)). `semver` is a real dependency, so
   `scripts/sync-deps.sh` means the SERVICE needs a restart for it to land
