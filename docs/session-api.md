@@ -8,7 +8,8 @@ Launched sessions talk back to Agent Wrangler over three HTTP routes, together c
 | `POST /pr-attach` | the PR-attach hook after `gh pr create` | attaches the new PR to the calling session's card |
 | `POST /pr-model` | the PR model footer | answers which model to tag the calling session's PR with |
 
-They are served on their own port, `AW_SESSION_API_PORT` (default `AW_PORT` + 2), bound like the
+They are served on their own port, `AW_SESSION_API_PORT` (default the deck's port + 1: `AW_PORT` + 2
+with a board, `AW_DECK_PORT` + 1 for a deck started with `--deck-only`), bound like the
 board (`AW_BIND_HOST`, loopback by default). Running sessions keep the URLs they launched with, so
 the server saves the port it bound in `session-api.json` in the data directory and asks for the
 same one on its next start. If that port is taken it picks a free one, saves it, and sessions
@@ -120,5 +121,7 @@ never accepts a card id.
 ## Starting it
 
 `server/index.js` builds the session API once (`createSessionApi`) and calls `start({ port, host,
-fixed })` before the deck and board bind, so every launch names the port it actually got. Another
-startup (a deck without a board, say) needs only the same two calls plus the handlers.
+fixed })` before the deck and board bind, so every launch names the port it actually got, and
+logs `session API at http://<host>:<port>`. A deck started with `--deck-only` runs the same
+startup with no board, so it serves its session API too. Another startup needs only the same two
+calls plus the handlers.

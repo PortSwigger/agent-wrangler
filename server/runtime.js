@@ -18,23 +18,15 @@ export function deckPort() {
   return Number(process.env.AW_DECK_PORT) || boardPort() + 1;
 }
 
-// The port launched sessions reach MCP and the PR hooks on, shared by index.js
-// and the MCP client-config injection so a session always points back at the
-// server that spawned it: the board's (which forwards them to the deck), or the
-// deck's own when there is no board.
-export function serverPort() {
-  return deckOnly() ? deckPort() : boardPort();
-}
-
 // The session API's port: where launched sessions reach /mcp, /pr-attach and
 // /pr-model. The port it actually bound once listening (setSessionApiPort),
-// else AW_SESSION_API_PORT, else the board's port plus two.
+// else AW_SESSION_API_PORT, else the deck's port plus one, with or without a board.
 let sessionApiListenPort = null;
 export function setSessionApiPort(port) {
   sessionApiListenPort = port;
 }
 export function sessionApiPort() {
-  return sessionApiListenPort ?? (Number(process.env.AW_SESSION_API_PORT) || serverPort() + 2);
+  return sessionApiListenPort ?? (Number(process.env.AW_SESSION_API_PORT) || deckPort() + 1);
 }
 
 // The interface the server binds to. Loopback by default — /ws, /pty, and /mcp
