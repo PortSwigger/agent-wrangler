@@ -38,7 +38,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
@@ -683,6 +683,18 @@ let lastControlActivity = Date.now();
 // starved by a long full sweep and never runs the transition diff below.
 const pollPrStatuses = createFullSweepGuard(runPrStatusSweep);
 
+// Broadcast a PR event once its pane nudge has been delivered. `nudged` is true
+// only when the session actually has the line: pasted into a live pane, or
+// carried by a woken session's resume. A held line (draft, dialog, unreadable
+// pane), a skipped owner or a failed wake leaves the board toast showing.
+function announceAfterNudge(event) {
+  return (mode) => {
+    broadcast({ ...event, nudged: mode === 'live' || mode === 'dormant' });
+    if (mode === 'dormant' || mode === 'dormant-held') return Promise.resolve(rebuild()).catch(() => {});
+    return undefined;
+  };
+}
+
 async function runPrStatusSweep(only) {
   const links = [
     ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
@@ -742,8 +754,6 @@ async function runPrStatusSweep(only) {
     const checkStatusKeys = new Set();
     for (const ev of diffCheckStatus(current)) {
       checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
-      broadcast({ type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
-                  url: ev.url, number: ev.number, status: ev.checkStatus, headSha: ev.headSha });
       const entry = sessionManager.entryFor(ev.ownerId);
       // The two gated decisions (auto-merge / pane-nudge) live in the pure
       // planCheckTransition (notifier.js, unit-tested matrix); all the I/O stays
@@ -751,7 +761,10 @@ async function runPrStatusSweep(only) {
       // behaves like an idle-but-live one; the auto-merge confirmation line below
       // stays board-only when dormant (terminal/informational — not expanded here).
       const { merge: willMerge, nudge } = planCheckTransition(ev, entry, fixPrDefault);
-      if (nudge) {
+      const checksEvent = { type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
+                            url: ev.url, number: ev.number, status: ev.checkStatus, headSha: ev.headSha };
+      if (!nudge) broadcast({ ...checksEvent, nudged: false });
+      else {
         // A live session gets the nudge in its pane; a DORMANT one (entry, no tmux)
         // is woken and handed the SAME nudge as its resume intent — dormancy is only
         // a RAM optimization, so it behaves like an idle-but-live session. Archived/
@@ -766,7 +779,7 @@ async function runPrStatusSweep(only) {
         deliverPrNudge(ev, entry, {
           message: prPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
-        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+        }).then(announceAfterNudge(checksEvent)).catch(() => broadcast({ ...checksEvent, nudged: false }));
       }
       // A successful merge leaves the MERGED-state path (next poll) to remove the
       // link and nudge "merged"; either way we report the outcome now (board
@@ -774,11 +787,14 @@ async function runPrStatusSweep(only) {
       if (willMerge) {
         const res = await mergePr(ev.url);
         const target = tmuxFor(ev.ownerId);
-        broadcast({ type: 'pr-merge', scope: ev.scope, sessionId: ev.ownerId,
-                    url: ev.url, number: ev.number, ok: res.ok, error: res.ok ? null : res.error });
-        if (target) {
+        const mergeEvent = { type: 'pr-merge', scope: ev.scope, sessionId: ev.ownerId,
+                             url: ev.url, number: ev.number, ok: res.ok, error: res.ok ? null : res.error };
+        if (!target) broadcast({ ...mergeEvent, nudged: false });
+        else {
           const phrase = res.ok ? 'auto-merged' : `auto-merge failed: ${res.error}`;
-          paneDeferral.deliverOrDefer({ id: ev.ownerId, text: prPaneLine(ev.number, ev.url, phrase), tmux: target, socket: socketFor(ev.ownerId) }).catch(() => {});
+          paneDeferral.deliverOrDefer({ id: ev.ownerId, text: prPaneLine(ev.number, ev.url, phrase), tmux: target, socket: socketFor(ev.ownerId) })
+            .then((sent) => broadcast({ ...mergeEvent, nudged: sent === 'sent' }))
+            .catch(() => broadcast({ ...mergeEvent, nudged: false }));
         }
       }
     }
@@ -787,13 +803,15 @@ async function runPrStatusSweep(only) {
     // Same board-toast-always / pane-nudge-gated shape as the checks transition
     // above; there is no auto-merge branch (a DIRTY PR can't be merged).
     for (const ev of diffDirty(current)) {
-      broadcast({ type: 'pr-dirty', scope: ev.scope, sessionId: ev.ownerId, url: ev.url, number: ev.number });
       const entry = sessionManager.entryFor(ev.ownerId);
-      if (planDirtyTransition(ev, entry, fixPrDefault)) {
+      const dirtyNudge = planDirtyTransition(ev, entry, fixPrDefault);
+      const dirtyEvent = { type: 'pr-dirty', scope: ev.scope, sessionId: ev.ownerId, url: ev.url, number: ev.number };
+      if (!dirtyNudge) broadcast({ ...dirtyEvent, nudged: false });
+      else {
         deliverPrNudge(ev, entry, {
           message: prDirtyPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
-        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+        }).then(announceAfterNudge(dirtyEvent)).catch(() => broadcast({ ...dirtyEvent, nudged: false }));
       }
     }
     // Detect unresolved review-thread-count increases — own diff/baseline,
@@ -807,15 +825,17 @@ async function runPrStatusSweep(only) {
     // comments AND a fresh changes-requested transition), and two unawaited
     // deliverPrNudge calls to the same pane would interleave their pastes.
     for (const ev of diffUnresolvedComments(current)) {
-      broadcast({ type: 'pr-unresolved', scope: ev.scope, sessionId: ev.ownerId,
-                  url: ev.url, number: ev.number, count: ev.unresolvedCount, delta: ev.delta });
       const entry = sessionManager.entryFor(ev.ownerId);
       const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
-      if (!checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault)) {
+      const commentNudge = !checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault);
+      const commentEvent = { type: 'pr-unresolved', scope: ev.scope, sessionId: ev.ownerId,
+                             url: ev.url, number: ev.number, count: ev.unresolvedCount, delta: ev.delta };
+      if (!commentNudge) broadcast({ ...commentEvent, nudged: false });
+      else {
         deliverPrNudge(ev, entry, {
           message: prUnresolvedPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
-        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+        }).then(announceAfterNudge(commentEvent)).catch(() => broadcast({ ...commentEvent, nudged: false }));
       }
     }
   }
@@ -1209,6 +1229,7 @@ async function rebuildOnce() {
   graph.trustClaudeLaunchCwd = trustClaudeLaunchCwd();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.mailWakesDormant = mailWakesDormant();
+  graph.suppressNudgedPrToasts = suppressNudgedPrToasts();
   graph.prModelFooter = prModelFooterEnabled();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();

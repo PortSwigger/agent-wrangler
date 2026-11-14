@@ -53,6 +53,7 @@ export const SETTINGS_KEYS = [
   'trustClaudeLaunchCwd',
   'autoFixPrChecksDefault',
   'mailWakesDormant',
+  'suppressNudgedPrToasts',
   'prModelFooter',
   'defaultSessionCwd',
   'defaultRuntime',
