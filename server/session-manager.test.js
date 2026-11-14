@@ -3967,3 +3967,77 @@ test('schedule provenance reaches the hook without changing saved lineage or lau
   assert.equal(sm.map.get(sessionId).spawnedBy, undefined);
   assert.ok(!command.includes('AW_SPAWNER_SESSION_ID'));
 });
+
+for (const agent of ['claude', 'codex']) {
+  test(`${agent} resume refreshes tool discovery only after a recorded schema change`, async () => {
+    const sm = smForDispatch();
+    const id = 'tool-refresh';
+    const dir = os.tmpdir();
+    let current = 'v1';
+    let command;
+    sm._extensionToolFingerprint = () => current;
+    sm.killForSession = async () => [];
+    sm._newSession = async (_tmux, _dir, cmd) => { command = cmd; };
+    const history = adapterFor(agent).history;
+    const originalFind = history.findFile;
+    const originalCwd = history.launchCwd;
+    history.findFile = async () => '/transcript';
+    history.launchCwd = async () => dir;
+    try {
+      sm.map.set(id, { agent, cwd: dir, liveSessionId: 'live-tools', launchedToolFingerprint: 'v1' });
+      await sm.resume(id, dir);
+      assert.doesNotMatch(command, /re-run ToolSearch/);
+      current = 'v2';
+      await sm.resume(id, dir, { intent: 'Continue the task' });
+      assert.match(command, /Extension MCP tool schemas changed.*re-run ToolSearch before calling MCP tools/);
+      assert.equal(sm.map.get(id).launchedToolFingerprint, 'v2');
+      assert.match(command, agent === 'claude' ? /--append-system-prompt/ : /developer_instructions=/);
+      if (agent === 'claude') assert.match(command, /Continue the task/);
+      await sm.resume(id, dir);
+      assert.doesNotMatch(command, /re-run ToolSearch/);
+      delete sm.map.get(id).launchedToolFingerprint;
+      await sm.resume(id, dir);
+      assert.doesNotMatch(command, /re-run ToolSearch/);
+      assert.equal(sm.map.get(id).launchedToolFingerprint, 'v2');
+    } finally {
+      history.findFile = originalFind;
+      history.launchCwd = originalCwd;
+    }
+  });
+}
+
+test('fresh dispatch records the extension schema without a refresh note', async () => {
+  const sm = smForDispatch();
+  sm._extensionToolFingerprint = () => 'schema-v1';
+  let command;
+  sm._newSession = async (_tmux, _dir, cmd) => { command = cmd; };
+  const result = await sm.dispatch({ agent: 'claude', cwd: os.tmpdir(), intent: 'Start' });
+  assert.equal(sm.map.get(result.sessionId).launchedToolFingerprint, 'schema-v1');
+  assert.doesNotMatch(command, /re-run ToolSearch/);
+});
+
+test('a failed resume leaves the previous tool fingerprint available for retry', async () => {
+  const sm = resumableCodex('tool-retry');
+  sm.map.get('tool-retry').launchedToolFingerprint = 'v1';
+  sm._extensionToolFingerprint = () => 'v2';
+  sm.killForSession = async () => [];
+  sm._newSession = async () => { throw new Error('launch failed'); };
+  await assert.rejects(sm.resume('tool-retry', os.tmpdir()), /launch failed/);
+  assert.equal(sm.map.get('tool-retry').launchedToolFingerprint, 'v1');
+  let command;
+  sm._newSession = async (_tmux, _dir, cmd) => { command = cmd; };
+  await sm.resume('tool-retry', os.tmpdir());
+  assert.match(command, /re-run ToolSearch/);
+  assert.equal(sm.map.get('tool-retry').launchedToolFingerprint, 'v2');
+});
+
+test('a fork records the current extension schemas for its next resume', async () => {
+  const sm = smForDispatch();
+  sm._extensionToolFingerprint = () => 'current-tools';
+  const result = await sm.fork({
+    sourceId: 'source', parentId: 'parent',
+    parentEntry: { agent: 'claude', launchedToolFingerprint: 'old-tools' },
+    cwd: os.tmpdir(),
+  });
+  assert.equal(sm.map.get(result.sessionId).launchedToolFingerprint, 'current-tools');
+});
