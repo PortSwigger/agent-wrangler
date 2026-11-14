@@ -44,6 +44,17 @@ test('the session API sits next to the deck port, with or without a board, unles
     assert.equal(sessionApiPort(), 9200);
     setSessionApiPort(9300);
     assert.equal(sessionApiPort(), 9300);
+    setSessionApiPort(null);
+    delete process.env.AW_SESSION_API_PORT;
+    process.env.AW_DECK_PORT = '0';
+    assert.equal(deckPort(), 0, 'AW_DECK_PORT=0 leaves the deck port to the OS');
+    assert.equal(sessionApiPort(), 0, 'and the session API port with it');
+    delete process.env.AW_DECK_PORT;
+    delete process.env.AW_DECK_ONLY;
+    process.env.AW_PORT = '0';
+    assert.equal(boardPort(), 0, 'AW_PORT=0 leaves the board port to the OS');
+    assert.equal(deckPort(), 0, 'and the deck port');
+    assert.equal(sessionApiPort(), 0, 'and the session API port');
   } finally {
     setSessionApiPort(null);
     for (const k of keys) if (save[k] === undefined) delete process.env[k]; else process.env[k] = save[k];

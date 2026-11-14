@@ -10,7 +10,8 @@ import { carriesSessionCredential } from '../session-api/check.js';
 // are wired on the returned server in index.js. GET /deck, like /ws and /pty,
 // refuses a request carrying a session credential (refuseSessionCredential).
 //
-// `boardPort` names the board origins the allowlist holds.
+// `boardPort()` names the board origins the allowlist holds, read per request
+// since the board may bind after the deck.
 export function createDeckServer({ boardPort, mcpRequestHandler, prAttachHandler, prModelHandler, fileHandler, extFileHandler, deckHandler }) {
   return http.createServer((req, res) => {
     const urlPath = decodeURIComponent(req.url.split('?')[0]);
@@ -20,7 +21,7 @@ export function createDeckServer({ boardPort, mcpRequestHandler, prAttachHandler
       // Same CSRF gate as the WS upgrade: a cross-origin POST still fires spawn even
       // when CORS blocks the reply. Absent Origin = a non-browser client (MCP client,
       // or the local PostToolUse hook fetch) → allow.
-      if (!isAllowedOrigin(req.headers.origin, boardPort)) {
+      if (!isAllowedOrigin(req.headers.origin, boardPort())) {
         res.writeHead(403).end('forbidden');
         return;
       }
@@ -30,7 +31,7 @@ export function createDeckServer({ boardPort, mcpRequestHandler, prAttachHandler
 
     if (req.method === 'GET' && urlPath === '/deck') {
       if (carriesSessionCredential(req)) { refuseSessionCredential(res); return; }
-      for (const [k, v] of Object.entries(corsHeaders(req.headers.origin, boardPort))) res.setHeader(k, v);
+      for (const [k, v] of Object.entries(corsHeaders(req.headers.origin, boardPort()))) res.setHeader(k, v);
       deckHandler(req, res);
       return;
     }

@@ -45,7 +45,7 @@ import { dispatchModels } from './agents/listing.js';
 import { createMcpRequestHandler } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
-import { bindHost, deckPort, deckOnly, sessionApiPort } from './runtime.js';
+import { bindHost, boardPort, deckPort, deckOnly, sessionApiPort } from './runtime.js';
 import { createSessionApi, carriesSessionCredential } from './session-api/index.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createBoardServer } from './http-handler.js';
@@ -104,18 +104,19 @@ import { VERSION } from './version.js';
 const open = openModule.default || openModule;
 
 // PORT is the board's: the address people open. Launched sessions reach MCP and
-// the PR hooks on the session API's own port (sessionApiPort). The deck listens on
-// loopback on its own port; DECK_PORT is what it asks for, and deckListenPort
-// what it got. A deck-only instance has no board: nothing listens on PORT, its
-// sessions reach the deck directly, and only configured origins are boards.
-const PORT = Number(process.env.AW_PORT) || Number(process.env.PORT) || 7878;
+// the PR hooks on the session API's own port (sessionApiPort). PORT and DECK_PORT
+// are what the board and the deck ask for (0 lets the OS pick); boardListenPort and
+// deckListenPort what they got. A deck-only instance has no board: nothing listens
+// on PORT, its sessions reach the deck directly, and only configured origins are boards.
+const PORT = boardPort();
+let boardListenPort = PORT;
 const HOST = bindHost();
 const DECK_ONLY = deckOnly();
 const DECK_HOST = '127.0.0.1';
 const DECK_PORT = deckPort();
 let deckListenPort = DECK_PORT;
-const BOARD_ORIGIN_PORT = DECK_ONLY ? null : PORT;
-const deckAuthorities = () => (DECK_ONLY ? [deckListenPort] : [PORT, deckListenPort]);
+const boardOriginPort = () => (DECK_ONLY ? null : boardListenPort);
+const deckAuthorities = () => (DECK_ONLY ? [deckListenPort] : [boardListenPort, deckListenPort]);
 
 // Last-resort guards: a single bad PTY/AppleScript/parse must never take the
 // whole dashboard down. Log and keep serving.
@@ -1119,7 +1120,7 @@ sessionManager._issueSessionToken = (id) => sessionApi.tokens.issue(id);
 sessionManager._revokeSessionToken = (id) => sessionApi.tokens.revoke(id);
 
 const deckServer = createDeckServer({
-  boardPort: BOARD_ORIGIN_PORT, deckHandler,
+  boardPort: boardOriginPort, deckHandler,
   mcpRequestHandler: sessionApi.legacyHandlers['/mcp'],
   prAttachHandler: sessionApi.legacyHandlers['/pr-attach'],
   prModelHandler: sessionApi.legacyHandlers['/pr-model'],
@@ -1133,7 +1134,7 @@ const boardDecks = createBoardDecks({
   onChange: (snapshot) => boardServer.announceDecks(snapshot),
 });
 const boardServer = createBoardServer({
-  boardPort: () => PORT,
+  boardPort: () => boardListenPort,
   deckPort: () => deckListenPort,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
   extensionThemes: () => themeSources(ext.themeDirs),
@@ -1147,7 +1148,7 @@ const ptyWss = new WebSocketServer({ noServer: true });
 deckServer.on('upgrade', (req, socket, head) => {
   // CSRF gate: a cross-origin browser page can open a WS without a preflight, so
   // reject before handleUpgrade (an absent Origin is a non-browser client — allow).
-  if (!isAllowedOrigin(req.headers.origin, BOARD_ORIGIN_PORT)) {
+  if (!isAllowedOrigin(req.headers.origin, boardOriginPort())) {
     socket.destroy();
     return;
   }
@@ -1650,9 +1651,10 @@ async function main() {
   if (!DECK_ONLY) boardServer.once('error', onListenError);
   if (!DECK_ONLY) boardServer.listen(PORT, HOST, () => {
     boardServer.off('error', onListenError);
+    boardListenPort = boardServer.address().port;
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;
-    const url = `http://${host}:${PORT}`;
+    const url = `http://${host}:${boardListenPort}`;
     if (startupStyle({ isTTY: process.stdout.isTTY, supervised: INSTALL_ENV.supervised }) === 'banner') {
       console.log(bannerLines({ version: VERSION, commit: install.checkout ? codeVersion : null, url, dataDir: DATA_DIR }).join('\n'));
     } else {
