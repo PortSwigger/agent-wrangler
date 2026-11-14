@@ -354,9 +354,9 @@ for (const [label, pane] of [
 for (const status of ['needs-you', 'unknown']) {
   test(`Codex mail still defers for board status ${status}`, async () => {
     const d = paneDeps({ status });
-    assert.deepEqual(await deliverMailNotification('CARD1', 'you have mail', d), {
-      mode: 'deferred', reason: `board status ${status}`,
-    });
+    const result = await deliverMailNotification('CARD1', 'you have mail', d);
+    assert.equal(result.mode, 'deferred');
+    assert.ok(result.reason.startsWith(`board status ${status}: `));
     assert.deepEqual(d.sent, []);
   });
 }
@@ -364,9 +364,9 @@ for (const status of ['needs-you', 'unknown']) {
 test('Codex mail still defers for a pane dialog despite a working board status', async () => {
   const dialog = ['› 1. Update now', '  2. Skip', '  3. Skip until next version', '  Press Enter to continue'];
   const d = paneDeps({ pane: [...dialog, codexEmpty].join('\n') });
-  assert.deepEqual(await deliverMailNotification('CARD1', 'you have mail', d), {
-    mode: 'deferred', reason: 'pane classified needs-you',
-  });
+  const result = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.equal(result.mode, 'deferred');
+  assert.match(result.reason, /^pane classified needs-you: /);
   assert.deepEqual(d.sent, []);
 });
 
@@ -404,9 +404,11 @@ test('Codex mail rechecks for a new draft after waiting for MCP readiness', asyn
     pane = `${codexWorking}\n${E}[1m›${E}[0m a new draft`;
     return relaunchedAt + 1;
   };
-  assert.deepEqual(await deliverMailNotification('CARD1', 'you have mail', d), {
-    mode: 'deferred', reason: 'composer not confirmed empty (after beforeSend)',
-  });
+  const result = await deliverMailNotification('CARD1', 'you have mail', d);
+  assert.equal(result.mode, 'deferred');
+  assert.match(result.reason, /^composer not confirmed empty: .* \(after beforeSend\)$/);
+  assert.match(result.reason, /"check":"visible-content"/);
+  assert.doesNotMatch(result.reason, /a new draft/);
   assert.deepEqual(d.sent, []);
 });
 

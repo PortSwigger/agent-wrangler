@@ -483,3 +483,35 @@ test('a draft reason only counts from when it began, not from a busy start', () 
   t.deferred('CARD1', 'composer not confirmed empty', 100_000);
   assert.equal(t.draftBlocked('CARD1', 100_000), false);
 });
+
+for (const [check, blockedPane] of [
+  ['mouse-fragments', '\x1b[1m›\x1b[0m [<35;79;1M[<35;78;1M<35;77;2M;54;9M['],
+  ['approval-selector', '  \x1b[1;7m› 1. Allow \x1b[0;7mRun the tool and continue\x1b[0m'],
+]) {
+  test(`held Codex mail logs ${check} without pane contents after restart`, async (t) => {
+    const file = tmpFile();
+    t.after(() => fs.rmSync(path.dirname(file), { recursive: true, force: true }));
+    const store = new MailboxStore(file);
+    store.append('CARD1', { from: 'sess_a', body: 'private mail body' }, 0);
+    const d = deps({ mailStore: new MailboxStore(file), live: { CARD1: { tmux: 'cx_one' } }, entries: { CARD1: { agent: 'codex' } } });
+    const logs = [];
+    d.deferrals = createDeferralTracker({ log: (line) => logs.push(line) });
+    let pane = blockedPane;
+    d.paneDeferral = createPaneDeferral({
+      tmuxFor: d.tmuxFor, agentFor: () => 'codex', capture: async () => pane, sendText: d.sendText,
+    });
+    for (let now = SETTLE_MS; now <= SETTLE_MS + DEFER_LOG_AFTER_MS; now += SETTLE_MS) {
+      assert.equal(await sweepDueSettles(d, now), 0);
+    }
+    assert.equal(logs.length, 1);
+    const diagnostic = JSON.parse(logs[0].slice(logs[0].indexOf('{')));
+    assert.equal(diagnostic.check, check);
+    assert.doesNotMatch(logs[0], /35;79|Run the tool|private mail body/);
+    assert.deepEqual(d.sent, []);
+    assert.equal(d.mailStore.boxes.get('CARD1').lastNotifiedAt, null);
+    assert.equal(d.mailStore.unreadMessages('CARD1').length, 1);
+    pane = '\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m';
+    assert.equal(await sweepDueSettles(d, SETTLE_MS * 2 + DEFER_LOG_AFTER_MS), 1);
+    assert.equal(d.sent.length, 1);
+  });
+}
