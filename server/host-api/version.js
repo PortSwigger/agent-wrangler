@@ -533,12 +533,12 @@ import semver from 'semver';
 // older server ignores `board` and loads no board half, so a split manifest
 // declares `^1.74.0`.
 //
-// 1.74.0 adds manifest hooks `session.beforeSpawn` and `session.spawned` for
+// 1.75.0 adds manifest hooks `session.beforeSpawn` and `session.spawned` for
 // new-session launches across providers and launch sources. The first can
 // refuse with a reason or return extension-owned data; the second receives
 // that data and the new session id after launch. Both time out and fail open;
 // a timeout does not cancel extension code already running.
-export const HOST_API_VERSION = '1.74.0';
+export const HOST_API_VERSION = '1.75.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
