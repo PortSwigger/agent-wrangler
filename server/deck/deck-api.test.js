@@ -1,22 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import WebSocket from 'ws';
 import { CONTROL_HANDLERS } from '../control/handlers/index.js';
 import { CORE_ACTIONS } from './actions.js';
+import { startInstance } from '../browser-harness.js';
 
 // Boots the real server on an isolated AW_DATA_DIR with no mappings, so it never
 // scans the live board's tmux (see the run-dev skill).
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const freePort = () => new Promise((res) => {
-  const s = createServer();
-  s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)); });
-});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, { tries = 60, every = 250 } = {}) {
   for (let i = 0; i < tries; i++) {
@@ -36,18 +29,15 @@ function connect(port, query = '') {
 
 test('the deck API: descriptor, state stream, actions with results; the legacy protocol and file routes answer through adapters', { timeout: 60_000 }, async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-deck-'));
-  const port = await freePort();
-  const base = `http://127.0.0.1:${port}`;
   const note = join(dataDir, 'note.md');
   writeFileSync(note, '# Deck note\n');
-  let server;
+  let instance;
   const sockets = [];
   try {
-    server = spawn(process.execPath, ['server/index.js'], {
-      cwd: REPO_ROOT,
-      env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_DATA_DIR: dataDir, AW_PORT: String(port), AW_OPEN_BROWSER: '' },
-      stdio: 'ignore',
-    });
+    instance = await startInstance(dataDir);
+    assert.ok(instance.up, `dev instance never started serving:\n${instance.out()}`);
+    const { port } = instance;
+    const base = `http://127.0.0.1:${port}`;
     const deck = await waitFor(async () => { const r = await fetch(`${base}/deck`); return r.ok && r.json(); });
     assert.ok(deck, 'GET /deck never answered');
     assert.equal(deck.api, '1.0');
@@ -114,7 +104,7 @@ test('the deck API: descriptor, state stream, actions with results; the legacy p
     assert.ok(await waitFor(() => client.frames.find((f) => f.type === 'state' && f.tasks.tasks.some((t) => t.id === reply.taskId))), 'the same state reaches the deck client');
   } finally {
     for (const ws of sockets) try { ws.close(); } catch {}
-    try { server?.kill(); } catch {}
+    try { instance?.server.kill(); } catch {}
     await sleep(500);
     rmSync(dataDir, { recursive: true, force: true });
   }
