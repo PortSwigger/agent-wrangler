@@ -92,9 +92,13 @@ function deckData(deckId) {
   return entry.graph;
 }
 
-function incompatibleDeck(deckId) {
+function deckRow(deckId) {
   const decks = typeof state.api?.decks === 'function' ? state.api.decks() : [];
-  return decks.find((d) => d.deckId === deckId && d.status === 'incompatible') || null;
+  return decks.find((d) => d.deckId === deckId) || null;
+}
+function incompatibleDeck(deckId) {
+  const d = deckRow(deckId);
+  return d?.status === 'incompatible' ? d : null;
 }
 
 // A view's working copy and its bucket in it: the board's own deck's, keyed by
@@ -135,7 +139,7 @@ function update(el, ctx, graph) {
     const bad = incompatibleDeck(view.deck);
     el.innerHTML = bad
       ? todoIncompatibleHtml(bad.name)
-      : todoZoneHtml(todosOf(graphOf(view), view.localId), view.key, state.collapsed.has(view.key), { spawn: false });
+      : todoZoneHtml(todosOf(graphOf(view), view.localId), view.key, state.collapsed.has(view.key), { spawn: deckRow(view.deck)?.status === 'ready' });
     return;
   }
   el.innerHTML = todoZoneHtml(todosOf(state.graph, view.key), view.key, state.collapsed.has(view.key));
@@ -422,15 +426,13 @@ function openDetails(view, row) {
 
 // Start a session from a TODO: the dispatch modal opens pre-filled with the
 // todo's text, locked to its task, and the todo is consumed (deleted) only once
-// the dispatch is acknowledged — a cancelled modal leaves it untouched.
+// the dispatch is acknowledged — a cancelled modal leaves it untouched. Another
+// deck's TODO starts its session on that deck, in its task there.
 async function spawn(view, row) {
-  // Another deck's task starts its sessions on that deck, not from this board.
-  if (view.deck) return;
   const todoId = row.dataset.todoid;
-  const key = view.key;
-  const td = todosOf(state.graph, key).find((x) => x.id === todoId);
+  const td = todosOf(graphOf(view), bucketOf(view)).find((x) => x.id === todoId);
   if (!td) return;
-  const taskId = todoKeyToTaskId(key, view.adhocId);
+  const taskId = view.deck ? view.key : todoKeyToTaskId(view.key, view.adhocId);
   let ack;
   try {
     ack = await state.api.openDispatch({ taskId, intent: todoLaunchIntent(td), lockTask: true });
@@ -440,8 +442,8 @@ async function spawn(view, row) {
     return;
   }
   if (!ack) return;
-  send({ type: 'todo-delete', taskId, todoId });
-  if (optimisticDelete(state.graph, key, todoId)) redraw();
+  sendFor(view, { type: 'todo-delete', taskId: wireId(view), todoId });
+  if (optimisticDelete(graphOf(view), bucketOf(view), todoId)) redraw();
 }
 
 export default {

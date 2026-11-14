@@ -492,6 +492,8 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    sheet — every user declares its own line. A plain block wrapper: the fields
    inside lay out exactly as they did unwrapped. */
 .dispatch-field.hidden { display: none; }
+/* The new-session dialog's deck picker, shown only with more than one deck. */
+#m-deck-row.hidden { display: none; }
 
 /* The Codex sandbox/approval controls in Advanced options (codex-policy-field.js). */
 #m-codex-policy-row label.check-row { margin-top: 10px; }

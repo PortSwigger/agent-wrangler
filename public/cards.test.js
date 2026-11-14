@@ -617,7 +617,7 @@ test('tileHtml: an empty tile keeps its empty-state hint (extensions hide it the
   assert.match(html, /cell-empty-body/);
 });
 
-test('tileHtml: with several decks a task tile names its deck; another deck\'s tile offers no new session or extension body', () => {
+test('tileHtml: with several decks a task tile names its deck; another deck\'s tile offers a new session only while that deck is reachable', () => {
   const tile = (task) => ({ kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { links: [], ...task } });
   const plain = tileHtml(tile({ id: 'T1', name: 'T' }), ctx({ ownDeckId: 'deck-a' }));
   assert.doesNotMatch(plain, /task-deck|on-deck/, 'one deck: no deck name');
@@ -631,6 +631,10 @@ test('tileHtml: with several decks a task tile names its deck; another deck\'s t
   assert.match(remote, />Laptop B · unreachable</);
   assert.doesNotMatch(remote, /task-new-sess/);
   assert.match(remote, /data-task-body="deck-b\/T1"/);
+  assert.doesNotMatch(remote, /empty-new-sess/);
+  const reachable = tileHtml(tile({ id: 'deck-b/T1', name: 'T', deckId: 'deck-b', deckName: 'Laptop B' }), ctx({ ownDeckId: 'deck-a' }));
+  assert.match(reachable, /task-new-sess/);
+  assert.match(reachable, /empty-new-sess/);
 });
 
 test('visibleTaskLinkCount: keeps every link that fits and reserves the overflow badge only when needed', () => {

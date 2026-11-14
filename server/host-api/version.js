@@ -582,7 +582,11 @@ import semver from 'semver';
 // registered with `decks: true` is also offered another deck's task, whose
 // subject carries `deckId` and `deckTaskId`. An older board has no
 // `api.decks`, so a board half that uses any declares `^1.81.0`.
-export const HOST_API_VERSION = '1.81.0';
+//
+// 1.82.0 lets the client `api.openDispatch({ taskId })` name another deck's task
+// by its board id (`<deckId>/<id>`): the dialog opens on that deck, in that task,
+// and the session starts there. A board half that does declares `^1.82.0`.
+export const HOST_API_VERSION = '1.82.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

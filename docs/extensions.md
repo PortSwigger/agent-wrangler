@@ -316,6 +316,9 @@ runs its extension (1.81.0):
   the task's id on that deck (the board shows it as `<deckId>/<id>`), and `weight(taskId, graph,
   task)` gets that subject as its third argument. The board's own deck's tasks carry neither, and
   a contribution without `decks: true` sees only them, as before.
+- `api.openDispatch({ taskId })` may name another deck's task by its board id, `<deckId>/<id>`
+  (1.82.0): the dialog opens on that deck, in that task, and the session starts there. While that
+  deck is unreachable it shows a toast and resolves `null` without opening.
 
 A per-session board half reads the open card's deck from its session row:
 
