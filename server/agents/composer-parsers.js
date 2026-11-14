@@ -113,6 +113,38 @@ function codexComposerIsEmpty(paneText) {
   return rest.map((cell) => cell.ch).join('').trim() === CODEX_PLACEHOLDER;
 }
 
+export function codexComposerDiagnostic(paneText, { approvalSelector = false } = {}) {
+  const text = typeof paneText === 'string' ? paneText : '';
+  const lines = styledLines(text);
+  const composerIndex = lines.findLastIndex((cells) => cells[0]?.ch === CODEX_PROMPT_MARK);
+  const line = lines[composerIndex];
+  const selected = lines.findLast((cells, index) => {
+    const first = cells.findIndex((cell) => cell.ch.trim());
+    return index >= composerIndex && cells[first]?.reverse
+      && /^›\s*\d+\.\s*Allow\b/.test(cells.slice(first).map((cell) => cell.ch).join(''));
+  });
+  approvalSelector ||= Boolean(selected);
+  const diagnosticLine = line ?? selected;
+  const content = diagnosticLine?.slice(diagnosticLine.findIndex((cell) => cell.ch === CODEX_PROMPT_MARK) + 1)
+    .map((cell) => cell.ch).join('').trim() ?? '';
+  const rawLine = text.split('\n').findLast((raw) => raw.includes(CODEX_PROMPT_MARK));
+  const rawContent = rawLine?.slice(rawLine.indexOf(CODEX_PROMPT_MARK) + 1).trim() ?? '';
+  const escapeOnly = rawContent.length > 0
+    && !rawContent.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ -/]*[0-~]/g, '').trim();
+  const mouseFragmentsOnly = /\[?<\d+;\d+;\d+[Mm]/.test(content)
+    && /^[\[<\d;Mm\s]+$/.test(content);
+  let check;
+  if (approvalSelector) check = 'approval-selector';
+  else if (!text.includes(ESC)) check = 'missing-styling';
+  else if (!line) check = 'composer-missing';
+  else if (!line[0].bold) check = 'prompt-not-bold';
+  else if (line[0].dim) check = 'prompt-dim';
+  else if (mouseFragmentsOnly) check = 'mouse-fragments';
+  else if (line.slice(1).some((cell) => !cell.dim && cell.ch.trim())) check = 'visible-content';
+  else check = content === CODEX_PLACEHOLDER ? 'empty' : 'placeholder-mismatch';
+  return { check, length: diagnosticLine ? content.length : null, escapeOnly, mouseFragmentsOnly, approvalSelector };
+}
+
 export function paneComposerIsReady(paneText, agent = 'claude') {
   if (typeof paneText !== 'string' || !paneText) return false;
   if (agent === 'codex') {
