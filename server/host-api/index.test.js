@@ -166,6 +166,14 @@ test('a range the server does not serve throws at build; one it serves builds', 
   assert.ok(buildHostApi({ id: 'ok', requires: [], range: null, ...wiring() }));
 });
 
+test('a board half whose boardApi the server does not serve throws at build, like the range', () => {
+  assert.throws(
+    () => buildHostApi({ id: 'boom', requires: [], boardApi: `>${HOST_API_VERSION}`, ...wiring() }),
+    /Extension boom: its board half needs board API >/,
+  );
+  assert.ok(buildHostApi({ id: 'ok', requires: [], boardApi: `^${HOST_API_VERSION}`, ...wiring() }));
+});
+
 test('broadcast forces type: ext:<id> whatever the payload says', () => {
   const seen = [];
   const host = buildHostApi({ id: 'x', requires: ['board:broadcast'], ...wiring({ broadcast: (o) => seen.push(o) }) });

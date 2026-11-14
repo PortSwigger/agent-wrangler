@@ -57,5 +57,6 @@ export default {
     placeholder: 'https://yourcompany.atlassian.net/browse/',
   }],
   hooks: { 'links.normalise': normalise },
-  client: 'public/index.js',
+  boardApi: '^1.74.0',
+  board: { client: 'public/index.js' },
 };
