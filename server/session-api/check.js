@@ -38,6 +38,15 @@ export function credentialsOf(req) {
   };
 }
 
+// True when a request presents a session credential (a bearer or an
+// X-AW-Session claim). The deck's own surfaces (GET /deck, /ws, /pty) refuse
+// such a request: a session acts through the session API, as its token's card,
+// and never through the board's interface.
+export function carriesSessionCredential(req) {
+  const { bearer, claim } = credentialsOf(req);
+  return Boolean(bearer || claim);
+}
+
 const refuse = (code, reason) => ({ refuse: code, reason });
 
 // `cardState(cardId)` answers 'running' (its pane is alive), 'stopped',
