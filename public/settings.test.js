@@ -31,6 +31,7 @@ test('each registered setting appears in exactly one tab', () => {
     'codexDefaultApproveForMe',
     'codexDefaultBypass',
     'autoFixPrChecksDefault',
+    'suppressNudgedPrToasts',
     'trustCodexLaunchCwd',
     'trustClaudeLaunchCwd',
     'mailWakesDormant',

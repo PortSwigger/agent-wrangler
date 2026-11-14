@@ -1,50 +1,50 @@
-import { serverPort } from '../runtime.js';
+import { sessionApiPort } from '../runtime.js';
 import { getExtensions } from '../extensions/index.js';
 
 // Single source of truth for how a launched session's MCP client is pointed back
 // at this server. Imports only serverPort, so the agents layer (a leaf) can use
-// it without pulling in heavy modules.
+// it without pulling in heavy modules. Every URL here is on the session API's
+// own port (server/session-api), and every caller presents the session's token
+// from SESSION_TOKEN_ENV as a bearer (docs/session-api.md).
 export const MCP_SERVER_NAME = 'agent-wrangler';
-export const MCP_TOKEN_ENV = 'AW_MCP_TOKEN';
+export const SESSION_TOKEN_ENV = 'AW_SESSION_TOKEN';
 
-export function mcpUrl(port = serverPort()) {
+export function mcpUrl(port = sessionApiPort()) {
   return `http://127.0.0.1:${port}/mcp`;
 }
 
 // Where the launch-injected PostToolUse PR-attach hook (scripts/pr-attach-hook.mjs)
 // POSTs a freshly created PR url back to. Same leaf so the agents layer can build
 // the launch env without importing the server.
-export function prAttachUrl(port = serverPort()) {
+export function prAttachUrl(port = sessionApiPort()) {
   return `http://127.0.0.1:${port}/pr-attach`;
 }
 
 // Where the PR model footer (scripts/pr-model-footer.mjs) asks which model to
 // tag the caller's new PR with.
-export function prModelUrl(port = serverPort()) {
+export function prModelUrl(port = sessionApiPort()) {
   return `http://127.0.0.1:${port}/pr-model`;
 }
 
-// Claude carries the caller's card id as a custom header (supported by
-// --mcp-config's per-server `headers`).
-export function claudeMcpConfigArg(cardId, port = serverPort()) {
+// Claude expands `${VAR}` in --mcp-config, so the token stays in the
+// environment and never reaches argv.
+export function claudeMcpConfigArg(port = sessionApiPort()) {
   return JSON.stringify({
     mcpServers: {
       [MCP_SERVER_NAME]: {
         type: 'http',
         url: mcpUrl(port),
-        headers: { 'X-AW-Session': cardId },
+        headers: { Authorization: `Bearer \${${SESSION_TOKEN_ENV}}` },
       },
     },
   });
 }
 
-// Codex can't send a custom header; it sends the card id as a bearer token read
-// from MCP_TOKEN_ENV (set per-launch in the env to the card id). Values are TOML
-// strings (double-quoted) for the `-c key=value` channel.
-export function codexMcpConfigArgs(port = serverPort()) {
+// Values are TOML strings (double-quoted) for the `-c key=value` channel.
+export function codexMcpConfigArgs(port = sessionApiPort()) {
   return [
     '-c', `mcp_servers.${MCP_SERVER_NAME}.url="${mcpUrl(port)}"`,
-    '-c', `mcp_servers.${MCP_SERVER_NAME}.bearer_token_env_var="${MCP_TOKEN_ENV}"`,
+    '-c', `mcp_servers.${MCP_SERVER_NAME}.bearer_token_env_var="${SESSION_TOKEN_ENV}"`,
     '-c', `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
   ];
 }

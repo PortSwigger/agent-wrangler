@@ -44,3 +44,12 @@ export function extractCreatedPrUrl(stdinText) {
   const m = GITHUB_PR_URL.exec(text);
   return m ? m[0] : null;
 }
+
+// The identity headers a launch hook sends to the session API: the session
+// token as a bearer. A session launched before tokens existed has only its card
+// id, which the board accepts on its legacy route until that session relaunches.
+export function sessionApiHeaders(env = process.env) {
+  if (env.AW_SESSION_TOKEN) return { Authorization: `Bearer ${env.AW_SESSION_TOKEN}` };
+  if (env.AW_SESSION_ID) return { 'X-AW-Session': env.AW_SESSION_ID };
+  return null;
+}

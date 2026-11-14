@@ -207,14 +207,13 @@ test('a fork never loads the workflow skill plugin (a fork is not a tracked run)
   assert.doesNotMatch(cmd, /\/skills\/issue-to-pr/);
 });
 
-test('claude launch injects the wrangler MCP server + allow entry keyed on the card id', () => {
+test('claude launch injects the wrangler MCP server, its bearer read from the token env, and the allow entries', () => {
   const cmd = claude.buildLaunch({ sessionId: 'CARD', liveSessionId: 'LIVE', intent: '' });
   assert.match(cmd, /--mcp-config/);
   assert.match(cmd, /mcp__agent-wrangler__list_sessions/);
   assert.match(cmd, /mcp__agent-wrangler__spawn_session/);
-  // The card id rides as the X-AW-Session header inside the --mcp-config JSON.
-  assert.match(cmd, /X-AW-Session/);
-  assert.match(cmd, /CARD/);
+  assert.match(cmd, /"Authorization":"Bearer \$\{AW_SESSION_TOKEN\}"/);
+  assert.doesNotMatch(cmd, /X-AW-Session/);
 });
 
 test('claude launch injects the PR-attach hook on Bash + the attach-url env', () => {
