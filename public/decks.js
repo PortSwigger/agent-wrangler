@@ -114,6 +114,20 @@ export function deckRuntimes(descriptor) {
 // Whether any of a deck's runtimes runs `agent`.
 export const deckRunsAgent = (runtimes, agent) => runtimes.some((r) => r.agents === null || r.agents.includes(agent));
 
+// The sessions a deck holds: another deck's by its id, the board's own (null)
+// those stamped with the board's deck id or with none.
+export function sessionsOnDeck(sessions = [], deckId = null, ownDeckId = null) {
+  return sessions.filter((s) => (deckId ? s?.deckId === deckId : s && (!s.deckId || s.deckId === ownDeckId)));
+}
+
+// A schedule action as another deck stores it: a dispatch names its task by
+// that deck's own id, not the board's scoped one.
+export function scheduleActionForDeck(action, tasks = []) {
+  if (action?.kind !== 'dispatch' || !action.dispatch?.taskId) return action;
+  const task = tasks.find((t) => t.id === action.dispatch.taskId);
+  return { ...action, dispatch: { ...action.dispatch, taskId: task?.localId } };
+}
+
 // Where a task or schedule call goes, from the ids it names: a scoped id names
 // another deck and is sent there bare; any other id is the board's own deck's
 // (`deckId: null`). `deckId` is undefined when the call names none, and

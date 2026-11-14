@@ -60,7 +60,7 @@ import { toast } from './toast.js';
 import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
-import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, deckPickerOptions, deckRuntimes, deckRunsAgent, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
+import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, deckPickerOptions, deckRuntimes, deckRunsAgent, sessionsOnDeck, scheduleActionForDeck, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
 import { mountDecksPanel } from './decks-panel.js';
 import { setLegacyReporter, withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
@@ -2792,6 +2792,7 @@ function buildMenuEl(items) {
       : ('trailing' in it ? `<span class="context-menu-trailing">${it.trailing || ''}</span>` : '');
     b.innerHTML = `${it.icon || ''}<span>${esc(it.label)}</span>${trailing}`;
     if (it.title) b.title = it.title;
+    if (it.disabled) b.disabled = true;
     if (it.submenu) {
       b.dataset.hasSubmenu = '1';
       b.setAttribute('aria-haspopup', 'true');
@@ -2910,7 +2911,9 @@ function taskMinimiseMenuItem(taskId) {
 function openTaskViewMenu(x, y) {
   const item = slots.trayBackgroundItem(latestGraph, extApi);
   mountMenu([
-    { label: 'New task', icon: PLUS_ICON, run: () => createTask() },
+    deckEntries.length > 1
+      ? { label: 'New task', icon: PLUS_ICON, submenu: newTaskDeckItems() }
+      : { label: 'New task', icon: PLUS_ICON, run: () => createTask() },
     ...(item ? [item] : []),
   ], x, y);
 }
@@ -3817,6 +3820,14 @@ function wireTaskControls(el) {
 function createTask(sessionId, card = null) {
   send({ type: 'task-create', sessionId, draft: true, card });
 }
+// With more than one deck, a new task asks which deck it goes on; one that is
+// not connected is listed but cannot be picked.
+function newTaskDeckItems() {
+  return deckPickerOptions(boardDecks()).map((o) => ({
+    label: o.label, disabled: o.disabled,
+    run: () => (o.value ? send({ type: 'task-create', draft: true, deck: o.value }) : createTask()),
+  }));
+}
 
 function onTaskCreated(msg) {
   autoEditTaskId = msg.taskId;
@@ -3845,7 +3856,9 @@ function armNewTask(on) {
   // shows — so pressed from Search or an extension view, go back to it first.
   btn.addEventListener('click', () => {
     if (currentView !== 'grid') setView('grid');
-    createTask();
+    if (deckEntries.length < 2) { createTask(); return; }
+    const r = btn.getBoundingClientRect();
+    mountMenu([{ header: 'New task on' }, ...newTaskDeckItems()], r.left, r.bottom + 4);
   });
   const grid = document.getElementById('grid');
   if (grid) {
@@ -6077,12 +6090,13 @@ function populateTaskSelect(selectedId) {
   sel.value = selectedId && tasks.some((t) => t.id === selectedId && !t.archivedAt) ? selectedId : '';
 }
 
-// The deck picker, shown in launch mode while the board has more than one
-// deck. A deck that cannot be picked falls back to the board's own.
+// The deck picker, shown when launching or creating a schedule while the board
+// has more than one deck. A deck that cannot be picked falls back to the board's own.
+const deckPickerMode = () => modalMode === 'launch' || modalMode === 'schedule-create';
 function syncDeckPicker() {
   const row = document.getElementById('m-deck-row');
   const sel = document.getElementById('m-deck');
-  const show = modalMode === 'launch' && deckEntries.length > 1;
+  const show = deckPickerMode() && deckEntries.length > 1;
   row.classList.toggle('hidden', !show);
   if (!show) { sel.innerHTML = ''; delete sel.dataset.html; return; }
   const options = deckPickerOptions(boardDecks());
@@ -6124,6 +6138,7 @@ function setDispatchDeck(deckId) {
   dispatchDeck = next;
   if (intentImages.names().length) { intentImages.reset(); toast('Images are kept by one deck: paste them again for this one.'); }
   populateTaskSelect(null);
+  if (scheduleMode()) populateTargetSelect(null);
   syncDispatchRuntimes();
   populateModelSelect();
   setDispatchCwdDefaults();
@@ -6132,11 +6147,12 @@ function setDispatchDeck(deckId) {
   syncWorktreeFields();
   requestFolderBrowse();
   syncDispatchExtFields();
+  syncScheduleGo();
 }
 // A deck that comes or goes while the dialog is open updates the picker; one
 // that can no longer be picked hands the dialog back to the board's own deck.
 function refreshDeckPicker() {
-  if (modal.classList.contains('hidden') || modalMode !== 'launch') return;
+  if (modal.classList.contains('hidden') || !deckPickerMode()) return;
   const was = dispatchDeck;
   syncDeckPicker();
   if (was === dispatchDeck) return;
@@ -6469,7 +6485,7 @@ function setScheduleAction(kind) {
 // liveness at fire time (resume if dormant, message into the pane if live).
 function populateTargetSelect(selectedId) {
   const sel = document.getElementById('m-sch-target');
-  const sessions = [...latestSessions].sort((a, b) => (a.label || '').localeCompare(b.label || ''));
+  const sessions = sessionsOnDeck(latestSessions, dispatchDeck, boardDeckId).sort((a, b) => (a.label || '').localeCompare(b.label || ''));
   sel.innerHTML = sessions.length
     ? sessions.map((s) => `<option value="${esc(s.sessionId)}">${esc(s.label || s.sessionId)} · ${s.managed ? 'running' : 'dormant'}</option>`).join('')
     : '<option value="">No sessions on the board</option>';
@@ -6686,12 +6702,12 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   const action = schedule?.action || (schedule?.dispatch ? { kind: 'dispatch', dispatch: schedule.dispatch } : null);
   scheduleAction = action?.kind || 'dispatch';
   const d = (action?.kind === 'dispatch' ? action.dispatch : null) || {};
-  populateTargetSelect(action?.sessionId);
   document.getElementById('m-sch-focus').checked = action?.kind === 'session' && action.focus === true;
   document.getElementById('m-sch-message').value = action && action.kind !== 'dispatch' ? (action.message || '') : '';
   const wantTask = typeof taskId === 'string' ? taskId : (d.taskId || null);
   dispatchDeck = mode === 'launch' && isRemoteTask(wantTask) ? findTask(wantTask).deckId : null;
   syncDeckPicker();
+  populateTargetSelect(action?.sessionId);
   populateTaskSelect(wantTask);
   dispatchMode = d.workflow ? 'workflow' : 'standard'; // never sticky otherwise
   setDispatchCwdDefaults();
@@ -6994,9 +7010,12 @@ function submitSchedule() {
   const name = document.getElementById('m-sch-name').value.trim();
   const action = readScheduleAction();
   const editing = modalMode === 'schedule-edit';
-  send(editing
-    ? { type: 'schedule-update', id: editingScheduleId, patch: { name, when, action } }
-    : { type: 'schedule-create', name, when, action });
+  const sent = editing
+    ? send({ type: 'schedule-update', id: editingScheduleId, patch: { name, when, action } })
+    : dispatchDeck
+      ? send({ type: 'schedule-create', name, when, action: scheduleActionForDeck(action, remoteBoard.tasks), deck: dispatchDeck })
+      : send({ type: 'schedule-create', name, when, action });
+  if (!sent) return;
   closeModal();
   openSchedulesPanel(); // back to the list, which the rebuild refreshes
   toast(editing ? 'Schedule saved' : 'Schedule created');
