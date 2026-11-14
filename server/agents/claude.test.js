@@ -420,3 +420,12 @@ for (const method of ['buildLaunch', 'buildResume', 'buildFork']) {
     assert.throws(() => claude[method]({ ...opts, permissionMode: 'invalid' }), /permission mode/i);
   });
 }
+
+test('Claude prepends a tool refresh note to an existing resume prompt without creating one', () => {
+  const note = 'Extension MCP tools changed; re-run ToolSearch before calling MCP tools.';
+  const withIntent = claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE', intent: 'Continue', toolRefreshNote: note });
+  assert.ok(withIntent.includes(` -- '${note}\n\nContinue'`));
+  const interactive = claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE', toolRefreshNote: note });
+  assert.ok(interactive.includes(note));
+  assert.ok(!interactive.includes(` -- '${note}'`));
+});
