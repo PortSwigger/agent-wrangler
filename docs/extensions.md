@@ -279,6 +279,13 @@ A board half reads only its own state and the session view, and acts only throug
   with the reply arriving through `api.onMessage`.
 - `api.styles()` resolves with the board's contributed styles, the list `/api/styles` serves.
 
+Every session row the board hands a board half carries two fields of the board's own (1.75.0):
+`deckId`, the id of the deck the session is on (from `GET /deck`), and `cardKey`,
+`<deckId>/<sessionId>`. The board names a card by that pair, since two decks can each hold a session
+the other does not know about. The session ids in the API itself (`openSession`, `mountSession`,
+`api.act`'s `session`) are unchanged. An older board leaves both fields out, so a board half that
+reads them declares `^1.75.0`.
+
 ### Host API 2.0 and the v1 shim
 
 Agent Wrangler serves host API **2.0.0**. Version 2 is the deck API contract: a split manifest, a
@@ -287,9 +294,9 @@ board half that reads `api.state()` and the session view, files through the `ses
 method changed shape, so moving to 2.0 is the migration below plus raising your ranges to `^2.0.0`.
 
 A manifest declaring a `^1` range (`engines.wranglerApi` or `boardApi`) still boots, on the **v1
-shim**: its `host.version` reads `1.74.0`, the last 1.x, and every surface 1.x offered keeps working,
+shim**: its `host.version` reads `1.75.0`, the last 1.x, and every surface 1.x offered keeps working,
 the older ones through the adapters listed under
-[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.74.0` is
+[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.75.0` is
 refused, as before. The adapters stay until 3.0, which removes them once their use has gone quiet:
 each use is reported as the [`core.deprecated`](#core-events) telemetry event, so the maintainers can
 see which surfaces are still in use.
@@ -301,8 +308,13 @@ board server is on `AW_PORT` (default `7878`), the address you open: it serves t
 scripts, each extension's board half under `/ext/<id>/`, and styles (`/api/styles`, `/styles/*`).
 The deck listens on loopback only, on `AW_DECK_PORT` (default `AW_PORT` + 1), and the board page names
 that port in `<meta name="aw-deck-port">`. The deck accepts a browser only from the board origins in
-its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS`. A board
-opened from another host (with `AW_BIND_HOST`) reaches the deck through the board server instead.
+its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_ORIGINS` (or
+`--allowed-origins`, or `allowedOrigins` in `config.json`). A board opened from another host (with
+`AW_BIND_HOST`) reaches the deck through the board server instead.
+
+A deck started with `--deck-only` has no board server: it serves only the deck API on its own port
+and 404s board pages, and its allowlist is only the origins configured for it. See
+[Running a second deck](../README.md#running-a-second-deck).
 
 Board pages are sent with `Content-Security-Policy-Report-Only: script-src 'self'; object-src 'none';
 base-uri 'self'`. Nothing is blocked yet: an inline `onclick` or `<script>` in a board half still
@@ -943,7 +955,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`host-api/version.js`) is what the server serves and a breaking reshape adds
   `v2.js` keeping `v1.js` as the shim, selected by the declared range — never
   edit builders in place. 2.0.0 reshaped no builder, so both majors still build
-  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.74.0) and its
+  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.75.0) and its
   older surfaces through the adapters (see [Host API 2.0 and the v1
   shim](#host-api-20-and-the-v1-shim)). `semver` is a real dependency, so
   `scripts/sync-deps.sh` means the SERVICE needs a restart for it to land

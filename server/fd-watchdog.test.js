@@ -36,3 +36,12 @@ test('decision: sustained growth escalates through further step levels', () => {
 test('decision: a drop that does not cross back below threshold does not re-warn the same level', () => {
   assert.equal(fdWatchdogDecision({ count: 210, threshold: 200, step: 50, lastWarnedAt: 200 }), null);
 });
+
+test('decision: a burst not yet sustained for `sustain` polls → stays quiet', () => {
+  assert.equal(fdWatchdogDecision({ count: 210, threshold: 200, sustain: 3, samplesAbove: 1 }), null);
+  assert.equal(fdWatchdogDecision({ count: 260, threshold: 200, sustain: 3, samplesAbove: 2 }), null);
+});
+
+test('decision: warns once the count has stayed over threshold for `sustain` polls', () => {
+  assert.equal(fdWatchdogDecision({ count: 210, threshold: 200, step: 50, sustain: 3, samplesAbove: 3 }), 200);
+});

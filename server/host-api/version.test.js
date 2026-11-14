@@ -78,13 +78,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 // and 1.72.0 `telemetry:emit`, the manifest `telemetry` block and `version`,
 // and 1.73.0 the telemetry `ms` type up to 366 days,
 // and 1.74.0 split manifests and the board half's state, onState, act and styles,
+// and 1.75.0 `deckId` and `cardKey` on the board's session rows,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders. 2.0.0 is
-// the deck API major: every 1.x range is still served, on the v1 shim (1.74.0).
+// the deck API major: every 1.x range is still served, on the v1 shim (1.75.0).
 test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can honour passes', () => {
   assert.equal(HOST_API_VERSION, '2.0.0');
-  assert.equal(V1_SHIM_VERSION, '1.74.0');
+  assert.equal(V1_SHIM_VERSION, '1.75.0');
   assert.equal(servesRange('^1.47.0'), true);
   assert.equal(servesRange('^1.48.0'), true);
   assert.equal(servesRange('^1.49.0'), true);
@@ -113,7 +114,8 @@ test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can 
   assert.equal(servesRange('^1.72.0'), true);
   assert.equal(servesRange('^1.73.0'), true);
   assert.equal(servesRange('^1.74.0'), true);
-  assert.equal(servesRange('^1.75.0'), false);
+  assert.equal(servesRange('^1.75.0'), true);
+  assert.equal(servesRange('^1.76.0'), false);
   assert.equal(servesRange('^1.46.0'), true);
   assert.equal(servesRange('^1.45.0'), true);
   assert.equal(servesRange('^1.44.0'), true);
@@ -170,10 +172,11 @@ test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can 
 test('a ^1 range is served as the v1 shim, a ^2 range as the current version', () => {
   assert.equal(servedVersion('^1.15.0'), V1_SHIM_VERSION);
   assert.equal(servedVersion('^1.74.0'), V1_SHIM_VERSION);
+  assert.equal(servedVersion('^1.75.0'), V1_SHIM_VERSION);
   assert.equal(servedVersion('>=1.0.0'), HOST_API_VERSION, 'a range the current version meets gets it');
   assert.equal(servedVersion('^2.0.0'), HOST_API_VERSION);
   assert.equal(servedVersion(null), HOST_API_VERSION);
-  assert.equal(servedVersion('^1.75.0'), null);
+  assert.equal(servedVersion('^1.76.0'), null);
   assert.equal(servedVersion('not a range'), null);
 });
 
