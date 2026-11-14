@@ -28,3 +28,15 @@ test('/ws?api= picks the legacy protocol, the deck API, or refuses a major it ca
   assert.equal(wsApiMode('?api=2'), null);
   assert.equal(wsApiMode('?api=x'), null);
 });
+
+test('each extension is listed with its own boardApi, else the one the deck serves', () => {
+  const d = deckDescriptor({
+    deckId: 'd1',
+    name: 'laptop',
+    actions: [],
+    runtimes: [],
+    extensions: [{ id: 'split', enabled: true, version: '2.0.0', boardApi: '^1.74.0' }, { id: 'plain', enabled: true }],
+    boardApi: '1.74.0',
+  });
+  assert.deepEqual(d.extensions, [{ id: 'split', version: '2.0.0', boardApi: '^1.74.0' }, { id: 'plain', version: null, boardApi: '1.74.0' }]);
+});

@@ -54,7 +54,7 @@ import {
 } from './util.js';
 import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
-import { readTerminalTheme, readTerminalFont, setCustomStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
+import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
 import { toast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { withCompatFields } from './legacy-surface.js';
@@ -442,6 +442,10 @@ const extApi = {
   railButtons,
   sessionPanel,
   send,
+  // Backs `api.act`; slots binds the id, so only `ext.<own id>.*` is reachable.
+  act: (extId, name, opts) => deckAct(`ext.${extId}.${name}`, opts),
+  // Backs `api.styles()`.
+  styles: loadedStyles,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
   selectedSessionId: () => selectedSessionId,
   requestPanelRender: () => { if (selectedSessionId) renderPanel(selectedSessionId); },
@@ -662,7 +666,19 @@ function renderSampleCard(el, _extId, hidden) {
   if (host) sampleHosts.set(host, { session: SAMPLE_SESSION, hidden });
   mountCardPills(document);
 }
-const clientExtensions = createClientExtensionLoader(slots, { api: extApi });
+const clientExtensions = createClientExtensionLoader(slots, { api: extApi, pairs: pairsWithDeck });
+// A board half is mounted only when the deck lists its id with the same
+// boardApi (an entry without one pairs with the API the deck serves). Before
+// the descriptor has answered there is nothing to pair against, so it loads;
+// an id the descriptor does not list yet waits for the refresh that follows.
+function pairsWithDeck(entry) {
+  const listed = deck.descriptor()?.extensions;
+  if (!Array.isArray(listed)) return true;
+  const mine = listed.find((e) => e?.id === entry.id);
+  if (!mine) return null;
+  const want = entry.boardApi ?? hostApiVersion;
+  return want == null || mine.boardApi === want;
+}
 // The `extensions` connect message announces which extensions ship a client
 // module and where it lives; `graph.extensions[].enabled` (re-read from config
 // server-side every rebuild) is what decides whether each one is actually
@@ -7585,7 +7601,7 @@ const deck = createDeckClient({
     syncStandingBanner();
     syncDeckControls();
   },
-  onState: (frame) => { applyGraph(stateToGraph(frame, { restore: withCompatFields })); armIdleReapply(); },
+  onState: (frame) => { slots.setExtState(frame.ext); applyGraph(stateToGraph(frame, { restore: withCompatFields })); armIdleReapply(); },
   onEvent: (frame) => onDeckMessage(frame.data),
   // A #view=search deep link runs setView before this socket exists, so its
   // index-status request is dropped. Re-issue it on open — which also refreshes
@@ -7649,7 +7665,7 @@ function onDeckMessage(msg) {
   // extension that fails to load is logged and dropped, never the board's
   // problem. A render is asked for once something new registered, since the
   // first graph may already have been applied while the module was in flight.
-  else if (msg.type === 'extensions') { deck.refresh().then(syncDeckControls); extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteExtClientFacts(extClientManifest); syncClientExtensions(); }
+  else if (msg.type === 'extensions') { deck.refresh().then(() => { syncDeckControls(); syncClientExtensions(); }); extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteExtClientFacts(extClientManifest); syncClientExtensions(); }
   // An extension's server half talking to its own browser half: host.broadcast
   // FORCES the frame's type to `ext:<its own id>` (host-api/v1.js), so the
   // prefix can never collide with a core type and the id in it is the whole
