@@ -59,7 +59,7 @@ export default {
       noted = localStorage.getItem(JP_NOTE_KEY) === '1';
     } catch {}
     if (saved === 'jurassic-park' && !noted) {
-      fetch('/api/styles').then((r) => r.json()).then(({ styles }) => {
+      api.styles().then((styles) => {
         if (styles.some((s) => s.id === 'jurassic-park')) return;
         api.ui.notify({
           id: 'jurassic-park-moved',

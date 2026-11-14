@@ -40,9 +40,9 @@ export default {
   author: 'Agent Wrangler',
   dir,
   defaultEnabled: true,
-  themes: 'themes',
   settings: readThemes().map((t) => ({ key: t.key, type: 'toggle', label: t.manifest.name || t.id, theme: t.id, hidden: true })),
   handlers: [listThemesHandler],
   engines: { wranglerApi: '^1.46.0' },
-  client: 'public/index.js',
+  boardApi: '^1.74.0',
+  board: { client: 'public/index.js', themes: 'themes' },
 };

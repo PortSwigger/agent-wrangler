@@ -85,11 +85,14 @@ function mergeInto(target, contribution) {
   }
 }
 
-export function buildHostApi({ id, requires = [], range = null, ...wiring } = {}) {
+export function buildHostApi({ id, requires = [], range = null, boardApi = null, ...wiring } = {}) {
   if (typeof id !== 'string' || !id) throw new Error('buildHostApi: id must be a non-empty extension id');
   if (!Array.isArray(requires)) throw new Error(`Extension ${id}: requires must be an array of capability names`);
   if (!servesRange(range)) {
     throw new Error(`Extension ${id}: needs host API ${range}, this server serves ${HOST_API_VERSION}`);
+  }
+  if (!servesRange(boardApi)) {
+    throw new Error(`Extension ${id}: its board half needs board API ${boardApi}, this server serves ${HOST_API_VERSION}`);
   }
   const facade = alwaysPresent({ id, ...wiring });
   // `settingDefs`/`readSettings` ride in on `wiring` with no signature change,

@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 // Validation and naming for an image pasted into the chat composer or the
 // terminal. Pure and fs-free (the caller does the writing) so it unit-tests
-// without touching disk, the same split file-preview.js uses for GET /file — the
+// without touching disk, the same split file-preview.js uses for the session.file action — the
 // one exception is convertToPng, which needs a temp file for `sips`.
 //
 // Why a file at all: Claude Code's own Cmd+V image paste reads the HOST

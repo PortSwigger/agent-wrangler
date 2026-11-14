@@ -97,6 +97,6 @@ export default {
   graph,
   activate,
   deactivate,
-  client: 'public/index.js',
-  styles: 'public/styles.css',
+  boardApi: '^1.74.0',
+  board: { client: 'public/index.js', styles: 'public/styles.css' },
 };

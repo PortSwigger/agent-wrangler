@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileTypeOf } from '../public/file-types.js';
 
-// Pure path validation for GET /file. fs functions are injected so this unit
+// Pure path validation for the session.file action. fs functions are injected so this unit
 // tests without touching disk; server/index.js passes the real ones. Returns an
 // HTTP status + (on 200) the resolved real path — the caller reads the bytes.
 export function expandHome(p, homedir) {

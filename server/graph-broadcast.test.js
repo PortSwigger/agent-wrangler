@@ -8,11 +8,10 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
-// history-gate.test.js and graph-frame-gate.test.js prove the gates drop an unchanged
-// list or graph; this proves the LIVE server's graph actually IS unchanged tick to
-// tick. Those are different claims, and only this one fails when the record starts
-// jittering — a per-build timestamp, an unstable sort, a label recomputed off
-// something live, a sampled cpu figure — which would leave the gates a silent no-op
+// deck/state.test.js proves the state stream drops an unchanged list or state; this
+// proves the LIVE server's state actually IS unchanged tick to tick. Those are
+// different claims, and only this one fails when the record starts jittering — a per-build timestamp, an unstable sort, a label recomputed off
+// something live, a sampled cpu figure — which would leave the stream's skip a silent no-op
 // with every unit test still green.
 //
 // Boots the real server against an ISOLATED AW_DATA_DIR (see the run-dev skill) seeded
@@ -34,7 +33,7 @@ async function waitFor(fn, { tries = 60, every = 250 } = {}) {
   return null;
 }
 
-test('the archived list rides the first graph, and an idle server sends no graph after it', { timeout: 60_000 }, async () => {
+test('the archived list rides the first state frame, and an idle server sends no frame after it', { timeout: 60_000 }, async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-hist-'));
   const port = await freePort();
   const url = `http://127.0.0.1:${port}/`;
@@ -59,24 +58,24 @@ test('the archived list rides the first graph, and an idle server sends no graph
 
     // No trailing slash: origin-check.js compares the Origin header exactly, and a
     // `http://host:port/` form is rejected by the CSRF gate.
-    ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: `http://127.0.0.1:${port}` });
-    const graphs = [];
+    ws = new WebSocket(`ws://127.0.0.1:${port}/ws?api=1`, { origin: `http://127.0.0.1:${port}` });
+    const frames = [];
     ws.on('message', (raw) => {
       const m = JSON.parse(raw.toString());
-      if (m.type === 'graph') graphs.push(m.graph);
+      if (m.type === 'state') frames.push(m);
     });
-    assert.ok(await waitFor(() => graphs.length >= 1), 'no connect snapshot');
+    assert.ok(await waitFor(() => frames.length >= 1), 'no connect snapshot');
     // Three 4s rebuild ticks with nothing changing. Any frame in them means the
-    // graph moved on its own; history-less or not, the board re-renders for it.
+    // state moved on its own; history-less or not, the board re-renders for it.
     await sleep(12_500);
 
-    assert.equal('history' in graphs[0], true, 'the connect snapshot must always carry the full list');
-    assert.equal(graphs[0].history.length, 3);
+    assert.equal('history' in frames[0], true, 'the connect snapshot must always carry the full list');
+    assert.equal(frames[0].history.length, 3);
     assert.deepEqual(
-      Object.keys(graphs[0].history[0]).sort(),
+      Object.keys(frames[0].history[0]).sort(),
       ['archivedAt', 'cwd', 'effort', 'label', 'model', 'sessionId', 'viaTaskArchive'],
     );
-    assert.deepEqual(graphs.slice(1), [], 'nothing changed between these ticks, so none may be broadcast');
+    assert.deepEqual(frames.slice(1), [], 'nothing changed between these ticks, so none may be broadcast');
   } finally {
     try { ws?.close(); } catch {}
     try { server?.kill(); } catch {}
