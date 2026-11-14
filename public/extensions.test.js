@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createClientExtensionLoader } from './extensions.js';
 import { createSlots } from './slots.js';
 
-function harness(modules) {
+function harness(modules, { pairs } = {}) {
   // `head` is real enough for the stylesheet <link> bookkeeping: the loader only
   // ever appends one and removes it again.
   const head = {
@@ -25,6 +25,7 @@ function harness(modules) {
     },
     onError: (msg) => errors.push(String(msg)),
     document,
+    ...(pairs ? { pairs } : {}),
   });
   return { slots, errors, imported, loader, load: loader.load, head };
 }
@@ -196,4 +197,20 @@ test('a failed load leaves nothing to call stale', async () => {
   const { loader } = harness({});
   await loader.load([{ id: 'a', client: '/ext/a/index.js?v=old' }]);
   assert.deepEqual(loader.staleIds([{ id: 'a', client: '/ext/a/index.js?v=new' }]), []);
+});
+
+test('a board half the deck does not list with the same id and boardApi is reported and left unloaded', async () => {
+  const mod = { default: { register() {} } };
+  const listed = new Map([['a', '^1.74.0'], ['b', '^1.80.0']]);
+  const pairs = (e) => (listed.has(e.id) ? listed.get(e.id) === (e.boardApi ?? '1.74.0') : null);
+  const h = harness({ '/ext/a/i.js': mod, '/ext/b/i.js': mod, '/ext/c/i.js': mod }, { pairs });
+  const list = [{ id: 'a', client: '/ext/a/i.js', boardApi: '^1.74.0' }, { id: 'b', client: '/ext/b/i.js', boardApi: '^1.74.0' }, { id: 'c', client: '/ext/c/i.js' }];
+  await h.load(list);
+  assert.deepEqual(h.loader.loadedIds(), ['a']);
+  assert.deepEqual(h.imported, ['/ext/a/i.js']);
+  assert.deepEqual(h.errors, ['[ext:b] not loaded: the deck lists b with a different boardApi than ^1.74.0'], 'an id the deck does not list yet waits quietly');
+  listed.set('b', '^1.74.0');
+  listed.set('c', '1.74.0');
+  await h.load(list);
+  assert.deepEqual(h.loader.loadedIds(), ['a', 'b', 'c']);
 });

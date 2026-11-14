@@ -47,6 +47,11 @@ export function createClientExtensionLoader(slots, {
   // app.js's base api, handed to slots.forExtension so a module's registrar
   // exposes `api` at register() time (1.14.0).
   api = {},
+  // Whether the deck lists this board half's id with the same boardApi
+  // (GET /deck `extensions`): true, false when it lists the id with another
+  // boardApi (reported), or null when it does not list the id yet. Either way
+  // an unpaired half is left unloaded, so a later announcement retries it.
+  pairs = () => true,
 } = {}) {
   const loaded = new Map(); // id -> assetKey of what was mounted
   const sheets = new Map(); // id -> the <link> element, so unload can remove it
@@ -77,6 +82,11 @@ export function createClientExtensionLoader(slots, {
       // ever lists an extension that has one — and is skipped rather than
       // marked loaded, which would swallow the real entry on a later connect.
       if (typeof id !== 'string' || !id || (!mod && !css) || loaded.has(id)) continue;
+      const paired = pairs(entry);
+      if (paired !== true) {
+        if (paired === false) onError(`[ext:${id}] not loaded: the deck lists ${id} with a different boardApi than ${entry.boardApi ?? 'the one it serves'}`);
+        continue;
+      }
       loaded.set(id, assetKey(entry));
       // Before the import, so a module's first render already has its rules —
       // a stylesheet that lands after mount is a visible flash of unstyled UI.

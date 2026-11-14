@@ -150,7 +150,11 @@ in tmux; a non-empty `LC_ALL` takes precedence and must be updated or unset firs
 
 Environment variables:
 
-- `AW_PORT` (or legacy `PORT`) — port to listen on (default `7878`)
+- `AW_PORT` (or legacy `PORT`) — port the board listens on, the address you open (default `7878`)
+- `AW_DECK_PORT` — loopback port the deck, which runs sessions, listens on (default `AW_PORT` + 1).
+  The board talks to it cross-origin; if the default is taken the deck takes a free port instead
+- `AW_ALLOWED_ORIGINS` — comma-separated extra board origins the deck accepts, beside the board's
+  own loopback origins
 - `AW_DATA_DIR` — state directory (default `~/.agent-wrangler`); set it with a distinct `AW_PORT` to run an isolated instance
 - `AW_OPEN_BROWSER=1` — auto-open the board in a browser on startup (default: off; the legacy `AW_NO_OPEN=1` still suppresses)
 - `AW_DEFAULT_MODEL` — model pre-selected in the dispatch dialog, by value (e.g. `fable`, `opus`, `opusplan`, `sonnet`, `sonnet[1m]`, `haiku`); unset or unrecognised leaves the built-in default (`opus`)
@@ -164,7 +168,8 @@ Environment variables:
   isn't enough on Linux: the server also binds loopback-only by default, so pair it with
   `AW_BIND_HOST=0.0.0.0` (below) or the container still can't reach `/mcp` even once it's dialing
   the right address
-- `AW_BIND_HOST` — interface the server listens on (default `127.0.0.1`, loopback-only); set to
+- `AW_BIND_HOST` — interface the board server listens on (default `127.0.0.1`, loopback-only; the
+  deck itself always stays on loopback, and the board server forwards `/mcp` to it); set to
   `0.0.0.0` when a devcontainer session needs to reach this server's `/mcp` from inside its
   container. Widens exposure on a shared machine (the control/MCP posture is localhost-advisory),
   so treat it as a deliberate opt-in, not a default

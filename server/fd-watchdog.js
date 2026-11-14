@@ -15,6 +15,7 @@ import { logWarn } from './log.js';
 
 const DEFAULT_THRESHOLD = 200;
 const DEFAULT_STEP = 50;
+const DEFAULT_SUSTAIN = 3;
 const DEFAULT_INTERVAL_MS = 30000;
 
 // Pure: this process's current open fd count, or null if /dev/fd isn't available
@@ -27,13 +28,16 @@ export function countOpenFds(readdirSync = fs.readdirSync) {
   }
 }
 
-// Pure decision: given the current count, should we warn now? Edge-triggered on
-// crossing `threshold`, then re-fires every further `step` fds so sustained growth
-// keeps escalating instead of going silent after the first warning. Returns the
-// crossed level (for the log message) or null to stay quiet. `lastWarnedAt` is the
-// highest level already warned about since the count last dropped below threshold.
-export function fdWatchdogDecision({ count, threshold = DEFAULT_THRESHOLD, step = DEFAULT_STEP, lastWarnedAt = 0 }) {
-  if (count == null || count < threshold) return null;
+// Pure decision: given the current count, should we warn now? Stays quiet until
+// `samplesAbove` consecutive polls (including this one) have been at or over
+// `threshold` — a single poll landing on a momentary burst is not a leak. Then
+// edge-triggered on crossing `threshold`, re-firing every further `step` fds so
+// sustained growth keeps escalating instead of going silent after the first
+// warning. Returns the crossed level (for the log message) or null to stay quiet.
+// `lastWarnedAt` is the highest level already warned about since the count last
+// dropped below threshold.
+export function fdWatchdogDecision({ count, threshold = DEFAULT_THRESHOLD, step = DEFAULT_STEP, sustain = DEFAULT_SUSTAIN, samplesAbove = sustain, lastWarnedAt = 0 }) {
+  if (count == null || count < threshold || samplesAbove < sustain) return null;
   const level = threshold + Math.floor((count - threshold) / step) * step;
   return level > lastWarnedAt ? level : null;
 }
@@ -48,18 +52,22 @@ export function startFdWatchdog({
   intervalMs = DEFAULT_INTERVAL_MS,
   threshold = DEFAULT_THRESHOLD,
   step = DEFAULT_STEP,
+  sustain = DEFAULT_SUSTAIN,
   onAlert = () => {},
   onClear = () => {},
 } = {}) {
   let lastWarnedAt = 0;
+  let samplesAbove = 0;
   const timer = setInterval(() => {
     const count = countOpenFds();
     if (count != null && count < threshold) {
       if (lastWarnedAt > 0) onClear();
       lastWarnedAt = 0;
+      samplesAbove = 0;
       return;
     }
-    const level = fdWatchdogDecision({ count, threshold, step, lastWarnedAt });
+    if (count != null) samplesAbove += 1;
+    const level = fdWatchdogDecision({ count, threshold, step, sustain, samplesAbove, lastWarnedAt });
     if (level == null) return;
     lastWarnedAt = level;
     logWarn(`[fd-watchdog] open fd count ${count} has crossed ${level} — possible leak (see CLAUDE.md for past offenders: chokidar watch scope, node-pty attach teardown)`);

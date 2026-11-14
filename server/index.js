@@ -12,7 +12,7 @@ import openModule from 'open';
 import { buildGraph, createWatcher, sessionLabel } from './state-reader.js';
 import { analyze, resolveResumeDir } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
-import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor } from './runtimes/index.js';
+import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, knownRuntimes } from './runtimes/index.js';
 import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
@@ -37,16 +37,17 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
 import { createMcpRequestHandler, extractCaller } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
-import { bindHost } from './runtime.js';
+import { bindHost, deckPort } from './runtime.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
-import { createHttpServer } from './http-handler.js';
+import { createBoardServer } from './http-handler.js';
+import { createDeckServer } from './deck/http.js';
 import { resolveMarkdownPath } from './file-preview.js';
 import { createExtFiles } from './ext-files.js';
 import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
@@ -56,7 +57,12 @@ import { createExtTerminalOpener } from './ext-terminals.js';
 import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
 import { archiveTaskCascade } from './control/handlers/tasks.js';
 import { createTargets } from './control/targets.js';
-import { routeControlMessage, invalidateHandlerMap } from './control/router.js';
+import { routeControlMessage, invalidateHandlerMap, deckActions } from './control/router.js';
+import { createLegacyFileRoutes, legacyGraphFrame, legacyReply, warnLegacy } from './deck/legacy.js';
+import { loadDeckId } from './deck/deck-id.js';
+import { deckDescriptor, wsApiMode } from './deck/descriptor.js';
+import { deckEvent } from './deck/actions.js';
+import { createStateStream } from './deck/state.js';
 import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
 import { resolveTmuxBin, TmuxNotFoundError } from './tmux-resolve.js';
 import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
@@ -65,8 +71,6 @@ import { scanAllDaily } from './usage-report.js';
 import { startFdWatchdog } from './fd-watchdog.js';
 import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
-import { createHistoryGate } from './history-gate.js';
-import { createGraphFrameGate } from './graph-frame-gate.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
@@ -95,8 +99,15 @@ import { VERSION } from './version.js';
 
 const open = openModule.default || openModule;
 
+// PORT is the board's: the address people open, and the one launched sessions
+// reach MCP and the PR hooks on (forwarded to the deck). The deck listens on
+// loopback on its own port; DECK_PORT is what it asks for, and deckListenPort
+// what it got.
 const PORT = Number(process.env.AW_PORT) || Number(process.env.PORT) || 7878;
 const HOST = bindHost();
+const DECK_HOST = '127.0.0.1';
+const DECK_PORT = deckPort();
+let deckListenPort = DECK_PORT;
 
 // Last-resort guards: a single bad PTY/AppleScript/parse must never take the
 // whole dashboard down. Log and keep serving.
@@ -137,7 +148,7 @@ ensurePtyHelperExecutable();
 applyRetiredFlagMigrations();
 let ext;
 try {
-  ext = await primeExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: CONTROL_HANDLERS.map((h) => h.type), coreRuntimeIds: BUILTIN_RUNTIME_IDS });
+  ext = await primeExtensions({ coreToolNames: TOOLS.map((t) => t.name), coreHandlerTypes: [...CONTROL_HANDLERS.map((h) => h.type), 'action'], coreRuntimeIds: BUILTIN_RUNTIME_IDS });
 } catch (err) {
   logError(`[agent-wrangler] ${err.message}`);
   process.exit(1);
@@ -302,6 +313,7 @@ const terminalRegistry = new TerminalRegistry();
 const STALE_MS = 12 * 60 * 60 * 1000;
 
 let lastGraph = null;
+let deckId = null;
 const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, () => lastGraph);
 
 // Every AUTOMATED paste into a pane goes through here. A paste lands at the
@@ -435,6 +447,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
       id,
       requires: e.requires,
       range: e.range,
+      boardApi: e.boardApi,
       stores: storesFor(id),
       // The manifest's own setting DEFS, plus a READ-THROUGH of their values:
       // host.settings resolves against config.json on every call, so a value
@@ -989,60 +1002,31 @@ const prModelHandler = createPrModelHandler({
   logError,
 });
 
-// GET /file?path=… — read a markdown file for the click-to-preview modal.
-// Localhost posture like the static routes; the response carries NO CORS header
-// so a cross-origin page can't read it (load-bearing for the .md-anywhere read
-// scope). resolveMarkdownPath gates: .md only, symlinks resolved, regular file,
+// The deck's session.file action: read a markdown file for the click-to-preview
+// modal. resolveMarkdownPath gates: .md only, symlinks resolved, regular file,
 // 2 MB cap. A read-time growth past the cap is an accepted race on a localhost
 // dev tool.
 const FILE_MAX_BYTES = 2 * 1024 * 1024;
-async function fileHandler(req, res) {
-  try {
-    if (!isAllowedHost(req.headers.host, PORT)) {
-      res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: 'forbidden' }));
-      return;
-    }
-    const raw = new URL(req.url, 'http://localhost').searchParams.get('path');
-    const r = resolveMarkdownPath(raw, {
-      homedir: os.homedir(), realpathSync: fs.realpathSync, statSync: fs.statSync, maxBytes: FILE_MAX_BYTES,
-    });
-    if (r.status !== 200) {
-      res.writeHead(r.status, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: r.message }));
-      return;
-    }
-    const content = await fs.promises.readFile(r.path, 'utf8');
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ path: r.path, content }));
-  } catch (err) {
-    logError('[file]', err);
-    if (!res.headersSent) {
-      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: 'read error' }));
-    }
-  }
+async function readMarkdownFile(raw) {
+  const r = resolveMarkdownPath(raw, {
+    homedir: os.homedir(), realpathSync: fs.realpathSync, statSync: fs.statSync, maxBytes: FILE_MAX_BYTES,
+  });
+  if (r.status !== 200) return r;
+  return { status: 200, path: r.path, content: await fs.promises.readFile(r.path, 'utf8') };
 }
 
-// GET /ext-file?ext=<id>&path=… — what api.openFile reads. Same localhost posture
-// as /file (no CORS header). Answers 200 { ok, … } either way: a refusal is
-// { ok:false, reason }, and only the registry (host.files) decides what opens.
-async function extFileHandler(req, res) {
-  const json = (status, body) => {
-    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify(body));
-  };
-  try {
-    if (!isAllowedHost(req.headers.host, PORT)) return json(403, { ok: false, reason: 'forbidden' });
-    const q = new URL(req.url, 'http://localhost').searchParams;
-    const id = q.get('ext');
-    const r = hostApis.has(id) ? await extFiles.open(id, q.get('path')) : { ok: false, reason: 'not-permitted' };
-    json(200, r);
-  } catch (err) {
-    logError('[ext-file]', err);
-    if (!res.headersSent) json(200, { ok: false, reason: 'error' });
-  }
-}
+// The deck's deck.ext-file action, what api.openFile reads: only the registry
+// (host.files) decides what opens.
+const openExtFile = async (id, p) => (hostApis.has(id) ? extFiles.open(id, p) : { ok: false, reason: 'not-permitted' });
+
+// GET /file and GET /ext-file, kept for extensions that fetch them: adapters
+// over the two actions above, answering as those routes always did.
+const legacyFileRoutes = createLegacyFileRoutes({
+  registry: deckActions,
+  ctx: () => ({ readMarkdownFile, openExtFile }),
+  allowedHost: (host) => isAllowedHost(host, [PORT, deckListenPort]),
+  logError,
+});
 
 // spawn_session creates a full board session, mirroring the /ws dispatch path:
 // dispatch (mints the card id, collects the launch context pre-launch) → assign →
@@ -1084,10 +1068,35 @@ const mcpRequestHandler = createMcpRequestHandler({
   boardClients: () => controlWss.clients.size,
 });
 
+// GET /deck — the deck API's descriptor. Host-pinned like /file.
+function deckHandler(req, res) {
+  if (!isAllowedHost(req.headers.host, [PORT, deckListenPort])) {
+    res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'forbidden' }));
+    return;
+  }
+  const body = deckDescriptor({
+    deckId,
+    name: os.hostname(),
+    actions: deckActions().keys(),
+    runtimes: knownRuntimes(),
+    extensions: ext.list,
+    boardApi: HOST_API_VERSION,
+  });
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+const deckServer = createDeckServer({
+  boardPort: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, deckHandler,
+  fileHandler: legacyFileRoutes.file, extFileHandler: legacyFileRoutes.extFile,
+});
+
 // /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
 // extensions alone — so a disabled extension's client is a 404, never served.
-const server = createHttpServer({
-  port: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, fileHandler, extFileHandler,
+const boardServer = createBoardServer({
+  boardPort: () => PORT,
+  deckPort: () => deckListenPort,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
   extensionThemes: () => themeSources(ext.themeDirs),
 });
@@ -1096,16 +1105,24 @@ const server = createHttpServer({
 const controlWss = new WebSocketServer({ noServer: true });
 const ptyWss = new WebSocketServer({ noServer: true });
 
-server.on('upgrade', (req, socket, head) => {
+deckServer.on('upgrade', (req, socket, head) => {
   // CSRF gate: a cross-origin browser page can open a WS without a preflight, so
   // reject before handleUpgrade (an absent Origin is a non-browser client — allow).
   if (!isAllowedOrigin(req.headers.origin, PORT)) {
     socket.destroy();
     return;
   }
-  const { pathname } = new URL(req.url, 'http://localhost');
+  const { pathname, search } = new URL(req.url, 'http://localhost');
   if (pathname === '/ws') {
-    controlWss.handleUpgrade(req, socket, head, (ws) => controlWss.emit('connection', ws, req));
+    const mode = wsApiMode(search);
+    if (!mode) {
+      socket.destroy();
+      return;
+    }
+    controlWss.handleUpgrade(req, socket, head, (ws) => {
+      ws.legacy = mode === 'legacy';
+      controlWss.emit('connection', ws, req);
+    });
   } else if (pathname === '/pty') {
     ptyWss.handleUpgrade(req, socket, head, (ws) => ptyWss.emit('connection', ws, req));
   } else {
@@ -1134,31 +1151,54 @@ async function dispatchAgents() {
 }
 
 async function agentsMessage() {
-  return JSON.stringify({ type: 'agents', agents: await dispatchAgents(), providers: registeredAgents().map(providerMetadata) });
+  return { type: 'agents', agents: await dispatchAgents(), providers: registeredAgents().map(providerMetadata) };
 }
 
 function broadcastAgents() {
   agentsMessage()
-    .then((msg) => { for (const client of controlWss.clients) sendGuarded(client, msg); })
+    .then(broadcast)
     .catch(() => {});
 }
 
+// Every broadcast reaches a board as an event, and a legacy client as the
+// event's payload (deck/legacy.js).
 function broadcast(obj) {
-  broadcastMessage(JSON.stringify(obj));
+  const event = deckEvent(obj);
+  let deck = null;
+  let legacy = null;
+  for (const client of controlWss.clients) {
+    if (client.legacy) sendGuarded(client, legacy ??= JSON.stringify(legacyReply(event)));
+    else sendGuarded(client, deck ??= JSON.stringify(event));
+  }
 }
 
-function broadcastMessage(msg) {
-  // readyState alone is not enough: a client that stops reading stays OPEN
-  // forever, so every snapshot we send it is queued in our own heap until the
-  // process OOMs. sendGuarded drops such a peer instead — see ws-backpressure.js
-  // for why terminate (not skip, not close) is the only safe option here.
-  for (const client of controlWss.clients) sendGuarded(client, msg);
+// readyState alone is not enough: a client that stops reading stays OPEN
+// forever, so every snapshot we send it is queued in our own heap until the
+// process OOMs. sendGuarded drops such a peer instead — see ws-backpressure.js
+// for why terminate (not skip, not close) is the only safe option here.
+// A state frame goes to each deck API client as it is, and to each legacy
+// client as the graph frame built from it.
+function sendStateToClients(frame, { except = null } = {}) {
+  let legacy = null;
+  for (const client of controlWss.clients) {
+    if (client === except) continue;
+    if (client.legacy) sendGuarded(client, legacy ??= legacyGraphFrame(JSON.parse(frame)));
+    else sendGuarded(client, frame);
+  }
+}
+
+// Sends any change the stream holds to the boards already connected. Run on
+// every rebuild while one is connected, and before a new one is handed its
+// snapshot, so no client misses a rev.
+function flushState({ except = null } = {}) {
+  if (!controlWss.clients.size) return;
+  const frame = stateStream.next();
+  if (frame) sendStateToClients(frame, { except });
 }
 
 // Module-scope so its "have I already sent this?" memory spans every rebuild, not
 // one call — the whole saving is across ticks.
-const wireGraph = createHistoryGate();
-const graphFrame = createGraphFrameGate();
+const stateStream = createStateStream();
 
 // Wrapped below in createRebuildCoalescer — see there for why an overlapping call
 // must trail rather than skip or race.
@@ -1175,15 +1215,13 @@ async function rebuildOnce() {
   const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore, mailDraftBlocked: (sid, now) => mailDeferrals.draftBlocked(sid, now) });
   graph.tasks = taskStore.snapshot();
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
-  graph.subagentsExpandedByDefault = subagentsExpandedByDefault();
+  graph.legacyBoardSettings = legacyBoardSettings();
   graph.trustCodexLaunchCwd = trustCodexLaunchCwd();
   graph.trustClaudeLaunchCwd = trustClaudeLaunchCwd();
-  graph.childFullViewByDefault = childFullViewByDefault();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.mailWakesDormant = mailWakesDormant();
   graph.suppressNudgedPrToasts = suppressNudgedPrToasts();
   graph.prModelFooter = prModelFooterEnabled();
-  graph.chatViewDefault = chatViewDefault();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();
   // Settings › Background model, resolved: never null, a stored pair that can
@@ -1207,7 +1245,11 @@ async function rebuildOnce() {
   graph.staleGuiSession = staleGuiSession;
   // Each enabled extension's graph contribution. Only enabled ones are in the
   // list, keys were checked against the core's at boot — and no logging here: this is the 4s rebuild.
-  for (const { id, contribute } of ext.graphContributors) Object.assign(graph, contribute({ host: hostApiFor(id), graph }));
+  const extState = {};
+  for (const { id, contribute } of ext.graphContributors) {
+    extState[id] = contribute({ host: hostApiFor(id), graph });
+    Object.assign(graph, extState[id]);
+  }
   lastGraph = graph;
   coreTelemetry.observe(graph.sessions);
 
@@ -1222,13 +1264,10 @@ async function rebuildOnce() {
   }
   statusNotices.run(graph).catch((error) => logError('[status-notice]', error));
   for (const session of graph.sessions) session.statusNoticeBlocked = statusNotices.blocked(session.sessionId);
-  // The wire graph, not `lastGraph`: history is omitted while unchanged, which is
-  // almost every tick. See history-gate.js — and note the connect path above sends
-  // `lastGraph` itself, so a fresh socket is always served the full list.
-  // graphFrame then drops the tick altogether when nothing but generatedAt moved
-  // (see graph-frame-gate.js), which on an idle server is every one of them.
-  const frame = graphFrame(wireGraph(graph));
-  if (frame) broadcastMessage(frame);
+  // The state stream leaves history off a frame while it is unchanged, and skips
+  // the frame when nothing but generatedAt moved (see deck/state.js).
+  stateStream.observe(graph, extState);
+  flushState();
   broadcastStylesIfChanged();
   return graph;
 }
@@ -1301,17 +1340,25 @@ controlWss.on('connection', (ws) => {
   // `canRestart` gates the board's own "Restart the wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
-  ws.send(JSON.stringify({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() }));
+  // Announcements reach the board as events, then the state stream follows. A
+  // legacy client is sent each event's payload, and graph frames built from
+  // the state frames.
+  if (ws.legacy) warnLegacy('A /ws connection without ?api=', 'GET /deck and /ws?api=1 (action frames)');
+  const wire = (obj) => JSON.stringify(ws.legacy ? legacyReply(deckEvent(obj)) : deckEvent(obj));
+  const send = (obj) => ws.send(wire(obj));
+  send({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() });
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
-  // the host API version this server serves. Sent before the first graph,
-  // every connect.
-  ws.send(JSON.stringify({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION }));
-  if (lastGraph) ws.send(JSON.stringify({ type: 'graph', graph: lastGraph }));
-  if (fdWarning) ws.send(JSON.stringify({ type: 'fd-warning', active: true, ...fdWarning }));
+  // the host API version this server serves. Sent before the first state
+  // frame, every connect.
+  send({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION });
+  flushState({ except: ws });
+  const snapshot = stateStream.snapshot();
+  if (snapshot) ws.send(ws.legacy ? legacyGraphFrame(JSON.parse(snapshot)) : snapshot);
+  if (fdWarning) send({ type: 'fd-warning', active: true, ...fdWarning });
   agentsMessage()
-    .then((msg) => { if (ws.readyState === 1) ws.send(msg); })
+    .then((msg) => { if (ws.readyState === 1) send(msg); })
     .catch(() => {});
   // ctx is per-connection because reply() closes over this socket; the rest are
   // shared singletons + the graph-target resolvers.
@@ -1334,7 +1381,11 @@ controlWss.on('connection', (ws) => {
     socketFor,
     // Guarded like broadcast: this is the same socket, and a client swamped by
     // snapshots must not go on accruing per-request replies either.
-    reply: (obj) => { sendGuarded(ws, JSON.stringify(obj)); },
+    reply: (obj) => { sendGuarded(ws, wire(obj)); },
+    // Result frames, never wrapped.
+    send: (obj) => { sendGuarded(ws, JSON.stringify(obj)); },
+    readMarkdownFile,
+    openExtFile,
     broadcast,
     terminalRegistry,
     createShellSession: (cwd, socket, command) => createShellSession(cwd, socket, sessionManager.tmuxBin, command),
@@ -1348,7 +1399,7 @@ controlWss.on('connection', (ws) => {
     staleGuiSession: () => staleGuiSession,
     recheckGuiSession: async () => { staleGuiSession = await sessionManager.checkGuiSession(); },
   };
-  ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx); });
+  ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx, { legacy: ws.legacy }); });
 });
 
 // --- PTY channel: stream a tmux attach to xterm.js ---
@@ -1390,6 +1441,7 @@ async function main() {
   // installed at module load, so a stop arriving during this slow startup is still
   // recorded — and one handler means one path down.
   shutdownLog.onShutdown(() => instanceLock.release());
+  deckId = loadDeckId(DATA_DIR);
   // An interrupted install leaves only a staging directory behind, so this is
   // the whole of its recovery — and the reason the install lock can be purely
   // in-memory. After the lock, so a duplicate instance never sweeps the running
@@ -1505,13 +1557,37 @@ async function main() {
   // KeepAlive never notices. The lock is released by its own exit handler.
   // Detached once listening: the server also emits 'error' for a failed accept
   // (EMFILE under fd pressure), which must stay a logged, survivable event.
+  // The deck binds first, so the board's page names a port that answers. A
+  // taken default deck port falls back to one the OS picks; one set with
+  // AW_DECK_PORT is held to.
+  await new Promise((resolve) => {
+    let tryPort = DECK_PORT;
+    const onDeckError = (err) => {
+      if (err?.code === 'EADDRINUSE' && !process.env.AW_DECK_PORT && tryPort !== 0) {
+        tryPort = 0;
+        deckServer.listen(0, DECK_HOST);
+        return;
+      }
+      logError(listenErrorMessage(err, tryPort, 'set AW_DECK_PORT to use another'));
+      process.exit(1);
+    };
+    deckServer.on('error', onDeckError);
+    deckServer.once('listening', () => {
+      deckServer.off('error', onDeckError);
+      deckListenPort = deckServer.address().port;
+      log(`[agent-wrangler] deck API at http://${DECK_HOST}:${deckListenPort}`);
+      resolve();
+    });
+    deckServer.listen(DECK_PORT, DECK_HOST);
+  });
+
   const onListenError = (err) => {
     logError(listenErrorMessage(err, PORT));
     process.exit(1);
   };
-  server.once('error', onListenError);
-  server.listen(PORT, HOST, () => {
-    server.off('error', onListenError);
+  boardServer.once('error', onListenError);
+  boardServer.listen(PORT, HOST, () => {
+    boardServer.off('error', onListenError);
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;
     const url = `http://${host}:${PORT}`;

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, subagentsExpandedByDefault, trustCodexLaunchCwd, trustClaudeLaunchCwd, childFullViewByDefault, autoFixPrChecksDefault, suppressNudgedPrToasts, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, chatViewDefault, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, CODEX_POLICY_DEFAULTS, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
+import { migrateRetiredFlags, shouldOpenBrowser, prStatusPollSeconds, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, archiveReviewEnabled, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, CODEX_POLICY_DEFAULTS, extensionEnabled, extensionSetting, extensionSettings, setExtensionSetting, writeConfig, readConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
 import { writeJsonAtomic } from './atomic-json.js';
 
@@ -67,12 +67,6 @@ test('prStatusPollSeconds ignores a non-positive / non-number override', () => {
   });
 });
 
-// Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
-test('subagentsExpandedByDefault defaults to off (collapsed); only an explicit true enables', () => {
-  assert.equal(subagentsExpandedByDefault({}), false);
-  assert.equal(subagentsExpandedByDefault({ subagentsExpandedByDefault: false }), false);
-  assert.equal(subagentsExpandedByDefault({ subagentsExpandedByDefault: true }), true);
-});
 
 test('trustClaudeLaunchCwd defaults to on; only an explicit false disables', () => {
   assert.equal(trustClaudeLaunchCwd({}), true);
@@ -87,12 +81,6 @@ test('trustCodexLaunchCwd defaults to on; only an explicit false disables', () =
   assert.equal(trustCodexLaunchCwd({ trustCodexLaunchCwd: false }), false);
 });
 
-// Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
-test('childFullViewByDefault defaults to off (compact); only an explicit true enables', () => {
-  assert.equal(childFullViewByDefault({}), false);
-  assert.equal(childFullViewByDefault({ childFullViewByDefault: false }), false);
-  assert.equal(childFullViewByDefault({ childFullViewByDefault: true }), true);
-});
 
 // Tested via cfg injection, never the real file — same reasoning as archiveReviewEnabled.
 // Default OFF (unlike most of these): archive review spends real money per
@@ -128,10 +116,12 @@ test('autoFixPrChecksDefault defaults to on; only an explicit false disables', (
   assert.equal(autoFixPrChecksDefault({ autoFixPrChecksDefault: false }), false);
 });
 
-test('chatViewDefault defaults to false (terminal) and is opt-in', () => {
-  assert.equal(chatViewDefault({}), false);
-  assert.equal(chatViewDefault({ chatViewDefault: true }), true);
-  assert.equal(chatViewDefault({ chatViewDefault: 'yes' }), false, 'only a real boolean true opts in');
+test('legacyBoardSettings carries only the explicit booleans config.json still holds', () => {
+  assert.deepEqual(legacyBoardSettings({}), {});
+  assert.deepEqual(
+    legacyBoardSettings({ chatViewDefault: true, subagentsExpandedByDefault: false, childFullViewByDefault: 'yes', mailWakesDormant: true }),
+    { chatViewDefault: true, subagentsExpandedByDefault: false },
+  );
 });
 
 test('defaultSessionCwd is blank unless a string is set, and is trimmed', () => {

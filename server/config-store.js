@@ -70,15 +70,6 @@ export function prModelFooterEnabled(cfg = readConfig()) {
   return cfg.prModelFooter !== false;
 }
 
-// Whether a session's sub-agents zone (board card + panel) starts expanded or
-// collapsed for cards the user hasn't explicitly toggled either way. Default off
-// (collapsed) to preserve today's behaviour; toggled from the board's settings
-// modal (config.json `subagentsExpandedByDefault: true`). Takes cfg (like
-// archiveReviewEnabled) so tests never write the shared config.json.
-export function subagentsExpandedByDefault(cfg = readConfig()) {
-  return cfg.subagentsExpandedByDefault === true;
-}
-
 export function archiveReviewEnabled(cfg = readConfig()) {
   return extensionSetting('task-memory', 'archiveReviewEnabled', false, cfg) === true;
 }
@@ -110,24 +101,13 @@ export function trustClaudeLaunchCwd(cfg = readConfig()) {
   return cfg.trustClaudeLaunchCwd !== false;
 }
 
-// Whether a newly-nested CHILD session (parentSession set — a workflow worker or
-// any other nested child, never a merely-`spawnedBy` top-level session) starts
-// rendered as a full card (like a top-level session) instead of the default
-// compact `.worker-row`. Default off (compact), matching today's behaviour;
-// toggled from the board's settings modal (config.json
-// `childFullViewByDefault: true`). This is a CREATION-time default, not a live
-// rule: "new child sessions show full view by default" means new —
-// session-manager's attachSession/dispatch read this value ONCE and stamp it
-// onto `entry.childFullView` at the moment a session becomes a child, so
-// flipping the setting later never retroactively changes an already-nested
-// child (see the client's isChildFullView, which deliberately does NOT fall
-// back to this setting per-render — an unstamped child reads as compact,
-// matching what it already rendered as, not whatever this setting is now).
-// An explicit per-child override (the card menu's "Full view" toggle) is just
-// the same stamp applied again later by hand. Takes cfg (like
-// subagentsExpandedByDefault) so tests never write the shared config.json.
-export function childFullViewByDefault(cfg = readConfig()) {
-  return cfg.childFullViewByDefault === true;
+// The board's own settings that config.json held before they moved into the
+// board. Only explicit booleans, so the board copies in a choice, never a default.
+const LEGACY_BOARD_SETTINGS = ['subagentsExpandedByDefault', 'childFullViewByDefault', 'chatViewDefault'];
+export function legacyBoardSettings(cfg = readConfig()) {
+  const out = {};
+  for (const key of LEGACY_BOARD_SETTINGS) if (typeof cfg[key] === 'boolean') out[key] = cfg[key];
+  return out;
 }
 
 // The fallback for a session's `autoFixPrChecks` (the PR check-failure and
@@ -149,14 +129,6 @@ export function suppressNudgedPrToasts(cfg = readConfig()) {
   return cfg.suppressNudgedPrToasts !== false;
 }
 
-// Which view a session's sidebar opens in for cards the user hasn't explicitly
-// toggled either way. Default off (terminal) to preserve today's behaviour;
-// toggled from the board's settings modal (config.json `chatViewDefault: true`).
-// Takes cfg (like subagentsExpandedByDefault) so tests never write the shared
-// config.json — `node --test` runs files in parallel against the same real file.
-export function chatViewDefault(cfg = readConfig()) {
-  return cfg.chatViewDefault === true;
-}
 
 // The Codex sandbox/approval policy a new Codex session starts from: what the
 // dispatch dialog's Advanced options prefill, and what a dispatch with no dialog

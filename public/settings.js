@@ -48,7 +48,6 @@ export const SETTINGS = [
   {
     id: 'subagentsExpandedByDefault',
     type: 'toggle',
-    scope: 'server',
     label: 'Sub-agents view expanded by default',
     help: 'Whether a session\'s sub-agents zone (board card + panel) starts expanded or collapsed. A card or panel you have toggled by hand keeps its own choice regardless of this setting.',
     default: false,
@@ -104,15 +103,13 @@ export const SETTINGS = [
   {
     id: 'childFullViewByDefault',
     type: 'toggle',
-    scope: 'server',
     label: 'New child sessions show full view by default',
-    help: 'A nested child session (a workflow worker, or any other child attached under a parent) normally renders as a compact row. This sets the default for newly-nested children; a child you have toggled by hand (its card menu\'s "Full view") keeps its own choice regardless.',
+    help: 'A nested child session (a workflow worker, or any other child attached under a parent) normally renders as a compact row. This sets the default for every child you have not toggled by hand; a child you have toggled (its card menu\'s "Full view") keeps its own choice regardless.',
     default: false,
   },
   {
     id: 'chatViewDefault',
     type: 'toggle',
-    scope: 'server',
     label: 'Open sessions in chat view',
     help: 'Whether a session\'s sidebar opens in the rich chat view or the terminal. A session you have switched by hand keeps its own choice regardless of this setting.',
     default: false,
@@ -396,6 +393,25 @@ export function openSettings(tabId) {
 export function getSetting(id) {
   const def = byId.get(id);
   return def ? readStored(def) : undefined;
+}
+
+// Board settings that used to live in the server's config.json. Each browser
+// copies the old value in once, the first time it sees one and has no choice
+// of its own stored yet, so upgrading never resets a choice.
+export const LEGACY_SERVER_SETTING_IDS = ['subagentsExpandedByDefault', 'childFullViewByDefault', 'chatViewDefault'];
+
+export function migrateLegacySettings(legacy, storage = localStorage) {
+  if (!legacy || typeof legacy !== 'object') return [];
+  const migrated = [];
+  for (const id of LEGACY_SERVER_SETTING_IDS) {
+    if (typeof legacy[id] !== 'boolean') continue;
+    try {
+      if (storage.getItem(STORE_PREFIX + id) != null) continue;
+      storage.setItem(STORE_PREFIX + id, legacy[id] ? '1' : '0');
+      migrated.push(id);
+    } catch { /* private window: the default stands */ }
+  }
+  return migrated;
 }
 
 export function setSetting(id, value) {
