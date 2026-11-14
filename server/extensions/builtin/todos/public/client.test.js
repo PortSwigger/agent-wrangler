@@ -212,3 +212,30 @@ for (const adhoc of [false, true]) test(`New TODO creates and renders in ${adhoc
   assert.match(el.innerHTML, /Follow up/);
   assert.deepEqual(errors, []);
 });
+
+test('draws from its own ext.todos state, editing a working copy until the next state frame', async () => {
+  const { resetLegacyWarnings } = await import('../../../../../public/legacy-surface.js');
+  resetLegacyWarnings();
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (m) => warned.push(String(m));
+  try {
+    const { slots, document, sent } = load();
+    const frame = { todos: { t1: [{ id: 'a', text: 'from state' }] } };
+    slots.setExtState({ todos: frame });
+    const graph = { ...frame, sessions: [] };
+    const host = document.make();
+    const entries = [{ host, session: { taskId: 't1', adhocId: 'adhoc', container: host } }];
+    slots.syncHosts('task.body', entries, {}, graph);
+    assert.match(host.children[0].innerHTML, /from state/);
+    assert.equal(slots.taskBodyWeight('t1', graph), TODO_DIVIDER_PX + TODO_STRIDE_PX);
+    assert.deepEqual(warned, [], 'the builtin never reads its state off the graph');
+    slots.setExtState({ todos: { todos: { t1: [{ id: 'a', text: 'next frame' }, { id: 'b', text: 'two' }] } } });
+    slots.syncHosts('task.body', entries, {}, graph);
+    assert.match(host.children[0].innerHTML, /next frame/);
+    assert.equal(slots.taskBodyWeight('t1', graph), TODO_DIVIDER_PX + 2 * TODO_STRIDE_PX);
+    assert.deepEqual(sent, []);
+  } finally {
+    console.warn = orig;
+  }
+});

@@ -522,7 +522,17 @@ import semver from 'semver';
 // collector's bound), so a card's or a job's whole life fits. An older server
 // throws on an `ms` value past 24 hours, so an emitter sending one declares
 // `^1.73.0`.
-export const HOST_API_VERSION = '1.73.0';
+//
+// 1.74.0 splits a manifest into a deck half and a board half: `board: {
+// client, styles, themes }` beside a `boardApi` range, paired with the deck's
+// GET /deck entry by id and boardApi (server/extensions/manifest-halves.js). An
+// unsplit manifest still loads as both halves. The board half gains
+// `api.state()` / `api.onState(fn)` (its own `ext.<id>` state from the state
+// frame), `api.act(name, args, { session })` (its own `ext.<id>.<name>` action,
+// resolving with the result) and `api.styles()` (the board's style list). An
+// older server ignores `board` and loads no board half, so a split manifest
+// declares `^1.74.0`.
+export const HOST_API_VERSION = '1.74.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

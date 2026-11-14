@@ -18,6 +18,6 @@ export default {
   stores: { sounds: () => new SoundStore() },
   handlers: [getSoundsHandler, setSoundsHandler],
   engines: { wranglerApi: '^1.35.0' },
-  client: 'public/index.js',
-  styles: 'public/style.css',
+  boardApi: '^1.74.0',
+  board: { client: 'public/index.js', styles: 'public/style.css' },
 };
