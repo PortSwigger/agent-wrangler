@@ -369,7 +369,9 @@ its allowlist: the board's own loopback origins, plus any listed in `AW_ALLOWED_
 `AW_BIND_HOST`) reaches the deck through the board server instead.
 Launched sessions reach MCP and the PR hooks on a third port, the session API (`AW_SESSION_API_PORT`,
 default the deck's port + 1, so `AW_PORT` + 2 with a board), with a token per session; an MCP tool's `caller` is the card that token
-belongs to ([session-api.md](session-api.md)).
+belongs to ([session-api.md](session-api.md)). The deck's own surfaces (`GET /deck`, `/ws`, `/pty`)
+refuse any request carrying a session token, as an `Authorization` bearer or an `X-AW-Session`
+header, so a session never drives the board's interface.
 
 A deck started with `--deck-only` has no board server: it serves only the deck API on its own port
 and 404s board pages, and its allowlist is only the origins configured for it. See
