@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, connect as netConnect } from 'node:net';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,10 +36,13 @@ function open(url, origin) {
   return { ws, frames, opened };
 }
 
-async function startDeckOnly({ args = [], env = {}, config } = {}) {
+async function startDeckOnly({ args = [], env = {}, config, tokens } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-deck-only-'));
   if (config) writeFileSync(join(dataDir, 'config.json'), JSON.stringify(config));
-  const [deckPort, boardPort] = [await freePort(), await freePort()];
+  if (tokens) writeFileSync(join(dataDir, 'session-tokens.json'), JSON.stringify({ cards: tokens }));
+  const deckPort = await freePort();
+  await freePort(); // left free: the session API takes the port next to the deck
+  const boardPort = await freePort();
   let out = '';
   const server = spawn(process.execPath, ['server/cli.js', '--deck-only', '--port', String(deckPort), '--data-dir', dataDir, ...args], {
     cwd: REPO_ROOT,
@@ -103,6 +107,32 @@ test('a deck-only instance takes its board allowlist from config.json too', { ti
     assert.ok(d.deck, `GET /deck never answered:\n${d.out()}`);
     assert.equal(await d.open('/ws?api=1', 'http://board.example:7878').opened, true);
     assert.equal(await d.open('/ws?api=1', 'http://localhost:7878').opened, false, 'with nothing configured for it, the usual board is not let in');
+  } finally {
+    await d.stop();
+  }
+});
+
+test('a deck-only instance serves its session API on the port next to its deck, behind the token check', { timeout: 60_000 }, async () => {
+  const token = 'awt_deck-only-test-token';
+  const d = await startDeckOnly({ tokens: { 'deck-card': createHash('sha256').update(token).digest('hex') } });
+  try {
+    assert.ok(d.deck, `GET /deck never answered:\n${d.out()}`);
+    const port = Number(await waitFor(() => d.out().match(/session API at http:\/\/127\.0\.0\.1:(\d+)/)?.[1]));
+    assert.ok(port, `startup never named the session API port:\n${d.out()}`);
+    assert.equal(port, d.deckPort + 1, 'it takes the port next to the deck');
+    const listSessions = (headers) => fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_sessions', arguments: {} } }),
+    }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+    const ok = await listSessions({ Authorization: `Bearer ${token}` });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.result.isError, undefined, JSON.stringify(ok.body));
+    assert.deepEqual(await listSessions({}), { status: 403, body: { error: 'missing-token', reason: 'missing token' } });
+    assert.equal((await listSessions({ Authorization: 'Bearer awt_forged' })).body.error, 'unknown-token');
+    assert.equal((await listSessions({ 'X-AW-Session': 'deck-card' })).body.error, 'missing-token', 'a card id is no token here');
+    assert.equal((await fetch(`http://127.0.0.1:${port}/deck`)).status, 404, 'the session API port serves no deck API');
   } finally {
     await d.stop();
   }
