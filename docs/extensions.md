@@ -2028,6 +2028,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   skipped. Resume and fork never fire it. For a short admission check that also
   covers forks and can pass data to `session.spawned`, use `session.beforeSpawn`
   above. `server/session-prepare.js`.
+- **Metadata-only mail lists** (`mail:read`, 1.79.0):
+  `host.mail.list(sessionId)` returns `id`, `from`, `fromLabel`, `at`, `size`,
+  `state` and `readAt`, without message bodies or excerpts. Extensions that
+  depend on this contract declare `^1.79.0`. Core's `list_mail` tool retains
+  bounded previews through a separate accessor unavailable to extensions.
 - **Session status projections** (`sessions:read`, 1.59.0): `host.sessions.get(id)`,
   `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
   `hasBackgroundShell` from the latest board graph. Without a graph node, status

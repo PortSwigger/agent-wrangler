@@ -559,12 +559,12 @@ import semver from 'semver';
 // that data and the new session id after launch. Both time out and fail open;
 // a timeout does not cancel extension code already running.
 //
-// 1.76.0 enforces the metadata-only contract of `host.mail.list(sessionId)`
+// 1.79.0 enforces the metadata-only contract of `host.mail.list(sessionId)`
 // under `mail:read`: id, from, fromLabel, at, size, state and readAt, without
 // bodies or excerpts. Core list_mail retains bounded previews through a
 // separate accessor that is not available on the extension facade. Extensions
-// relying on sender/time metadata without reading text can declare `^1.76.0`.
-export const HOST_API_VERSION = '1.78.0';
+// relying on sender/time metadata without reading text can declare `^1.79.0`.
+export const HOST_API_VERSION = '1.79.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
