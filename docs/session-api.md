@@ -108,15 +108,37 @@ async function resolveFromTokenReview(req) {
 `resolve` may return a promise. Everything after the check is unchanged: handlers only ever see
 the resolved `cardId`.
 
-## Sessions launched before tokens
+## The old routes on the deck and board ports
+
+Before the session API had its own port, sessions called `POST /mcp`, `/pr-attach` and `/pr-model`
+on the board's port, which forwards them to the deck. Those routes still work, as an adapter onto
+the session API: the same caller check decides every request, and handlers see only the resolved
+card. The first call to any of them logs one deprecation warning naming the session API's address:
+
+```
+[agent-wrangler] POST /mcp, /pr-attach and /pr-model on the deck's or board's port is deprecated and kept working through an adapter; use the session API at http://127.0.0.1:7880 (sessions launched before it move there when resumed) instead.
+```
+
+A session moves to the session API's own port when it is resumed or relaunched.
+
+### Sessions launched before tokens
 
 A session launched by an older server has no token. Its MCP config and hooks still send the card
-id (`X-AW-Session`, or as Codex's bearer) to the board's port, which forwards `/mcp`, `/pr-attach`
-and `/pr-model` to the deck. Only on those deck routes, the check accepts a bare card id when the
-card is on the board, is not archived, its pane is running and it has never been issued a token. The first such call per
-card is logged (`called without a session token`). Every launch issues a token, so once the
-session is resumed or relaunched its card id stops working there too. The session API's own port
-never accepts a card id.
+id (`X-AW-Session`, or as Codex's bearer) to the board's port. Only on the old routes, the check
+accepts a bare card id when the card is on the board, is not archived, its pane is running and it
+has never been issued a token. The first such call per card is logged (`called without a session
+token`). Every launch issues a token, so once the session is resumed or relaunched its card id
+stops working there too. The session API's own port never accepts a card id.
+
+## The deck takes no session token
+
+A session token is for the session API only. The deck's own surfaces, `GET /deck`, the `/ws` action
+channel and `/pty`, refuse any request that carries one, as an `Authorization: Bearer` header or an
+`X-AW-Session` header, whether it reaches the deck's port directly or through the board's
+forwarder. `GET /deck` answers `403` with `{"error": "session-credential", ...}`; a `/ws` or `/pty`
+upgrade is answered `403` and never opens, so no action frame or pty input can follow. The board
+itself never sends either header. A session therefore acts only through the session API, as its
+token's card, under the per-tool rules there, and never as the board's user.
 
 ## Starting it
 
