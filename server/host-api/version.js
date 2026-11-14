@@ -546,6 +546,13 @@ import semver from 'semver';
 // rows carry none of them, as before. A board half that reads them declares
 // `^1.76.0`.
 //
+// 1.77.0 shows each deck's tasks on a board with several decks: the
+// `board.tray` context's `tasks` also lists every other deck's tasks, with ids
+// scoped `<deckId>/<taskId>`, and with more than one deck each real task
+// carries `deckName`. `minimiseTask` and `setMinimisedTasks` take those ids.
+// With one deck the context is as before. A tray that reads `deckName`
+// declares `^1.77.0`.
+//
 // 2.0.0 is the major the deck API makes. The 2.x contract is what the deck
 // API offers: a board half beside `boardApi` in a split manifest, its state
 // through `api.state()`, the session view without the fields it drops, files
@@ -561,7 +568,7 @@ import semver from 'semver';
 export const HOST_API_VERSION = '2.0.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
-export const V1_SHIM_VERSION = '1.76.0';
+export const V1_SHIM_VERSION = '1.77.0';
 
 // The version this server serves `range` as: HOST_API_VERSION, the v1 shim, or
 // null for neither. A null/absent range is "no constraint" and gets the

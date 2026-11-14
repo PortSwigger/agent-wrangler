@@ -299,9 +299,9 @@ board half that reads `api.state()` and the session view, files through the `ses
 method changed shape, so moving to 2.0 is the migration below plus raising your ranges to `^2.0.0`.
 
 A manifest declaring a `^1` range (`engines.wranglerApi` or `boardApi`) still boots, on the **v1
-shim**: its `host.version` reads `1.76.0`, the last 1.x, and every surface 1.x offered keeps working,
+shim**: its `host.version` reads `1.77.0`, the last 1.x, and every surface 1.x offered keeps working,
 the older ones through the adapters listed under
-[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.76.0` is
+[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.77.0` is
 refused, as before. The adapters stay until 3.0, which removes them once their use has gone quiet:
 each use is reported as the [`core.deprecated`](#core-events) telemetry event, so the maintainers can
 see which surfaces are still in use.
@@ -963,7 +963,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`host-api/version.js`) is what the server serves and a breaking reshape adds
   `v2.js` keeping `v1.js` as the shim, selected by the declared range — never
   edit builders in place. 2.0.0 reshaped no builder, so both majors still build
-  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.76.0) and its
+  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.77.0) and its
   older surfaces through the adapters (see [Host API 2.0 and the v1
   shim](#host-api-20-and-the-v1-shim)). `semver` is a real dependency, so
   `scripts/sync-deps.sh` means the SERVICE needs a restart for it to land
@@ -1373,6 +1373,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   Unassigned (`id: 'adhoc', adhoc: true`) and excluding archived/deleted tasks;
   `minimisedIds` is an array of the browser's current minimised task ids.
   Both are fresh snapshots. Core owns that set; enabling a tray does not change it.
+  On a board showing several decks (1.77.0), `tasks` also lists each other deck's
+  tasks after the board's own, with ids scoped `<deckId>/<taskId>`, and every real
+  task carries `deckName`; `minimiseTask` and `setMinimisedTasks` take those ids.
+  With one deck the context is unchanged.
   `mount` receives the initial context, then `update` runs on every board render,
   including graph changes, reorder, Focus, keyboard focus navigation, task/session
   opening and bulk minimisation. New tasks are visible until explicitly minimised.
