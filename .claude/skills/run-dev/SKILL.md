@@ -31,6 +31,20 @@ echo "Dev board at http://localhost:$AW_PORT, deck at http://127.0.0.1:$AW_DECK_
 - The instance generates its socket into `<AW_DATA_DIR>/config.json` (`tmuxSocket`); all its sessions run there.
 - `AW_DEV=1` — opts the instance into **self-shutdown** so a forgotten teardown can't leave it running forever (reparented to launchd). It exits when its data dir is wiped out from under it, or after ~30 min idle with no control-WS client connected (`AW_DEV_IDLE_SHUTDOWN_MIN` to tune, `0` to disable the idle timer). The production service never sets `AW_DEV`, so it's unaffected. It exits cleanly (lock released) but does **not** delete its data dir — teardown still owns that.
 
+### A second, deck-only instance
+
+To try a board against a second deck, start a deck-only instance with its own `mktemp` data dir and free port, allowlisting the dev board's origins:
+
+```bash
+AWDIR2=$(mktemp -d /tmp/aw-dev-XXXXX); DECK2_PORT=$(node -e "$FREE_PORT")
+AW_DEV=1 node server/cli.js --deck-only --data-dir "$AWDIR2" --port "$DECK2_PORT" \
+  --allowed-origins "http://localhost:$AW_PORT,http://127.0.0.1:$AW_PORT" >"$AWDIR2/server.log" 2>&1 &
+DECK2_PID=$!
+until curl -sf "http://127.0.0.1:$DECK2_PORT/deck" >/dev/null; do sleep 0.5; done
+```
+
+It serves only the deck API (`/deck`, `/ws?api=1`, `/pty`, `/mcp`) and 404s board pages. Tear it down like the first: kill `$DECK2_PID`, then remove `$AWDIR2`.
+
 ## Safety — why it can't touch the live board
 
 A fresh `AW_DATA_DIR` has no legacy (socket-less) entries, so `socketsToScan` returns only the generated socket and the **default socket is never scanned**. Never point a dev instance at the live `~/.agent-wrangler` data dir.

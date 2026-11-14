@@ -20,7 +20,7 @@ import { chip as jiraChip } from '../server/extensions/builtin/jira/public/index
 // the same branches they do on the board.
 function ctx(over = {}) {
   return {
-    selectedSessionId: null,
+    selectedCard: null,
     selectedNewSlot: null,
     flashingPr: new Set(),
     collapsedWorkflows: new Set(),
@@ -40,10 +40,10 @@ function ctx(over = {}) {
   };
 }
 
-const sess = (over = {}) => ({
-  sessionId: 's1', label: 'my session', cwd: '/home/me/repo', managed: true,
-  status: 'working', agent: 'claude', ...over,
-});
+const sess = (over = {}) => {
+  const s = { sessionId: 's1', label: 'my session', cwd: '/home/me/repo', managed: true, status: 'working', agent: 'claude', ...over };
+  return { deckId: 'd1', cardKey: `d1/${s.sessionId}`, ...s };
+};
 
 test('linkChipsHtml: empty / non-array → empty string', () => {
   assert.equal(linkChipsHtml(null, ctx()), '');
@@ -94,9 +94,9 @@ test('linkChipsHtml: a non-pr link nothing answers for draws no chip, and drawab
   assert.deepEqual(drawableLinks(links, ctx()).map((l) => l.type), ['jira', 'pr']);
 });
 
-test('sessionCardHtml: escapes label, carries data-sid, marks selection', () => {
-  const html = sessionCardHtml(sess({ label: '<x>' }), ctx({ selectedSessionId: 's1' }));
-  assert.match(html, /data-sid="s1"/);
+test('sessionCardHtml: escapes label, carries data-sid and the card key, marks selection', () => {
+  const html = sessionCardHtml(sess({ label: '<x>' }), ctx({ selectedCard: 'd1/s1' }));
+  assert.match(html, /data-sid="s1" draggable="[a-z]+" data-card="d1\/s1"/);
   assert.match(html, /&lt;x&gt;/);
   assert.match(html, /session-card [^"]*selected/);
 });
@@ -119,7 +119,7 @@ test('workerRowHtml and snoozedRowHtml carry no card.pill host', () => {
 });
 
 test('sessionCardHtml: a slot selection suppresses the card ring', () => {
-  const html = sessionCardHtml(sess(), ctx({ selectedSessionId: 's1', selectedNewSlot: 'adhoc' }));
+  const html = sessionCardHtml(sess(), ctx({ selectedCard: 'd1/s1', selectedNewSlot: 'adhoc' }));
   assert.doesNotMatch(html, /session-card [^"]*\bselected\b/);
 });
 
@@ -347,9 +347,9 @@ test('workerRowHtml: renders a trailing worker-ring element as the halo — not 
 });
 
 test('workerRowHtml: marks selection like a top-level card, suppressed by a slot selection', () => {
-  const selected = workerRowHtml(sess(), ctx({ selectedSessionId: 's1' }));
+  const selected = workerRowHtml(sess(), ctx({ selectedCard: 'd1/s1' }));
   assert.match(selected, /worker-row [^"]*selected/);
-  const slotted = workerRowHtml(sess(), ctx({ selectedSessionId: 's1', selectedNewSlot: 'adhoc' }));
+  const slotted = workerRowHtml(sess(), ctx({ selectedCard: 'd1/s1', selectedNewSlot: 'adhoc' }));
   assert.doesNotMatch(slotted, /worker-row [^"]*\bselected\b/);
 });
 
@@ -374,7 +374,7 @@ test('workerRowHtml: manual unread keeps its halo even when the child also just 
 
 test('workerRowHtml: completion suppression preserves selection and snooze alarms', () => {
   const html = workerRowHtml(sess({ status: 'idle' }), ctx({
-    justFinished: new Set(['s1']), selectedSessionId: 's1',
+    justFinished: new Set(['s1']), selectedCard: 'd1/s1',
     cardState: () => 'just-finished snooze-alarm',
   }));
   assert.match(html, /worker-row just-finished snooze-alarm done-quiet selected/);

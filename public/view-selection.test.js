@@ -1,4 +1,5 @@
 import { parseViewHash } from './hash-view.js';
+import { cardKey, sessionIdOf } from './card-key.js';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test, mock } from 'node:test';
@@ -33,8 +34,8 @@ function harness() {
   const listeners = {};
   const noop = () => {};
   const heads = [
-    'function setView(view) {', 'function selectSession(sessionId) {',
-    'function deselectSession() {', 'function setPendingSelect(id) {',
+    'function setView(view) {', 'function selectSession(card) {',
+    'function deselectSession() {', 'function setPendingSelect(card) {', 'function setPendingLink(sessionId) {',
     'function tryFulfillPending() {', 'function syncHash() {',
     'function hashSessionId() {', 'function hashView() {',
     'function isHashView(view) {', 'function closePanel() {',
@@ -48,21 +49,25 @@ function harness() {
     location, history: { replaceState: () => { location.hash = ''; } },
     extViewHosts: new Map([['ext:example:list', node('extension')]]),
     sessionEmbed: { active: () => null }, syncSessionEmbed: noop,
-    parseViewHash,
+    parseViewHash, cardKey, sessionIdOf,
     clearSearch: noop, onEnterSearchView: noop, isDiffPanelOpen: () => false,
-    closeDiffPanel: noop, diffPanelSessionId: noop, disarmChatHandoff: noop,
+    closeDiffPanel: noop, diffPanelCard: noop, disarmChatHandoff: noop,
     acknowledge: noop, send: noop, setUnread: noop, renderSidebar: noop,
     syncShellTerminal: noop,
-    renderPanel: (sid) => { node('sidebar').style.display = ''; log.push(['panel', sid]); },
+    renderPanel: (card) => { node('sidebar').style.display = ''; log.push(['panel', card]); },
     closeTerminal: () => log.push(['detach']),
     hideSidebar: () => { node('sidebar').style.display = 'none'; },
     renderGrid: noop,
     boardOpen: { claim: () => null }, applyEmbedView: noop,
   };
   const app = new Function(...Object.keys(scope), `
-    let currentView = 'grid', selectedSessionId = null, selectedNewSlot = null;
-    let selectionBeforeView = null, pendingSelect = null, currentShellTerm = null;
-    let latestSessions = [{ sessionId: 'first / session' }, { sessionId: 'second' }];
+    let currentView = 'grid', selectedCard = null, selectedNewSlot = null;
+    let selectionBeforeView = null, pendingSelect = null, pendingLink = null, currentShellTerm = null;
+    let boardDeckId = 'd1';
+    const cardOf = (sessionId) => cardKey(boardDeckId, sessionId);
+    const stamp = (list) => list.map((x) => ({ ...x, cardKey: cardOf(x.sessionId) }));
+    let latestSessions = stamp([{ sessionId: 'first / session' }, { sessionId: 'second' }]);
+    const sessionByCard = (card) => (card ? latestSessions.find((x) => x.cardKey === card) || null : null);
     const HASH_VIEWS = ['search'];
     const AWAITING_EXT_VIEW_TIMEOUT_MS = 10000;
     const EXT_VIEW_PREFIX = 'ext:';
@@ -71,8 +76,9 @@ function harness() {
     ${hashListener}
     const coldLoad = () => { ${coldStart} };
     return { coldLoad, trackExtLoad, settleDeepView, graphSeen: () => { extGraphSeen = true; }, awaiting: () => awaitingExtView, setView, selectSession, deselectSession, setPendingSelect, tryFulfillPending, closePanel,
-      selected: () => selectedSessionId, view: () => currentView,
-      sessions: (v) => { latestSessions = v; } };
+      selected: () => selectedCard, view: () => currentView,
+      deck: (id) => { boardDeckId = id; latestSessions = stamp(latestSessions); },
+      sessions: (v) => { latestSessions = stamp(v); } };
   `)(...Object.values(scope));
   return { ...app, log, location, node, scope,
     hash: (value) => { location.hash = value; listeners.hashchange(); },
@@ -83,16 +89,16 @@ for (const destination of ['search', 'ext:example:list']) {
   test(`${destination} restores a later selection despite an unresolved pending session`, () => {
     const h = harness();
     h.hash('#session=missing');
-    h.selectSession('second');
+    h.selectSession('d1/second');
     h.setView(destination);
     h.setView('grid');
-    assert.equal(h.selected(), 'second');
+    assert.equal(h.selected(), 'd1/second');
     assert.equal(h.location.hash, '#session=second');
   });
 
   test(`${destination} detaches and restores the selected panel and session hash on grid`, () => {
     const h = harness();
-    h.selectSession('first / session');
+    h.selectSession('d1/first / session');
     h.log.length = 0;
     h.setView(destination);
     assert.equal(h.selected(), null);
@@ -100,15 +106,15 @@ for (const destination of ['search', 'ext:example:list']) {
     assert.deepEqual(h.log, [['detach']]);
     assert.equal(h.location.hash, `#view=${destination}`);
     h.setView('grid');
-    assert.equal(h.selected(), 'first / session');
+    assert.equal(h.selected(), 'd1/first / session');
     assert.equal(h.node('sidebar').style.display, '');
-    assert.deepEqual(h.log, [['detach'], ['panel', 'first / session']]);
+    assert.deepEqual(h.log, [['detach'], ['panel', 'd1/first / session']]);
     assert.equal(h.location.hash, '#session=first%20%2F%20session');
   });
 
   test(`${destination} discards removed sessions and consumes their memory`, () => {
     const h = harness();
-    h.selectSession('second');
+    h.selectSession('d1/second');
     h.setView(destination);
     h.sessions([]);
     h.setView('grid');
@@ -131,29 +137,29 @@ for (const destination of ['search', 'ext:example:list']) {
 
 test('a pending session arriving after newer navigation never briefly reopens the remembered panel', () => {
   const h = harness();
-  h.setPendingSelect('later');
-  h.selectSession('second');
+  h.setPendingSelect('d1/later');
+  h.selectSession('d1/second');
   h.setView('search');
   h.sessions([{ sessionId: 'second' }, { sessionId: 'later' }]);
   h.log.length = 0;
   h.tryFulfillPending();
-  assert.deepEqual(h.log, [['panel', 'later']]);
-  assert.equal(h.selected(), 'later');
+  assert.deepEqual(h.log, [['panel', 'd1/later']]);
+  assert.equal(h.selected(), 'd1/later');
   assert.equal(h.location.hash, '#session=later');
 });
 
 test('repeated and chained non-grid navigation preserves the remembered selection', () => {
   const h = harness();
-  h.selectSession('second');
+  h.selectSession('d1/second');
   for (const view of ['search', 'search', 'ext:example:list', 'search', 'ext:example:list']) h.setView(view);
   h.setView('grid');
-  assert.equal(h.selected(), 'second');
+  assert.equal(h.selected(), 'd1/second');
 });
 
 for (const clear of ['deselectSession', 'closePanel']) {
   test(`${clear} deliberately clears remembered selection`, () => {
     const h = harness();
-    h.selectSession('second');
+    h.selectSession('d1/second');
     h.setView('search');
     h[clear]();
     h.setView('grid');
@@ -163,45 +169,45 @@ for (const clear of ['deselectSession', 'closePanel']) {
 
 test('a newer explicit selection replaces the remembered selection', () => {
   const h = harness();
-  h.selectSession('first / session');
+  h.selectSession('d1/first / session');
   h.setView('search');
-  h.selectSession('second');
+  h.selectSession('d1/second');
   h.setView('grid');
-  assert.equal(h.selected(), 'second');
+  assert.equal(h.selected(), 'd1/second');
 });
 
 for (const pending of ['present', 'missing']) {
   test(`a ${pending} pending selection never briefly reopens the remembered panel`, () => {
     const h = harness();
-    h.selectSession('first / session');
+    h.selectSession('d1/first / session');
     h.setView('search');
     h.log.length = 0;
     const target = pending === 'present' ? 'second' : 'later';
-    h.setPendingSelect(target);
+    h.setPendingSelect(`d1/${target}`);
     h.tryFulfillPending();
     h.setView('grid');
-    assert.deepEqual(h.log, pending === 'present' ? [['panel', 'second']] : []);
+    assert.deepEqual(h.log, pending === 'present' ? [['panel', 'd1/second']] : []);
     if (pending === 'missing') {
       h.sessions([{ sessionId: 'later' }]);
       h.tryFulfillPending();
-      assert.equal(h.selected(), 'later');
+      assert.equal(h.selected(), 'd1/later');
     }
   });
 }
 
 test('a session hash deep link supersedes memory without reopening the old panel', () => {
   const h = harness();
-  h.selectSession('first / session');
+  h.selectSession('d1/first / session');
   h.setView('search');
   h.log.length = 0;
   h.hash('#session=second');
-  assert.deepEqual(h.log, [['panel', 'second']]);
+  assert.deepEqual(h.log, [['panel', 'd1/second']]);
   assert.equal(h.location.hash, '#session=second');
 });
 
 test('clearing the hash deliberately discards remembered selection', () => {
   const h = harness();
-  h.selectSession('second');
+  h.selectSession('d1/second');
   h.setView('search');
   h.hash('');
   h.setView('grid');
@@ -210,11 +216,11 @@ test('clearing the hash deliberately discards remembered selection', () => {
 
 test('an active extension embed keeps its selected panel and attached terminal', () => {
   const h = harness();
-  h.selectSession('second');
-  h.scope.sessionEmbed.active = () => ({ sessionId: 'second' });
+  h.selectSession('d1/second');
+  h.scope.sessionEmbed.active = () => ({ sessionId: 'second', card: 'd1/second' });
   h.log.length = 0;
   h.setView('ext:example:list');
-  assert.equal(h.selected(), 'second');
+  assert.equal(h.selected(), 'd1/second');
   assert.equal(h.node('sidebar').style.display, '');
   assert.deepEqual(h.log, []);
   assert.equal(h.location.hash, '#view=ext:example:list');
@@ -327,4 +333,26 @@ test('an import that never settles releases the board after the safety timeout',
   } finally {
     mock.timers.reset();
   }
+});
+
+test('a #session link read before the deck answers selects that card once the deck is known', () => {
+  const h = harness();
+  h.deck(null);
+  h.location.hash = '#session=second';
+  h.coldLoad();
+  h.tryFulfillPending();
+  assert.equal(h.selected(), null, 'no card key without a deck id');
+  h.deck('d1');
+  h.tryFulfillPending();
+  assert.equal(h.selected(), 'd1/second');
+  assert.equal(h.location.hash, '#session=second', 'the link keeps its bare session id');
+});
+
+test('a #session link names the session on the board\'s own deck', () => {
+  const h = harness();
+  h.deck('deck-a');
+  h.hash('#session=second');
+  assert.equal(h.selected(), 'deck-a/second');
+  h.selectSession('deck-a/first / session');
+  assert.equal(h.location.hash, '#session=first%20%2F%20session');
 });

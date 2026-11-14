@@ -11,12 +11,12 @@ export function startupStyle({ isTTY, supervised }) {
 // `commit` is a validated checkout's HEAD, or null for a packaged install. Every
 // checkout reports package.json's version, so the short commit is what tells
 // two of them apart; a package's version already identifies it.
-export function bannerLines({ version, commit = null, url, dataDir }) {
+export function bannerLines({ version, commit = null, url, dataDir, deckOnly = false }) {
   return [
     '',
-    `  Agent Wrangler ${version}${commit ? ` (${commit.slice(0, 7)})` : ''}`,
+    `  Agent Wrangler ${version}${commit ? ` (${commit.slice(0, 7)})` : ''}${deckOnly ? ' — deck only' : ''}`,
     '',
-    `  ➜  ${url}`,
+    deckOnly ? `  Deck API: ${url}/deck` : `  ➜  ${url}`,
     '',
     `  State: ${dataDir}`,
     '  Press Ctrl-C to stop',

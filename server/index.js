@@ -38,14 +38,14 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
 import { createMcpRequestHandler } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
-import { bindHost, deckPort, sessionApiPort } from './runtime.js';
+import { bindHost, deckPort, deckOnly, sessionApiPort } from './runtime.js';
 import { createSessionApi } from './session-api/index.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createBoardServer } from './http-handler.js';
@@ -104,12 +104,16 @@ const open = openModule.default || openModule;
 // PORT is the board's: the address people open. Launched sessions reach MCP and
 // the PR hooks on the session API's own port (sessionApiPort). The deck listens on
 // loopback on its own port; DECK_PORT is what it asks for, and deckListenPort
-// what it got.
+// what it got. A deck-only instance has no board: nothing listens on PORT, its
+// sessions reach the deck directly, and only configured origins are boards.
 const PORT = Number(process.env.AW_PORT) || Number(process.env.PORT) || 7878;
 const HOST = bindHost();
+const DECK_ONLY = deckOnly();
 const DECK_HOST = '127.0.0.1';
 const DECK_PORT = deckPort();
 let deckListenPort = DECK_PORT;
+const BOARD_ORIGIN_PORT = DECK_ONLY ? null : PORT;
+const deckAuthorities = () => (DECK_ONLY ? [deckListenPort] : [PORT, deckListenPort]);
 
 // Last-resort guards: a single bad PTY/AppleScript/parse must never take the
 // whole dashboard down. Log and keep serving.
@@ -676,6 +680,18 @@ let lastControlActivity = Date.now();
 // starved by a long full sweep and never runs the transition diff below.
 const pollPrStatuses = createFullSweepGuard(runPrStatusSweep);
 
+// Broadcast a PR event once its pane nudge has been delivered. `nudged` is true
+// only when the session actually has the line: pasted into a live pane, or
+// carried by a woken session's resume. A held line (draft, dialog, unreadable
+// pane), a skipped owner or a failed wake leaves the board toast showing.
+function announceAfterNudge(event) {
+  return (mode) => {
+    broadcast({ ...event, nudged: mode === 'live' || mode === 'dormant' });
+    if (mode === 'dormant' || mode === 'dormant-held') return Promise.resolve(rebuild()).catch(() => {});
+    return undefined;
+  };
+}
+
 async function runPrStatusSweep(only) {
   const links = [
     ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
@@ -735,8 +751,6 @@ async function runPrStatusSweep(only) {
     const checkStatusKeys = new Set();
     for (const ev of diffCheckStatus(current)) {
       checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
-      broadcast({ type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
-                  url: ev.url, number: ev.number, status: ev.checkStatus, headSha: ev.headSha });
       const entry = sessionManager.entryFor(ev.ownerId);
       // The two gated decisions (auto-merge / pane-nudge) live in the pure
       // planCheckTransition (notifier.js, unit-tested matrix); all the I/O stays
@@ -744,7 +758,10 @@ async function runPrStatusSweep(only) {
       // behaves like an idle-but-live one; the auto-merge confirmation line below
       // stays board-only when dormant (terminal/informational — not expanded here).
       const { merge: willMerge, nudge } = planCheckTransition(ev, entry, fixPrDefault);
-      if (nudge) {
+      const checksEvent = { type: 'pr-checks', scope: ev.scope, sessionId: ev.ownerId,
+                            url: ev.url, number: ev.number, status: ev.checkStatus, headSha: ev.headSha };
+      if (!nudge) broadcast({ ...checksEvent, nudged: false });
+      else {
         // A live session gets the nudge in its pane; a DORMANT one (entry, no tmux)
         // is woken and handed the SAME nudge as its resume intent — dormancy is only
         // a RAM optimization, so it behaves like an idle-but-live session. Archived/
@@ -759,7 +776,7 @@ async function runPrStatusSweep(only) {
         deliverPrNudge(ev, entry, {
           message: prPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
-        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+        }).then(announceAfterNudge(checksEvent)).catch(() => broadcast({ ...checksEvent, nudged: false }));
       }
       // A successful merge leaves the MERGED-state path (next poll) to remove the
       // link and nudge "merged"; either way we report the outcome now (board
@@ -767,11 +784,14 @@ async function runPrStatusSweep(only) {
       if (willMerge) {
         const res = await mergePr(ev.url);
         const target = tmuxFor(ev.ownerId);
-        broadcast({ type: 'pr-merge', scope: ev.scope, sessionId: ev.ownerId,
-                    url: ev.url, number: ev.number, ok: res.ok, error: res.ok ? null : res.error });
-        if (target) {
+        const mergeEvent = { type: 'pr-merge', scope: ev.scope, sessionId: ev.ownerId,
+                             url: ev.url, number: ev.number, ok: res.ok, error: res.ok ? null : res.error };
+        if (!target) broadcast({ ...mergeEvent, nudged: false });
+        else {
           const phrase = res.ok ? 'auto-merged' : `auto-merge failed: ${res.error}`;
-          paneDeferral.deliverOrDefer({ id: ev.ownerId, text: prPaneLine(ev.number, ev.url, phrase), tmux: target, socket: socketFor(ev.ownerId) }).catch(() => {});
+          paneDeferral.deliverOrDefer({ id: ev.ownerId, text: prPaneLine(ev.number, ev.url, phrase), tmux: target, socket: socketFor(ev.ownerId) })
+            .then((sent) => broadcast({ ...mergeEvent, nudged: sent === 'sent' }))
+            .catch(() => broadcast({ ...mergeEvent, nudged: false }));
         }
       }
     }
@@ -780,13 +800,15 @@ async function runPrStatusSweep(only) {
     // Same board-toast-always / pane-nudge-gated shape as the checks transition
     // above; there is no auto-merge branch (a DIRTY PR can't be merged).
     for (const ev of diffDirty(current)) {
-      broadcast({ type: 'pr-dirty', scope: ev.scope, sessionId: ev.ownerId, url: ev.url, number: ev.number });
       const entry = sessionManager.entryFor(ev.ownerId);
-      if (planDirtyTransition(ev, entry, fixPrDefault)) {
+      const dirtyNudge = planDirtyTransition(ev, entry, fixPrDefault);
+      const dirtyEvent = { type: 'pr-dirty', scope: ev.scope, sessionId: ev.ownerId, url: ev.url, number: ev.number };
+      if (!dirtyNudge) broadcast({ ...dirtyEvent, nudged: false });
+      else {
         deliverPrNudge(ev, entry, {
           message: prDirtyPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
-        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+        }).then(announceAfterNudge(dirtyEvent)).catch(() => broadcast({ ...dirtyEvent, nudged: false }));
       }
     }
     // Detect unresolved review-thread-count increases — own diff/baseline,
@@ -800,15 +822,17 @@ async function runPrStatusSweep(only) {
     // comments AND a fresh changes-requested transition), and two unawaited
     // deliverPrNudge calls to the same pane would interleave their pastes.
     for (const ev of diffUnresolvedComments(current)) {
-      broadcast({ type: 'pr-unresolved', scope: ev.scope, sessionId: ev.ownerId,
-                  url: ev.url, number: ev.number, count: ev.unresolvedCount, delta: ev.delta });
       const entry = sessionManager.entryFor(ev.ownerId);
       const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
-      if (!checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault)) {
+      const commentNudge = !checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault);
+      const commentEvent = { type: 'pr-unresolved', scope: ev.scope, sessionId: ev.ownerId,
+                             url: ev.url, number: ev.number, count: ev.unresolvedCount, delta: ev.delta };
+      if (!commentNudge) broadcast({ ...commentEvent, nudged: false });
+      else {
         deliverPrNudge(ev, entry, {
           message: prUnresolvedPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
-        }).then((mode) => (mode === 'dormant' ? rebuild() : undefined)).catch(() => {});
+        }).then(announceAfterNudge(commentEvent)).catch(() => broadcast({ ...commentEvent, nudged: false }));
       }
     }
   }
@@ -1005,7 +1029,7 @@ const openExtFile = async (id, p) => (hostApis.has(id) ? extFiles.open(id, p) : 
 const legacyFileRoutes = createLegacyFileRoutes({
   registry: deckActions,
   ctx: () => ({ readMarkdownFile, openExtFile }),
-  allowedHost: (host) => isAllowedHost(host, [PORT, deckListenPort]),
+  allowedHost: (host) => isAllowedHost(host, deckAuthorities()),
   logError,
 });
 
@@ -1051,7 +1075,7 @@ const mcpRequestHandler = createMcpRequestHandler({
 
 // GET /deck — the deck API's descriptor. Host-pinned like /file.
 function deckHandler(req, res) {
-  if (!isAllowedHost(req.headers.host, [PORT, deckListenPort])) {
+  if (!isAllowedHost(req.headers.host, deckAuthorities())) {
     res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: 'forbidden' }));
     return;
@@ -1086,7 +1110,7 @@ sessionManager._issueSessionToken = (id) => sessionApi.tokens.issue(id);
 sessionManager._revokeSessionToken = (id) => sessionApi.tokens.revoke(id);
 
 const deckServer = createDeckServer({
-  boardPort: PORT, deckHandler,
+  boardPort: BOARD_ORIGIN_PORT, deckHandler,
   mcpRequestHandler: sessionApi.legacyHandlers['/mcp'],
   prAttachHandler: sessionApi.legacyHandlers['/pr-attach'],
   prModelHandler: sessionApi.legacyHandlers['/pr-model'],
@@ -1109,7 +1133,7 @@ const ptyWss = new WebSocketServer({ noServer: true });
 deckServer.on('upgrade', (req, socket, head) => {
   // CSRF gate: a cross-origin browser page can open a WS without a preflight, so
   // reject before handleUpgrade (an absent Origin is a non-browser client — allow).
-  if (!isAllowedOrigin(req.headers.origin, PORT)) {
+  if (!isAllowedOrigin(req.headers.origin, BOARD_ORIGIN_PORT)) {
     socket.destroy();
     return;
   }
@@ -1221,6 +1245,7 @@ async function rebuildOnce() {
   graph.trustClaudeLaunchCwd = trustClaudeLaunchCwd();
   graph.autoFixPrChecksDefault = autoFixPrChecksDefault();
   graph.mailWakesDormant = mailWakesDormant();
+  graph.suppressNudgedPrToasts = suppressNudgedPrToasts();
   graph.prModelFooter = prModelFooterEnabled();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();
@@ -1426,7 +1451,7 @@ async function main() {
   // before any store write (init/rebuild) so a duplicate never gets a save in.
   let instanceLock;
   try {
-    instanceLock = await acquireInstanceLock({ port: PORT });
+    instanceLock = await acquireInstanceLock({ port: DECK_ONLY ? DECK_PORT : PORT });
   } catch (err) {
     if (err instanceof InstanceLockError) {
       logError(`[agent-wrangler] ${err.message}`);
@@ -1568,11 +1593,11 @@ async function main() {
 
   // The deck binds first, so the board's page names a port that answers. A
   // taken default deck port falls back to one the OS picks; one set with
-  // AW_DECK_PORT is held to.
+  // AW_DECK_PORT is held to, as is a deck-only one: its sessions are told its port.
   await new Promise((resolve) => {
     let tryPort = DECK_PORT;
     const onDeckError = (err) => {
-      if (err?.code === 'EADDRINUSE' && !process.env.AW_DECK_PORT && tryPort !== 0) {
+      if (err?.code === 'EADDRINUSE' && !process.env.AW_DECK_PORT && !DECK_ONLY && tryPort !== 0) {
         tryPort = 0;
         deckServer.listen(0, DECK_HOST);
         return;
@@ -1590,12 +1615,22 @@ async function main() {
     deckServer.listen(DECK_PORT, DECK_HOST);
   });
 
+  if (DECK_ONLY) {
+    const url = `http://localhost:${deckListenPort}`;
+    if (startupStyle({ isTTY: process.stdout.isTTY, supervised: INSTALL_ENV.supervised }) === 'banner') {
+      console.log(bannerLines({ version: VERSION, commit: install.checkout ? codeVersion : null, url, dataDir: DATA_DIR, deckOnly: true }).join('\n'));
+    } else {
+      log(`[agent-wrangler] deck-only at ${url} (pid ${process.pid})`);
+    }
+    setTimeout(() => clearRollbackMarker(), ROLLBACK_CLEAR_AFTER_MS).unref();
+  }
+
   const onListenError = (err) => {
     logError(listenErrorMessage(err, PORT));
     process.exit(1);
   };
-  boardServer.once('error', onListenError);
-  boardServer.listen(PORT, HOST, () => {
+  if (!DECK_ONLY) boardServer.once('error', onListenError);
+  if (!DECK_ONLY) boardServer.listen(PORT, HOST, () => {
     boardServer.off('error', onListenError);
     // Loopback presents as "localhost"; any other bind prints its actual host.
     const host = (HOST === '127.0.0.1' || HOST === '::1') ? 'localhost' : HOST;

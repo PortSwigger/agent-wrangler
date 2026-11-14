@@ -20,7 +20,11 @@
 // `view` (1.45.0, only 'diff' so far) is the view the NEXT show opens on, held on
 // the owner as `o.view` for app.js to apply and clear: one-shot, so the view
 // coming back on screen (unpark) reopens wherever the human left it, not on it.
-export function createSessionEmbed({ document, parts, show, release }) {
+//
+// An extension names sessions by id; the owner's `card` is the card key `cardOf`
+// makes of it (card-key.js), read when used so a mount made before the board
+// knows its deck still resolves, and `show` is called with that key.
+export function createSessionEmbed({ document, parts, show, release, cardOf }) {
   let owner = null;
 
   function attach(o) {
@@ -57,7 +61,7 @@ export function createSessionEmbed({ document, parts, show, release }) {
         if (!mine()) return false;
         o.sessionId = sessionId;
         o.view = view;
-        if (!o.parked) show(sessionId, o);
+        if (!o.parked) show(o.card, o);
         return true;
       },
       unmount: () => {
@@ -86,10 +90,10 @@ export function createSessionEmbed({ document, parts, show, release }) {
       return owner.handle;
     }
     if (owner) drop();
-    const o = { el, extId, sessionId, onMaximize, view, maximized: false, parked: true, homes: null, wrap: null };
+    const o = { el, extId, sessionId, get card() { return cardOf(this.sessionId); }, onMaximize, view, maximized: false, parked: true, homes: null, wrap: null };
     o.handle = handleFor(o);
     owner = o;
-    if (active) { attach(o); show(sessionId, o); }
+    if (active) { attach(o); show(o.card, o); }
     return o.handle;
   }
 
@@ -102,7 +106,7 @@ export function createSessionEmbed({ document, parts, show, release }) {
   function unpark() {
     if (!owner || !owner.parked) return;
     attach(owner);
-    show(owner.sessionId, owner);
+    show(owner.card, owner);
   }
 
   return {
