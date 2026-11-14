@@ -15,8 +15,9 @@ export function deckDescriptor({ deckId, name, actions, runtimes, extensions, bo
   };
 }
 
-// `?api=` on the /ws upgrade: absent is a legacy board, a 1.x value is a deck
-// API client, and anything else is a board this deck cannot serve.
+// `?api=` on the /ws upgrade: absent is a legacy client (served by the
+// adapter in legacy.js), a 1.x value is a deck API client, and anything else is
+// a board this deck cannot serve.
 export function wsApiMode(search) {
   const api = new URLSearchParams(search).get('api');
   if (api == null) return 'legacy';

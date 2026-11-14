@@ -1,5 +1,5 @@
 // The one extension → { kind, mime } table behind api.files.canOpen, api.files.types
-// and the viewer panel. The server (host.files, GET /ext-file) imports this same
+// and the viewer panel. The server (host.files, deck.ext-file) imports this same
 // module, so what the browser says it can open is what the server will read.
 // mime is derived from the extension, never sniffed from the bytes. Pure and
 // DOM-free so both halves can load it; extension-only, so no disk is touched.

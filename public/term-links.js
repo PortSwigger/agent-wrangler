@@ -34,7 +34,7 @@ export function markdownPathRegex() {
   return /(?<![\w:/@~.])(?:~|\/|[\w.\-]+\/)[^\s"'`<>()[\]{}|]*\.(?:markdown|md)(?!\.?\w)/gi;
 }
 
-// Resolve a matched path to what the server's GET /file accepts (absolute or
+// Resolve a matched path to what the deck's session.file action accepts (absolute or
 // ~-home). Absolute/home pass through untouched; a relative match is joined onto
 // baseDir (the session's cwd) — the server's realpath normalizes any ./ or ../
 // segments, so a plain join is enough. A relative match with no baseDir (e.g. an
