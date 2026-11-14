@@ -38,7 +38,7 @@ const MIME = {
 // (enabled extensions only, each with the themes it has switched off), so a
 // disabled extension's or switched-off theme drops out of /api/styles and its
 // assets 404.
-export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, prModelHandler, fileHandler, extFileHandler, deckHandler = null, extensionAssets = () => null, extensionThemes = () => [] }) {
+export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, prModelHandler, deckHandler = null, extensionAssets = () => null, extensionThemes = () => [] }) {
   return http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
     if (urlPath === '/') urlPath = '/index.html';
@@ -61,16 +61,6 @@ export function createHttpServer({ port, mcpRequestHandler, prAttachHandler, prM
 
     if (req.method === 'GET' && urlPath === '/deck' && deckHandler) {
       deckHandler(req, res);
-      return;
-    }
-
-    if (req.method === 'GET' && urlPath === '/file') {
-      fileHandler(req, res);
-      return;
-    }
-
-    if (req.method === 'GET' && urlPath === '/ext-file') {
-      extFileHandler(req, res);
       return;
     }
 

@@ -11,9 +11,8 @@ const REASON_CODE = {
   'changed': 'conflict',
 };
 
-// Actions with no legacy control type: the reads the board makes over plain
-// HTTP today (GET /file and GET /ext-file). Both take their file reader from
-// ctx, which server/index.js fills with the same functions those routes use.
+// Actions with no control handler behind them: the board's file reads. Both
+// take their file reader from ctx, which server/index.js fills.
 export const NATIVE_ACTIONS = [
   {
     action: 'session.file',

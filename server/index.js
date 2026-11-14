@@ -69,8 +69,6 @@ import { scanAllDaily } from './usage-report.js';
 import { startFdWatchdog } from './fd-watchdog.js';
 import { startHeapWatchdog } from './heap-watchdog.js';
 import { sendGuarded } from './ws-backpressure.js';
-import { createHistoryGate } from './history-gate.js';
-import { createGraphFrameGate } from './graph-frame-gate.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
@@ -974,14 +972,11 @@ const prModelHandler = createPrModelHandler({
   logError,
 });
 
-// GET /file?path=… — read a markdown file for the click-to-preview modal.
-// Localhost posture like the static routes; the response carries NO CORS header
-// so a cross-origin page can't read it (load-bearing for the .md-anywhere read
-// scope). resolveMarkdownPath gates: .md only, symlinks resolved, regular file,
+// The deck's session.file action: read a markdown file for the click-to-preview
+// modal. resolveMarkdownPath gates: .md only, symlinks resolved, regular file,
 // 2 MB cap. A read-time growth past the cap is an accepted race on a localhost
 // dev tool.
 const FILE_MAX_BYTES = 2 * 1024 * 1024;
-// Shared by GET /file and the deck API's session.file action.
 async function readMarkdownFile(raw) {
   const r = resolveMarkdownPath(raw, {
     homedir: os.homedir(), realpathSync: fs.realpathSync, statSync: fs.statSync, maxBytes: FILE_MAX_BYTES,
@@ -990,49 +985,9 @@ async function readMarkdownFile(raw) {
   return { status: 200, path: r.path, content: await fs.promises.readFile(r.path, 'utf8') };
 }
 
-async function fileHandler(req, res) {
-  try {
-    if (!isAllowedHost(req.headers.host, PORT)) {
-      res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: 'forbidden' }));
-      return;
-    }
-    const r = await readMarkdownFile(new URL(req.url, 'http://localhost').searchParams.get('path'));
-    if (r.status !== 200) {
-      res.writeHead(r.status, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: r.message }));
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ path: r.path, content: r.content }));
-  } catch (err) {
-    logError('[file]', err);
-    if (!res.headersSent) {
-      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: 'read error' }));
-    }
-  }
-}
-
-// GET /ext-file?ext=<id>&path=… — what api.openFile reads. Same localhost posture
-// as /file (no CORS header). Answers 200 { ok, … } either way: a refusal is
-// { ok:false, reason }, and only the registry (host.files) decides what opens.
+// The deck's deck.ext-file action, what api.openFile reads: only the registry
+// (host.files) decides what opens.
 const openExtFile = async (id, p) => (hostApis.has(id) ? extFiles.open(id, p) : { ok: false, reason: 'not-permitted' });
-
-async function extFileHandler(req, res) {
-  const json = (status, body) => {
-    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify(body));
-  };
-  try {
-    if (!isAllowedHost(req.headers.host, PORT)) return json(403, { ok: false, reason: 'forbidden' });
-    const q = new URL(req.url, 'http://localhost').searchParams;
-    json(200, await openExtFile(q.get('ext'), q.get('path')));
-  } catch (err) {
-    logError('[ext-file]', err);
-    if (!res.headersSent) json(200, { ok: false, reason: 'error' });
-  }
-}
 
 // spawn_session creates a full board session, mirroring the /ws dispatch path:
 // dispatch (mints the card id, collects the launch context pre-launch) → assign →
@@ -1096,7 +1051,7 @@ function deckHandler(req, res) {
 // /ext/<id>/* resolves ONLY through the loader's `dirs`, which holds enabled
 // extensions alone — so a disabled extension's client is a 404, never served.
 const server = createHttpServer({
-  port: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, fileHandler, extFileHandler, deckHandler,
+  port: PORT, mcpRequestHandler, prAttachHandler, prModelHandler, deckHandler,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
   extensionThemes: () => themeSources(ext.themeDirs),
 });
@@ -1114,15 +1069,11 @@ server.on('upgrade', (req, socket, head) => {
   }
   const { pathname, search } = new URL(req.url, 'http://localhost');
   if (pathname === '/ws') {
-    const mode = wsApiMode(search);
-    if (!mode) {
+    if (!wsApiMode(search)) {
       socket.destroy();
       return;
     }
-    controlWss.handleUpgrade(req, socket, head, (ws) => {
-      ws.deckApi = mode === 'deck';
-      controlWss.emit('connection', ws, req);
-    });
+    controlWss.handleUpgrade(req, socket, head, (ws) => controlWss.emit('connection', ws, req));
   } else if (pathname === '/pty') {
     ptyWss.handleUpgrade(req, socket, head, (ws) => ptyWss.emit('connection', ws, req));
   } else {
@@ -1160,40 +1111,30 @@ function broadcastAgents() {
     .catch(() => {});
 }
 
-// A deck API client gets every broadcast wrapped as an event; a legacy board
-// gets it as it is.
+// Every broadcast reaches a board as an event.
 function broadcast(obj) {
-  const legacy = JSON.stringify(obj);
-  let event = null;
-  for (const client of controlWss.clients) {
-    if (client.deckApi) sendGuarded(client, event ??= JSON.stringify(deckEvent(obj)));
-    else sendGuarded(client, legacy);
-  }
+  sendToClients(JSON.stringify(deckEvent(obj)));
 }
 
 // readyState alone is not enough: a client that stops reading stays OPEN
 // forever, so every snapshot we send it is queued in our own heap until the
 // process OOMs. sendGuarded drops such a peer instead — see ws-backpressure.js
 // for why terminate (not skip, not close) is the only safe option here.
-function sendToClients(msg, { deckApi, except = null }) {
-  for (const client of controlWss.clients) if (Boolean(client.deckApi) === deckApi && client !== except) sendGuarded(client, msg);
+function sendToClients(msg, { except = null } = {}) {
+  for (const client of controlWss.clients) if (client !== except) sendGuarded(client, msg);
 }
 
-const hasDeckClients = () => [...controlWss.clients].some((c) => c.deckApi);
-
-// Sends any change the stream holds to the deck clients already connected. Run
-// on every rebuild while one is connected, and before a new one is handed its
+// Sends any change the stream holds to the boards already connected. Run on
+// every rebuild while one is connected, and before a new one is handed its
 // snapshot, so no client misses a rev.
 function flushState({ except = null } = {}) {
-  if (!hasDeckClients()) return;
+  if (!controlWss.clients.size) return;
   const frame = stateStream.next();
-  if (frame) sendToClients(frame, { deckApi: true, except });
+  if (frame) sendToClients(frame, { except });
 }
 
 // Module-scope so its "have I already sent this?" memory spans every rebuild, not
 // one call — the whole saving is across ticks.
-const wireGraph = createHistoryGate();
-const graphFrame = createGraphFrameGate();
 const stateStream = createStateStream();
 
 // Wrapped below in createRebuildCoalescer — see there for why an overlapping call
@@ -1259,13 +1200,8 @@ async function rebuildOnce() {
   }
   statusNotices.run(graph).catch((error) => logError('[status-notice]', error));
   for (const session of graph.sessions) session.statusNoticeBlocked = statusNotices.blocked(session.sessionId);
-  // The wire graph, not `lastGraph`: history is omitted while unchanged, which is
-  // almost every tick. See history-gate.js — and note the connect path above sends
-  // `lastGraph` itself, so a fresh socket is always served the full list.
-  // graphFrame then drops the tick altogether when nothing but generatedAt moved
-  // (see graph-frame-gate.js), which on an idle server is every one of them.
-  const frame = graphFrame(wireGraph(graph));
-  if (frame) sendToClients(frame, { deckApi: false });
+  // The state stream leaves history off a frame while it is unchanged, and skips
+  // the frame when nothing but generatedAt moved (see deck/state.js).
   stateStream.observe(graph, extState);
   flushState();
   broadcastStylesIfChanged();
@@ -1340,21 +1276,18 @@ controlWss.on('connection', (ws) => {
   // `canRestart` gates the board's own "Restart the wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
-  // A deck API client is sent the same announcements as events, and the state
-  // stream in place of the graph.
-  const send = (obj) => ws.send(JSON.stringify(ws.deckApi ? deckEvent(obj) : obj));
+  // Announcements reach the board as events, then the state stream follows.
+  const send = (obj) => ws.send(JSON.stringify(deckEvent(obj)));
   send({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() });
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
-  // the host API version this server serves. Sent before the first graph,
-  // every connect.
+  // the host API version this server serves. Sent before the first state
+  // frame, every connect.
   send({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION });
-  if (ws.deckApi) {
-    flushState({ except: ws });
-    const snapshot = stateStream.snapshot();
-    if (snapshot) ws.send(snapshot);
-  } else if (lastGraph) send({ type: 'graph', graph: lastGraph });
+  flushState({ except: ws });
+  const snapshot = stateStream.snapshot();
+  if (snapshot) ws.send(snapshot);
   if (fdWarning) send({ type: 'fd-warning', active: true, ...fdWarning });
   agentsMessage()
     .then((msg) => { if (ws.readyState === 1) send(msg); })
@@ -1380,8 +1313,8 @@ controlWss.on('connection', (ws) => {
     socketFor,
     // Guarded like broadcast: this is the same socket, and a client swamped by
     // snapshots must not go on accruing per-request replies either.
-    reply: (obj) => { sendGuarded(ws, JSON.stringify(ws.deckApi ? deckEvent(obj) : obj)); },
-    // The deck API's result frames, never wrapped.
+    reply: (obj) => { sendGuarded(ws, JSON.stringify(deckEvent(obj))); },
+    // Result frames, never wrapped.
     send: (obj) => { sendGuarded(ws, JSON.stringify(obj)); },
     readMarkdownFile,
     openExtFile,

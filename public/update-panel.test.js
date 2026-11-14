@@ -174,8 +174,8 @@ test('reconnecting after a restart re-enables the Updates restart button', async
     assert.ok(end > start);
     return source.slice(start, end + 3);
   };
-  const configStart = source.indexOf("else if (msg.type === 'config') {");
-  const configEnd = source.indexOf('\n    }', configStart);
+  const configStart = source.indexOf("if (msg.type === 'config') {");
+  const configEnd = source.indexOf('\n  }', configStart);
   assert.ok(configStart >= 0 && configEnd > configStart);
   const configBody = source.slice(source.indexOf('{', configStart) + 1, configEnd);
   const host = document.createElement('div');

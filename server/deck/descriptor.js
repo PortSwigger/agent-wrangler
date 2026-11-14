@@ -15,10 +15,9 @@ export function deckDescriptor({ deckId, name, actions, runtimes, extensions, bo
   };
 }
 
-// `?api=` on the /ws upgrade: absent is a legacy board, a 1.x value is a deck
-// API client, and anything else is a board this deck cannot serve.
+// `?api=` on the /ws upgrade: a 1.x value is a board this deck serves, and
+// anything else, or none, is refused.
 export function wsApiMode(search) {
   const api = new URLSearchParams(search).get('api');
-  if (api == null) return 'legacy';
-  return /^1(\.\d+)?$/.test(api) ? 'deck' : null;
+  return api != null && /^1(\.\d+)?$/.test(api) ? 'deck' : null;
 }

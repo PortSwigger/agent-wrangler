@@ -34,7 +34,7 @@ function connect(port, query = '') {
   return { ws, frames, opened };
 }
 
-test('the deck API: descriptor, state stream, actions with results, and the legacy protocol alongside', { timeout: 60_000 }, async () => {
+test('the deck API: descriptor, state stream, actions with results; no legacy protocol or file routes', { timeout: 60_000 }, async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'aw-deck-'));
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
@@ -62,6 +62,10 @@ test('the deck API: descriptor, state stream, actions with results, and the lega
     const refused = connect(port, '?api=2');
     sockets.push(legacy.ws, client.ws, refused.ws);
     assert.equal(await refused.opened, false, 'a major this deck cannot serve is refused');
+    assert.equal(await legacy.opened, false, 'a board that names no API version is refused');
+    for (const p of [`/file?path=${encodeURIComponent(note)}`, '/ext-file?ext=checklist&path=a.md']) {
+      assert.equal((await fetch(`${base}${p}`)).status, 404, `${p} is gone; the board reads files through actions`);
+    }
     assert.equal(await client.opened, true);
 
     const state = await waitFor(() => client.frames.find((f) => f.type === 'state'));
@@ -70,8 +74,6 @@ test('the deck API: descriptor, state stream, actions with results, and the lega
     for (const k of ['sessions', 'history', 'nodes', 'edges', 'tasks', 'schedules', 'settings', 'ext']) assert.ok(k in state, `state carries ${k}`);
     assert.ok(!client.frames.some((f) => f.type === 'graph'), 'a deck client gets state, not graph');
     assert.ok(client.frames.some((f) => f.type === 'event' && f.event === 'config'), 'announcements arrive as events');
-    assert.ok(await waitFor(() => legacy.frames.some((f) => f.type === 'graph')), 'the legacy board still gets its graph');
-    assert.ok(!legacy.frames.some((f) => f.type === 'state'));
 
     const call = async (id, body) => {
       client.ws.send(JSON.stringify({ type: 'action', id, ...body }));
@@ -89,8 +91,11 @@ test('the deck API: descriptor, state stream, actions with results, and the lega
     assert.ok(after, 'the new task arrives on the state stream');
     assert.ok(after.rev > before, 'rev rose');
 
-    legacy.ws.send(JSON.stringify({ type: 'task-create', name: 'Legacy task' }));
-    assert.ok(await waitFor(() => legacy.frames.some((f) => f.type === 'graph' && f.graph.tasks?.tasks?.some((t) => t.name === 'Legacy task'))), 'a legacy message still works');
+    const resultsBefore = client.frames.filter((f) => f.type === 'result').length;
+    client.ws.send(JSON.stringify({ type: 'task-create', name: 'Legacy task' }));
+    await sleep(1500);
+    assert.equal(client.frames.filter((f) => f.type === 'result').length, resultsBefore, 'a legacy message gets no answer');
+    assert.ok(!client.frames.some((f) => f.type === 'state' && f.tasks.tasks.some((t) => t.name === 'Legacy task')), 'and does nothing');
   } finally {
     for (const ws of sockets) try { ws.close(); } catch {}
     try { server?.kill(); } catch {}

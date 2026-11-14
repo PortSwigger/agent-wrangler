@@ -32,7 +32,6 @@ const server = createHttpServer({
   mcpRequestHandler: (req, res) => res.end(),
   prAttachHandler: (req, res) => res.end(),
   prModelHandler: (req, res) => res.end('pr-model'),
-  fileHandler: (req, res) => res.end(),
   extensionAssets: (id) => dirs[id] || null,
   extensionThemes: () => themeDirs,
 });
@@ -113,4 +112,10 @@ test('a theme its extension has switched off is neither listed nor served', asyn
   assert.equal(styles.some((s) => s.id === 'route-sky'), false);
   assert.equal((await fetch(`${base}/styles/route-sky/w.svg`)).status, 404);
   themeDirs = [];
+});
+
+test('the file reads are deck actions now, so /file and /ext-file are plain 404s', async () => {
+  for (const p of ['/file?path=/etc/hosts.md', '/ext-file?ext=checklist&path=a.md']) {
+    assert.equal((await fetch(`${base}${p}`)).status, 404, p);
+  }
 });

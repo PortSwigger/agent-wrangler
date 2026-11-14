@@ -520,7 +520,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             onError(`[ext:${extId}] send refused: "${type}" is not one of this extension's control handlers (${allowed.join(', ') || 'none'})`);
             return;
           }
-          baseApi.send?.(frame);
+          baseApi.send?.(frame, extId);
         },
         onMessage: (fn) => subscribe(extId, fn),
         onConnect: (fn) => {
