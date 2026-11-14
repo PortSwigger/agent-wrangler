@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,11 +20,6 @@ export function findChrome() {
   ].find((p) => existsSync(p)) || null;
 }
 
-export const freePort = () => new Promise((res) => {
-  const s = createServer();
-  s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)); });
-});
-
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function waitFor(fn, { tries = 80, every = 250 } = {}) {
@@ -36,20 +30,20 @@ export async function waitFor(fn, { tries = 80, every = 250 } = {}) {
   return null;
 }
 
-// Starts server/index.js on `dataDir` and a free port, resolving once GET /deck
-// answers. `out()` is everything it has printed; `deckPort()` the port the
-// deck said it listens on.
+// Starts server/index.js on `dataDir` with every port left to the OS, resolving
+// once GET /deck answers on the board port it logged. `out()` is everything it
+// has printed; `deckPort()` the port the deck said it listens on.
 export async function startInstance(dataDir) {
-  const port = await freePort();
   let out = '';
   const server = spawn(process.execPath, ['server/index.js'], {
     cwd: REPO_ROOT,
-    env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_DATA_DIR: dataDir, AW_PORT: String(port), AW_OPEN_BROWSER: '' },
+    env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_DATA_DIR: dataDir, AW_PORT: '0', AW_OPEN_BROWSER: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stdout.on('data', (c) => { out += c; });
   server.stderr.on('data', (c) => { out += c; });
-  const up = await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/deck`)).ok);
+  const port = Number(await waitFor(() => /running at http:\/\/localhost:(\d+)/.exec(out)?.[1])) || null;
+  const up = port && await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/deck`)).ok);
   const deckPort = () => Number(/deck API at http:\/\/127\.0\.0\.1:(\d+)/.exec(out)?.[1]) || null;
   return { port, deckPort, server, up: Boolean(up), out: () => out };
 }
