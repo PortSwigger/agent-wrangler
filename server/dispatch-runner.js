@@ -40,7 +40,7 @@ export async function deliverFirstPrompt({ tmux, socket = '', agent, text, image
 // opts = { cwd, intent, model, agent, runtime, taskId, addDirs, worktree, worktreeBranch,
 //          worktreeFolderName, worktreeAuto, workflow, autoMergeOnPass, parentSession, imageNames,
 //          codexPolicy }
-export async function runDispatch(opts, { sessionManager, taskStore, deliverFirstPrompt: deliver = deliverFirstPrompt, launchSource }, now = Date.now()) {
+export async function runDispatch(opts, { sessionManager, taskStore, deliverFirstPrompt: deliver = deliverFirstPrompt, launchSource, scheduledBy }, now = Date.now()) {
   // Both callers can carry an agent/model this install doesn't offer, and both
   // have somewhere to report it: the /ws dispatch handler turns a throw into the
   // dialog's {type:'error'}, and fireSchedule catches it into a `schedule-error`
@@ -104,6 +104,7 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     // For telemetry: the board's dialog, or a schedule (performScheduleAction
     // passes it in deps, never the client's message).
     launchSource: launchSource || (workflow ? 'workflow' : 'board'),
+    scheduledBy: launchSource === 'schedule' ? scheduledBy : undefined,
   });
   let firstPrompt;
   if (withImages) {

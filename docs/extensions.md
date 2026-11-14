@@ -1842,6 +1842,64 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
 ## Launch context, events and lifecycle
 
+- **`hooks['session.beforeSpawn']`** (1.78.0), called with `{ spawnedBy,
+  parentSession, spawner, agent, model, effort, cwd, intent, source, taskId, host }` before
+  a new session's directory, worktree or process is created. All providers use
+  it: MCP spawns (including workflows), scheduled dispatches when they fire,
+  board launches, extension spawns and forks. Resuming an existing session does
+  not call it. `spawnedBy` identifies the launching session; for a scheduled
+  dispatch it identifies the session that last set the scheduled action.
+  ScheduleStore owns that provenance, supplied separately from action input by
+  the MCP scheduling tools: action edits reattribute to the editing caller;
+  board action edits clear it; timing/name-only edits retain it. Caller-supplied
+  attribution in stored dispatch input is discarded. Scheduled provenance is
+  hook-only: it does not set the new entry's `spawnedBy`, the agent's
+  `AW_SPAWNER_SESSION_ID`, the spawner chain, telemetry parent or `session.prepare`
+  lineage. `parentSession` is the requested board nesting parent, or the source
+  session for a fork. Forks have `spawnedBy: null`, matching their saved entry;
+  use `source: 'fork'` and `parentSession` for their relationship. `spawner` is
+  the extension id for `host.sessions.spawn`; these launches have no calling
+  session attribution (`spawnedBy: null`). A tool's calling session is not
+  automatically carried through the host spawn API; extensions must apply
+  caller-specific policies themselves. Absent ids, model, effort and cwd are
+  `null`; a blank cwd means a fresh scratch directory. `intent` is at most
+  8,000 characters, or `null` when explicitly supplied as null.
+  `source` is `agent`, `board`, `workflow`,
+  `schedule`, `extension` or `fork`, following the core launch source.
+  Hooks run sequentially and may return nothing to allow, `{ refuse: 'reason' }`
+  to stop the launch, or `{ data: anything }` to carry data to their own
+  `session.spawned` hook. A nonempty refusal stops later hooks and is returned
+  to the caller as the launch error, including through MCP. A refused scheduled
+  fire reports a board `schedule-error` toast, without messaging the scheduling
+  agent. A recurring schedule tries again at its next fire. Data is transient,
+  kept per launch and per extension, and never saved by core.
+- **`hooks['session.spawned']`** (1.78.0) receives the same launch fields plus
+  `{ sessionId, data }`, with `cwd` set to the actual launch directory, after
+  the process launches and its session entry is saved. Only that extension's
+  `data` is supplied (`undefined` if it supplied none). The notification is
+  awaited before dispatch/fork returns; a failed or refused launch never calls
+  it. Hook return values are ignored. Both spawn hooks receive their own host
+  facade, have a two-second timeout per extension, and log and skip thrown
+  errors or timeouts so launches fail open. A timeout cannot cancel extension
+  code already running: hooks should finish promptly and avoid delayed side
+  effects. Use `session.spawned` for enrollment that requires the new id;
+  a before hook's data has no delivery guarantee if a later hook refuses or
+  the launch fails. `server/session-spawn.js`.
+
+  Use the spawn pair for a short admission check across dispatches and forks,
+  using intent/model/effort/source, and for passing data to a completion hook.
+  Use [`session.prepare`](#launch-context-events-and-lifecycle) for dispatch-only
+  checkout preparation: it runs after cwd resolution with `sessionId`, `repoRoot`
+  and `willCreateWorktree`, and allows 60 seconds for work such as updating the
+  repository. Its existing hooks deliberately never run on forks: a fork reuses
+  its parent's checkout, so running repository preparation there could change
+  files beneath the parent session. Keeping the pair separate preserves that
+  contract and admits a launch before a scratch directory exists.
+  `session.launchContext` supplies process configuration and can refuse when that
+  configuration is unavailable; it also runs for resumes and non-launch context
+  changes. `onBeforeDispatch` is a dispatch lifecycle notification whose return
+  value cannot refuse a launch. These hooks serve different stages.
+
 - **`hooks['session.launchContext']`**, called with `{ sid, task, agent, grantPaths, runtime,
   reason, parentId?, ext, host }`, returns `{ env?, secretEnv?, addDirs?, codexConfig?, claudeHooks?, refuse?, refuseIfSet? }` (or a Promise of it). `server/launch-context.js`
   `collectLaunchContext` asks every ENABLED extension, merges `env` (later wins,
@@ -1967,7 +2025,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   through the usual dispatch error path, with no worktree or pane created
   (later extensions are not asked); `warnings` toast on the board and the
   launch goes ahead. A hook that throws or takes over 60s is logged and
-  skipped. Resume and fork never fire it. `server/session-prepare.js`.
+  skipped. Resume and fork never fire it. For a short admission check that also
+  covers forks and can pass data to `session.spawned`, use `session.beforeSpawn`
+  above. `server/session-prepare.js`.
 - **Session status projections** (`sessions:read`, 1.59.0): `host.sessions.get(id)`,
   `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
   `hasBackgroundShell` from the latest board graph. Without a graph node, status

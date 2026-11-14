@@ -46,7 +46,7 @@ export const scheduleSessionTool = {
     if (prepared.isError) return prepared;
     let created;
     try {
-      created = deps.scheduleStore.create(prepared, Date.now());
+      created = deps.scheduleStore.create(prepared, Date.now(), { caller });
     } catch (e) {
       return errorResult(e?.message || 'Could not create the schedule.');
     }

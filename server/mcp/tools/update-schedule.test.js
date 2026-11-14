@@ -71,7 +71,7 @@ test('update_schedule retains omitted dispatch metadata and task defaults across
   const original = deps.scheduleStore.create({ when: { kind: 'cron', cron: '0 9 * * *' }, action: { kind: 'dispatch', dispatch: { intent: 'Original', agent: 'claude', addDirs: ['/tmp/shared'], model: 'opus' } } }, now);
   const result = await update(deps, { id: original.id, intent: 'Edited' });
   assert.equal(result.isError, undefined);
-  assert.deepEqual(deps.scheduleStore.snapshot().schedules[1], { ...original, action: { kind: 'dispatch', dispatch: { ...original.action.dispatch, intent: 'Edited' } } });
+  assert.deepEqual(deps.scheduleStore.snapshot().schedules[1], { ...original, scheduledBy: 'different-card', action: { kind: 'dispatch', dispatch: { ...original.action.dispatch, intent: 'Edited' } } });
 });
 
 test('update_schedule handles timezone-only edits and preserves disabled state', async () => {
@@ -86,4 +86,20 @@ test('update_schedule handles timezone-only edits and preserves disabled state',
   assert.equal(stored.missed, false);
   assert.deepEqual(stored.when, { ...original.when, tz: 'America/New_York' });
   assert.ok(Date.parse(stored.nextRunAt) > Date.now());
+});
+
+test('action edits reattribute to the editor; timing and name edits retain the author', async () => {
+  const { deps } = setup();
+  const created = deps.scheduleStore.create({ when: { kind: 'cron', cron: '0 9 * * *' },
+    action: { kind: 'dispatch', dispatch: { intent: 'Original', spawnedBy: 'FORGED' } } }, now, { caller: 'CREATOR' });
+  const renamed = await update(deps, { id: created.id, name: 'New name' });
+  assert.equal(renamed.isError, undefined);
+  assert.equal(deps.scheduleStore.schedules.at(-1).scheduledBy, 'CREATOR');
+  const retimed = await update(deps, { id: created.id, cron: '0 10 * * *' });
+  assert.equal(retimed.isError, undefined);
+  assert.equal(deps.scheduleStore.schedules.at(-1).scheduledBy, 'CREATOR');
+  const edited = await update(deps, { id: created.id, intent: 'Edited' });
+  assert.equal(edited.isError, undefined);
+  assert.equal(deps.scheduleStore.schedules.at(-1).scheduledBy, 'different-card');
+  assert.equal(deps.scheduleStore.schedules.at(-1).action.dispatch.spawnedBy, undefined);
 });

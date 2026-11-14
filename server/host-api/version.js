@@ -552,7 +552,13 @@ import semver from 'semver';
 // carries `deckName`. `minimiseTask` and `setMinimisedTasks` take those ids.
 // With one deck the context is as before. A tray that reads `deckName`
 // declares `^1.77.0`.
-export const HOST_API_VERSION = '1.77.0';
+//
+// 1.78.0 adds manifest hooks `session.beforeSpawn` and `session.spawned` for
+// new-session launches across providers and launch sources. The first can
+// refuse with a reason or return extension-owned data; the second receives
+// that data and the new session id after launch. Both time out and fail open;
+// a timeout does not cancel extension code already running.
+export const HOST_API_VERSION = '1.78.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.
