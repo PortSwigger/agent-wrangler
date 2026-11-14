@@ -60,7 +60,7 @@ import { toast } from './toast.js';
 import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
-import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
+import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
 import { mountDecksPanel } from './decks-panel.js';
 import { setLegacyReporter, withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
@@ -467,6 +467,8 @@ const extApi = {
   send,
   // Backs `api.act`; slots binds the id, so only `ext.<own id>.*` is reachable.
   act: (extId, name, opts) => deckAct(`ext.${extId}.${name}`, opts),
+  // Backs `api.act`'s `deck` option: the call goes to that deck alone.
+  actOnDeck: (deckId, extId, name, opts) => deckActOn(deckId, `ext.${extId}.${name}`, opts),
   // Backs `api.styles()`.
   styles: loadedStyles,
   markdownPreview: (md) => (renderMarkdown ||= createRenderer(window.markdownit))(md),
@@ -700,8 +702,14 @@ function pairsWithDeck(entry) {
   if (!Array.isArray(listed)) return true;
   const mine = listed.find((e) => e?.id === entry.id);
   if (!mine) return null;
-  const want = entry.boardApi ?? hostApiVersion;
+  const want = boardApiWanted(entry.id);
   return want == null || mine.boardApi === want;
+}
+// The boardApi a deck must list an extension with for this board's half of it
+// to pair: the half's own, else the API this board serves.
+function boardApiWanted(extId) {
+  const entry = extClientManifest.find((e) => e?.id === extId);
+  return entry ? (entry.boardApi ?? hostApiVersion) : null;
 }
 // The `extensions` connect message announces which extensions ship a client
 // module and where it lives; `graph.extensions[].enabled` (re-read from config
@@ -1916,6 +1924,10 @@ function assignedTaskId(ref) {
 const boardTasks = () => (remoteBoard.tasks.length ? [...latestTasks.tasks, ...remoteBoard.tasks] : latestTasks.tasks);
 const findTask = (id) => latestTasks.tasks.find((t) => t.id === id) || remoteBoard.tasks.find((t) => t.id === id) || null;
 const isRemoteTask = (id) => remoteBoard.tasks.some((t) => t.id === id);
+// What a task.body / task.action subject adds for another deck's task: its deck
+// and its id there. Slots offers such a task only to contributions registered
+// with `decks: true`.
+const deckTaskFields = (task) => (task && isRemoteTask(task.id) ? { deckId: task.deckId, deckTaskId: task.localId } : {});
 const bucketOrder = (id) => (latestTasks.sessionOrder || {})[id] || remoteBoard.sessionOrder[id];
 // A task as its tile draws it: with more than one deck on the board, each tile
 // names its deck, so the tasks read grouped under their decks' names.
@@ -2264,7 +2276,7 @@ function renderGrid(trayPass = 0, fitPass = 0) {
         const sessions = sortAsleepLast(ordered, phaseOf);
         // Tile height the `task.body` extensions want (e.g. the TODO zone); 0
         // when none is registered, which is also what a disabled one contributes.
-        const bodyPx = slots.taskBodyWeight(task.id, latestGraph);
+        const bodyPx = slots.taskBodyWeight(task.id, latestGraph, { taskId: task.id, ...deckTaskFields(task) });
         const { visible: childRowCount, absorbed: absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, fullView: childFullViewCount } = childRowCounts(sessions.filter((s) => phaseOf(s) !== 'asleep'));
         return [task.id, { kind: 'task', id: task.id, task: tileTask(task), sessions, estimate: tileSpan(sessions, rowHeight, bodyPx, phaseOf, childRowCount, absorbedChildCount, workflowBoxCount, subagentRowCount, subagentZoneCount, childFullViewCount, collapsedSnoozed.has(task.id), gap) }];
       })
@@ -2503,7 +2515,7 @@ function mountTaskBodies(el) {
   const entries = [];
   for (const host of el.querySelectorAll('.task-body-ext')) {
     const taskId = host.dataset.taskBody;
-    if (taskId) entries.push({ host, session: { taskId, adhocId: ADHOC_ID, container: host } });
+    if (taskId) entries.push({ host, session: { taskId, adhocId: ADHOC_ID, container: host, ...deckTaskFields(findTask(taskId)) } });
   }
   slots.syncHosts('task.body', entries, extApi, latestGraph);
 }
@@ -2859,10 +2871,10 @@ function extMenuItems(s) {
 // adhoc }`, the no-task tile carrying ADHOC_ID — not the DOM cell.
 function extTaskMenuItems(taskId, isNoTask) {
   const id = isNoTask ? ADHOC_ID : taskId;
-  const task = isNoTask ? null : latestTasks.tasks.find((t) => t.id === taskId);
+  const task = isNoTask ? null : findTask(taskId);
   // Core carries Minimise in both task menus, so the legacy minimise-task
   // extension's own item is dropped rather than shown twice.
-  return slots.taskMenuItems({ id, name: task?.name ?? null, adhoc: isNoTask }, latestGraph, extApi)
+  return slots.taskMenuItems({ id, name: task?.name ?? null, adhoc: isNoTask, ...deckTaskFields(task) }, latestGraph, extApi)
     .filter((it) => !(it.extId === 'minimise-task' && it.label === 'Minimise'))
     .map((it) => ({
       label: it.label,
@@ -3192,8 +3204,7 @@ function openTaskActionsMenu(taskId, x, y) {
   const isAdhoc = taskId === ADHOC_ID;
   const task = isAdhoc ? null : findTask(taskId);
   if (!isAdhoc && !task) return;
-  // An extension's task actions act on this board's own deck's tasks.
-  const extItems = isRemoteTask(taskId) ? [] : extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
+  const extItems = extTaskMenuItems(isAdhoc ? null : taskId, isAdhoc);
   const sortOn = activitySortedTasks.has(taskId);
   const items = [
     { label: 'Focus', icon: FOCUS_ICON, run: () => focusOnly(taskId) },
@@ -7755,6 +7766,8 @@ let deckStatus = 'connecting';
 // The own deck's last graph, before the other decks' sessions join it.
 let ownGraph = null;
 let ownCompatFields = null;
+// The own deck's last `ext` state map, for api.decks().
+let ownExt = null;
 // The board server's deck list (decks.js createDeckList); the own deck first.
 let deckEntries = [];
 const deck = createDeckClient({
@@ -7765,10 +7778,12 @@ const deck = createDeckClient({
     syncStandingBanner();
     syncDeckControls();
     if (deckEntries.length > 1) applyDecks();
+    else syncExtDecks();
     remountDecksPanel();
   },
   onState: (frame) => {
     boardDeckId = deck.descriptor()?.deckId || boardDeckId;
+    ownExt = frame.ext && typeof frame.ext === 'object' ? frame.ext : null;
     slots.setExtState(frame.ext);
     ownGraph = stampDeck(stateToGraph(frame), boardDeckId);
     ownCompatFields = frame.compat?.sessionFields || null;
@@ -7810,12 +7825,13 @@ const ownDeckEntry = () => deckEntries.find((e) => e.own) || { id: OWN_ENTRY, ow
 function boardDecks() {
   const own = ownDeckEntry();
   return [
-    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, descriptor: deck.descriptor(), name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
+    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, descriptor: deck.descriptor(), ext: ownExt, name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
     ...remoteDecks.list(),
   ];
 }
 const deckNameOf = (deckId) => boardDecks().find((d) => d.deckId === deckId)?.name || 'That deck';
 function applyDecks() {
+  syncExtDecks();
   if (!ownGraph) return;
   const [own, ...remotes] = boardDecks();
   const multi = deckEntries.length > 1;
@@ -7823,6 +7839,10 @@ function applyDecks() {
   ownTaskDeck = multi ? { deckId: boardDeckId, deckName: own.name, deckColour: own.colour } : null;
   const merged = mergeDeckGraphs({ ...own, graph: ownGraph }, remotes, { multi });
   applyGraph(restoreCompat(merged, ownCompatFields, withCompatFields, (r) => r.deckId === boardDeckId));
+}
+// Hands every board half the decks that report its extension (api.decks()).
+function syncExtDecks() {
+  slots.setExtDecks(extensionDecks(boardDecks(), boardApiWanted));
 }
 function clientForDeck(deckId) {
   return !deckId || deckId === boardDeckId ? deck : remoteDecks.clientFor(deckId);
@@ -7869,17 +7889,18 @@ function syncDeckControls() {
 // `card` (a card key) names the card the message is about, which decides the
 // deck it goes to; without it the session id does (deckForCall).
 export function send(obj, extId = null) {
-  const { card = null, ...named } = obj || {};
+  const { card = null, deck: toDeck = null, ...named } = obj || {};
   // A task or schedule id names its deck (decks.js scopeCall); a call that
   // would move a session or task onto another deck's is refused here.
   const scope = scopeCall(named);
   let deckId = deckForCall(named.sessionId, card);
   const owner = scope.deckId === undefined ? deckId : scope.deckId || boardDeckId;
-  if (scope.conflict || ((card || named.sessionId) && deckId !== owner)) {
+  if (!toDeck && (scope.conflict || ((card || named.sessionId) && deckId !== owner))) {
     toast('Tasks stay on their own deck: move it to a task on the same deck', true);
     return false;
   }
-  deckId = owner;
+  // An extension's frame may name its deck outright (`deck`, slots checks it).
+  deckId = toDeck || owner;
   const frame = scope.frame;
   const call = toActionCall(frame, extId);
   if (!call) return false;
@@ -7896,6 +7917,12 @@ export function send(obj, extId = null) {
   }));
   return true;
 }
+// An action sent to one deck by its id, whatever session it names.
+export function deckActOn(deckId, action, opts = {}) {
+  const client = clientForDeck(deckId);
+  if (!client) return Promise.resolve({ ok: false, data: null, error: { code: 'failed', message: 'That deck is not on this board' } });
+  return client.act(action, opts);
+}
 export function deckAct(action, { card = null, ...opts } = {}) {
   const client = clientForDeck(deckForCall(opts.session, card));
   if (!client) return Promise.resolve({ ok: false, data: null, error: { code: 'failed', message: 'That deck is not on this board' } });
@@ -7911,7 +7938,7 @@ const REMOTE_DECK_MESSAGES = new Set([
   'schedule-fired', 'schedule-error', 'schedule-missed',
 ]);
 function onRemoteDeckMessage(deckId, msg) {
-  if (!msg || !REMOTE_DECK_MESSAGES.has(msg.type)) return;
+  if (!msg || (!REMOTE_DECK_MESSAGES.has(msg.type) && !String(msg.type).startsWith('ext:'))) return;
   withDeckContext(deckId, () => onDeckMessage(msg));
 }
 function remountDecksPanel() {
@@ -7948,7 +7975,7 @@ function onDeckMessage(msg) {
   // extension that fails to load is logged and dropped, never the board's
   // problem. A render is asked for once something new registered, since the
   // first graph may already have been applied while the module was in flight.
-  else if (msg.type === 'extensions') { deck.refresh().then(() => { syncDeckControls(); syncClientExtensions(); }); extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteExtClientFacts(extClientManifest); syncClientExtensions(); }
+  else if (msg.type === 'extensions') { deck.refresh().then(() => { syncDeckControls(); syncClientExtensions(); syncExtDecks(); }); extClientManifest = Array.isArray(msg.list) ? msg.list : []; hostApiVersion = typeof msg.version === 'string' ? msg.version : null; noteExtClientFacts(extClientManifest); syncClientExtensions(); }
   // An extension's server half talking to its own browser half: host.broadcast
   // FORCES the frame's type to `ext:<its own id>` (host-api/v1.js), so the
   // prefix can never collide with a core type and the id in it is the whole
@@ -7956,7 +7983,7 @@ function onDeckMessage(msg) {
   // extension's own module subscribed are called, and an unknown or unloaded
   // id reaches nothing. This branch is the whole reason such a frame is no
   // longer dropped off the end of this ladder.
-  else if (typeof msg.type === 'string' && msg.type.startsWith('ext:')) slots.dispatchMessage(msg);
+  else if (typeof msg.type === 'string' && msg.type.startsWith('ext:')) slots.dispatchMessage(msg, { deck: msgDeckId });
   // Success is silent on purpose: the model chip changes on the next turn, off
   // the transcript, which is real confirmation rather than this reply's
   // optimism. Only a refusal needs saying, because nothing else would show it.

@@ -84,13 +84,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.78.0 the beforeSpawn and spawned hooks
 // 1.79.0 metadata-only extension mail lists
 // 1.80.0 Codex approvalPolicy in sessions.spawn
+// 1.81.0 the board half's per-deck `decks`, `state({ deck })`, `act`'s and `send`'s `deck`, `fromDeck` and `decks: true` task contributions,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders. 2.0.0 is
-// the deck API major: every 1.x range is still served, on the v1 shim (1.80.0).
+// the deck API major: every 1.x range is still served, on the v1 shim (1.81.0).
 test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can honour passes', () => {
   assert.equal(HOST_API_VERSION, '2.0.0');
-  assert.equal(V1_SHIM_VERSION, '1.80.0');
+  assert.equal(V1_SHIM_VERSION, '1.81.0');
   assert.equal(servesRange('^1.47.0'), true);
   assert.equal(servesRange('^1.48.0'), true);
   assert.equal(servesRange('^1.49.0'), true);
@@ -125,7 +126,8 @@ test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can 
   assert.equal(servesRange('^1.78.0'), true);
   assert.equal(servesRange('^1.79.0'), true);
   assert.equal(servesRange('^1.80.0'), true);
-  assert.equal(servesRange('^1.81.0'), false);
+  assert.equal(servesRange('^1.81.0'), true);
+  assert.equal(servesRange('^1.82.0'), false);
   assert.equal(servesRange('^1.46.0'), true);
   assert.equal(servesRange('^1.45.0'), true);
   assert.equal(servesRange('^1.44.0'), true);
@@ -183,11 +185,11 @@ test('a ^1 range is served as the v1 shim, a ^2 range as the current version', (
   assert.equal(servedVersion('^1.15.0'), V1_SHIM_VERSION);
   assert.equal(servedVersion('^1.74.0'), V1_SHIM_VERSION);
   assert.equal(servedVersion('^1.75.0'), V1_SHIM_VERSION);
-  assert.equal(servedVersion('^1.80.0'), V1_SHIM_VERSION);
+  assert.equal(servedVersion('^1.81.0'), V1_SHIM_VERSION);
   assert.equal(servedVersion('>=1.0.0'), HOST_API_VERSION, 'a range the current version meets gets it');
   assert.equal(servedVersion('^2.0.0'), HOST_API_VERSION);
   assert.equal(servedVersion(null), HOST_API_VERSION);
-  assert.equal(servedVersion('^1.81.0'), null);
+  assert.equal(servedVersion('^1.82.0'), null);
   assert.equal(servedVersion('not a range'), null);
 });
 

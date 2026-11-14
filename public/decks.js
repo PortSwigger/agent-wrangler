@@ -152,7 +152,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
   }
 
   function open(entry) {
-    const d = { entry, deckId: null, graph: null, status: 'connecting', duplicate: null, started: ++opened };
+    const d = { entry, deckId: null, graph: null, ext: null, status: 'connecting', duplicate: null, started: ++opened };
     const cached = cache?.get(entry);
     if (cached && typeof cached.deckId === 'string' && Array.isArray(cached.sessions) && cached.url === entry.url) {
       d.deckId = cached.deckId;
@@ -173,6 +173,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
         d.deckId = d.client.descriptor()?.deckId || d.deckId;
         if (!d.deckId) return;
         d.graph = stampDeck(stateToGraph(frame), d.deckId);
+        d.ext = frame.ext && typeof frame.ext === 'object' ? frame.ext : null;
         cache?.set(d.entry, { url: d.entry.url, deckId: d.deckId, sessions: d.graph.sessions || [], tasks: d.graph.tasks, schedules: d.graph.schedules });
         onChange();
       },
@@ -202,6 +203,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
     entry: d.entry,
     deckId: d.duplicate ? null : d.deckId,
     graph: d.duplicate ? null : d.graph,
+    ext: d.duplicate ? null : d.ext,
     status: d.duplicate ? 'incompatible' : d.status,
     duplicate: d.duplicate,
     descriptor: d.client.descriptor(),
@@ -226,6 +228,31 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
     },
     stop: () => { for (const d of decks.values()) d.client.stop(); decks.clear(); },
   };
+}
+
+// Which decks on the board report each extension, for that extension's board
+// half (api.decks()). A deck reports an extension its descriptor lists; the row
+// is `ready` while the deck is connected and lists it with the boardApi this
+// board's half pairs with (`wantOf(id)`), `incompatible` when it lists another,
+// and `unreachable` while the deck is not connected. `ext` is that deck's
+// `ext` state map. Returns Map<extId, [{ deckId, name, colour, own, status, state }]>.
+export function extensionDecks(decks, wantOf = () => null) {
+  const out = new Map();
+  for (const d of decks || []) {
+    if (!d?.deckId || d.duplicate) continue;
+    const listed = d.descriptor?.extensions;
+    if (!Array.isArray(listed)) continue;
+    for (const e of listed) {
+      if (!e || typeof e.id !== 'string') continue;
+      const want = wantOf(e.id);
+      let status = d.status === 'ready' || d.status === 'incompatible' ? d.status : 'unreachable';
+      if (want != null && e.boardApi !== want) status = 'incompatible';
+      const state = status === 'incompatible' ? null : (d.ext && Object.hasOwn(d.ext, e.id) ? d.ext[e.id] : null);
+      if (!out.has(e.id)) out.set(e.id, []);
+      out.get(e.id).push({ deckId: d.deckId, name: d.name, colour: d.colour ?? null, own: Boolean(d.own), status, boardApi: e.boardApi ?? null, state });
+    }
+  }
+  return out;
 }
 
 // The board server's deck list: read once, then followed on its event stream

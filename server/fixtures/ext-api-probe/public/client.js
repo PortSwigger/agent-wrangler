@@ -53,6 +53,12 @@ function probes(api) {
     },
     state: () => check(typeof api.state()?.extApiProbe?.note === 'string' && Object.isFrozen(api.state()), JSON.stringify(api.state())),
     onState: () => check(stateHeard >= 0, 'subscribed'),
+    decks: () => {
+      const list = api.decks();
+      const off = api.decks.onChange(() => {});
+      off();
+      return check(list.some((d) => d.own && d.status === 'ready') && api.state({ deck: list[0].deckId })?.extApiProbe != null, JSON.stringify(list.map((d) => [d.own, d.status])));
+    },
     styles: async () => {
       const list = await api.styles();
       return check(Array.isArray(list), `${list.length} contributed styles`);

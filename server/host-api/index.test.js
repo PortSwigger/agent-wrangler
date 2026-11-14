@@ -1032,11 +1032,11 @@ test('without core telemetry wired, host.telemetry is inert', () => {
 });
 
 test('a ^1 manifest boots on the v1 shim and its host.version says so; a ^2 one gets 2.0.0', () => {
-  assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0' }).version, '1.80.0');
-  assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0', boardApi: '^1.74.0' }).version, '1.80.0');
+  assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0' }).version, '1.81.0');
+  assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0', boardApi: '^1.74.0' }).version, '1.81.0');
   assert.equal(buildHostApi({ id: 'new-ext', range: '^2.0.0', boardApi: '^2.0.0' }).version, '2.0.0');
   assert.equal(buildHostApi({ id: 'any-ext' }).version, '2.0.0');
-  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.81.0' }), /needs host API \^1\.81\.0, this server serves 2\.0\.0/);
+  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.82.0' }), /needs host API \^1\.82\.0, this server serves 2\.0\.0/);
 });
 
 test('spawn validates Codex approvalPolicy and forwards only the approval selection', async () => {

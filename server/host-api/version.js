@@ -571,6 +571,18 @@ import semver from 'semver';
 // to their underlying sandbox with the requested approval.
 // Extension Codex policy answers retain precedence.
 //
+// 1.81.0 lets one board half serve every deck that reports its extension: the
+// client `api.decks()` (each such deck with its `status`, 'ready',
+// 'incompatible' when it lists the extension with another boardApi than the
+// board's half, or 'unreachable') with `api.decks.onChange(fn)`, `api.state({
+// deck })` for that deck's own state, and `api.act(name, args, { deck })`,
+// which goes to that deck alone and is refused for an incompatible one;
+// `api.send` takes `deck` the same way, and another deck's `ext:<id>` message
+// arrives carrying `fromDeck`. A `task.body` or `task.action` contribution
+// registered with `decks: true` is also offered another deck's task, whose
+// subject carries `deckId` and `deckTaskId`. An older board has no
+// `api.decks`, so a board half that uses any declares `^1.81.0`.
+//
 // 2.0.0 is the major the deck API makes. The 2.x contract is what the deck
 // API offers: a board half beside `boardApi` in a split manifest, its state
 // through `api.state()`, the session view without the fields it drops, files
@@ -586,7 +598,7 @@ import semver from 'semver';
 export const HOST_API_VERSION = '2.0.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
-export const V1_SHIM_VERSION = '1.80.0';
+export const V1_SHIM_VERSION = '1.81.0';
 
 // The version this server serves `range` as: HOST_API_VERSION, the v1 shim, or
 // null for neither. A null/absent range is "no constraint" and gets the

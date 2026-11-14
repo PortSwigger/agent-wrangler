@@ -13,7 +13,7 @@ import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from '.
 const FIXTURE = join(REPO_ROOT, 'server', 'fixtures', 'ext-api-probe');
 
 const MEMBERS = [
-  'act', 'agents', 'cards', 'claimDrag', 'dispatch', 'dispatchFields', 'earlyAdopter', 'earlyAdopterFor',
+  'act', 'agents', 'cards', 'claimDrag', 'decks', 'dispatch', 'dispatchFields', 'earlyAdopter', 'earlyAdopterFor',
   'files', 'front', 'images', 'keys', 'markdownPreview', 'minimiseTask', 'modelFront', 'mountSession',
   'notify', 'onConnect', 'onMessage', 'onState', 'onThemeChange', 'openDiff', 'openDispatch',
   'openDispatchAcked', 'openFile', 'openSession', 'openTask', 'rail', 'refreshInputGates',

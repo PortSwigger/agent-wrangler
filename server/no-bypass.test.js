@@ -10,7 +10,8 @@ import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from '.
 // added by, through originForDeck). Its same-origin calls are the board
 // server's /api/styles, since styles come from the board's own install, and
 // its deck list (/api/decks and its stream). And no board code imports from
-// server/. Board code is public/ and each builtin extension's board half.
+// server/. Board code is public/, each builtin extension's board half, and the
+// per-deck fixture's board half (server/multi-deck-extensions.test.js).
 const DECK_ROUTE = /^`\$\{(?:deckOrigin\(\)|origin\(\)|originForDeck\([\w.]+\))\.(http|ws)\}\/(deck|ws|pty)[?`]/;
 const BOARD_ROUTES = new Set(["'/api/styles'", "'/api/decks'", "'/api/decks/stream'"]);
 // Calls that never reach a deck, by file: a pasted image's own URL.
@@ -34,6 +35,7 @@ export function boardFiles(root = REPO_ROOT) {
     const pub = join(builtin, id, 'public');
     try { if (statSync(pub).isDirectory()) walk(pub, files); } catch {}
   }
+  walk(join(root, 'server', 'fixtures', 'per-deck-probe', 'public'), files);
   return files;
 }
 
@@ -91,6 +93,9 @@ test('board code reaches the deck only through /deck, /ws and /pty on the deck o
   assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}app.js`)) && files.some((f) => f.includes(`builtin${sep}todos${sep}public`)));
   assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}card-key.js`)), 'the card-key module is board code');
   assert.ok(files.some((f) => f.endsWith(`${sep}public${sep}decks.js`)) && files.some((f) => f.endsWith(`${sep}public${sep}decks-panel.js`)), 'the multi-deck modules are board code');
+  assert.ok(files.some((f) => f.endsWith(`checklist${sep}public${sep}index.js`)), 'the checklist board half, which reads each card\'s own deck, is board code');
+  assert.ok(files.some((f) => f.endsWith(`todos${sep}public${sep}client.js`)), 'the todos board half, which reads each task\'s own deck, is board code');
+  assert.ok(files.some((f) => f.endsWith(`task-memory${sep}public${sep}index.js`)), 'the task-memory board half, which reads each task\'s own deck, is board code');
   const all = files.flatMap((f) => bypasses(readFileSync(f, 'utf8'), f).map((b) => `${relative(REPO_ROOT, f)}:${b}`));
   assert.deepEqual(all, []);
 });

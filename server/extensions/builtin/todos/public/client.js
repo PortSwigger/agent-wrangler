@@ -10,13 +10,18 @@
 //
 // The zone's rows are draggable, so the host is `claimDrag`-ed: core's card and
 // tile drag handlers ignore any drag that starts in it. Reorder is within a tile;
-// dropping a row on ANOTHER tile moves it there.
+// dropping a row on ANOTHER tile of the same deck moves it there.
+//
+// On a board with several decks another deck's task tile carries `deckId` and
+// `deckTaskId`: its todos are that deck's `api.state({ deck })`, keyed by the
+// task's id there, and every change is sent to that deck alone. A deck running
+// this extension with another boardApi shows an Incompatible note instead.
 import {
   todoKeyToTaskId, todoLaunchIntent, todoWeightPx, reorderedTodoIds, tooltipPosition,
   todosOf, optimisticAdd, optimisticEdit, optimisticDelete, optimisticMove, optimisticReorder,
-  TOOLTIP_MARGIN_PX,
+  TOOLTIP_MARGIN_PX, TODO_INCOMPATIBLE_PX,
 } from './todo.js';
-import { esc, todoZoneHtml, CHECK_ICON } from './markup.js';
+import { esc, todoZoneHtml, todoIncompatibleHtml, CHECK_ICON } from './markup.js';
 
 // Same key the board used before this moved into an extension, so a user's
 // collapsed zones carry over.
@@ -28,6 +33,7 @@ const state = {
   api: null,
   graph: null,
   seen: null,
+  decks: new Map(), // another deck's id -> { seen, graph }, its working copy
   collapsed: new Set(),
   views: new Map(), // host element -> view
   byKey: new Map(), // bucket key -> view (latest mounted)
@@ -36,7 +42,7 @@ const state = {
 };
 
 export function reset() {
-  Object.assign(state, { api: null, graph: null, seen: null, collapsed: new Set(), views: new Map(), byKey: new Map(), drag: null, tooltip: null });
+  Object.assign(state, { api: null, graph: null, seen: null, decks: new Map(), collapsed: new Set(), views: new Map(), byKey: new Map(), drag: null, tooltip: null });
 }
 
 function loadCollapsed(api) {
@@ -75,16 +81,42 @@ function data(graph) {
   return state.graph;
 }
 
+// Another deck's working copy, the same way.
+function deckData(deckId) {
+  const own = state.api?.state?.({ deck: deckId }) ?? null;
+  let entry = state.decks.get(deckId);
+  if (!entry || own !== entry.seen) {
+    entry = { seen: own, graph: { todos: structuredClone(own?.todos ?? {}) } };
+    state.decks.set(deckId, entry);
+  }
+  return entry.graph;
+}
+
+function incompatibleDeck(deckId) {
+  const decks = typeof state.api?.decks === 'function' ? state.api.decks() : [];
+  return decks.find((d) => d.deckId === deckId && d.status === 'incompatible') || null;
+}
+
+// A view's working copy and its bucket in it: the board's own deck's, keyed by
+// the tile's key, or another deck's, keyed by the task's id on that deck.
+const graphOf = (view) => (view.deck ? deckData(view.deck) : state.graph);
+const bucketOf = (view) => (view.deck ? view.localId : view.key);
+
 // Tile height the zone wants, in px (see todoWeightPx). Called per tile per
 // layout pass with the graph the board is rendering, so it also keeps our
 // copy of the graph current for the handlers below.
-export function weight(taskId, graph) {
+export function weight(taskId, graph, task) {
+  if (typeof task?.deckId === 'string') {
+    if (incompatibleDeck(task.deckId)) return TODO_INCOMPATIBLE_PX;
+    return todoWeightPx(todosOf(deckData(task.deckId), task.deckTaskId).length, state.collapsed.has(taskId));
+  }
   return todoWeightPx(todosOf(data(graph), taskId).length, state.collapsed.has(taskId));
 }
 
 function mount(el, api, ctx) {
   state.api = api;
-  const view = { el, key: ctx.taskId, adhocId: ctx.adhocId || 'adhoc' };
+  const deck = typeof ctx.deckId === 'string' && ctx.deckId ? ctx.deckId : null;
+  const view = { el, key: ctx.taskId, adhocId: ctx.adhocId || 'adhoc', deck, localId: deck ? ctx.deckTaskId : null };
   state.views.set(el, view);
   state.byKey.set(view.key, view);
   el.classList.add('todo-ext');
@@ -99,6 +131,13 @@ function update(el, ctx, graph) {
   // text. The board holds its own re-render while one is focused; this guards
   // any other path that updates the host.
   if (el.contains(document.activeElement) && document.activeElement?.tagName === 'INPUT') return;
+  if (view.deck) {
+    const bad = incompatibleDeck(view.deck);
+    el.innerHTML = bad
+      ? todoIncompatibleHtml(bad.name)
+      : todoZoneHtml(todosOf(graphOf(view), view.localId), view.key, state.collapsed.has(view.key), { spawn: false });
+    return;
+  }
   el.innerHTML = todoZoneHtml(todosOf(state.graph, view.key), view.key, state.collapsed.has(view.key));
 }
 
@@ -111,7 +150,9 @@ function unmount(el) {
 }
 
 const send = (frame) => state.api.send(frame);
-const wireId = (view) => todoKeyToTaskId(view.key, view.adhocId);
+// A frame about a view's todos goes to that view's deck.
+const sendFor = (view, frame) => send(view.deck ? { ...frame, deck: view.deck } : frame);
+const wireId = (view) => (view.deck ? view.localId : todoKeyToTaskId(view.key, view.adhocId));
 
 // --- interactions (event delegation on the host, which lives as long as the tile render) ---
 
@@ -127,8 +168,8 @@ function wire(view) {
     else if (t.closest('.todo-del')) {
       e.stopPropagation();
       const todoId = row.dataset.todoid;
-      send({ type: 'todo-delete', taskId: wireId(view), todoId });
-      if (optimisticDelete(state.graph, view.key, todoId)) redraw();
+      sendFor(view, { type: 'todo-delete', taskId: wireId(view), todoId });
+      if (optimisticDelete(graphOf(view), bucketOf(view), todoId)) redraw();
     } else if (t.closest('.todo-text') && !t.closest('.todo-text-input')) { e.stopPropagation(); beginEdit(view, row.querySelector('.todo-text')); }
   });
   el.addEventListener('mouseover', (e) => {
@@ -198,7 +239,7 @@ function rowAfter(host, y) {
 function onDragOver(cell, e) {
   const d = state.drag;
   const view = cell._todoView;
-  if (!d || !view) return;
+  if (!d || !view || view.deck !== d.view.deck) return;
   e.preventDefault();
   if (view === d.view || view.key === d.view.key) {
     cell.classList.remove('todo-drop-target');
@@ -216,17 +257,18 @@ function onDragOver(cell, e) {
 function onDrop(cell, e) {
   const d = state.drag;
   const view = cell._todoView;
-  if (!d || !view) return;
+  if (!d || !view || view.deck !== d.view.deck) return;
   e.preventDefault();
   cell.classList.remove('todo-drop-target');
+  const graph = graphOf(view);
   if (view.key === d.view.key) {
     const beforeEl = d.placeholder?.nextElementSibling;
     const beforeId = beforeEl?.classList.contains('todo-row') ? beforeEl.dataset.todoid : null;
-    const order = reorderedTodoIds(todosOf(state.graph, view.key).map((td) => td.id), d.todoId, beforeId);
-    optimisticReorder(state.graph, view.key, order);
-    send({ type: 'todo-reorder', taskId: wireId(view), order });
-  } else if (optimisticMove(state.graph, d.todoId, d.view.key, view.key)) {
-    send({ type: 'todo-move', todoId: d.todoId, fromTaskId: wireId(d.view), toTaskId: wireId(view) });
+    const order = reorderedTodoIds(todosOf(graph, bucketOf(view)).map((td) => td.id), d.todoId, beforeId);
+    optimisticReorder(graph, bucketOf(view), order);
+    sendFor(view, { type: 'todo-reorder', taskId: wireId(view), order });
+  } else if (optimisticMove(graph, d.todoId, bucketOf(d.view), bucketOf(view))) {
+    sendFor(view, { type: 'todo-move', todoId: d.todoId, fromTaskId: wireId(d.view), toTaskId: wireId(view) });
   }
   // dragend (always fired on the source) clears the drag state and redraws.
 }
@@ -249,8 +291,8 @@ function beginAdd(key) {
     settled = true;
     const text = input.value.trim();
     if (save && text) {
-      send({ type: 'todo-add', taskId: todoKeyToTaskId(key, view.adhocId), text });
-      optimisticAdd(state.graph, key, text);
+      sendFor(view, { type: 'todo-add', taskId: wireId(view), text });
+      optimisticAdd(graphOf(view), bucketOf(view), text);
     }
     input.blur();
     redraw();
@@ -283,8 +325,8 @@ function beginEdit(view, span) {
     settled = true;
     const text = input.value.trim();
     if (save && text && text !== current) {
-      send({ type: 'todo-edit', taskId: wireId(view), todoId, text });
-      optimisticEdit(state.graph, view.key, todoId, { text });
+      sendFor(view, { type: 'todo-edit', taskId: wireId(view), todoId, text });
+      optimisticEdit(graphOf(view), bucketOf(view), todoId, { text });
     }
     input.blur();
     redraw();
@@ -321,7 +363,7 @@ function hideTooltip() {
 
 function openDetails(view, row) {
   const todoId = row.dataset.todoid;
-  const td = todosOf(state.graph, view.key).find((item) => item.id === todoId);
+  const td = todosOf(graphOf(view), bucketOf(view)).find((item) => item.id === todoId);
   if (!td) return;
   const overlay = document.createElement('div');
   overlay.className = 'todo-editor-overlay';
@@ -352,18 +394,19 @@ function openDetails(view, row) {
     const descriptionChanged = nextDescription !== (td.description || '');
     if (textChanged || descriptionChanged) {
       // The todo may have moved bucket while the dialog was open.
-      const key = Object.keys(state.graph?.todos || {}).find((bucket) => todosOf(state.graph, bucket).some((item) => item.id === todoId));
+      const graph = graphOf(view);
+      const key = Object.keys(graph?.todos || {}).find((bucket) => todosOf(graph, bucket).some((item) => item.id === todoId));
       if (!key) {
         error.textContent = 'This TODO no longer exists.';
         error.hidden = false;
         return;
       }
-      send({
+      sendFor(view, {
         type: 'todo-edit', taskId: todoKeyToTaskId(key, view.adhocId), todoId,
         ...(textChanged ? { text } : {}),
         ...(descriptionChanged ? { description: nextDescription } : {}),
       });
-      optimisticEdit(state.graph, key, todoId, { ...(textChanged ? { text } : {}), ...(descriptionChanged ? { description: nextDescription } : {}) });
+      optimisticEdit(graph, key, todoId, { ...(textChanged ? { text } : {}), ...(descriptionChanged ? { description: nextDescription } : {}) });
       redraw();
     }
     close();
@@ -381,6 +424,8 @@ function openDetails(view, row) {
 // todo's text, locked to its task, and the todo is consumed (deleted) only once
 // the dispatch is acknowledged — a cancelled modal leaves it untouched.
 async function spawn(view, row) {
+  // Another deck's task starts its sessions on that deck, not from this board.
+  if (view.deck) return;
   const todoId = row.dataset.todoid;
   const key = view.key;
   const td = todosOf(state.graph, key).find((x) => x.id === todoId);
@@ -403,10 +448,13 @@ export default {
   register(registrar) {
     state.api = registrar.api;
     state.collapsed = loadCollapsed(registrar.api);
-    registrar.register('task.body', { id: 'todos', mount, update, unmount, weight });
+    registrar.register('task.body', { id: 'todos', decks: true, mount, update, unmount, weight });
     registrar.register('task.action', {
       id: 'new-todo',
-      items: (task) => [{ label: 'New TODO', icon: CHECK_ICON, run: () => beginAdd(task.id) }],
+      decks: true,
+      items: (task) => (typeof task.deckId === 'string' && incompatibleDeck(task.deckId)
+        ? []
+        : [{ label: 'New TODO', icon: CHECK_ICON, run: () => beginAdd(task.id) }]),
     });
   },
 };
