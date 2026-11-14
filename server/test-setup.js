@@ -57,3 +57,7 @@ process.env.CLAUDE_CONFIG_DIR = claudeDir;
 process.on('exit', () => {
   fs.rmSync(claudeDir, { recursive: true, force: true });
 });
+
+// Read by data-dir.js, which runs this file itself in a test process that skipped
+// the --import (a bare `node --test server/x.test.js`).
+process.env.AW_TEST_SETUP = '1';
