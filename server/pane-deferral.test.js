@@ -490,3 +490,39 @@ test('dropping a status notice during snooze preserves queued PR nudges', async 
   assert.deepEqual(await pd.drain(), ['c1']);
   assert.deepEqual(d.sent.map((s) => s.text), ['PR #1 checks failing']);
 });
+
+for (const [name, pane, check, traits] of [
+  ['mouse fragments', `${E}[1m›${E}[0m [<35;79;1M[<35;78;1M<35;77;2M;54;9M[`, 'mouse-fragments', { mouseFragmentsOnly: true, approvalSelector: false }],
+  ['approval selector', `  ${E}[1;7m› 1. Allow                   ${E}[0;7mRun the tool and continue${E}[0m`, 'approval-selector', { mouseFragmentsOnly: false, approvalSelector: true }],
+]) {
+  test(`Codex ${name} has a named, content-free deferral diagnostic`, async () => {
+    const d = deps({ pane, agent: 'codex' });
+    const reasons = [];
+    const pd = createPaneDeferral(d);
+    assert.equal(await pd.deliverOrDefer({
+      id: 'c1', text: 'New mail', queueOnDefer: false,
+      onDefer: (reason) => reasons.push(reason),
+    }), 'deferred');
+    assert.deepEqual(d.sent, []);
+    assert.deepEqual(pd.pending('c1'), []);
+    assert.match(reasons[0], /: \{/);
+    const diagnostic = JSON.parse(reasons[0].slice(reasons[0].indexOf(': ') + 2));
+    assert.equal(diagnostic.check, check);
+    assert.equal(diagnostic.mouseFragmentsOnly, traits.mouseFragmentsOnly);
+    assert.equal(diagnostic.approvalSelector, traits.approvalSelector);
+    assert.equal(typeof diagnostic.length, 'number');
+    assert.equal(diagnostic.escapeOnly, false);
+    assert.doesNotMatch(reasons[0], /35;79|Run the tool|Allow/);
+  });
+}
+
+test('a Codex approval diagnostic survives the board needs-you gate', async () => {
+  const pane = `  ${E}[1;7m› 1. Allow ${E}[0;7mRun the tool and continue${E}[0m`;
+  const d = deps({ pane, agent: 'codex' });
+  const pd = createPaneDeferral({ ...d, statusFor: () => 'needs-you' });
+  let reason;
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'New mail', onDefer: (r) => { reason = r; } }), 'deferred');
+  assert.match(reason, /^board status needs-you: /);
+  assert.equal(JSON.parse(reason.slice(reason.indexOf(': ') + 2)).check, 'approval-selector');
+  assert.deepEqual(d.sent, []);
+});
