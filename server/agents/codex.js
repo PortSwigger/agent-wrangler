@@ -54,14 +54,14 @@ function envPrefix(sessionId, spawnedBy, launchContext) {
 // an entry already persisted in `~/.codex/config.toml` at process start
 // suppresses it. See `ensureCodexTrust` (codex-trust.js), which the caller runs
 // before this launch command is ever spawned.
-function commonFlags({ sessionId, cwd, addDirs = [], worktree = null, launchContext, disabledSkills, codexPolicy }) {
+function commonFlags({ toolRefreshNote, sessionId, cwd, addDirs = [], worktree = null, launchContext, disabledSkills, codexPolicy }) {
   // memory/links are wrangler-meta skills now; Codex gets a read-only catalog of
   // them in developer_instructions and reads a SKILL.md on demand (workspace-write
   // allows reads outside cwd). A mandatory skill's nudge (task-memory) still rides
   // this always-on text too — the catalog alone doesn't guarantee it's read at
   // session start. The worktree guardrail still appends when present.
   const titlePrompt = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call the agent-wrangler rename_session MCP tool with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
-  const base = [mandatorySkillPrompt(undefined, { disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { disabledSkills })].filter(Boolean).join('\n\n');
+  const base = [toolRefreshNote, mandatorySkillPrompt(undefined, { disabledSkills }), titlePrompt, codexSkillCatalog(undefined, { disabledSkills })].filter(Boolean).join('\n\n');
   const instructions = worktree ? `${base}\n\n${worktreeGuardrailPrompt(worktree)}` : base;
   const args = codexPolicyArgs(codexPolicy);
   args.push(...launchCodexConfigArgs(launchContext));
@@ -218,11 +218,11 @@ export const codex = {
     return inner;
   },
 
-  buildResume({ sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, launchContext, disabledSkills, codexPolicy }) {
+  buildResume({ toolRefreshNote, sessionId, resumeId, effort, autoCompactTokens, addDirs = [], spawnedBy, launchContext, disabledSkills, codexPolicy }) {
     const args = ['resume', resumeId];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     if (autoCompactTokens) args.push('-c', `model_auto_compact_token_limit=${autoCompactTokens}`);
-    args.push(...commonFlags({ sessionId, addDirs, launchContext, disabledSkills, codexPolicy }));
+    args.push(...commonFlags({ toolRefreshNote, sessionId, addDirs, launchContext, disabledSkills, codexPolicy }));
     return `${envPrefix(sessionId, spawnedBy, launchContext)}codex ${args.map(shellQuote).join(' ')}`;
   },
 

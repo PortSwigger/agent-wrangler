@@ -1043,6 +1043,9 @@ function applyGraph(graph) {
   // this banner is the wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  const hadMissingFiles = missingExtensionFiles.length > 0;
+  missingExtensionFiles = Array.isArray(graph.missingExtensionFiles) ? graph.missingExtensionFiles : [];
+  if (hadMissingFiles && !missingExtensionFiles.length && !fdBannerActive) hideSystemBanner();
   const hadRestartPending = restartPendingExts.length > 0;
   restartPendingExts = (graph.extensions || []).filter((e) => e.restartPending).map((e) => e.label || e.id);
   if (hadRestartPending && !restartPendingExts.length && !fdBannerActive) hideSystemBanner();
@@ -7064,6 +7067,7 @@ applyChatFontSize(chatFontSize());
 // that do.
 let quarantinedBuiltins = [];
 let restartPendingExts = [];
+let missingExtensionFiles = [];
 // #system-banner is one slot and the fd watchdog is the more urgent producer, so
 // it wins while active and this line is re-asserted when it clears.
 let fdBannerActive = false;
@@ -7101,6 +7105,11 @@ function syncStandingBanner() {
   if (quarantinedBuiltins.length) {
     const many = quarantinedBuiltins.length !== 1;
     showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
+    return;
+  }
+  if (missingExtensionFiles.length) {
+    const names = missingExtensionFiles.map((e) => e.label === e.id ? e.id : `${e.label} (${e.id})`);
+    showSystemBanner(`⚠ Loaded extension files are missing (${names.join(', ')}) — restore the files or reinstall the extension`);
     return;
   }
   if (staleGuiSession) {
