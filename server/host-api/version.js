@@ -570,7 +570,19 @@ import semver from 'semver';
 // for launch, resume and fork; combined bypass/approve-for-me modes are resolved
 // to their underlying sandbox with the requested approval.
 // Extension Codex policy answers retain precedence.
-export const HOST_API_VERSION = '1.80.0';
+//
+// 1.81.0 lets one board half serve every deck that reports its extension: the
+// client `api.decks()` (each such deck with its `status`, 'ready',
+// 'incompatible' when it lists the extension with another boardApi than the
+// board's half, or 'unreachable') with `api.decks.onChange(fn)`, `api.state({
+// deck })` for that deck's own state, and `api.act(name, args, { deck })`,
+// which goes to that deck alone and is refused for an incompatible one;
+// `api.send` takes `deck` the same way, and another deck's `ext:<id>` message
+// arrives carrying `fromDeck`. A `task.body` or `task.action` contribution
+// registered with `decks: true` is also offered another deck's task, whose
+// subject carries `deckId` and `deckTaskId`. An older board has no
+// `api.decks`, so a board half that uses any declares `^1.81.0`.
+export const HOST_API_VERSION = '1.81.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

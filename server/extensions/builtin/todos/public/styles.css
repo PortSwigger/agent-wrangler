@@ -84,3 +84,4 @@
   background: color-mix(in srgb, var(--blue) 10%, transparent);
   flex: 0 0 auto;
 }
+.todo-incompatible { margin: 2px 4px 0; font-size: 12px; color: var(--fg-subtle); }

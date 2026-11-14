@@ -13,7 +13,7 @@ import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from '.
 const FIXTURE = join(REPO_ROOT, 'server', 'fixtures', 'ext-api-probe');
 
 const MEMBERS = [
-  'act', 'agents', 'cards', 'claimDrag', 'dispatch', 'dispatchFields', 'earlyAdopter', 'earlyAdopterFor',
+  'act', 'agents', 'cards', 'claimDrag', 'decks', 'dispatch', 'dispatchFields', 'earlyAdopter', 'earlyAdopterFor',
   'files', 'front', 'images', 'keys', 'markdownPreview', 'minimiseTask', 'modelFront', 'mountSession',
   'notify', 'onConnect', 'onMessage', 'onState', 'onThemeChange', 'openDiff', 'openDispatch',
   'openDispatchAcked', 'openFile', 'openSession', 'openTask', 'rail', 'refreshInputGates',
@@ -40,7 +40,7 @@ test('an unsplit extension calling every api member works on top of the deck API
     assert.ok(instance.up, 'dev instance never started serving');
     const deck = await (await fetch(`http://127.0.0.1:${instance.port}/deck`)).json();
     assert.deepEqual(deck.extensions.find((e) => e.id === 'ext-api-probe'), { id: 'ext-api-probe', version: '0.1.0', boardApi: '^1.74.0' }, 'the deck lists it, its boardApi read from the unsplit manifest');
-    assert.deepEqual(deck.extensions.find((e) => e.id === 'todos'), { id: 'todos', version: null, boardApi: '^1.74.0' }, 'a split builtin is listed with its own boardApi');
+    assert.deepEqual(deck.extensions.find((e) => e.id === 'todos'), { id: 'todos', version: null, boardApi: '^1.81.0' }, 'a split builtin is listed with its own boardApi');
 
     tab = await openTab(chromePath, `http://127.0.0.1:${instance.port}/#view=ext:ext-api-probe:main`);
     const probe = () => tab.evaluate('JSON.stringify(window.__extApiProbe || null)');

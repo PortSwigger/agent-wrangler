@@ -73,6 +73,9 @@ import { warnLegacy } from './legacy-surface.js';
 // A contribution may carry `weight(taskId, graph)`: the px of tile height its
 // content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
 // it. It must be cheap and synchronous; a throwing weight counts as 0.
+// Another deck's task tile (1.81.0) gets only the `task.body` and `task.action`
+// contributions registered with `decks: true`; its subject also carries
+// `deckId` and `deckTaskId`, the task's id on its own deck (see deckTask()).
 // `session.inputGate` (1.52.0) is a VALUE slot that can stop the human typing
 // into a session: `gate(session, graph, api)` answers `{ reason, label? }` to
 // lock it or null to leave it alone (inputGate()). Core owns the effect — typed
@@ -233,6 +236,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   const stateCopies = new Map();
   const stateListeners = new Map();
   const graphViews = new Map();
+  // extId -> the decks on the board that report it (decks.js extensionDecks),
+  // what api.decks() reads; `deckCopies` holds the frozen list it hands out.
+  let extDecks = new Map();
+  const deckCopies = new Map();
+  const deckListeners = new Map();
 
   // The graph handed to an extension's contribution. Extension state still sits
   // at the graph's top level, as it always has, but reading one of those keys
@@ -252,6 +260,31 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       cache.set(graph, view);
     }
     return view;
+  }
+
+  // Whether a task tile's subject is another deck's task: only those carry `deckId`.
+  const deckTask = (subject) => Boolean(isPlainObject(subject) && typeof subject.deckId === 'string' && subject.deckId);
+
+  function decksOf(extId) {
+    if (!deckCopies.has(extId)) {
+      const rows = (extDecks.get(extId) || []).map(({ state: _state, ...row }) => row);
+      deckCopies.set(extId, deepFreeze(structuredClone(rows)));
+    }
+    return deckCopies.get(extId);
+  }
+
+  // One deck's `ext.<extId>` state, frozen, or null when that deck does not
+  // report the extension with a boardApi this half pairs with.
+  const deckStateCopies = new Map();
+  function deckStateOf(extId, deckId) {
+    if (!deckStateCopies.has(extId)) deckStateCopies.set(extId, new Map());
+    const copies = deckStateCopies.get(extId);
+    if (!copies.has(deckId)) {
+      const row = (extDecks.get(extId) || []).find((r) => r.deckId === deckId);
+      const st = row && row.status !== 'incompatible' ? row.state : null;
+      copies.set(deckId, st == null ? null : deepFreeze(structuredClone(st)));
+    }
+    return copies.get(deckId);
   }
 
   function stateOf(extId) {
@@ -550,7 +583,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
         return null;
       };
       // openExtFile takes an extension id; only the bound openFile below may reach it.
-      const { openExtFile: _bound, board: _board, railButtons: _rail, sessionPanel: _panel, ...exposed } = baseApi;
+      const { openExtFile: _bound, actOnDeck: _actOnDeck, board: _board, railButtons: _rail, sessionPanel: _panel, ...exposed } = baseApi;
       apis.set(extId, {
         ...exposed,
         // Resolved HERE rather than at createSlots time: the server announces it,
@@ -566,13 +599,43 @@ export function createSlots({ document, storage, onError = (...a) => console.err
             onError(`[ext:${extId}] send refused: "${type}" is not one of this extension's control handlers (${allowed.join(', ') || 'none'})`);
             return;
           }
+          // `deck` (1.81.0) sends the frame to that deck alone, which must
+          // report this extension with a boardApi this half pairs with.
+          if (Object.hasOwn(frame, 'deck')) {
+            const row = typeof frame.deck === 'string' ? (extDecks.get(extId) || []).find((r) => r.deckId === frame.deck) : null;
+            if (!row || row.status === 'incompatible') {
+              onError(`[ext:${extId}] send refused: ${row ? `${row.name || 'that deck'} runs this extension with an incompatible boardApi` : 'no deck on this board reports this extension under that id'}`);
+              return;
+            }
+          }
           baseApi.send?.(frame, extId);
         },
         onMessage: (fn) => subscribe(extId, fn),
         // This extension's own `ext.<id>` state from the deck's state frame
         // (1.74.0): what its graph contributor returned, as a frozen copy, or
         // null before the first frame. `onState(fn)` hears each new one.
-        state: () => stateOf(extId),
+        // With `{ deck }` (1.81.0), that deck's copy of it instead.
+        state: (opts) => {
+          const deckId = isPlainObject(opts) && typeof opts.deck === 'string' && opts.deck ? opts.deck : null;
+          return deckId ? deckStateOf(extId, deckId) : stateOf(extId);
+        },
+        // The decks on the board that report this extension (1.81.0), the own
+        // deck first: `[{ deckId, name, colour, own, status, boardApi }]`, where
+        // `status` is 'ready', 'incompatible' (the deck lists it with another
+        // boardApi than this half's, so it is never sent an action) or
+        // 'unreachable'. `decks.onChange(fn)` hears the list, a status or any
+        // of those decks' state change.
+        decks: Object.assign(() => decksOf(extId), {
+          onChange: (fn) => {
+            if (typeof fn !== 'function') {
+              onError(`[ext:${extId}] decks.onChange needs a function`);
+              return () => {};
+            }
+            if (!deckListeners.has(extId)) deckListeners.set(extId, new Set());
+            deckListeners.get(extId).add(fn);
+            return () => deckListeners.get(extId)?.delete(fn);
+          },
+        }),
         onState: (fn) => {
           if (typeof fn !== 'function') {
             onError(`[ext:${extId}] onState needs a function`);
@@ -590,6 +653,17 @@ export function createSlots({ document, storage, onError = (...a) => console.err
           if (args != null && !isPlainObject(args)) return Promise.resolve({ ok: false, data: null, error: { code: 'invalid', message: 'act args must be an object' } });
           if (typeof baseApi.act !== 'function') return Promise.resolve({ ok: false, data: null, error: { code: 'unsupported', message: 'act is not available' } });
           const session = isPlainObject(opts) && typeof opts.session === 'string' && opts.session ? opts.session : null;
+          // `deck` (1.81.0) sends it to that deck alone, which must report this
+          // extension with a boardApi this half pairs with.
+          const deckId = isPlainObject(opts) && typeof opts.deck === 'string' && opts.deck ? opts.deck : null;
+          if (deckId) {
+            const row = (extDecks.get(extId) || []).find((r) => r.deckId === deckId);
+            if (!row) return Promise.resolve({ ok: false, data: null, error: { code: 'invalid', message: 'No deck on this board reports this extension under that id' } });
+            if (row.status === 'incompatible') return Promise.resolve({ ok: false, data: null, error: { code: 'incompatible', message: `${row.name || 'That deck'} runs this extension with an incompatible boardApi` } });
+            if (typeof baseApi.actOnDeck !== 'function') return Promise.resolve({ ok: false, data: null, error: { code: 'unsupported', message: 'act is not available' } });
+            return Promise.resolve(baseApi.actOnDeck(deckId, extId, name, { session, args: { ...(args || {}) } }))
+              .catch((err) => ({ ok: false, data: null, error: { code: 'failed', message: String(err?.message || err) } }));
+          }
           return Promise.resolve(baseApi.act(extId, name, { session, args: { ...(args || {}) } }))
             .catch((err) => ({ ok: false, data: null, error: { code: 'failed', message: String(err?.message || err) } }));
         },
@@ -1239,6 +1313,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       const key = `${c.extId}:${c.id}`;
       const mine = entries.filter((e) =>
         (!e.only || (e.only.extId === c.extId && e.only.id === c.id))
+        && (!e.deckTask || c.decks === true)
         && (!e.at || e.at === c.at)
         && (!e.ext || e.ext === c.extId)
         && !(union && (e.hidden || union).has(key)));
@@ -1258,7 +1333,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   // handler.
   function valueMenuItems(slotName, subject, graph, baseApi) {
     const out = [];
+    const remote = slotName === 'task.action' && deckTask(subject);
     for (const c of [...slotList(slotName)]) {
+      if (remote && c.decks !== true) continue;
       let items;
       try {
         items = c.items(subject, graphFor(c.extId, graph), apiFor(c.extId, baseApi));
@@ -1393,6 +1470,9 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       earlyAdopterApis.delete(extId);
       updateStatusListeners.delete(extId);
       stateListeners.delete(extId);
+      deckListeners.delete(extId);
+      deckCopies.delete(extId);
+      deckStateCopies.delete(extId);
       graphViews.delete(extId);
       for (const unsub of [...(boardUnsubs.get(extId) || [])]) unsub();
       boardUnsubs.delete(extId);
@@ -1517,7 +1597,11 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // listener runs in its own loop and can hurt nothing but itself. Deafening
     // an extension for the life of the page over one bad frame is the worse
     // failure. Returns how many listeners were called.
-    dispatchMessage(frame) {
+    // `deck` names the deck whose server half sent it when that is not the
+    // board's own (1.81.0): the frame reaches the listeners only while that deck
+    // reports the extension with a boardApi this half pairs with, and carries
+    // `fromDeck`. A frame from the own deck never carries `fromDeck`.
+    dispatchMessage(frame, { deck = null } = {}) {
       const type = frame && typeof frame === 'object' ? frame.type : null;
       const extId = typeof type === 'string' && type.startsWith('ext:') ? type.slice(4) : '';
       if (!extId) {
@@ -1526,10 +1610,16 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       }
       const set = listeners.get(extId);
       if (!set || set.size === 0) return 0;
+      if (deck) {
+        const row = (extDecks.get(extId) || []).find((r) => r.deckId === deck);
+        if (!row || row.status === 'incompatible') return 0;
+      }
+      const { fromDeck: _spoofed, ...rest } = frame;
+      const out = deck ? { ...rest, fromDeck: deck } : rest;
       let called = 0;
       for (const fn of [...set]) {
         called += 1;
-        try { fn({ ...frame }); } catch (err) { onError(`[ext:${extId}] onMessage listener failed`, err); }
+        try { fn({ ...out }); } catch (err) { onError(`[ext:${extId}] onMessage listener failed`, err); }
       }
       return called;
     },
@@ -1559,7 +1649,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       // `hidden` (a Set) overrides the chip-veto union for that entry, and
       // `sample` marks a preview host whose failures never drop — see sync().
       const rows = (entries || []).filter((e) => e && e.host).map((e) => ({
-        host: e.host, session: e.session ?? null, only: e.only ?? null, at: e.at ?? null, graph,
+        host: e.host, session: e.session ?? null, only: e.only ?? null, at: e.at ?? null, graph, deckTask: slotName === 'task.body' && deckTask(e.session),
         hidden: e.hidden instanceof Set ? e.hidden : null, sample: Boolean(e.sample),
       }));
       sync(slotName, rows, baseApi, true);
@@ -1694,13 +1784,14 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // reported once per contribution, NOT removed: it runs in a measurement pass,
     // and a bad number must not cost the extension its UI. Anything that is not a
     // finite positive number counts as 0.
-    taskBodyWeight(taskId, graph = null) {
+    taskBodyWeight(taskId, graph = null, task = null) {
       let total = 0;
+      const remote = deckTask(task);
       for (const c of slotList('task.body')) {
-        if (typeof c.weight !== 'function') continue;
+        if (typeof c.weight !== 'function' || (remote && c.decks !== true)) continue;
         let w;
         try {
-          w = c.weight(taskId, graphFor(c.extId, graph));
+          w = remote ? c.weight(taskId, graphFor(c.extId, graph), task) : c.weight(taskId, graphFor(c.extId, graph));
         } catch (err) {
           const key = `${c.extId}:${c.id}`;
           if (!weightReported.has(key)) { weightReported.add(key); onError(`[ext:${c.extId}] ${c.id} weight failed — counted as 0`, err); }
@@ -1754,7 +1845,8 @@ export function createSlots({ document, storage, onError = (...a) => console.err
 
     // The `task.action` items for one task tile's right-click menu — the same
     // item shape and the same guards as menuItems(), with the TILE as subject:
-    // `items(task, graph, api)` where `task` is `{ id, name, adhoc }`.
+    // `items(task, graph, api)` where `task` is `{ id, name, adhoc }`, plus
+    // `deckId`/`deckTaskId` for another deck's task (1.81.0).
     taskMenuItems(task, graph, baseApi) {
       return valueMenuItems('task.action', task, graph, baseApi);
     },
@@ -1880,6 +1972,23 @@ export function createSlots({ document, storage, onError = (...a) => console.err
       for (const id of moved) {
         for (const fn of [...(stateListeners.get(id) || [])]) {
           try { fn(stateOf(id)); } catch (err) { onError(`[ext:${id}] onState listener failed`, err); }
+        }
+      }
+    },
+
+    // app.js hands over which decks report each extension (decks.js
+    // extensionDecks). Listeners hear their own extension's list when it, a
+    // status or one of those decks' state changed.
+    setExtDecks(map) {
+      const next = map instanceof Map ? map : new Map();
+      const prev = extDecks;
+      extDecks = next;
+      for (const id of new Set([...prev.keys(), ...next.keys()])) {
+        if (JSON.stringify(prev.get(id) ?? []) === JSON.stringify(next.get(id) ?? [])) continue;
+        deckCopies.delete(id);
+        deckStateCopies.delete(id);
+        for (const fn of [...(deckListeners.get(id) || [])]) {
+          try { fn(decksOf(id)); } catch (err) { onError(`[ext:${id}] decks.onChange listener failed`, err); }
         }
       }
     },

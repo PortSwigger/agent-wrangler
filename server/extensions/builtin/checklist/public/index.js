@@ -51,6 +51,13 @@ export default {
     // flow writes into latestTasks.
     let checklists = {};
     let sessionId = null;
+    // The open card's key and, while its deck runs this checklist with another
+    // boardApi, that deck's row from api.decks().
+    let cardKey = null;
+    let incompatible = null;
+    // A change goes to the open card's deck; one whose card has since changed
+    // is routed by its session id alone.
+    const send = (frame) => api.send(cardKey && frame.sessionId === sessionId ? { ...frame, card: cardKey } : frame);
     const sections = new Set();
     const pills = new Set();
     // Two freeze flags, both load-bearing: a poll tick landing mid-gesture would
@@ -83,6 +90,16 @@ export default {
       // is the chip in #panel's meta row, which costs the terminal no height.
       if (!sessionId || !isChecklistOpen(openOverrides, sessionId)) { root.hidden = true; return; }
       root.hidden = false;
+      const list = root.querySelector('#ck-list');
+      const empty = root.querySelector('#ck-empty');
+      list.hidden = Boolean(incompatible);
+      root.querySelector('#ck-add').disabled = Boolean(incompatible);
+      if (incompatible) {
+        root.querySelector('#ck-count').textContent = '';
+        empty.textContent = `Incompatible: ${incompatible.name || 'this card\'s deck'} runs another version of the checklist`;
+        empty.hidden = false;
+        return;
+      }
       root.querySelector('#ck-count').textContent = checklistCountLabel(items);
       const showDone = isChecklistShowDone(showDoneIds, sessionId);
       const filter = root.querySelector('#ck-filter');
@@ -90,12 +107,10 @@ export default {
       filter.setAttribute('aria-pressed', String(showDone));
       filter.setAttribute('title', showDone ? 'Show open items only' : 'Show all items');
       root.querySelector('#ck-filter-label').textContent = showDone ? 'All' : 'Open';
-      const empty = root.querySelector('#ck-empty');
       const emptyLabel = checklistHiddenDoneLabel(items, { showDone });
       if (empty.textContent !== emptyLabel) empty.textContent = emptyLabel;
       empty.hidden = !emptyLabel;
       if (dragActive || editing) return;
-      const list = root.querySelector('#ck-list');
       dom.patch(list, { sessionId, items: visibleChecklistItems(items, { showDone }), focusFallback: filter });
       syncScrollHint(root, list);
     }
@@ -120,7 +135,7 @@ export default {
       const item = itemsFor(sid).find((i) => i.id === itemId);
       if (!item) return;
       const done = !item.done;
-      api.send({ type: 'checklist-update', sessionId: sid, itemId, done });
+      send({ type: 'checklist-update', sessionId: sid, itemId, done });
       item.done = done;
       renderAll();
     }
@@ -128,7 +143,7 @@ export default {
     function deleteItem(itemId) {
       const sid = sessionId;
       if (isPendingChecklistId(itemId)) return;
-      api.send({ type: 'checklist-remove', sessionId: sid, itemId });
+      send({ type: 'checklist-remove', sessionId: sid, itemId });
       checklists[sid] = itemsFor(sid).filter((i) => i.id !== itemId);
       renderAll();
     }
@@ -157,7 +172,7 @@ export default {
         const text = input.value.trim();
         if (holder.parentNode) holder.parentNode.removeChild(holder);
         if (save && text) {
-          api.send({ type: 'checklist-add', sessionId: sid, text });
+          send({ type: 'checklist-add', sessionId: sid, text });
           // Optimistic: a tmp id the next graph replaces with the server's real one.
           checklists[sid] = [...itemsFor(sid), { id: `tmp_${Date.now()}`, text, done: false, createdAt: Date.now() }];
         }
@@ -198,7 +213,7 @@ export default {
         if (input.parentNode) input.parentNode.removeChild(input);
         span.textContent = current;
         if (save && text && text !== current) {
-          api.send({ type: 'checklist-update', sessionId: sid, itemId, text });
+          send({ type: 'checklist-update', sessionId: sid, itemId, text });
           const item = itemsFor(sid).find((i) => i.id === itemId);
           if (item) item.text = text;
         }
@@ -274,7 +289,7 @@ export default {
         // is sent; reorder appends anything it isn't told about.
         const reordered = reorderVisibleChecklistItems(itemsFor(sid), visibleOrder);
         const order = reordered.map((item) => item.id);
-        api.send({ type: 'checklist-reorder', sessionId: sid, order: order.filter((id) => !isPendingChecklistId(id)) });
+        send({ type: 'checklist-reorder', sessionId: sid, order: order.filter((id) => !isPendingChecklistId(id)) });
         // Optimistic reorder, so the next patch agrees with the DOM.
         checklists[sid] = reordered;
         endDrag();
@@ -284,15 +299,22 @@ export default {
       list.addEventListener('scroll', () => syncScrollHint(root, list));
     }
 
-    // `checklists` is a working copy of this extension's own state, replaced
-    // when a new state frame arrives; a board without api.state() still hands
-    // it over on the graph.
+    // `checklists` is a working copy of this extension's state on the open
+    // card's deck, replaced when a new state frame arrives; a board without
+    // api.state() still hands it over on the graph.
     let seen = null;
     function sync(session, graph) {
       sessionId = session?.sessionId || null;
-      const own = api.state?.() ?? null;
+      cardKey = typeof session?.cardKey === 'string' ? session.cardKey : null;
+      const deckId = typeof session?.deckId === 'string' ? session.deckId : null;
+      const decks = typeof api.decks === 'function' ? api.decks() : [];
+      const perDeck = Boolean(deckId) && decks.length > 0;
+      const row = perDeck ? decks.find((d) => d.deckId === deckId) : null;
+      incompatible = row?.status === 'incompatible' ? row : null;
+      const own = perDeck ? api.state({ deck: deckId }) : (api.state?.() ?? null);
       if (own == null) {
-        checklists = graph?.checklists || {};
+        seen = null;
+        checklists = perDeck ? {} : (graph?.checklists || {});
         return;
       }
       if (own !== seen) {

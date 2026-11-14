@@ -1,0 +1,5 @@
+.pdp { padding: 24px; max-width: 640px; }
+.pdp-deck { border: 1px solid var(--border, #444); border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
+.pdp-deck h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.pdp-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.pdp-incompatible { color: var(--warn, #d9a400); }

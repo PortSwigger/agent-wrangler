@@ -6,6 +6,11 @@
 //   <- { type: 'ext:task-memory', kind: 'memory', taskId, md }   (a get answered)
 //   <- { type: 'ext:task-memory', kind: 'changed', taskId }      (file changed on disk)
 //
+// Another deck's task (its subject carries `deckId` and `deckTaskId`) reads and
+// writes that deck's memory: the frames go to that deck alone, and only its
+// answers (`fromDeck`) reach the open editor. A deck running this extension
+// with another boardApi shows an Incompatible note instead of the editor.
+//
 // `editing` tracks the open task and whether the textarea has unsaved edits, so a
 // concurrent on-disk change refreshes a clean editor but never clobbers a dirty
 // one. The textarea is the literal-markdown buffer (Save writes it byte-exact);
@@ -50,7 +55,7 @@ export default {
   register(slots) {
     const api = slots.api;
     const names = new Map(); // taskId -> last name seen via task.action
-    let editing = null; // { taskId, dirty } while the modal is open
+    let editing = null; // { taskId, deck, dirty } while the modal is open
     let modal = null;
     let previewTimer;
 
@@ -89,9 +94,14 @@ export default {
       modal = null;
     }
 
+    const sendFor = (deck, frame) => api.send(deck ? { ...frame, deck } : frame);
+    const incompatibleDeck = (deck) => (deck && typeof api.decks === 'function'
+      ? api.decks().find((d) => d.deckId === deck && d.status === 'incompatible') || null
+      : null);
+
     function save() {
-      if (!editing) return;
-      api.send({ type: 'set-memory', taskId: editing.taskId, md: $('memory-text').value });
+      if (!editing || editing.incompatible) return;
+      sendFor(editing.deck, { type: 'set-memory', taskId: editing.taskId, md: $('memory-text').value });
       close();
     }
 
@@ -111,19 +121,28 @@ export default {
       document.body.appendChild(modal);
     }
 
-    function open(taskId) {
+    function open(boardId, taskId, deck) {
       if (modal) close();
-      editing = { taskId, dirty: false };
+      const bad = incompatibleDeck(deck);
+      editing = { taskId, deck, dirty: false, incompatible: Boolean(bad) };
       build();
-      api.send({ type: 'get-memory', taskId });
-      const name = names.get(taskId);
+      const name = names.get(boardId);
       $('memory-title').textContent = name ? `Memory — ${name}` : 'Task memory';
+      if (bad) {
+        $('memory-note').textContent = `Incompatible: ${bad.name || 'this task\'s deck'} runs another version of task memory.`;
+        $('memory-mode').style.display = 'none';
+        $('memory-body').style.display = 'none';
+        $('memory-save').style.display = 'none';
+        return;
+      }
+      sendFor(deck, { type: 'get-memory', taskId });
       setMode(readMode());
       renderPreview();
     }
 
     slots.onMessage((msg) => {
-      if (!msg || !editing || msg.taskId !== editing.taskId) return;
+      if (!msg || !editing || editing.incompatible || msg.taskId !== editing.taskId) return;
+      if ((msg.fromDeck || null) !== editing.deck) return;
       if (msg.kind === 'memory') {
         // Fill from the server only while clean — never stomp live edits.
         if (editing.dirty) return;
@@ -131,16 +150,19 @@ export default {
         renderPreview();
       } else if (msg.kind === 'changed') {
         if (editing.dirty) $('memory-conflict').classList.remove('hidden');
-        else api.send({ type: 'get-memory', taskId: msg.taskId });
+        else sendFor(editing.deck, { type: 'get-memory', taskId: msg.taskId });
       }
     });
 
     slots.register('task.action', {
       id: 'memory',
+      decks: true,
       items(task) {
         if (task.adhoc) return [];
         if (task.name) names.set(task.id, task.name);
-        return [{ label: 'Task memory', icon: MEMORY_ICON, run: () => open(task.id) }];
+        const deck = typeof task.deckId === 'string' && task.deckId ? task.deckId : null;
+        const taskId = deck ? task.deckTaskId : task.id;
+        return [{ label: 'Task memory', icon: MEMORY_ICON, run: () => open(task.id, taskId, deck) }];
       },
     });
   },

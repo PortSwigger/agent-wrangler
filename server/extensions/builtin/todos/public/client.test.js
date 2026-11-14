@@ -239,3 +239,38 @@ test('draws from its own ext.todos state, editing a working copy until the next 
     console.warn = orig;
   }
 });
+
+test('another deck\'s task draws that deck\'s todos, sends changes to that deck alone, and an incompatible deck shows a note', () => {
+  const { slots, document, sent, errors } = load();
+  slots.setExtState({ todos: { todos: { T1: [{ id: 'a', text: 'own deck' }] } } });
+  const decks = (cStatus) => new Map([['todos', [
+    { deckId: 'deck-a', name: 'Laptop A', own: true, status: 'ready', state: { todos: { T1: [{ id: 'a', text: 'own deck' }] } } },
+    { deckId: 'deck-b', name: 'Laptop B', own: false, status: 'ready', state: { todos: { T1: [{ id: 'b', text: 'deck B todo' }] } } },
+    { deckId: 'deck-c', name: 'Laptop C', own: false, status: cStatus, state: cStatus === 'ready' ? { todos: {} } : null },
+  ]]]);
+  slots.setExtDecks(decks('incompatible'));
+  const own = document.make(); const hostB = document.make(); const hostC = document.make();
+  const remote = (deckId, host) => ({ taskId: `${deckId}/T1`, adhocId: 'adhoc', container: host, deckId, deckTaskId: 'T1' });
+  slots.syncHosts('task.body', [
+    { host: own, session: { taskId: 'T1', adhocId: 'adhoc', container: own } },
+    { host: hostB, session: remote('deck-b', hostB) },
+    { host: hostC, session: remote('deck-c', hostC) },
+  ], {}, {});
+  assert.match(own.children[0].innerHTML, /own deck/);
+  const elB = hostB.children[0];
+  assert.match(elB.innerHTML, /deck B todo/);
+  assert.doesNotMatch(elB.innerHTML, /own deck|todo-spawn/, 'another deck\'s task starts no session from here');
+  assert.match(hostC.children[0].innerHTML, /Incompatible: Laptop C runs another version of TODOs/);
+  assert.equal(slots.taskBodyWeight('deck-b/T1', {}, remote('deck-b')), TODO_DIVIDER_PX + TODO_STRIDE_PX);
+
+  const row = document.make(); row.dataset.todoid = 'b';
+  const del = document.make();
+  del.closest = (sel) => (sel === '.todo-del' ? del : sel === '.todo-row' ? row : null);
+  for (const fn of elB.listeners.click) fn({ target: del, stopPropagation() {} });
+  assert.deepEqual(sent, [{ type: 'todo-delete', taskId: 'T1', todoId: 'b', deck: 'deck-b' }]);
+
+  const labels = (deckId) => slots.taskMenuItems({ id: `${deckId}/T1`, name: 'T', adhoc: false, deckId, deckTaskId: 'T1' }, {}, {}).map((i) => i.label);
+  assert.deepEqual(labels('deck-b'), ['New TODO']);
+  assert.deepEqual(labels('deck-c'), [], 'no New TODO on a deck that runs another version');
+  assert.deepEqual(errors, []);
+});
