@@ -3143,6 +3143,10 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
   background: color-mix(in srgb, var(--red) 8%, transparent); padding: 9px 14px; }
 .chat-exit-notice[hidden] { display: none; }
 .chat-exit-notice-head { margin: 0 0 6px; font-size: 0.83em; font-weight: 600; color: var(--red-fg); }
+.chat-unavailable { border-top: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn-fg);
+  font-size: 0.83em; padding: 9px 14px; }
+.chat-unavailable[hidden] { display: none; }
 /* A spec's aspirational "--warn/--text" maps here to --red, NOT to the real
    --warn var added above (which is the amber notice hue): --red is
    the documented needs-you identity (see the --snooze comment above, which spells

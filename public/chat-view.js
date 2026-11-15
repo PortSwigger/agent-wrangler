@@ -229,6 +229,20 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
   const jumpPrevBtn = document.getElementById('chat-jump-prev');
   const jumpNextBtn = document.getElementById('chat-jump-next');
   const exitNoticeEl = document.getElementById('chat-exit-notice');
+  const unavailableEl = document.getElementById('chat-unavailable');
+
+  // Set by chat.js for a card at a location: the runtime's transcript hook
+  // answered nothing, or the card's agent has no hook Chat can read.
+  const UNAVAILABLE_TEXT = {
+    unreadable: "Can't read this conversation right now. Its runtime didn't return the transcript; Chat will keep trying.",
+    unsupported: "Chat isn't available for this card. Use the terminal to follow it.",
+  };
+  function renderUnavailable(kind) {
+    const text = UNAVAILABLE_TEXT[kind] || '';
+    unavailableEl.hidden = !text;
+    unavailableEl.dataset.kind = text ? kind : '';
+    unavailableEl.textContent = text;
+  }
 
   // s.exitOutput (state-reader.js) off the graph node — the one thing this view
   // shows that is neither transcript-sourced nor pane-scraped, because a dead
@@ -1276,6 +1290,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
       // and the caller re-seeds it right after mount — otherwise a session
       // whose pane never died would flash the PREVIOUS one's exit output.
       renderExitNotice(null);
+      renderUnavailable(null);
       poll();
       clearInterval(timer);
       timer = setInterval(poll, POLL_MS);
@@ -1325,6 +1340,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
       renderModel();
       renderContextBar();
       renderExitNotice(null);
+      renderUnavailable(null);
     },
     onChatReply(msg) {
       if (!card || cardOf(msg.sessionId) !== card) return;
@@ -1347,6 +1363,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
         return;
       }
       epoch = replyEpoch;
+      renderUnavailable(msg.unavailable);
       // Update the working line after the token check above but before the offset
       // gate below: pending describes this reply's OWN moment regardless of
       // whether it carried new events, so a same-offset "nothing new" reply must

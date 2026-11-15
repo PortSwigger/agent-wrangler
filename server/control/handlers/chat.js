@@ -1,7 +1,10 @@
 import fsp from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { findConversationFiles as realFindConversationFiles } from '../../conversation-file.js';
 import { capturePaneStyled, paneModelLabel, paneContextPercent } from '../../tmux-scraper.js';
 import { adapterFor } from '../../agents/index.js';
+import { findRuntime } from '../../runtimes/index.js';
+import { atLocation, locationTranscript } from '../../locations/index.js';
 
 // The first open reads only the trailing slice of the transcript. sinceOffset
 // bounds the TAIL; without this bound, opening a months-old session parses and
@@ -82,7 +85,9 @@ async function readVirtualRange(segments, start, size) {
   for (const segment of segments) {
     const from = Math.max(start, segment.start);
     const to = Math.min(size, segment.end);
-    if (from < to) {
+    if (from < to && segment.bytes) {
+      segment.bytes.copy(buf, segment.start - start + from - segment.start, from - segment.start, to - segment.start);
+    } else if (from < to) {
       let position = from - segment.start;
       while (position < to - segment.start) {
         const { bytesRead } = await segment.handle.read(buf, segment.start - start + position, to - segment.start - position, position);
@@ -110,6 +115,17 @@ function chainRebased(previous, current) {
     if (index < previous.length - 1 && old.separator !== now.separator) return true;
   }
   return false;
+}
+
+// A location runtime hands back the whole transcript and may drop whole lines
+// from its front, which shifts every offset already sent. The bytes this cache
+// entry has consumed must still be the text's prefix for those offsets to hold.
+function prefixHash(bytes, end) {
+  return createHash('sha256').update(bytes.subarray(0, end)).digest('hex');
+}
+
+function locationRebased(cached, bytes) {
+  return cached.offset > bytes.length || cached.prefix !== prefixHash(bytes, cached.offset);
 }
 
 function touchCache(convId, entry) {
@@ -249,39 +265,67 @@ export const chatHandler = {
       : adapter.terminal.contextSource === 'analysis'
         ? (await analyze(convId).catch(() => null))?.contextPercent ?? null : null;
 
-    const resolved = await findConversationFiles(convId, agent, { resolveAdapter });
-    // Older handler tests inject the single-file seam; production and new chain
-    // tests supply an array. Normalising here leaves the one-file path identical.
-    const files = Array.isArray(resolved) ? resolved : (resolved ? [resolved] : []);
-    if (!files.length) {
-      if (adapter.history.continuations && scannerCache.has(convId)) {
+    const empty = (extra) => ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, contextPercent, epoch: epochFor(convId), ...extra });
+
+    // A card at a location keeps its transcript where it runs, so its Chat
+    // reads only from the runtime's transcript hook, never this machine's disk,
+    // even when a file with the same conversation id exists here.
+    let opened;
+    let bytes = null;
+    if (atLocation(entry)) {
+      if (agent !== 'claude') {
+        empty({ unavailable: 'unsupported' });
+        return;
+      }
+      const rt = (ctx.findRuntime || findRuntime)(entry.runtime);
+      const text = await locationTranscript(rt, entry, convId);
+      if (text == null) {
+        empty({ offset: Number.isFinite(msg.sinceOffset) ? msg.sinceOffset : 0, unavailable: 'unreadable' });
+        return;
+      }
+      bytes = Buffer.from(text, 'utf8');
+      opened = { segments: [{ bytes, start: 0, end: bytes.length }], size: bytes.length };
+      const cached = scannerCache.get(convId);
+      const since = msg.sinceOffset;
+      const misaligned = Number.isFinite(since) && since > 0 && (since > bytes.length || bytes[since - 1] !== 0x0a);
+      if (misaligned || (cached && locationRebased(cached, bytes))) {
         scannerCache.delete(convId);
         bumpEpoch(convId);
       }
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, contextPercent, epoch: epochFor(convId) });
-      return;
-    }
+    } else {
+      const resolved = await findConversationFiles(convId, agent, { resolveAdapter });
+      // Older handler tests inject the single-file seam; production and new chain
+      // tests supply an array. Normalising here leaves the one-file path identical.
+      const files = Array.isArray(resolved) ? resolved : (resolved ? [resolved] : []);
+      if (!files.length) {
+        if (adapter.history.continuations && scannerCache.has(convId)) {
+          scannerCache.delete(convId);
+          bumpEpoch(convId);
+        }
+        empty();
+        return;
+      }
 
-    let opened;
-    try {
-      opened = await openSegments(files);
-    } catch {
-      ctx.reply({ type: 'chat', sessionId: msg.sessionId, token: msg.token ?? null, events: [], offset: 0, more: false, pending: null, lastTs: null, suggestion, modelNow, contextPercent, epoch: epochFor(convId) });
-      return;
+      try {
+        opened = await openSegments(files);
+      } catch {
+        empty();
+        return;
+      }
+
+      // A client offset is meaningful only while all preceding file boundaries
+      // retain their byte positions. Growth in the last file, or a new file at
+      // the end, preserves them; deletion, truncation, or replacement does not.
+      // Move the epoch before clamping `sinceOffset`, so the client discards this
+      // reply and rebuilds instead of repeatedly polling from a stale position.
+      const cached = scannerCache.get(convId);
+      if (adapter.history.continuations && cached?.segments && chainRebased(cached.segments, opened.segments)) {
+        scannerCache.delete(convId);
+        bumpEpoch(convId);
+      }
     }
 
     const { segments, size } = opened;
-
-    // A client offset is meaningful only while all preceding file boundaries
-    // retain their byte positions. Growth in the last file, or a new file at
-    // the end, preserves them; deletion, truncation, or replacement does not.
-    // Move the epoch before clamping `sinceOffset`, so the client discards this
-    // reply and rebuilds instead of repeatedly polling from a stale position.
-    const cached = scannerCache.get(convId);
-    if (adapter.history.continuations && cached?.segments && chainRebased(cached.segments, segments)) {
-      scannerCache.delete(convId);
-      bumpEpoch(convId);
-    }
 
     const since = Number.isFinite(msg.sinceOffset) ? Math.max(0, Math.min(msg.sinceOffset, size)) : null;
     // A ctx seam for tests only (like findTranscript) — production always uses the
@@ -383,7 +427,11 @@ export const chatHandler = {
         // Only the FINAL attempt's scanner is ever cached; the discarded attempts'
         // scanners are garbage, and caching one would hand a follow-up poll a
         // pending map built from a range it isn't resuming.
-        if (scanner) touchCache(convId, { scanner, offset, agent, segments: segments.map(({ file, start, end, separator }) => ({ file, start, end, separator })) });
+        if (scanner) {
+          touchCache(convId, bytes
+            ? { scanner, offset, agent, prefix: prefixHash(bytes, offset) }
+            : { scanner, offset, agent, segments: segments.map(({ file, start, end, separator }) => ({ file, start, end, separator })) });
+        }
         // Bumped before the reply is built so this very reply carries the new
         // value: the client is told to rebuild in the same message that would
         // otherwise have appended events the rewind just killed.
@@ -392,7 +440,7 @@ export const chatHandler = {
         return;
       }
     } finally {
-      await Promise.all(segments.map(({ handle }) => handle.close()));
+      await Promise.all(segments.map(({ handle }) => handle?.close()));
     }
   },
 };
