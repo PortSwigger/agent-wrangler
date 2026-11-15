@@ -2406,9 +2406,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (capability `agents:headless`, 1.67.0) runs one tool-less one-shot and resolves a
   frozen `{ text, liveSessionId, agent, model, error }`. `prompt` goes in argv and
   `stdin` (a string, default empty) is piped in; every tool is off, and the user's own
-  settings and MCP servers are not loaded. Claude runs `claude -p` with its tools
-  disallowed; Codex runs `codex exec` in a read-only sandbox with its tool features
-  disabled and the user's `config.toml` ignored. With no `model` the run uses the
+  settings and MCP servers are not loaded. Claude runs `claude -p --tools ''`; Codex
+  runs `codex exec` in a read-only sandbox with its tool features disabled, a
+  one-model catalog that turns none of the model's tools on, and the user's
+  `config.toml` ignored, and fails the run when the model is missing from Codex's
+  catalog. With no `model` the run uses the
   **Background model** (Settings › Automation, Claude Haiku by default); an `agent`
   alone runs the Background model when it is that agent, otherwise that agent's own
   headless default. `timeoutMs` defaults to two minutes and is capped at ten. A failed
