@@ -9,8 +9,10 @@ import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tm
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, adapterForTmux, agentError, isOwnedTmux, discoveryFloor, supportsRemoteControl, supportsDisallowedTools } from './agents/index.js';
 import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError } from './runtimes/index.js';
+import { hasLocation, atLocation, sameLocation, checkRef, openLocation, withLocationReads, locationIdleMs, locationCodexId } from './locations/index.js';
+import { normaliseRepos, reposBrief, checkLocationBranch, childRepos, prLinkRefusal, renameLocationBranchText } from './locations/repos.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
-import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName } from './worktree.js';
+import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName, sanitizeBranch } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
@@ -223,8 +225,9 @@ export function suspendableSessions(candidates, { idleMs, now }) {
     if (c.suspendPending) return true;
     if (c.hasTranscript && c.lastActivity == null) return false;
     const since = lastActiveAt(c);
-    if (idleMs == null || since == null) return false;
-    return (now - since) >= idleMs;
+    const limit = c.idleMs === undefined ? idleMs : c.idleMs;
+    if (limit == null || since == null) return false;
+    return (now - since) >= limit;
   });
 }
 
@@ -253,6 +256,10 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     runtime: parentEntry?.runtime,
     runtimeExt: parentEntry?.runtimeExt,
     ...(parentEntry?.addDirs ? { addDirs: [...parentEntry.addDirs] } : {}),
+    ...(parentEntry?.location === undefined ? {} : { location: parentEntry.location }),
+    ...(parentEntry?.repos ? { repos: [...parentEntry.repos] } : {}),
+    ...(parentEntry?.branch ? { branch: parentEntry.branch } : {}),
+    ...(parentEntry?.branchBase ? { branchBase: parentEntry.branchBase } : {}),
     // Unlike remoteControl (one phone name, one session), a removed tool is a
     // property of the conversation: a fork of an unwatched session is no more
     // watched than its parent, so it keeps the same --disallowed-tools.
@@ -389,6 +396,10 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     statusNotify: prev?.statusNotify,
     worktree: prev?.worktree,
     addDirs: prev?.addDirs,
+    ...(prev?.location === undefined ? {} : { location: prev.location }),
+    repos: prev?.repos,
+    branch: prev?.branch,
+    branchBase: prev?.branchBase,
     workflow: prev?.workflow,
     parentSession: prev?.parentSession,
     runtime: prev?.runtime,
@@ -678,9 +689,11 @@ export class SessionManager {
   }
 
   forget(sessionId) {
+    const entry = this.map.get(sessionId);
     if (!this.map.delete(sessionId)) return;
     this._save();
     this._revokeSessionToken(sessionId);
+    if (!entry?.locationDeleted) this._locationHook(sessionId, entry, 'delete');
     // Fire-and-forget after the delete; forget() stays synchronous for its
     // callers. This is the ONE "card purged from mappings.json" moment an
     // extension's per-session state (the checklist) is tied to.
@@ -787,6 +800,16 @@ export class SessionManager {
     // it runs twice, while the prune is idempotent and must run on every archive
     // of an archive→resume→archive cycle so each live span's read mail goes too.
     this._pruneMailOnArchive(sessionId);
+    // A clean exit skipped the unpushed check a human archive makes, so its
+    // location is only suspended, kept for a restore.
+    if (snapshot.reason === 'clean-exit') this._locationHook(sessionId, entry, 'suspend');
+    else {
+      this._locationHook(sessionId, entry, 'delete')?.then((ok) => {
+        if (!ok) return;
+        for (const e of [entry, ...[...this.map.values()].filter((x) => x !== entry && sameLocation(x, entry))]) e.locationDeleted = true;
+        this._save();
+      });
+    }
     // Unawaited like _archiveReview below (archive() is sync); `wasArchived` lets
     // a hook skip a re-archive of an archive→resume→archive cycle if it needs to.
     this._fireExtHooks('onArchive', { sessionId, entry, wasArchived }).catch(() => {});
@@ -803,6 +826,38 @@ export class SessionManager {
       }).catch(() => {});
     }
     return true;
+  }
+
+  // Run a card's location `suspend` or `delete`, unless another card still
+  // holds the same ref (a fork shares its parent's): for suspend, one whose pane
+  // is alive; for delete, any not archived (on forget or a failed dispatch, any
+  // at all). Never throws; resolves true when the hook ran and succeeded, and
+  // is null when it was not run.
+  _locationHook(sessionId, entry, hook) {
+    if (!atLocation(entry)) return null;
+    const rt = findRuntime(entry.runtime);
+    if (typeof rt?.location?.[hook] !== 'function') return null;
+    const forgetting = !this.map.has(sessionId) || this.map.get(sessionId) !== entry;
+    const shared = [...this.map].some(([sid, e]) => sid !== sessionId && sameLocation(e, entry)
+      && (hook === 'suspend' ? this.alive.has(e.tmux) : forgetting || !e.archivedAt));
+    if (shared) return null;
+    return Promise.resolve()
+      .then(() => rt.location[hook]({ ref: entry.location, entry }))
+      .then(() => true)
+      .catch((err) => { logWarn(`[location] ${hook} of ${sessionId} on ${entry.runtime} failed: ${err?.message || err}`); return false; });
+  }
+
+  // Starts a card's location before a relaunch there; throws, refusing the
+  // relaunch, when it was deleted or will not start.
+  async _resumeLocation(rt, entry) {
+    if (!atLocation(entry)) return;
+    if (entry.locationDeleted) throw new Error(`This session's "${rt.label || rt.id}" location was deleted when it was archived, so it can't be resumed.`);
+    if (typeof rt.location?.resume !== 'function') return;
+    try {
+      await rt.location.resume({ ref: entry.location, entry });
+    } catch (err) {
+      throw new Error(`The "${rt.label || rt.id}" runtime could not start this session's location: ${err?.message || err}`);
+    }
   }
 
   isArchived(sessionId) {
@@ -1080,6 +1135,20 @@ export class SessionManager {
     return branch;
   }
 
+  // name_branch for a location card that was given a branch: records the new
+  // name; the agent renames the branch in its own clones.
+  renameLocationBranch(sessionId, desired) {
+    const entry = this.map.get(sessionId);
+    if (!entry) throw new Error('Unknown session.');
+    const from = entry.branch;
+    if (!from) throw new Error('This session was not given a branch, so there is none to rename.');
+    const branch = sanitizeBranch(desired);
+    if (!branch || !isValidBranchName(branch)) throw new Error(`"${desired}" is not a usable git branch name.`);
+    entry.branch = branch;
+    this._save();
+    return { branch, from, text: branch === from ? null : renameLocationBranchText(entry, from, branch) };
+  }
+
   // Read a session's links (by card id). Empty for an unmapped session.
   getLinks(sessionId) {
     const entry = this.map.get(sessionId);
@@ -1102,9 +1171,23 @@ export class SessionManager {
       };
       this.map.set(sessionId, entry);
     }
-    entry.links = Array.isArray(links) ? [...links] : [];
+    const next = Array.isArray(links) ? [...links] : [];
+    const refusal = this.prLinkRefusal(sessionId, next);
+    if (refusal) throw new Error(refusal);
+    entry.links = next;
     this._save();
     return true;
+  }
+
+  // Null when the card may hold every pr link in `links`, else why not: a
+  // location card links only pull requests in its own repos.
+  prLinkRefusal(sessionId, links) {
+    const entry = this.map.get(sessionId);
+    for (const l of links || []) {
+      const why = prLinkRefusal(entry, l);
+      if (why) return why;
+    }
+    return null;
   }
 
   // Every pr link across all mapped sessions, as
@@ -1115,7 +1198,7 @@ export class SessionManager {
     const out = [];
     for (const [sessionId, entry] of this.map)
       for (const l of entry.links || [])
-        if (l.type === 'pr' && l.url)
+        if (l.type === 'pr' && l.url && !prLinkRefusal(entry, l))
           out.push({ ownerId: sessionId, url: l.url, number: l.number, checkStatus: l.checkStatus, headSha: l.headSha, dirty: l.dirty, unresolvedCount: l.unresolvedCount });
     return out;
   }
@@ -1158,6 +1241,7 @@ export class SessionManager {
     const entry = this.map.get(sessionId);
     if (!entry) return false;
     const tmux = entry.tmux;
+    const recorded = await this._recordCardValues(entry, sessionId);
     await this.killForSession(sessionId);
     // How long it had been idle is the whole justification for the teardown, so it
     // belongs on the line — reading "suspended" with no idle span leaves you unable
@@ -1169,8 +1253,25 @@ export class SessionManager {
     // Snapshot the board label so the dormant card keeps the name the user saw
     // (typically the terminal title Claude set).
     if (label) entry.lastLabel = label;
+    if (recorded) entry.suspendedCard = recorded;
     this._save();
+    await this._locationHook(sessionId, entry, 'suspend');
     return true;
+  }
+
+  // What a location card shows while suspended, read before its compute stops:
+  // cost, last activity, title and summary. Null for a card on this machine.
+  async _recordCardValues(entry, sessionId) {
+    if (!atLocation(entry)) return null;
+    const rt = findRuntime(entry.runtime);
+    if (!hasLocation(rt)) return null;
+    let enr;
+    try {
+      enr = await withLocationReads(rt).analyze({ entry: { ...entry, suspendedAt: undefined }, liveSid: entry.liveSessionId || sessionId });
+    } catch { return null; }
+    if (!enr || typeof enr !== 'object') return null;
+    const keep = ['usd', 'subAgentUsd', 'advisorUsd', 'tokens', 'lastActivity', 'summary', 'aiTitle', 'currentModel', 'contextPercent', 'hasTranscript'];
+    return Object.fromEntries(keep.filter((k) => enr[k] !== undefined).map((k) => [k, enr[k]]));
   }
 
   // Defer a suspend: the user asked to suspend/snooze a session that's currently
@@ -1279,6 +1380,15 @@ export class SessionManager {
     if (prev?.disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
     const adapter = adapterFor(agent);
     const runtime = runtimeFor(prev?.runtime);
+    // At a location the stored cwd is the dir: a caller's was resolved on this
+    // machine and names nothing there, and nothing here is created for it.
+    const remote = hasLocation(runtime);
+    if (remote && !atLocation(prev)) throw new Error(`This session's "${runtime.label || runtime.id}" location was never provisioned, so it can't be resumed.`);
+    let opened = {};
+    if (remote) {
+      await this._resumeLocation(runtime, prev);
+      opened = await openLocation(runtime, prev, 'resume');
+    }
     // Read what we're waking BEFORE the kill destroys the evidence: a resume off a
     // dead pane means something crashed, off an absent one means it was suspended
     // or the machine rebooted, and off a live one means a human forced it. The
@@ -1286,7 +1396,7 @@ export class SessionManager {
     const pane = paneStateOf(prev?.tmux, this.alive, this.dead);
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
-    let dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+    let dir = remote ? opened.cwd || prev?.cwd || '' : cwd && fs.existsSync(cwd) ? cwd : os.homedir();
     let freshAfterUpdate = false;
     if (adapterFor(agent).launch.recoverMissingConversation && !prev?.liveSessionId && !prev?.forkedFrom && this.dead.has(prev?.tmux)) {
       const exitedTmux = prev.tmux;
@@ -1315,18 +1425,22 @@ export class SessionManager {
       resumeId = prev?.liveSessionId || sessionId;
     } else if (prev?.liveSessionId && prev.liveSessionId !== sessionId) {
       resumeId = prev.liveSessionId;
+    } else if (remote) {
+      resumeId = await locationCodexId(runtime, prev, { since: discoveryFloor(prev), excludeIds: this._ownedLiveIds() });
     } else {
       resumeId = await adapter.discoverLiveId({ cwd: dir, launchedAt: 0, mintedAfter: discoveryFloor(prev) });
     }
     if (!freshAfterUpdate && !resumeId) {
-      throw new Error(`Could not locate a ${agent} session to resume (no rollout found under ${dir}).`);
+      throw new Error(remote
+        ? `Could not locate a ${agent} session to resume: the "${runtime.label || runtime.id}" runtime did not name its conversation.`
+        : `Could not locate a ${agent} session to resume (no rollout found under ${dir}).`);
     }
     // A never-messaged Claude fork has no transcript under its own id (Claude writes
     // it only on the first message) and its branch point was never saved — refuse
     // rather than resume a missing conversation. (Codex discovers its id, so this
     // only applies to preset-id agents.)
     let plan = { mode: 'resume', resumeId };
-    if (adapter.history.requiresResumeFile && !runtime.skipsHostResumeGuard && prev?.forkedFrom) {
+    if (adapter.history.requiresResumeFile && !runtime.skipsHostResumeGuard && !remote && prev?.forkedFrom) {
       plan = resumePlan({ entry: prev, resumeId, forkLiveExists: Boolean(await adapter.history.launchCwd(resumeId)) });
     }
     if (plan.mode === 'refuse') throw new Error(plan.message);
@@ -1335,7 +1449,7 @@ export class SessionManager {
     // dir, so a missing transcript or a drifted/blank cwd can't make `claude
     // --resume` fail open into a fresh, empty session (see resumeLaunchPlan). Codex
     // discovers its own rollout and isn't cwd-bucketed the same way, so skip it.
-    if (adapter.history.requiresResumeFile && !runtime.skipsHostResumeGuard) {
+    if (adapter.history.requiresResumeFile && !runtime.skipsHostResumeGuard && !remote) {
       const transcript = await adapter.history.findFile(plan.resumeId);
       const launchDir = transcript ? await adapter.history.launchCwd(plan.resumeId) : null;
       const lp = resumeLaunchPlan({
@@ -1354,7 +1468,7 @@ export class SessionManager {
     // It comes after every refusal above, so a resume that can't relaunch leaves
     // a live session running.
     await this.killForSession(sessionId);
-    await this._trustLaunchCwd(agent, 'before-context', { dir, repoRoot: prev?.worktree?.repoRoot });
+    if (!remote) await this._trustLaunchCwd(agent, 'before-context', { dir, repoRoot: prev?.worktree?.repoRoot });
     // Awaited before the command is built: the hook may bind state (task-memory
     // repoints the session's symlink) that the launch reads. A resume's reason is
     // passed through when it is one a hook distinguishes, else plain 'resume'.
@@ -1364,8 +1478,8 @@ export class SessionManager {
     }));
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
-    const addDirs = await withGitDirAddDirs(agent, dir, prev?.addDirs || []);
+    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
+    const addDirs = remote ? [] : await withGitDirAddDirs(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'resume', sessionId, entry: prev }, prev?.codexPolicy) : undefined;
     const toolFingerprint = this._extensionToolFingerprint();
@@ -1393,10 +1507,10 @@ export class SessionManager {
       codexPolicy,
     });
     const secretEnvFile = this._secretEnvFileFor(runtime, tmux, launchContext);
-    const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext: runtimeLaunchContext(runtime, launchContext), secretEnvFile });
+    const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext: runtimeLaunchContext(runtime, launchContext), secretEnvFile, ...(remote ? { location: prev.location } : {}) });
     const launchedAt = Date.now();
-    const paneId = await this._newSession(tmux, dir, launchCmd, this.socket);
-    if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt }) || undefined;
+    const paneId = await this._newSession(tmux, remote ? os.homedir() : dir, launchCmd, this.socket);
+    if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt, at: remote ? { rt: runtime, entry: { ...prev, cwd: dir } } : null }) || undefined;
     // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
     // launch was in flight. Nothing awaits between this check and the map.set below.
     if (automatic && (this.map.get(sessionId)?.archivedAt || this.map.get(sessionId)?.snooze)) {
@@ -1449,18 +1563,27 @@ export class SessionManager {
       model: parentEntry?.model || null, effort: parentEntry?.effort || null, cwd: cwd || null,
       intent: prompt == null ? null : String(prompt).slice(0, 8_000), source: 'fork', taskId: this._taskFor(parentId)?.id || null,
     };
+    // A fork runs where its parent does, sharing the parent's location ref.
+    const forkRuntime = runtimeFor(parentEntry?.runtime);
+    const remote = hasLocation(forkRuntime);
+    if (remote && !atLocation(parentEntry)) throw new Error(`This session's "${forkRuntime.label || forkRuntime.id}" location was never provisioned, so it can't be forked.`);
+    let opened = {};
+    if (remote) {
+      await this._resumeLocation(forkRuntime, parentEntry);
+      opened = await openLocation(forkRuntime, parentEntry, 'fork');
+    }
     const spawnData = await this._beforeSpawn(spawnPayload);
     const adapter = adapterFor(agent);
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
-    const dir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+    const dir = remote ? opened.cwd || parentEntry?.cwd || '' : cwd && fs.existsSync(cwd) ? cwd : os.homedir();
     const sessionId = crypto.randomUUID(); // fresh CARD id (mapping key), NOT the source id
     // The fork's live conversation gets its own id, distinct from the card id. A
     // preset agent (Claude) is handed it via --session-id so the conversation lives
     // under a known id (no phantom → the fork is resumable); a discover agent (Codex)
     // mints its own, resolved post-launch. Identity + scoped memory inject on the CARD id.
     const presetLiveId = adapter.presetsSessionId ? crypto.randomUUID() : undefined;
-    await this._trustLaunchCwd(agent, 'before-context', { dir, repoRoot: parentEntry?.worktree?.repoRoot });
+    if (!remote) await this._trustLaunchCwd(agent, 'before-context', { dir, repoRoot: parentEntry?.worktree?.repoRoot });
     // The fork lands in its parent's task, so the launch context is asked with
     // that task before the command is built (an extension that binds per-task
     // state, like task-memory, must see it first).
@@ -1469,8 +1592,8 @@ export class SessionManager {
     }));
     const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
-    const addDirs = await withGitDirAddDirs(agent, dir, parentEntry?.addDirs || []);
+    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
+    const addDirs = remote ? [] : await withGitDirAddDirs(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
     // gate is shown the PARENT's — which is what it would inherit anyway, and
     // the only thing that exists to gate on at this point.
@@ -1487,14 +1610,14 @@ export class SessionManager {
       codexPolicy,
       disallowedTools: parentEntry?.disallowedTools,
     });
-    const forkRuntime = runtimeFor(parentEntry?.runtime);
     const launchCmd = await forkRuntime.wrapLaunch({
       inner, cwd: dir, sessionId, parentId, worktree: parentEntry?.worktree, launchContext: runtimeLaunchContext(forkRuntime, launchContext),
       secretEnvFile: this._secretEnvFileFor(forkRuntime, tmux, launchContext),
+      ...(remote ? { location: parentEntry.location } : {}),
     });
     const launchedAt = Date.now();
-    const paneId = await this._newSession(tmux, dir, launchCmd, this.socket);
-    const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt });
+    const paneId = await this._newSession(tmux, remote ? os.homedir() : dir, launchCmd, this.socket);
+    const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt, at: remote ? { rt: forkRuntime, entry: { ...parentEntry, cwd: dir } } : null });
     // No killForSession — the parent's mapping and tmux are deliberately left alone.
     const early = this.map.get(sessionId);
     const entry = { ...early, ...forkEntry({ short, tmux, cwd: dir, parentEntry, parentId, name, createdAt: launchedAt }) };
@@ -1751,16 +1874,24 @@ export class SessionManager {
   // front) so a sibling dispatch that registers its own liveSessionId mid-loop is
   // excluded from the very next attempt — same ownership check noteLiveSessionId
   // already enforces on repoint via cardForLive, applied here at first discovery.
-  async _resolveLiveId(adapter, { sessionId, cwd, launchedAt }) {
+  // `at` ({ rt, entry }) asks a location runtime's codexId hook instead of
+  // looking on this machine.
+  async _resolveLiveId(adapter, { sessionId, cwd, launchedAt, at = null }) {
     if (adapter.presetsSessionId) return sessionId;
     const mintedAfter = launchedAt - 2000;
     for (let i = 0; i < 20; i++) {
-      const excludeIds = new Set([...this.map.values()].map((e) => e.liveSessionId).filter(Boolean));
-      const id = await adapter.discoverLiveId({ cwd, launchedAt, mintedAfter, excludeIds });
+      const excludeIds = this._ownedLiveIds();
+      const id = at
+        ? await locationCodexId(at.rt, at.entry, { since: mintedAfter, excludeIds })
+        : await adapter.discoverLiveId({ cwd, launchedAt, mintedAfter, excludeIds });
       if (id) return id;
       await new Promise((r) => setTimeout(r, 150));
     }
     return null;
+  }
+
+  _ownedLiveIds() {
+    return new Set([...this.map.values()].map((e) => e.liveSessionId).filter(Boolean));
   }
 
   // Run tmux on a specific socket (`-L <socket>`, or the default socket when the
@@ -1969,6 +2100,7 @@ export class SessionManager {
       // the relaunch floor costs no graph/state-reader coupling.
       relaunchedAt: this.map.get(s.sessionId)?.relaunchedAt,
       createdAt: this.map.get(s.sessionId)?.createdAt,
+      ...this._locationIdle(s.sessionId, idleMs),
       label: s.label,
     }));
     const now = Date.now();
@@ -1984,6 +2116,15 @@ export class SessionManager {
       });
     }
     return toSuspend.map((c) => c.sessionId);
+  }
+
+  // { idleMs } for a location card whose runtime sets its own idle threshold.
+  _locationIdle(sessionId, idleMs) {
+    const entry = this.map.get(sessionId);
+    if (!atLocation(entry)) return {};
+    const rt = findRuntime(entry.runtime);
+    if (rt?.location?.suspendIdleHours == null) return {};
+    return { idleMs: locationIdleMs(rt, entry, idleMs) };
   }
 
   // The tmux session mapped to this id, but only if it has exited (dead pane kept
@@ -2037,14 +2178,24 @@ export class SessionManager {
     this._save();
   }
 
+  // A location provisioned for a dispatch that then fails belongs to no card,
+  // so nothing else would ever delete it.
   dispatch(opts) {
-    return this._whileLaunching(() => this._doDispatch(opts));
+    return this._whileLaunching(async () => {
+      const pending = {};
+      try {
+        return await this._doDispatch(opts, pending);
+      } catch (err) {
+        if (pending.entry) this._locationHook(pending.sessionId, pending.entry, 'delete');
+        throw err;
+      }
+    });
   }
 
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, approvalPolicy, codexPolicy: pickedCodexPolicy,
-                   launchSource, spawner, scheduledBy } = {}) {
+                   launchSource, spawner, scheduledBy, repos: reposOpt, branch: branchOpt, base: baseOpt } = {}, pending = {}) {
     const approvalError = codexApprovalPolicyError(approvalPolicy, agent);
     if (approvalError) throw new Error(approvalError);
     const modeError = permissionModeError(permissionMode, agent);
@@ -2057,6 +2208,18 @@ export class SessionManager {
     if (autoCompactError) throw new Error(autoCompactError);
     const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
     if (!Array.isArray(addDirs)) throw new Error('Additional folders must be an array of paths');
+    // A session at a location works on GitHub repos it clones there; this
+    // machine's folders, worktrees and grants name nothing where it runs.
+    const remoteRt = runtimeFor(runtime);
+    const remote = hasLocation(remoteRt);
+    if (remote && addDirs.length) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime runs sessions elsewhere, where this machine's folders can't be granted; give it GitHub repos instead.`);
+    if (remote && worktree) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime takes GitHub repos instead of a worktree; the session branches in its own clones.`);
+    let repos = normaliseRepos(reposOpt);
+    if (repos.length && !remote) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime runs on this machine; give it a folder instead of GitHub repos.`);
+    if (remote && spawnedBy) repos = childRepos(this.map.get(spawnedBy), repos);
+    const locationBranch = checkLocationBranch({ branch: branchOpt, base: baseOpt, repos });
+    const remoteCwd = remote && cwd != null && String(cwd).trim() ? String(cwd).trim() : null;
+    if (remoteCwd && (!remoteCwd.startsWith('/') || /[\0\n\r]/.test(remoteCwd))) throw new Error('A folder at a location must be an absolute path there.');
     addDirs = [...new Set(addDirs.map((raw) => {
       if (typeof raw !== 'string' || !raw.trim()) throw new Error('Additional folder paths must be non-empty strings');
       const dir = expandTilde(raw.trim());
@@ -2085,7 +2248,7 @@ export class SessionManager {
     const agentErr = runtimeAgentError(rt, agent);
     if (agentErr) throw new Error(agentErr);
     const preflightErr = rt.preflight
-      ? await rt.preflight({ cwd: trimmed, agent, workflow: Boolean(workflowOpt), worktree: Boolean(worktree), ext: ext || null })
+      ? await rt.preflight({ cwd: remote ? remoteCwd : trimmed, agent, workflow: Boolean(workflowOpt), worktree: Boolean(worktree), ext: ext || null, ...(remote ? { repos } : {}) })
       : null;
     if (preflightErr) throw new Error(preflightErr);
     const spawnPayload = {
@@ -2094,19 +2257,30 @@ export class SessionManager {
       intent: intent == null ? null : String(intent).slice(0, 8_000), source: launchSource || (spawnedBy ? 'agent' : 'board'), taskId: taskId || null,
     };
     const spawnData = await this._beforeSpawn(spawnPayload);
+    const short = crypto.randomBytes(4).toString('hex');
+    const sessionId = crypto.randomUUID();
+    // A location is provisioned after the last refusal and before anything is
+    // created; its cwd is a path there, never made on this machine.
+    let locationRef;
+    let opened = {};
+    if (remote) {
+      locationRef = checkRef(await rt.location.provision({ sessionId, cwd: remoteCwd, agent, ext: ext || null, repos, branch: locationBranch.branch || null, base: locationBranch.branchBase || null }), rt);
+      Object.assign(pending, { sessionId, entry: { runtime, location: locationRef } });
+      opened = await openLocation(rt, { runtime, location: locationRef, cwd: remoteCwd, agent, repos, ...locationBranch }, 'dispatch');
+      if (!opened.cwd && !remoteCwd) throw new Error(`The "${rt.label || rt.id}" runtime named no folder for this session at its location.`);
+    }
     // Blank → a fresh timestamped scratch dir; a scratch path the client proposed
     // is ensured-fresh and created here; a real user-typed path is created too
     // (mkdir -p) so it exists before tmux launches in it — but NOT in worktree
     // mode, where the path must already be a git repo (resolveWorktree rejects a
     // non-repo below), so a nonexistent path stays a clean failure rather than
     // leaving a stray empty dir behind.
-    const dir = !trimmed ? this._freshScratchDir()
+    const dir = remote ? opened.cwd || remoteCwd
+      : !trimmed ? this._freshScratchDir()
       : isInsideSessions(trimmed) ? this._freshScratchDir(trimmed)
       : worktree ? trimmed
       : this._ensureCwd(trimmed);
     cwd = dir;
-    const short = crypto.randomBytes(4).toString('hex');
-    const sessionId = crypto.randomUUID();
     const adapter = adapterFor(agent);
     const tmux = this._tmuxName(agent, short);
 
@@ -2114,7 +2288,7 @@ export class SessionManager {
     // worktree: an abort fails the dispatch with nothing created.
     const builds = Boolean(rt.buildLaunch);
     const prepared = await this._prepare({
-      sessionId, taskId: taskId || null, cwd, repoRoot: await repoRootOf(cwd), willCreateWorktree: Boolean(worktree), agent,
+      sessionId, taskId: taskId || null, cwd, repoRoot: remote ? null : await repoRootOf(cwd), willCreateWorktree: Boolean(worktree), agent,
       spawnedBy: spawnedBy || null, ext: ext || null, runtime: rt.id, ownLaunch: builds,
     });
     if (prepared?.abort) throw new Error(prepared.abort);
@@ -2145,12 +2319,12 @@ export class SessionManager {
     // via `parentSession`, never `workflow`) is briefed via its intent and never
     // runs the procedure.
     const loadWorkflowSkill = Boolean(workflowOpt);
-    await this._trustLaunchCwd(agent, 'before-context', { dir: cwd, repoRoot: worktreeEntry?.repoRoot });
+    if (!remote) await this._trustLaunchCwd(agent, 'before-context', { dir: cwd, repoRoot: worktreeEntry?.repoRoot });
     // Keep the grants the dispatch ASKED for, before the codex git-dir is folded
     // in: that one is derived from the cwd on every launch, so storing it would
     // only let resume grant the same path twice.
     const grantedDirs = addDirs;
-    addDirs = await withGitDirAddDirs(agent, cwd, addDirs);
+    if (!remote) addDirs = await withGitDirAddDirs(agent, cwd, addDirs);
     // Awaited, and deliberately ahead of both the skill gate and the launch: the
     // card id, cwd and worktree are settled but nothing has started, so this is
     // the only window in which an extension can persist state the agent's very
@@ -2172,7 +2346,7 @@ export class SessionManager {
     }));
     const ownLaunch = ownLaunchRefusal(rt, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext });
+    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext });
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
     // the hooks fire either way) — their output just goes unused, since the
@@ -2194,7 +2368,7 @@ export class SessionManager {
     // as the card's: the caller pastes it into the booted composer itself, which is
     // the only way a first prompt can carry images (dispatch-runner.js). A launch
     // argument has no composer for an image path to be absorbed into.
-    const launchIntent = deferIntent ? '' : (intent ?? '');
+    const launchIntent = [remote ? reposBrief(cwd, repos, { branch: locationBranch.branch, base: locationBranch.branchBase }) : '', deferIntent ? '' : (intent ?? '')].filter(Boolean).join('\n\n');
     // Asked on both paths so a buildLaunch runtime logs the secrets it skips.
     const secretEnvFile = this._secretEnvFileFor(rt, tmux, launchContext);
     const toolFingerprint = this._extensionToolFingerprint();
@@ -2203,11 +2377,12 @@ export class SessionManager {
       : await rt.wrapLaunch({
         inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, permissionMode, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy, remoteControl, disallowedTools }),
         cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext: runtimeLaunchContext(rt, launchContext), secretEnvFile,
+        ...(remote ? { location: locationRef } : {}),
       });
     const launchedAt = Date.now();
-    const paneId = await this._newSession(tmux, cwd, inner, this.socket);
+    const paneId = await this._newSession(tmux, remote ? os.homedir() : cwd, inner, this.socket);
 
-    const liveSessionId = builds ? undefined : presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt });
+    const liveSessionId = builds ? undefined : presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt, at: remote ? { rt, entry: { runtime, location: locationRef, cwd, agent, repos } } : null });
 
     // Merge onto any entry an early setWorkflowPhase already adopted (the process is
     // alive before this map.set, so the skill can report a phase first). The launch
@@ -2222,8 +2397,9 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined, launchedToolFingerprint: toolFingerprint };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, ...(remote ? { location: locationRef } : {}), ...(repos.length ? { repos } : {}), ...locationBranch, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined, launchedToolFingerprint: toolFingerprint };
     this.map.set(sessionId, entry);
+    delete pending.entry;
     this._save();
     await this._spawned({ ...spawnPayload, sessionId, cwd }, spawnData);
     await this._fireExtHooks('onDispatch', { sessionId, entry });

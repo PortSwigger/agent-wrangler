@@ -322,6 +322,9 @@
            app.js's syncDispatchExtFields. `display: contents`, so an
            extension's control lays out as a .modal-card child. -->
       <div class="ext-dispatch-slot" data-at="top"></div>
+      <!-- Swapped for #m-repos-row by syncRuntimeToggle when the runtime runs
+           sessions elsewhere; the worktree row's veto stays on its own element. -->
+      <div class="dispatch-field" id="m-folder-row">
       <label>Folder (cwd)</label>
       <div class="folder-picker-row">
         <div class="combo">
@@ -349,6 +352,12 @@
             </div>
           </div>
         </div>
+      </div>
+      </div>
+      <div class="dispatch-field hidden" id="m-repos-row">
+        <label for="m-repos">GitHub repos</label>
+        <input id="m-repos" autocomplete="off" spellcheck="false" placeholder="owner/name, owner/other" />
+        <div id="m-repos-msg" class="worktree-msg">The session clones these from GitHub and branches off each default branch.</div>
       </div>
       <div class="wf-worktree-note hidden" id="m-wf-worktree-note">
         <span class="wf-worktree-check" id="m-wf-worktree-check">✓</span>

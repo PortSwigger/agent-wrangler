@@ -12,6 +12,7 @@ import {
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
 import { taskContentHeight, watchTaskScrollEdges } from './task-scroll.js';
 import { createAdditionalFolders } from './additional-folders.js';
+import { parseRepoInput, runtimeHasLocation } from './dispatch-repos.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import { focusReturnTarget } from './terminal-dialog.js';
 import {
@@ -4036,6 +4037,23 @@ function selectAfterArchive(card) {
 // to be archived in the SAME operation (a cascade's target + descendants),
 // computed off the same descendant list the dialog used rather than a
 // network round-trip — see worktreeStillInUse.
+function runtimeIdHasLocation(runtimeId) {
+  return Boolean(runtimeId) && latestExtensions.some((e) => e.runtimes?.some((r) => r?.id === runtimeId && r.location));
+}
+
+// The commits archiving would lose, as the confirm dialog's body.
+function unpushedBody(unpushed) {
+  const blocks = unpushed.map((f) => [
+    unpushed.length > 1 ? `${f.label}:` : null,
+    ...f.repos.map((r) => r.error
+      ? `${r.repo || r.dir || 'Session'}: ${r.error}`
+      : [`${r.repo || r.dir} (${r.commits.length}${r.commits.length >= 20 ? '+' : ''} commit${r.commits.length === 1 ? '' : 's'})`,
+        ...r.commits.slice(0, 5).map((c) => `  ${c.sha}  ${c.subject}`),
+        ...(r.commits.length > 5 ? ['  …'] : [])].join('\n')),
+  ].filter(Boolean).join('\n'));
+  return `These commits are on no remote branch, so archiving would lose them:\n\n${blocks.join('\n\n')}\n\nPush them first, or archive anyway?`;
+}
+
 function worktreeCleanupAction(sessionId, worktree, archivedIds = [sessionId]) {
   if (!worktree) return null;
   if (worktreeStillInUse(worktree.path, latestSessions, archivedIds)) return null;
@@ -4063,6 +4081,11 @@ function worktreeCleanupAction(sessionId, worktree, archivedIds = [sessionId]) {
 async function archiveSession(sessionId) {
   const s = latestSessions.find((x) => x.sessionId === sessionId);
   const { count, descendants } = s ? cascadeSummary(s, latestSessions) : { count: 0 };
+  // A card at a remote location is checked for unpushed commits server-side
+  // first, so its toast waits for the 'archived' (or 'archive-unpushed') reply.
+  const showArchived = s && runtimeIdHasLocation(s.runtime)
+    ? () => toast('Checking for unpushed commits…')
+    : archivedToast;
 
   if (count > 0) {
     const result = await confirmDialog({
@@ -4076,7 +4099,7 @@ async function archiveSession(sessionId) {
     if (result === 'ok') {
       const archivedIds = [sessionId, ...descendants.map((d) => d.sessionId)];
       send({ type: 'archive', sessionId, cascade: true, killJobsFirst: true });
-      archivedToast(sessionId, 'Archiving connected sessions…', s.worktree, archivedIds);
+      showArchived(sessionId, 'Archiving connected sessions…', s.worktree, archivedIds);
       return;
     }
     // "Archive only this one" (no further prompt — the user already confirmed
@@ -4085,10 +4108,10 @@ async function archiveSession(sessionId) {
     // every descendant running unchanged.
     if (s.hasBackgroundShell) {
       send({ type: 'archive', sessionId, killJobsFirst: true });
-      archivedToast(sessionId, 'Stopping background jobs, then archiving…', s.worktree);
+      showArchived(sessionId, 'Stopping background jobs, then archiving…', s.worktree);
     } else {
       send({ type: 'archive', sessionId });
-      archivedToast(sessionId, 'Session archived', s.worktree);
+      showArchived(sessionId, 'Session archived', s.worktree);
     }
     return;
   }
@@ -4105,13 +4128,13 @@ async function archiveSession(sessionId) {
     if (result === 'cancel') return;
     if (result === 'ok') {
       send({ type: 'archive', sessionId, killJobsFirst: true });
-      archivedToast(sessionId, 'Stopping background jobs, then archiving…', s.worktree);
+      showArchived(sessionId, 'Stopping background jobs, then archiving…', s.worktree);
       return;
     }
     // result === 'extra': archive immediately, same as the no-background-shell path.
   }
   send({ type: 'archive', sessionId });
-  archivedToast(sessionId, 'Session archived', s?.worktree);
+  showArchived(sessionId, 'Session archived', s?.worktree);
 }
 
 // Restart a live session: kill its tmux and relaunch with --resume, so the fresh
@@ -6393,7 +6416,28 @@ function syncRuntimeToggle() {
   const foldersEnabled = rt.value === 'local';
   additionalFolders.setEnabled(foldersEnabled);
   document.getElementById('m-add-dirs-note').classList.toggle('hidden', foldersEnabled);
+  const remote = selectedRuntimeHasLocation();
+  document.getElementById('m-folder-row').classList.toggle('hidden', remote);
+  document.getElementById('m-repos-row').classList.toggle('hidden', !remote);
+  if (remote) document.getElementById('m-worktree').checked = false;
   syncCodexPolicyRow(agent);
+}
+
+// Whether the picked runtime runs its sessions elsewhere, so the dialog asks for
+// GitHub repos instead of a folder.
+function selectedRuntimeHasLocation() {
+  const rt = document.getElementById('m-runtime');
+  const opt = rt?.options[rt.selectedIndex];
+  return Boolean(opt) && runtimeHasLocation(latestExtensions, opt.dataset.ext, opt.value);
+}
+
+function renderReposState() {
+  const el = document.getElementById('m-repos-msg');
+  const { error } = parseRepoInput(document.getElementById('m-repos').value);
+  el.textContent = error || 'The session clones these from GitHub and branches off each default branch.';
+  el.className = error ? 'worktree-msg error' : 'worktree-msg';
+  document.getElementById('m-repos').classList.toggle('input-error', Boolean(error));
+  return error;
 }
 
 // Whether this provider takes the Codex sandbox/approval policy (its adapter's
@@ -6597,9 +6641,11 @@ function readCoreDispatchFields() {
   // regardless of a stale selection (see syncRuntimeToggle) — a dispatch safety net.
   const rtSel = document.getElementById('m-runtime');
   const runtime = runtimeAllowsAgent(rtSel.options[rtSel.selectedIndex], agent) ? rtSel.value : 'local';
+  const remote = runtime !== 'local' && selectedRuntimeHasLocation();
   return {
-    cwd: cwdField() || proposedCwd,
-    addDirs: additionalFolders.values(),
+    cwd: remote ? undefined : cwdField() || proposedCwd,
+    addDirs: remote ? [] : additionalFolders.values(),
+    repos: remote ? parseRepoInput(document.getElementById('m-repos').value).repos : undefined,
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
@@ -6608,7 +6654,7 @@ function readCoreDispatchFields() {
     taskId: document.getElementById('m-task').value || undefined,
     workflow: wfOn || undefined,
     autoMergeOnPass: wfOn && document.getElementById('m-wf-auto-merge').checked || undefined,
-    worktree: (wfOn || wtOn) || undefined,
+    worktree: (wfOn || (wtOn && !remote)) || undefined,
     worktreeBranch: wtOn ? document.getElementById('m-wt-branch').value.trim() : undefined,
     worktreeFolderName: wtOn && wtFolderEdited ? document.getElementById('m-wt-folder').value.trim() : undefined,
     // Standard mode never auto-bumps on collision — the classify-and-warn/block
@@ -6745,6 +6791,8 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   setDispatchCwdDefaults();
   if (schedule) document.getElementById('m-cwd').value = d.cwd || '';
   additionalFolders.reset(d.addDirs || []);
+  document.getElementById('m-repos').value = Array.isArray(d.repos) ? d.repos.join(', ') : '';
+  renderReposState();
   document.getElementById('m-intent').value = d.intent || '';
   // Images an openDispatch is about to adopt keep their previews through the reset.
   intentImages.reset({ keep: keepImages });
@@ -6931,7 +6979,9 @@ function submitDispatch(over) {
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
-  if (cwdBlocked()) { renderCwdState(); return false; }
+  if (fields.repos) {
+    if (renderReposState()) return false;
+  } else if (cwdBlocked()) { renderCwdState(); return false; }
   if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return false; }
   if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return false; }
   if (intentImages.busy()) { toast('Still attaching images — launch again in a moment.'); return false; }
@@ -7020,6 +7070,7 @@ function listDispatchRuntimes() {
     ownsModel: Boolean(o.dataset.ext) && runtimeOwnsModel(o.dataset.ext, o.value),
     ownLaunch: Boolean(o.dataset.ext) && runtimeOwnLaunch(o.dataset.ext, o.value),
     agents: o.value === 'local' ? null : agentIds.filter((a) => runtimeAllowsAgent(o, a)),
+    location: Boolean(o.dataset.ext) && runtimeIdHasLocation(o.value),
   }));
 }
 
@@ -7732,6 +7783,7 @@ document.getElementById('m-runtime').addEventListener('change', () => {
   renderWorktreeState();
 });
 document.getElementById('m-runtime').addEventListener('change', syncRuntimeToggle);
+document.getElementById('m-repos').addEventListener('input', renderReposState);
 document.getElementById('m-runtime').addEventListener('change', syncDispatchExtFields);
 for (const id of ['m-codex-approve-for-me', 'm-codex-bypass']) {
   document.getElementById(id).addEventListener('change', () => syncCodexPolicyControls(document.getElementById('m-codex-policy-row')));
@@ -8108,7 +8160,7 @@ export function deckAct(action, { card = null, ...opts } = {}) {
 // settings, extensions and updates are its own and stay off this board.
 const REMOTE_DECK_MESSAGES = new Set([
   'notify', 'diff', 'diff-comments-result', 'pr-checks', 'pr-merge', 'pr-dirty', 'pr-unresolved',
-  'auto-archived', 'archived', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
+  'auto-archived', 'archived', 'archive-unpushed', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
   'forked', 'resume-needs-dir', 'open-terminal', 'subagent-detail', 'chat', 'message-result',
   'paste-image-result', 'interrupt-restore', 'model-set', 'error',
   'schedule-fired', 'schedule-error', 'schedule-missed',
@@ -8275,6 +8327,20 @@ function onDeckMessage(msg) {
   else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);
   // The "Kill jobs & archive" outcome — the immediate toast in archiveSession()
   // already fired; this replaces it once the nudge/wait/teardown actually finish.
+  else if (msg.type === 'archive-unpushed') {
+    confirmDialog({
+      title: 'Unpushed commits',
+      body: unpushedBody(msg.unpushed || []),
+      okLabel: 'Archive anyway',
+      danger: true,
+    }).then((result) => {
+      if (result === 'ok') send({ ...msg.request, allowUnpushed: true });
+      else toast('Archive cancelled — nothing was changed.');
+    });
+  }
+  else if (msg.type === 'archived' && msg.plain) {
+    archivedToast(msg.sessionId, 'Session archived', latestSessions.find((x) => x.sessionId === msg.sessionId)?.worktree || null);
+  }
   else if (msg.type === 'archived') {
     const worktree = latestSessions.find((x) => x.sessionId === msg.sessionId)?.worktree || null;
     const archivedIds = [msg.sessionId, ...(msg.childIds || [])];

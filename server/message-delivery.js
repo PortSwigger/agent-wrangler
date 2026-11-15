@@ -1,6 +1,4 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import { resolveResumeDir } from './transcript-reader.js';
+import { wakeDir } from './wake-dir.js';
 import { sendText as defaultSendText, prefillPane as defaultPrefillPane, clearComposer as defaultClearComposer } from './tmux-scraper.js';
 import { waitForComposerReady as defaultWaitForComposerReady, ensureSubmitted as defaultEnsureSubmitted, waitForCompactionEnd as defaultWaitForCompactionEnd, pasteImages as defaultPasteImages } from './pane-ready.js';
 import { adapterFor } from './agents/index.js';
@@ -102,10 +100,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
   // which is their live id). A wrangler-created worktree dir may have been cleaned up
   // post-archive; recreate it since there's no interactive prompt here (the transcript
   // lives under ~/.claude, so the conversation still resumes), falling back to home.
-  let dir = await resolveResumeDir(entry.liveSessionId || id, { entryCwd: entry.cwd });
-  if (!dir || !fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
-  }
+  const dir = await wakeDir(entry, id);
 
   // ---- SYNCHRONOUS COMMIT BLOCK: no await between this re-check and resume(). ----
   // Mirrors deliverPrNudge's archive-race guard: the awaits above can straddle a

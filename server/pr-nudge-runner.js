@@ -1,6 +1,4 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import { resolveResumeDir } from './transcript-reader.js';
+import { wakeDir } from './wake-dir.js';
 import { adapterFor } from './agents/index.js';
 
 // Deliver a PR check-status transition nudge to the owning session, treating a
@@ -48,10 +46,7 @@ export async function deliverPrNudge(ev, entry, deps) {
   // Resolve the launch dir — the LAST await before resume(). A wrangler-created
   // worktree dir may have been cleaned up post-archive; recreate it (the transcript
   // lives under ~/.claude, so the conversation resumes), falling back to home.
-  let dir = await resolveResumeDir(entry.liveSessionId || id, { entryCwd: entry.cwd });
-  if (!dir || !fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
-  }
+  const dir = await wakeDir(entry, id);
 
   // ---- SYNCHRONOUS COMMIT BLOCK: NO await from here through resume() initiation. ----
   // FIX 1 — Archive-races-wake TOCTOU. resolveResumeDir above yielded; during that

@@ -21,16 +21,17 @@ export const forkHandler = {
     // branch point was never saved). Refuse with guidance rather than launch a
     // `--resume` that dies on "No conversation found". (Caught by the router → client.)
     const history = adapterFor(parentEntry?.agent ?? s?.agent).history;
-    if (history.requiresResumeFile && parentEntry?.forkedFrom && !(await history.launchCwd(sourceId))) {
+    const remote = parentEntry?.location !== undefined;
+    if (!remote && history.requiresResumeFile && parentEntry?.forkedFrom && !(await history.launchCwd(sourceId))) {
       throw new Error(NEVER_MESSAGED_FORK_MSG);
     }
-    const dir = await history.resolveResumeDir(sourceId, {
+    const dir = remote ? parentEntry.cwd : await history.resolveResumeDir(sourceId, {
       graphCwd: s?.cwd,
       entryCwd: parentEntry?.cwd,
     });
     // Same deleted-dir trap as resume; echo the fork's own params so the opt-in
     // re-send forks (not resumes).
-    const ready = ensureLaunchDir({
+    const ready = remote || ensureLaunchDir({
       dir,
       recreateDir: msg.recreateDir,
       reply: ctx.reply,

@@ -1553,12 +1553,14 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   const presets = api.modelFront.programmesOf(agents, front, MY_PROGRAMMES);
   ```
 - **`api.runtimes()`** (1.33.0) returns the dispatch dialog's Runtime options,
-  `[{ id, label, ownsModel, ownLaunch, agents }]` (`local` and the built-ins first, then enabled
+  `[{ id, label, ownsModel, ownLaunch, agents, location }]` (`local` and the built-ins first, then enabled
   extensions' runtimes), as a fresh copy per call. `ownsModel` marks a runtime
   that defines `validateModel`, whose model `api.dispatch.submit` sends as
   `ext.<extId>.model`. `agents` (1.37.0) lists the agent ids the runtime takes
   (`null` for `local`, which takes every agent). `ownLaunch` (1.47.0) marks a
   runtime that builds its own command; it is `false` for `local` and `devcontainer`.
+  `location` (1.85.0) marks a runtime whose sessions run at a location (see
+  [Runtimes](#runtimes)); it is `false` for `local` and `devcontainer`.
 - **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
   adds a keyboard shortcut through the board's keybinding registry
   (`public/keybindings.js`) and returns an unbind function. The manifest must
@@ -2348,7 +2350,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   task as its tile's Archive does: the task and every live session assigned to it.
   Resolves `{ archived, sessionIds, unclean }`; `archived` is false for an unknown or
   already-archived task. It is separate from `tasks:write` so a consent to rename
-  and assign never grows into one that stops sessions.
+  and assign never grows into one that stops sessions. Since 1.84.0 a task holding a
+  location session with commits on no remote branch is left alone and resolves
+  `{ archived: false, unpushed }` unless called as `archive(taskId, { allowUnpushed: true })`;
+  `host.sessions.archive(sid, { allowUnpushed })` works the same way, resolving
+  `{ archived: [], unpushed }`. `unpushed` is `[{ sessionId, label, repos: [{ repo, dir,
+  commits: [{ sha, subject }], error? }] }]`.
+- **`host.sessions.spawn({ runtime, repos, branch, base })`** (1.84.0) dispatches on a
+  runtime by id (an unknown id is refused by name). A runtime with a `location` takes
+  GitHub `repos` (`owner/name` or a GitHub URL, at most 20) instead of a folder; `branch`
+  (with `base`, its starting remote branch) is the branch the session creates in each
+  clone and pushes to. The agent is briefed to clone each repo; a projection's `repos`
+  lists a location card's repos and is null for a card on this machine.
 - **`host.usage.byCard()`** (capability `usage:read`, 1.6.0) resolves every card's
   spend recomputed from transcripts, through the same cached scan as the Usage
   panel: one frozen row per card, `{ cardId, usd, estimatedUsd, days }`. A card's
@@ -2723,6 +2736,46 @@ Maintainer notes:
   `list_sessions` adds `launch` to each row whose runtime answers. An off-shape answer
   or a throw reads as no answer, and the bound copy returns null while inactive. Keep
   it cheap: it runs once per row on every `list_sessions`.
+- **`location` (1.83.0) runs a runtime's sessions somewhere core cannot see.** Core
+  never reads, writes or runs anything there: the runtime's `wrapLaunch` (handed the
+  card's ref as `location`) gets the agent there, copies what it needs and points the
+  agent's `http://127.0.0.1:<port>` URLs at this deck; status comes from `readLive` and
+  `analyze`; everything else comes back from these hooks, each called with `{ ref, entry }`:
+
+  | Hook | When | Answer |
+  | --- | --- | --- |
+  | `provision({ sessionId, cwd, agent, ext, repos, branch, base })` (required) | dispatch, after the last refusal | a JSON-able ref of at most 16 KiB, stored as `entry.location` |
+  | `open({ ref, entry, phase })` | before each launch (`dispatch`, `resume`, `fork`) | `{ cwd? }`, the absolute path there the agent starts in; dispatch needs one or a `cwd` |
+  | `suspend` | idle suspend after the pane is killed, and a clean exit | — |
+  | `resume` | before every resume or fork; a quick no-op when running | — |
+  | `delete` | archive (after the unpushed check), forget, a failed dispatch | — |
+  | `unpushed` | before archive | `[{ repo, dir, commits: [{ sha, subject }], error? }]` |
+  | `transcript({ ref, entry, liveSid })` | every graph tick, when there is no `analyze` | a Claude transcript's JSONL text |
+  | `diff({ ref, entry, mode })` | the diff panel (`working-tree` or `branch`) | `{ diff, baseRef?, dir? }`, or null for no repo |
+  | `codexId({ ref, entry, since, excludeIds })` | a Codex launch, and a resume that has no id | the conversation id, or null |
+
+  `suspendIdleHours` (a number, or a function of `{ ref, entry }`) sets this location's
+  idle-suspend threshold in place of the install's; `0` turns the timer off.
+  Every answer is checked: an off-shape ref or `cwd` fails the launch, a transcript over
+  64 Mi characters or not a string is ignored, a diff over 8 Mi characters is cut at a
+  line and its dropped lines counted in `truncated`, a `codexId` that is not
+  `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` or already belongs to another card is ignored, and
+  `unpushed` keeps 50 repos of 20 commits each. A hook that throws or answers off-shape
+  in `unpushed` blocks the archive as an error rather than passing it as clean; one
+  without `unpushed` has nothing to check. `suspend` and `delete` are withheld while
+  another card holds the same ref (a fork shares its parent's), and a location deleted on
+  archive refuses a later resume. While suspended a card shows the cost, activity, title
+  and summary read when it was suspended. Location cards are kept live by tmux liveness,
+  like `liveByTmux`; a location card refuses `addDirs` and `worktree`, links only pull
+  requests in its own `repos` (others are refused and never polled), and an unattended
+  wake resumes it in its stored `cwd` without creating anything on this machine. A
+  session spawned by a location session may only name its spawner's repos, and gets
+  all of them when it names none. `name_branch` records the new branch name and tells
+  the agent the `git branch -m` to run in its clones. Validation quarantines a `location`
+  that is not an object, sits beside `buildLaunch`, lacks `provision`, has a non-function
+  hook or an unknown key, or an off-shape `suspendIdleHours`. While the extension is
+  inactive the bound copy throws from `provision`, `open`, `resume`, `unpushed` and
+  `diff`, and reads nothing.
 - **Follow-up extraction.** Devcontainer is still special-cased outside the contract:
   the archive stop-container offer and its cascade (`control/handlers/archive.js`,
   `public/archive-cascade.js`), `archive-session`'s `stop_container`, the add-dirs resync in

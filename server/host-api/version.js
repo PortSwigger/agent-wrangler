@@ -586,7 +586,23 @@ import semver from 'semver';
 // 1.82.0 lets the client `api.openDispatch({ taskId })` name another deck's task
 // by its board id (`<deckId>/<id>`): the dialog opens on that deck, in that task,
 // and the session starts there. A board half that does declares `^1.82.0`.
-export const HOST_API_VERSION = '1.82.0';
+//
+// 1.83.0 adds a runtime's optional `location` (server/runtimes/index.js): its
+// sessions run somewhere core cannot see. Core calls `provision` at dispatch,
+// `open` before each launch, `suspend` on idle (per `suspendIdleHours`),
+// `resume` before a resume or fork, `unpushed` before archive and `delete` on
+// archive and forget, and reads `transcript`, `diff` and `codexId`, capping and
+// shape-checking each answer. A runtime without it is unchanged.
+//
+// 1.84.0 lets an extension dispatch on such a runtime: `sessions.spawn({
+// runtime, repos, branch, base })`. `sessions.archive` and `tasks.archive`
+// refuse a location card with unpushed commits, answering `{ unpushed }`,
+// unless called with `{ allowUnpushed: true }`, and a `sessions:read`
+// projection carries the card's `repos`. A manifest using any declares `^1.84.0`.
+//
+// 1.85.0 adds `location` to the client `api.runtimes()`: true for a runtime
+// whose sessions run at a location. A board half reading it declares `^1.85.0`.
+export const HOST_API_VERSION = '1.85.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

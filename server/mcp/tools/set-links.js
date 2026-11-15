@@ -48,7 +48,13 @@ export const setLinksTool = {
     } catch (e) {
       return errorResult(e.message);
     }
-    store.setLinks(ownerId, links);
+    const refusal = caller != null ? deps.sessionManager?.prLinkRefusal?.(caller, links) : null;
+    if (refusal) return errorResult(refusal);
+    try {
+      store.setLinks(ownerId, links);
+    } catch (e) {
+      return errorResult(e.message);
+    }
     // Kick an immediate status fetch for any pr link just stored (the server
     // wires this; absent in unit tests with no hook).
     if (links.some((l) => l.type === 'pr')) deps.onPrLinksChanged?.(args.scope, ownerId);

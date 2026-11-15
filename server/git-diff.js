@@ -358,15 +358,19 @@ export async function branchDiff(cwd, { lineCap } = {}) {
   return { ...result, baseRef: remoteRef };
 }
 
-export async function pullRequestDiff(url, { lineCap, run = fetchPrDiff } = {}) {
+export function diffFromText(text, { lineCap } = {}) {
   const cap = Number.isFinite(lineCap) ? lineCap : envLineCap();
+  const budget = { cap, kept: 0, droppedLines: 0 };
+  const files = parseDiff(text || '', budget);
+  if (files.length === 0) return { state: 'empty' };
+  const { files: capped, droppedLines } = applyLineCap(files, cap);
+  return { state: 'ok', files: capped, truncated: { droppedLines: budget.droppedLines + droppedLines, droppedFiles: 0 } };
+}
+
+export async function pullRequestDiff(url, { lineCap, run = fetchPrDiff } = {}) {
   try {
     const { stdout } = await run(url);
-    const budget = { cap, kept: 0, droppedLines: 0 };
-    const files = parseDiff(stdout || '', budget);
-    if (files.length === 0) return { state: 'empty' };
-    const { files: capped, droppedLines } = applyLineCap(files, cap);
-    return { state: 'ok', files: capped, truncated: { droppedLines: budget.droppedLines + droppedLines, droppedFiles: 0 } };
+    return diffFromText(stdout, { lineCap });
   } catch (err) {
     return { state: 'error', error: String(err.stderr || err.message || err) };
   }

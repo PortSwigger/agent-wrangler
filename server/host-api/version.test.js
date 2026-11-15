@@ -86,11 +86,14 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.80.0 Codex approvalPolicy in sessions.spawn
 // 1.81.0 the board half's per-deck `decks`, `state({ deck })`, `act`'s and `send`'s `deck`, `fromDeck` and `decks: true` task contributions,
 // 1.82.0 `openDispatch` on another deck's task,
+// 1.83.0 the runtime `location` hooks,
+// 1.84.0 `sessions.spawn({ runtime, repos, branch, base })`, `allowUnpushed` and projection `repos`,
+// 1.85.0 `location` in the client `api.runtimes()`,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.82.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.82.0');
+test('the served version is 1.85.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.85.0');
   assert.equal(servesRange('^1.47.0'), true);
   assert.equal(servesRange('^1.48.0'), true);
   assert.equal(servesRange('^1.49.0'), true);
@@ -127,7 +130,10 @@ test('the served version is 1.82.0, and every 1.x manifest range it can honour p
   assert.equal(servesRange('^1.80.0'), true);
   assert.equal(servesRange('^1.81.0'), true);
   assert.equal(servesRange('^1.82.0'), true);
-  assert.equal(servesRange('^1.83.0'), false);
+  assert.equal(servesRange('^1.83.0'), true);
+  assert.equal(servesRange('^1.84.0'), true);
+  assert.equal(servesRange('^1.85.0'), true);
+  assert.equal(servesRange('^1.86.0'), false);
   assert.equal(servesRange('^1.46.0'), true);
   assert.equal(servesRange('^1.45.0'), true);
   assert.equal(servesRange('^1.44.0'), true);

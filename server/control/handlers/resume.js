@@ -84,11 +84,14 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   // the card id, which is their live id). Archived sessions are off the
   // board, so s is null; fall back to the cwd persisted in the mapping rather
   // than stranding the resume in ~.
-  const dir = await adapterFor(entry?.agent ?? s?.agent).history.resolveResumeDir(entry?.liveSessionId || sessionId, {
+  // A location card's folder and transcript are where it runs: its stored cwd
+  // is the dir, and nothing on this machine is checked or created for it.
+  const remote = entry?.location !== undefined;
+  const dir = remote ? entry.cwd : await adapterFor(entry?.agent ?? s?.agent).history.resolveResumeDir(entry?.liveSessionId || sessionId, {
     graphCwd: s?.cwd,
     entryCwd: entry?.cwd,
   });
-  if (!ensureLaunchDir({ dir, recreateDir, reply: ctx.reply, sessionId })) {
+  if (!remote && !ensureLaunchDir({ dir, recreateDir, reply: ctx.reply, sessionId })) {
     // Refused before any launch: hand the claimed note back so the recreateDir
     // retry can still deliver it.
     if (claimed) ctx.sessionManager.restoreSnooze(sessionId, claim);

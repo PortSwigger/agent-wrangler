@@ -8,6 +8,7 @@ import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, l
 import { codexStatus as realCodexStatus } from './agents/codex-status.js';
 import { adapterFor, modelPillFor, maxContextWindowFor, discoveryFloor } from './agents/index.js';
 import { runtimeFor, findRuntime } from './runtimes/index.js';
+import { withLocationReads, hasLocation } from './locations/index.js';
 import { worktreeStatus } from './worktree.js';
 import { repoSlugFor } from './repo-slug.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
@@ -328,7 +329,11 @@ export async function applyRuntimeCost(runtime, args, enr) {
   return { ...(enr || {}), usd };
 }
 
-export const resolveRuntimeForGraph = (id) => findRuntime(id) || runtimeFor(undefined);
+export function reposOf(entry) {
+  return entry?.location !== undefined ? [...(entry.repos || [])] : null;
+}
+
+export const resolveRuntimeForGraph = (id) => withLocationReads(findRuntime(id) || runtimeFor(undefined));
 
 export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, codexStatus = realCodexStatus, mailStore, mailDraftBlocked } = {}) {
   const graphAnalysis = (agent, id, opts) => {
@@ -384,7 +389,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   for (const entry of sessionManager?.activeEntries?.() || []) {
     if (entry.runtime !== 'devcontainer') {
       const rt = runtimeResolver(entry.runtime);
-      if (!rt?.buildLaunch && !rt?.liveByTmux) continue;
+      if (!rt?.buildLaunch && !rt?.liveByTmux && !hasLocation(rt)) continue;
     }
     const tmuxName = sessionManager?.tmuxNameFor?.(entry.sessionId);
     if (!tmuxName || discoveredTmux.has(tmuxName)) continue;
@@ -455,6 +460,11 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     if (!branchCache.has(cwd)) branchCache.set(cwd, readBranch(cwd));
     return branchCache.get(cwd);
   };
+  // A location card's folder is a path where it runs, not here: its branch and
+  // repo come from the card.
+  const placeOf = async (entry, cwd) => (entry?.location !== undefined
+    ? { branch: entry.branch || null, repoSlug: entry.repos?.length === 1 ? entry.repos[0] : null }
+    : { branch: await branchFor(cwd), repoSlug: await repoSlugFor(cwd) });
   const seen = new Set();
 
   for (const s of sessions) {
@@ -595,6 +605,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoMergeOnPass: mapEntry?.autoMergeOnPass ?? false,
       childFullView: mapEntry?.childFullView ?? null,
       offBoard: mapEntry?.offBoard || null,
+      repos: reposOf(mapEntry),
       launchedCodeVersion: mapEntry?.launchedCodeVersion || null,
       links: mapEntry?.links || [],
       worktree: await worktreeStatus(mapEntry?.worktree),
@@ -676,11 +687,12 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // transcript. Fall back to a pane scrape + owner enrichment when the file is
     // absent (no regression for sessions without a hook-written file).
     const runtime = runtimeResolver(appEntry?.runtime);
+    const remote = hasLocation(runtime);
     const live = (runtime.readLive ? await runtime.readLive({ entry: appEntry, tmuxName: d.tmuxName, socket: d.socket }) : null)
-      || adapter.readLive({ pid: d.claudePid, cwd: d.cwd })
+      || (remote ? null : adapter.readLive({ pid: d.claudePid, cwd: d.cwd }))
       || (adapter.presetsSessionId
         ? null
-        : { liveSid: appEntry?.liveSessionId || await adapter.discoverLiveId({ cwd: fcwd, launchedAt: 0, mintedAfter: discoveryFloor(appEntry) }), status: 'unknown', name: null, waitingFor: null });
+        : { liveSid: appEntry?.liveSessionId || (remote ? null : await adapter.discoverLiveId({ cwd: fcwd, launchedAt: 0, mintedAfter: discoveryFloor(appEntry) })), status: 'unknown', name: null, waitingFor: null });
     // The running conversation is the truth, and it can be one the entry has never
     // heard of: `/clear` swaps the live id under us. Persist it — this read is the
     // only place that sees the swap, and left unrecorded the entry keeps pointing at
@@ -690,7 +702,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     const costSid = live?.liveSid || appEntry?.liveSessionId;
     const enr = await applyRuntimeCost(runtime, { entry: appEntry, liveSid: costSid },
       (runtime.analyze ? await runtime.analyze({ entry: appEntry, liveSid: costSid }) : null)
-        || await adapter.analyze(costSid || realSid, { since: usageSince(appEntry) }));
+        || (remote ? null : await adapter.analyze(costSid || realSid, { since: usageSince(appEntry) })));
     // A recognized live status wins (Claude's mapped status, or Codex's). Else
     // surface a reported-but-unrecognized status as 'unknown', and only scrape when
     // nothing was reported (Codex has no status file → live.rawStatus is absent).
@@ -702,7 +714,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     let scrapeWaitingFor = null;
     let scrapeWaitingReason = null;
     if (status === 'scrape') {
-      const c = adapterFor(agentId).statusSource === 'codex-rollout'
+      const c = adapterFor(agentId).statusSource === 'codex-rollout' && !remote
         ? await codexStatus({ liveSid: live?.liveSid || appEntry.liveSessionId, paneText })
         : paneText === '' ? { status: 'unknown' } : classifyPane(paneText, agentId);
       status = c.status;
@@ -755,8 +767,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoBlockSeconds: waiting?.autoBlockSeconds ?? null,
       kind: 'tmux',
       cwd: fcwd,
-      branch: await branchFor(fcwd),
-      repoSlug: await repoSlugFor(fcwd),
+      ...await placeOf(appEntry, fcwd),
       addDirs: [],
       intent: appEntry?.intent || '',
       createdAt: appEntry?.createdAt || null,
@@ -776,6 +787,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoMergeOnPass: appEntry?.autoMergeOnPass ?? false,
       childFullView: appEntry?.childFullView ?? null,
       offBoard: appEntry?.offBoard || null,
+      repos: reposOf(appEntry),
       launchedCodeVersion: appEntry?.launchedCodeVersion || null,
       links: appEntry?.links || [],
       worktree: await worktreeStatus(appEntry?.worktree),
@@ -828,7 +840,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // (which for them is the live id). Mirrors the Codex branch.
     const runtime = runtimeResolver(entry.runtime);
     const enrichment = await applyRuntimeCost(runtime, { entry, liveSid: entry.liveSessionId || sid }, (runtime.analyze ? await runtime.analyze({ entry, liveSid: entry.liveSessionId || sid }) : null)
-      || await graphAnalysis(agentId, entry.liveSessionId || sid, { since: usageSince(entry) }));
+      || (hasLocation(runtime) ? null : await graphAnalysis(agentId, entry.liveSessionId || sid, { since: usageSince(entry) })));
     const label = sessionLabel({
       agent: agentId,
       names: [entry.name, entry.lastLabel],
@@ -853,8 +865,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       waitingFor: null,
       kind: 'managed',
       cwd,
-      branch: await branchFor(cwd),
-      repoSlug: await repoSlugFor(cwd),
+      ...await placeOf(entry, cwd),
       addDirs: [],
       intent: entry.intent || '',
       createdAt: entry.createdAt || null,
@@ -874,6 +885,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoMergeOnPass: entry.autoMergeOnPass ?? false,
       childFullView: entry.childFullView ?? null,
       offBoard: entry.offBoard || null,
+      repos: reposOf(entry),
       links: entry.links || [],
       suspendedAt: entry.suspendedAt || null,
       worktree: await worktreeStatus(entry.worktree),

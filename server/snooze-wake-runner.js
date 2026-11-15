@@ -1,6 +1,4 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import { resolveResumeDir } from './transcript-reader.js';
+import { wakeDir } from './wake-dir.js';
 import { sendText as defaultSendText } from './tmux-scraper.js';
 import { descendantIdsOf } from './control/handlers/archive.js';
 
@@ -77,10 +75,7 @@ export async function wakeCommentedSnooze(sessionId, deps) {
   // Resolve the launch dir by the LIVE id (transcript bucket), recreating a
   // cleaned-up worktree dir since there's no interactive prompt here — the
   // transcript lives under ~/.claude, so the conversation still resumes.
-  let dir = await resolveResumeDir(entry.liveSessionId || sessionId, { entryCwd: entry.cwd });
-  if (!dir || !fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
-  }
+  const dir = await wakeDir(entry, sessionId);
   // Already CLAIMED above (clearSnooze before either branch) — deliver via the resume
   // intent so it auto-runs unattended.
   await sessionManager.resume(sessionId, dir, { intent: comment, reason: 'snooze-wake' });

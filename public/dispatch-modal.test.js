@@ -1,4 +1,5 @@
 import { createAdditionalFolders } from './additional-folders.js';
+import { runtimeHasLocation } from './dispatch-repos.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -183,17 +184,21 @@ function runtimeHarness(agent = 'claude') {
   const add = { addEventListener() {} };
   const additionalFolders = createAdditionalFolders({ list: {}, add, send() {} });
   const note = { hidden: true, classList: { toggle: (_name, hidden) => { note.hidden = hidden; } } };
+  const toggled = (hidden) => { const el = { hidden, classList: { toggle: (_name, h) => { el.hidden = h; } } }; return el; };
+  const folderRow = toggled(false);
+  const reposRow = toggled(true);
+  const worktree = { checked: false };
   const document = {
-    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': note })[id],
+    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': note, 'm-folder-row': folderRow, 'm-repos-row': reposRow, 'm-worktree': worktree })[id],
     createElement: () => stubOption(),
   };
   const app = loadApp(
-    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function syncExtRuntimeOptions() {'],
+    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function selectedRuntimeHasLocation() {', 'function syncCodexPolicyRow(agent) {', 'function syncExtRuntimeOptions() {'],
     ['syncExtRuntimeOptions', 'syncRuntimeToggle', 'setExtensions'],
     'let latestExtensions = []; let dispatchDeck = null; const setExtensions = (v) => { latestExtensions = v; };',
-    { document, additionalFolders },
+    { document, additionalFolders, runtimeHasLocation },
   );
-  return { rt, add, note, ...app };
+  return { rt, add, note, folderRow, reposRow, worktree, ...app };
 }
 const ext = (over = {}) => ({ id: 'sbx', enabled: true, quarantine: null, runtimes: [{ id: 'sandbox', label: 'Sandbox <b>' }], ...over });
 
@@ -441,6 +446,26 @@ test('extension runtimes disable additional folder grants until Local is selecte
   assert.equal(note.hidden, true);
 });
 
+test('a runtime with a location swaps the folder and worktree for the GitHub repos field', () => {
+  const { rt, folderRow, reposRow, worktree, syncRuntimeToggle, syncExtRuntimeOptions, setExtensions } = runtimeHarness();
+  setExtensions([ext({ runtimes: [{ id: 'sandbox', label: 'Sandbox', location: true }, { id: 'box', label: 'Box' }] })]);
+  syncExtRuntimeOptions();
+  worktree.checked = true;
+  rt.value = 'sandbox';
+  syncRuntimeToggle();
+  assert.equal(folderRow.hidden, true);
+  assert.equal(reposRow.hidden, false);
+  assert.equal(worktree.checked, false);
+  rt.value = 'box';
+  syncRuntimeToggle();
+  assert.equal(folderRow.hidden, false);
+  assert.equal(reposRow.hidden, true);
+  rt.value = 'local';
+  syncRuntimeToggle();
+  assert.equal(folderRow.hidden, false);
+  assert.equal(reposRow.hidden, true);
+});
+
 // The provider metadata the browser gets, built from the real adapters.
 const codexPolicyMetadata = (id) => providerMetadata(adapterFor(id));
 
@@ -457,18 +482,18 @@ test('Codex quick launch restores retained grants when switching from a non-loca
         'm-runtime': rt, 'm-model': model,
         'm-add-dirs-note': { classList: { toggle() {} } },
         'm-codex-policy-row': { classList: { toggle() {} } },
-      })[id] || { value: '', checked: false },
+      })[id] || { value: '', checked: false, classList: { toggle() {} } },
     };
     const additionalFolders = createAdditionalFolders({ list: element(), add: element(), document, send() {} });
     additionalFolders.reset(['/extra']);
     const app = loadApp(
-      ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
+      ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function selectedRuntimeHasLocation() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
       ['quickLaunch', 'syncRuntimeToggle', 'dispatched'],
       `let modelEdited = false; const dispatchMode = 'standard'; const reviewMode = false; const dispatchDeck = null;
        const autoCompactTokens = undefined; const parentSessionId = null;
        let codexPolicyDraftWasCodex = false; const codexPolicyDefaults = {};
        const dispatched = []; const submitDispatch = () => dispatched.push(readCoreDispatchFields());`,
-      { document, additionalFolders, modal: { classList: { contains: () => false } },
+      { document, additionalFolders, runtimeHasLocation, latestExtensions: [], modal: { classList: { contains: () => false } },
         scheduleMode: () => false, cwdField: () => '/repo', populateEffortSelect() {}, rememberDispatchPick() {},
         providerMetadataFor: codexPolicyMetadata,
         fillCodexPolicyControls() {}, readCodexPolicyControls: () => ({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false }) },
@@ -505,15 +530,15 @@ async function codexPolicyHarness() {
     querySelector: (sel) => ctl[sel.slice(1)],
   };
   const document = {
-    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': { classList: { toggle() {} } }, 'm-codex-policy-row': row })[id] || { value: '', checked: false },
+    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': { classList: { toggle() {} } }, 'm-codex-policy-row': row })[id] || { value: '', checked: false, classList: { toggle() {} } },
   };
   const app = loadApp(
-    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
+    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function selectedRuntimeHasLocation() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
     ['syncRuntimeToggle', 'readCoreDispatchFields', 'setDefaults'],
     `const dispatchMode = 'standard'; const reviewMode = false; const autoCompactTokens = undefined; const parentSessionId = null;
      let codexPolicyDraftWasCodex = false; let codexPolicyDefaults = {};
      const setDefaults = (v) => { codexPolicyDefaults = v; };`,
-    { document, additionalFolders: { setEnabled() {}, values: () => [] }, cwdField: () => '/repo', providerMetadataFor: codexPolicyMetadata, ...field },
+    { document, additionalFolders: { setEnabled() {}, values: () => [] }, runtimeHasLocation, latestExtensions: [], cwdField: () => '/repo', providerMetadataFor: codexPolicyMetadata, ...field },
   );
   return { ...app, model, ctl, rowHidden: () => hidden.has('row') };
 }
@@ -1184,21 +1209,21 @@ test('api.openDispatch without cwd or images leaves the task default and adopts 
 });
 
 
-test('the client runtime list exposes ownLaunch for extension runtimes and false for built-ins', () => {
+test('the client runtime list exposes ownLaunch and location for extension runtimes and false for built-ins', () => {
   const runtime = stubSelect(['local', 'devcontainer']);
   for (const id of ['own', 'wrapped']) {
     const option = runtime.appendChild(stubOption(id));
     option.dataset.ext = 'toy';
   }
-  const heads = ['function listDispatchRuntimes() {', 'function runtimeOwnsModel(extId, runtimeId) {', 'function runtimeAllowsAgent(opt, agent) {', 'function runtimeOwnLaunch(extId, runtimeId) {'];
+  const heads = ['function listDispatchRuntimes() {', 'function runtimeOwnsModel(extId, runtimeId) {', 'function runtimeAllowsAgent(opt, agent) {', 'function runtimeOwnLaunch(extId, runtimeId) {', 'function runtimeIdHasLocation(runtimeId) {'];
   const app = loadApp(heads, ['listDispatchRuntimes'], `
     const dispatchDeck = null;
     const availableAgents = [{ id: 'claude' }, { id: 'codex' }];
-    const latestExtensions = [{ id: 'toy', runtimes: [{ id: 'own', ownLaunch: true, agents: ['claude', 'codex'] }, { id: 'wrapped', ownLaunch: false }] }];
+    const latestExtensions = [{ id: 'toy', runtimes: [{ id: 'own', ownLaunch: true, location: true, agents: ['claude', 'codex'] }, { id: 'wrapped', ownLaunch: false }] }];
   `, { document: { getElementById: () => runtime } });
-  assert.deepEqual(app.listDispatchRuntimes().map(({ id, ownLaunch }) => ({ id, ownLaunch })), [
-    { id: 'local', ownLaunch: false }, { id: 'devcontainer', ownLaunch: false },
-    { id: 'own', ownLaunch: true }, { id: 'wrapped', ownLaunch: false },
+  assert.deepEqual(app.listDispatchRuntimes().map(({ id, ownLaunch, location }) => ({ id, ownLaunch, location })), [
+    { id: 'local', ownLaunch: false, location: false }, { id: 'devcontainer', ownLaunch: false, location: false },
+    { id: 'own', ownLaunch: true, location: true }, { id: 'wrapped', ownLaunch: false, location: false },
   ]);
 });
 

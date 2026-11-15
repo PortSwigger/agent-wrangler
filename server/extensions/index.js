@@ -162,6 +162,7 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 //     yours. See server/mcp/links.js.
 export const VALUE_HOOKS = ['session.launchContext', 'session.prepare', 'session.beforeSpawn', 'session.spawned', 'links.normalise'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
+export const LOCATION_HOOKS = ['provision', 'open', 'suspend', 'resume', 'delete', 'unpushed', 'transcript', 'diff', 'codexId'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 
 // A settings DEF, not a value: what the Extensions tab draws a row for and what
@@ -438,6 +439,21 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
         if (rt[k] != null && typeof rt[k] !== 'boolean') fail(ext, `runtime ${rt.id} ${k} must be a boolean`);
       }
       if (rt.buildLaunch && rt.resumable !== false) fail(ext, `runtime ${rt.id} uses buildLaunch, so it must declare resumable: false`);
+      if (rt.location != null) {
+        if (typeof rt.location !== 'object' || Array.isArray(rt.location)) fail(ext, `runtime ${rt.id} location must be an object`);
+        if (rt.buildLaunch) fail(ext, `runtime ${rt.id} location needs wrapLaunch, not buildLaunch`);
+        if (typeof rt.location.provision !== 'function') fail(ext, `runtime ${rt.id} location.provision must be a function`);
+        for (const k of LOCATION_HOOKS) {
+          if (k !== 'provision' && rt.location[k] != null && typeof rt.location[k] !== 'function') fail(ext, `runtime ${rt.id} location.${k} must be a function`);
+        }
+        for (const k of Object.keys(rt.location)) {
+          if (!LOCATION_HOOKS.includes(k) && k !== 'suspendIdleHours') fail(ext, `runtime ${rt.id} location.${k} is not a location hook`);
+        }
+        const idle = rt.location.suspendIdleHours;
+        if (idle != null && typeof idle !== 'function' && !(typeof idle === 'number' && Number.isFinite(idle) && idle >= 0)) {
+          fail(ext, `runtime ${rt.id} location.suspendIdleHours must be a non-negative number or a function`);
+        }
+      }
     }
   }
   // `client` and `styles` are the two asset paths, checked identically: both are
@@ -525,7 +541,7 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // given with it to api.dispatch.submit rides `ext.<extId>.model`.
     // `agents` (1.37.0): the agent ids it takes, ['claude'] when the manifest
     // leaves it out; the dialog disables the option for any other agent.
-    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel, ownLaunch, agents }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel), ownLaunch: Boolean(ownLaunch), agents: [...(agents || ['claude'])] })),
+    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel, ownLaunch, agents, location }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel), ownLaunch: Boolean(ownLaunch), agents: [...(agents || ['claude'])], location: Boolean(location) })),
     // The setting DEFS (third-party prose, rendered via textContent) plus the
     // current VALUES, re-read from config on every rebuild for exactly the
     // reason `enabled` is: an edit in another tab, or by hand in config.json,
@@ -833,7 +849,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const rt of runtimes) {
     reg.runtimeIds.add(rt.id);
     out.runtimes.push(rt);
-    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function', ownLaunch: Boolean(rt.buildLaunch), agents: [...(rt.agents || ['claude'])] });
+    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function', ownLaunch: Boolean(rt.buildLaunch), agents: [...(rt.agents || ['claude'])], location: Boolean(rt.location) });
   }
   for (const s of shipped) reg.skillNames.add(s);
   out.skillIds.push(...(ext.skills || []));

@@ -1,6 +1,4 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import { resolveResumeDir } from './transcript-reader.js';
+import { wakeDir } from './wake-dir.js';
 import { sendText as defaultSendText } from './tmux-scraper.js';
 import { notePrompt } from './prompt-ledger.js';
 
@@ -48,10 +46,7 @@ export async function runSessionAction(action, deps) {
   // up after archive — there is no interactive recreate prompt here, so recreate it
   // (the transcript lives under ~/.claude, so the conversation resumes; only working
   // files are gone), falling back to home if even that fails.
-  let dir = await resolveResumeDir(entry.liveSessionId || id, { entryCwd: entry.cwd });
-  if (!dir || !fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
-  }
+  const dir = await wakeDir(entry, id);
   await sessionManager.resume(id, dir, { intent: message, reason: 'schedule' });
   return { sessionId: id };
 }

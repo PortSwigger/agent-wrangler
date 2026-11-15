@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { archiveCascade, descendantsOf, containerStillInUse } from '../../control/handlers/archive.js';
+import { archiveCascade, descendantsOf, containerStillInUse, unpushedFor } from '../../control/handlers/archive.js';
+import { unpushedText } from '../../locations/repos.js';
 import { stopContainer } from '../../runtimes/devcontainer.js';
 
 // Stop another Agent Wrangler session and archive it — the session-to-session
@@ -36,12 +37,16 @@ export const archiveSessionTool = {
     + 'false to leave them running. For a devcontainer session the Docker container is LEFT '
     + 'RUNNING by default (so resume stays fast) — pass stop_container: true to also stop it, '
     + 'which is skipped if another active session still shares that container. This archives, it '
-    + 'does not permanently remove.',
+    + 'does not permanently remove. A session at a location with commits on no remote branch is '
+    + 'refused with the list; push them, or pass allow_unpushed: true to archive anyway.',
   inputSchema: {
     target: z.string().min(1).describe('Session id to stop and archive (card id, as returned by list_sessions).'),
     allow_self: z.boolean().optional().describe('Explicitly permit archiving the calling session. Default false; this stops your own agent immediately.'),
     archive_children: z.boolean().optional().describe(
       'Also archive this session\'s nested children (transitively), descendants-first. Default true.',
+    ),
+    allow_unpushed: z.boolean().optional().describe(
+      'Archive a session at a location even though it has commits on no remote branch. Default false.',
     ),
     stop_container: z.boolean().optional().describe(
       'For a devcontainer session, also stop its Docker container after archiving. Default false '
@@ -66,6 +71,12 @@ export const archiveSessionTool = {
     const sessions = deps.graph?.()?.sessions || [];
     const descendants = archiveChildren ? descendantsOf(target, sessions) : [];
     const archivedIds = [...descendants.map((d) => d.sessionId), target];
+    if (args.allow_unpushed !== true) {
+      const unpushed = await unpushedFor(archivedIds, deps);
+      if (unpushed.length) {
+        return errorResult(`Not archived: archiving would lose commits that are on no remote branch.\n${unpushedText(unpushed)}\nPush them first, or pass allow_unpushed: true to archive anyway.`);
+      }
+    }
     const { unclean } = await archiveCascade(archivedIds, deps, { reason: 'mcp', skipJobNudgeIds: target === caller ? [target] : [] });
     await deps.rebuild?.();
 
