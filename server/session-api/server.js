@@ -1,6 +1,9 @@
 import http from 'node:http';
 
-export const SESSION_API_ROUTES = ['/mcp', '/pr-attach', '/pr-model'];
+export const SESSION_API_ROUTES = ['/mcp', '/pr-attach', '/pr-model', '/status-event'];
+// The routes the deck's and board's ports still serve for sessions launched
+// before the session API had its own port. Newer routes exist only here.
+export const LEGACY_ROUTES = ['/mcp', '/pr-attach', '/pr-model'];
 
 // Wraps a `(req, res, cardId)` handler so it runs only for a request `resolve`
 // accepts; anything else is answered 403 with the refusal code. `resolve` may
@@ -23,11 +26,11 @@ export function guarded(resolve, handler, { legacy = false, onRefuse = () => {} 
   };
 }
 
-// The session API's own listener: POST /mcp, /pr-attach and /pr-model and
-// nothing else, each behind `resolve` with no legacy path. Browsers have no
+// The session API's own listener: POST on SESSION_API_ROUTES and nothing else
+// (a route with no handler is not served), each behind `resolve` with no legacy path. Browsers have no
 // business here, so any request carrying an Origin is refused.
 export function createSessionApiServer({ resolve, handlers, onRefuse }) {
-  const routes = new Map(SESSION_API_ROUTES.map((p) => [p, guarded(resolve, handlers[p], { onRefuse })]));
+  const routes = new Map(SESSION_API_ROUTES.filter((p) => handlers[p]).map((p) => [p, guarded(resolve, handlers[p], { onRefuse })]));
   return http.createServer((req, res) => {
     const urlPath = req.url.split('?')[0];
     const route = req.method === 'POST' ? routes.get(urlPath) : null;

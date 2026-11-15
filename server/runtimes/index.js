@@ -1,4 +1,4 @@
-import { agentError } from '../agents/index.js';
+import { agentError, adapterFor } from '../agents/index.js';
 import { local } from './local.js';
 import { devcontainer } from './devcontainer.js';
 
@@ -110,6 +110,17 @@ import { devcontainer } from './devcontainer.js';
 //                polls it for a few seconds so the caller learns a failed launch in
 //                the tool result, and list_sessions reads it for every row.
 //                Normalised by launch-status.js. Absent ⇒ no row says anything.
+//   statusEvents (optional, default falsey) true ⇒ its Claude and Codex sessions
+//                report status as events to the session API's POST /status-event
+//                (docs/session-api.md) and their cards take status from those
+//                events alone: the graph tick reads no status file, readLive or
+//                rollout for them. The launch carries the status hooks
+//                (status-hooks.js) in the agent's command, `launchContext.statusEvents`
+//                is true, and wrapLaunch is handed `statusHook: { script }`, the
+//                host path of the one self-contained hook script, for a runtime
+//                whose agent runs elsewhere to install (as devcontainer installs
+//                the PR hook). Ignored for a buildLaunch runtime and for an agent
+//                without status hooks (see takesStatusEvents).
 //
 // Per-runtime POLICY (comms severing, teardown timing) is deliberately NOT in the
 // contract yet: no current runtime needs it, so adding it now would be dead code.
@@ -194,6 +205,12 @@ export function runtimeAgentError(rt, agent = 'claude') {
   const agents = runtimeAgents(rt);
   if (!agents || agents.includes(agent)) return null;
   return `The "${rt.label || rt.id}" runtime can't run ${agent} sessions (it supports: ${agents.join(', ')}).`;
+}
+
+// True when a session of `agent` on `rt` reports status as events: the runtime
+// opted in, it launches the agent's own command, and that agent has status hooks.
+export function takesStatusEvents(rt, agent = 'claude') {
+  return Boolean(rt?.statusEvents && !rt.buildLaunch && adapterFor(agent)?.launch?.statusEvents);
 }
 
 // Null when a resume or fork of this card may proceed, else the human-facing

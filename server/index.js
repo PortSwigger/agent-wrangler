@@ -12,7 +12,8 @@ import openModule from 'open';
 import { buildGraph, createWatcher, sessionLabel } from './state-reader.js';
 import { analyze, resolveResumeDir } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
-import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, knownRuntimes } from './runtimes/index.js';
+import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, knownRuntimes, findRuntime, takesStatusEvents } from './runtimes/index.js';
+import { createStatusEventStore, createStatusEventHandler } from './status-events.js';
 import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
@@ -524,6 +525,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
         ...(rt.resumable === undefined ? {} : { resumable: rt.resumable }),
         skipsHostResumeGuard: Boolean(rt.skipsHostResumeGuard),
         liveByTmux: Boolean(rt.liveByTmux),
+        statusEvents: Boolean(rt.statusEvents),
         preflight: bind(rt.preflight, () => `The "${rt.label}" runtime needs the "${id}" extension, which is not active.`),
         wrapLaunch: bind(rt.wrapLaunch, notActive),
         buildLaunch: bind(rt.buildLaunch, notActive),
@@ -1105,6 +1107,19 @@ function deckHandler(req, res) {
 // the per-card token check, on a port of its own. The deck keeps the same routes
 // as an adapter onto it (same check, one deprecation warning) for sessions
 // launched before it had its own port, whose URLs name the board's port.
+// Status events (server/status-events.js): the last event per card, for cards on
+// a runtime with `statusEvents: true`. A card the board has not recorded yet is
+// accepted, since a hook can fire before its launch is recorded.
+const statusEvents = createStatusEventStore({ file: path.join(DATA_DIR, 'session-status.json'), onError: logError });
+const statusEventHandler = createStatusEventHandler({
+  store: statusEvents,
+  accepts: (id) => {
+    const entry = sessionManager.entryFor(id);
+    return !entry || takesStatusEvents(findRuntime(entry.runtime), entry.agent ?? 'claude');
+  },
+  onEvent: () => { rebuild().catch(() => {}); },
+});
+
 const sessionApi = createSessionApi({
   dataDir: DATA_DIR,
   cardState: (id) => {
@@ -1113,11 +1128,12 @@ const sessionApi = createSessionApi({
     if (entry.archivedAt) return 'archived';
     return entry.tmux && sessionManager.alive.has(entry.tmux) ? 'running' : 'stopped';
   },
-  handlers: { '/mcp': mcpRequestHandler, '/pr-attach': prAttachHandler, '/pr-model': prModelHandler },
+  handlers: { '/mcp': mcpRequestHandler, '/pr-attach': prAttachHandler, '/pr-model': prModelHandler, '/status-event': statusEventHandler },
   log, logWarn, logError,
 });
-sessionManager._issueSessionToken = (id) => sessionApi.tokens.issue(id);
-sessionManager._revokeSessionToken = (id) => sessionApi.tokens.revoke(id);
+// Every launch starts a fresh status lifecycle with its fresh token.
+sessionManager._issueSessionToken = (id) => { statusEvents.forget(id); return sessionApi.tokens.issue(id); };
+sessionManager._revokeSessionToken = (id) => { statusEvents.forget(id); sessionApi.tokens.revoke(id); };
 
 const deckServer = createDeckServer({
   boardPort: boardOriginPort, deckHandler,
@@ -1256,7 +1272,7 @@ async function rebuildOnce() {
     task: taskStore.taskFor(sid),
     label: lastGraph?.sessions?.find((s) => s.sessionId === sid)?.label,
   }));
-  const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore, mailDraftBlocked: (sid, now) => mailDeferrals.draftBlocked(sid, now) });
+  const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore, mailDraftBlocked: (sid, now) => mailDeferrals.draftBlocked(sid, now), statusEvents });
   graph.tasks = taskStore.snapshot();
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
   graph.legacyBoardSettings = legacyBoardSettings();
