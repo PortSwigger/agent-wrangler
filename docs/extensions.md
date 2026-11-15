@@ -667,6 +667,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   generation even after an update is installed. Startup selects the installed
   generation and removes superseded files after activation and the instance lock.
   Quarantined or missing selected generations retain prior files for recovery.
+  A missing or unreadable provenance record also preserves generation files;
+  restore the record (or its `.corrupt` backup) to make that install discoverable.
   Uninstall removes all generations for the extension.
 
   Provenance is separate from config.json, which keeps the `extensions.<id>`

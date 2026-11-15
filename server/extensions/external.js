@@ -250,7 +250,7 @@ export function sweepGenerations(entries, { dir = externalDir(), provenance = re
   let ids;
   try { ids = fs.readdirSync(path.join(dir, '.generations'), { withFileTypes: true }); } catch { return; }
   for (const id of ids) {
-    if (!id.isDirectory() || !isValidExtensionId(id.name) || retain.has(id.name)) continue;
+    if (!id.isDirectory() || !isValidExtensionId(id.name) || !provenance[id.name]?.generation || retain.has(id.name)) continue;
     const root = generationRoot(id.name, dir);
     let generations;
     try { generations = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }

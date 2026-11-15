@@ -6,6 +6,7 @@ import os from 'node:os';
 import { discoverExternal, unconsentedCapabilities, admitExternal, FORBIDDEN_IMPORTS } from './external.js';
 import * as external from './external.js';
 import { loadExtensions } from './index.js';
+import { DATA_DIR } from '../data-dir.js';
 
 function tempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aw-ext-discover-'));
@@ -217,7 +218,7 @@ test('startup cleanup preserves the selected and loaded generations, then reclai
     external.sweepGenerations([{ id: 'notes', dir: old, external: true }], { dir: root, provenance });
     for (const dir of [old, latest, legacy, handPlaced]) assert.ok(fs.existsSync(dir));
     assert.equal(fs.existsSync(abandoned), false);
-    assert.equal(fs.existsSync(orphan), false);
+    assert.ok(fs.existsSync(orphan), 'an unrecorded generation is retained for recovery');
     const next = await discoverExternal({ dir: root, provenance });
     external.sweepGenerations(next, { dir: root, provenance });
     assert.ok(fs.existsSync(latest));
@@ -257,4 +258,25 @@ test('malformed or missing generation pointers quarantine instead of falling bac
       assert.match(entries[0].quarantine, /Invalid extension generation|could not load/);
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('missing or corrupt provenance never deletes generation files needed for recovery', async () => {
+  const root = tempRoot();
+  const file = path.join(DATA_DIR, 'extensions.json');
+  try {
+    const first = writeGeneration(root, 'notes', 'a'.repeat(16));
+    const second = writeGeneration(root, 'notes', 'b'.repeat(16));
+    for (const body of [null, '{broken', '[]', '{"notes":null}']) {
+      fs.rmSync(file, { force: true });
+      if (body !== null) fs.writeFileSync(file, body);
+      const entries = await discoverExternal({ dir: root });
+      external.sweepGenerations(entries, { dir: root });
+      assert.ok(fs.existsSync(first), `the prior generation survives ${body}`);
+      assert.ok(fs.existsSync(second), `the selected generation survives ${body}`);
+    }
+  } finally {
+    fs.rmSync(file, { force: true });
+    fs.rmSync(`${file}.corrupt`, { force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
