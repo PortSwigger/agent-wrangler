@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runHeadless, resolveHeadlessTarget, backgroundModel, defaultBackgroundModel, headlessRunsInFlight, HEADLESS_MAX_TIMEOUT_MS } from './headless.js';
-import { HEADLESS_DISALLOWED_TOOLS } from './agents/claude.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFile as realExecFile, execFileSync } from 'node:child_process';
 import { CODEX_HEADLESS_DISABLED_FEATURES } from './agents/codex.js';
 import { adapterFor, registeredAgents } from './agents/index.js';
 
@@ -12,29 +15,55 @@ const runClaude = (prompt, stdin, { model, ...opts } = {}) => runHeadless({ prom
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+// What `codex debug models` reports: every model turning tools on the way
+// the real catalog does.
+const codexCatalog = () => ({
+  models: adapterFor('codex').models.map((m) => ({
+    slug: m.value,
+    context_window: 272000,
+    tool_mode: 'code_mode_only',
+    multi_agent_version: 'v2',
+    apply_patch_tool_type: 'freeform',
+    experimental_supported_tools: ['send_user_message_async', 'clock'],
+  })),
+});
+
 // The fake stands in for child_process.execFile: record the call, hand back a
 // child whose stdin captures what was written, and settle on the next tick so
 // the callback fires after runHeadless has written the payload — the same
-// ordering the real binary gives.
-function fakeExecFile(result) {
+// ordering the real binary gives. Codex's catalog read is answered from
+// codexCatalog and kept out of `calls`, and the catalog file a run names is
+// captured while it still exists.
+function fakeExecFile(result, { catalog = codexCatalog() } = {}) {
   const calls = [];
+  const catalogReads = [];
   const execFile = (file, args, opts, cb) => {
+    if (file === 'codex' && args[0] === 'debug' && args[1] === 'models') {
+      catalogReads.push({ args, opts });
+      setImmediate(() => cb(null, JSON.stringify(catalog)));
+      return { stdin: { end() {} } };
+    }
     const call = { file, args, opts, stdin: '' };
+    const catalogArg = args.find((a) => a.startsWith('model_catalog_json='));
+    if (catalogArg) {
+      call.catalogPath = JSON.parse(catalogArg.slice('model_catalog_json='.length));
+      call.catalog = JSON.parse(fs.readFileSync(call.catalogPath, 'utf8'));
+    }
     calls.push(call);
     setImmediate(() => cb(result.err || null, result.stdout ?? ''));
     return { stdin: { end: (payload) => { call.stdin = payload; } } };
   };
-  return { calls, execFile };
+  return { calls, catalogReads, execFile };
 }
 
-test('argv shape: model flag, joined disallowed tools, a uuid session id, prompt last', async () => {
+test('argv shape: model flag, every tool off, a uuid session id, prompt last', async () => {
   const f = fakeExecFile({ stdout: JSON.stringify({ result: 'ok' }) });
   await runClaude('THE PROMPT', 'the payload', { execFile: f.execFile, model: 'sonnet' });
   const { file, args } = f.calls[0];
   assert.equal(file, 'claude');
   assert.equal(args[args.length - 1], 'THE PROMPT');
   assert.deepEqual(args.slice(0, 3), ['-p', '--model', 'sonnet']);
-  assert.equal(args[args.indexOf('--disallowed-tools') + 1], HEADLESS_DISALLOWED_TOOLS.join(' '));
+  assert.equal(args[args.indexOf('--tools') + 1], '');
   assert.match(args[args.indexOf('--session-id') + 1], UUID_RE);
   // Tool-less and host-config-free, so a developer's own settings/MCP servers
   // can never leak into a classification call.
@@ -187,6 +216,62 @@ test('codex: `codex exec --json`, read-only, user config and tools off, payload 
   assert.deepEqual(disabled, CODEX_HEADLESS_DISABLED_FEATURES);
   assert.equal(args.at(-1), 'THE PROMPT');
   assert.equal(stdin, 'the payload');
+});
+
+test('codex: the run names a one-model catalog with the tool settings stripped, removed once the run ends', async () => {
+  const f = fakeExecFile({ stdout: CODEX_EVENTS });
+  const model = codexModel();
+  await runHeadless({ prompt: 'P', agent: 'codex', model, execFile: f.execFile, env: { CODEX_HOME: '/codex-home' } });
+  assert.equal(f.catalogReads.length, 1);
+  assert.equal(f.catalogReads[0].opts.env.CODEX_HOME, '/codex-home');
+  const { args, catalog, catalogPath } = f.calls[0];
+  assert.deepEqual(catalog, { models: [{ slug: model, context_window: 272000, experimental_supported_tools: [] }] });
+  assert.ok(args.includes('tools.experimental_request_user_input.enabled=false'));
+  assert.equal(fs.existsSync(catalogPath), false);
+});
+
+test('codex: a model missing from Codex\'s catalog fails the run without launching it', async () => {
+  const f = fakeExecFile({ stdout: CODEX_EVENTS }, { catalog: { models: [] } });
+  const out = await runHeadless({ prompt: 'P', agent: 'codex', model: codexModel(), execFile: f.execFile });
+  assert.equal(f.calls.length, 0);
+  assert.equal(out.text, null);
+  assert.match(out.error.message, /no ".+"; refusing/);
+  assert.equal(headlessRunsInFlight(), 0);
+});
+
+// ---- No tools ------------------------------------------------------------
+test('a headless call has no tools available: claude turns off every built-in tool and loads no MCP server', async () => {
+  const f = fakeExecFile({ stdout: JSON.stringify({ result: 'ok' }) });
+  await runClaude('P', '', { execFile: f.execFile });
+  const { args } = f.calls[0];
+  assert.equal(args[args.indexOf('--tools') + 1], '');
+  assert.ok(args.includes('--strict-mcp-config'));
+  for (const flag of ['--allowed-tools', '--allowedTools', '--mcp-config', '--plugin-dir', '--add-dir']) assert.ok(!args.includes(flag), flag);
+});
+
+function codexOnPath() {
+  try { execFileSync('sh', ['-c', 'command -v codex'], { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
+// `codex debug prompt-input` renders the tool list a run would send, offline.
+// It has no --ignore-user-config, so an empty CODEX_HOME stands in for it.
+test('a headless call has no tools available: the installed codex lists none for any model', { skip: !codexOnPath() && 'codex is not on PATH', timeout: 60_000 }, async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'headless-codex-home-'));
+  try {
+    for (const { value: model } of adapterFor('codex').models) {
+      const cmd = await adapterFor('codex').headless.command({ prompt: 'P', model, env: { CODEX_HOME: home }, cwd: os.tmpdir(), execFile: realExecFile });
+      try {
+        const overrides = cmd.args.flatMap((a, i) => (a === '--disable' || a === '-c' ? [a, cmd.args[i + 1]] : []));
+        const out = execFileSync('codex', ['debug', 'prompt-input', '-c', `model="${model}"`, ...overrides, 'hi'], { cwd: os.tmpdir(), env: cmd.env, encoding: 'utf8' });
+        const tools = JSON.parse(out).filter((item) => item.type === 'additional_tools').flatMap((item) => item.tools);
+        assert.deepEqual(tools, [], model);
+      } finally {
+        cmd.cleanup();
+      }
+    }
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('codex: the answer is the last agent_message, the id is thread.started, warning items are ignored', async () => {

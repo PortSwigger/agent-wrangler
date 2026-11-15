@@ -8,10 +8,13 @@ import { backgroundModelConfig } from './config-store.js';
 // `agents:headless`). Any adapter with a `headless` capability can run one:
 //
 //   headless.defaultModel()  — the model a call naming only this agent runs.
-//   headless.command({ prompt, model, effort, env, cwd })
-//                            → { file, args, env, liveSessionId? }: the binary and
-//                              argv for one run with every tool off. A
-//                              liveSessionId fixed at launch is returned here.
+//   headless.command({ prompt, model, effort, env, cwd, execFile })
+//                            → { file, args, env, liveSessionId?, cleanup? }, or a
+//                              promise of it: the binary and argv for one run
+//                              with every tool off. A liveSessionId fixed at
+//                              launch is returned here; cleanup runs once the
+//                              run ends. May throw when it cannot guarantee
+//                              no tools, and the run then fails.
 //   headless.parse(stdout)   → { text, liveSessionId?, error? }: the answer, and
 //                              the conversation id when the CLI only reports it
 //                              in its output. May throw on unparseable output.
@@ -102,9 +105,14 @@ export async function runHeadless({
     ...(resolve ? { resolve } : {}),
   });
   const cwd = os.tmpdir();
-  const cmd = target.adapter.headless.command({ prompt, model: target.model, effort: target.effort, env, cwd });
   headlessInFlight += 1;
+  let cmd;
   try {
+    try {
+      cmd = await target.adapter.headless.command({ prompt, model: target.model, effort: target.effort, env, cwd, execFile });
+    } catch (error) {
+      return { text: null, liveSessionId: null, agent: target.agent, model: target.model, error };
+    }
     return await new Promise((done) => {
       const child = execFile(cmd.file, cmd.args, { cwd, env: cmd.env, timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
         let parsed = {};
@@ -126,6 +134,7 @@ export async function runHeadless({
       child.stdin.end(stdin);
     });
   } finally {
+    cmd?.cleanup?.();
     headlessInFlight -= 1;
   }
 }
