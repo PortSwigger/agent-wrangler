@@ -212,8 +212,8 @@ export function findRuntime(id) {
 // for local); `extId` only on an extension's.
 export function knownRuntimes() {
   return [
-    ...ALL.map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt) })),
-    ...[...registered.values()].map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt), extId: rt.extId })),
+    ...ALL.map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt), location: Boolean(rt.location) })),
+    ...[...registered.values()].map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt), extId: rt.extId, location: Boolean(rt.location) })),
   ];
 }
 

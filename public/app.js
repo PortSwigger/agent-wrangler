@@ -205,6 +205,8 @@ let suppressNudgedPrToasts = true;
 let prModelFooter = true;
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
+let deckRuntimesSetting = ''; // Settings › Runtimes this deck offers, comma-separated ids
+let ownRuntimeOffer = []; // graph.runtimeOffer: [{ id, location, unavailable? }]
 // Settings › Background model (server config, resolved, every graph push).
 let backgroundModel = null;
 // Settings › Sessions' Codex sandbox/approval defaults (server config, every
@@ -1031,6 +1033,8 @@ function applyGraph(graph) {
   prModelFooter = graph.prModelFooter !== false;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
+  deckRuntimesSetting = Array.isArray(graph.deckRuntimes) ? graph.deckRuntimes.join(', ') : '';
+  ownRuntimeOffer = Array.isArray(graph.runtimeOffer) ? graph.runtimeOffer : [];
   backgroundModel = graph.backgroundModel && typeof graph.backgroundModel === 'object' ? graph.backgroundModel : null;
   codexPolicyDefaults = graph.codexPolicyDefaults && typeof graph.codexPolicyDefaults === 'object' ? { ...CODEX_POLICY_FALLBACK, ...graph.codexPolicyDefaults } : { ...CODEX_POLICY_FALLBACK };
   const prevAutoUpdate = autoUpdate;
@@ -1095,7 +1099,7 @@ function applyGraph(graph) {
   extGraphSeen = true;
   syncClientExtensions();
   // After the sync above, so the Settings row offers exactly what #m-runtime does.
-  setRuntimeOptions([...document.getElementById('m-runtime').options].map((o) => ({ value: o.value, label: o.textContent })));
+  setRuntimeOptions([...document.getElementById('m-runtime').options].filter((o) => !o.dataset.unavailable).map((o) => ({ value: o.value, label: o.dataset.label || o.textContent })));
   // Every `view` contribution gets this graph. AFTER syncClientExtensions, so a
   // view that has only just registered is updated in the same tick it appears
   // rather than staying blank until the next one — and unconditionally, because
@@ -6182,7 +6186,40 @@ function syncDispatchRuntimes() {
     for (const o of OWN_RUNTIME_OPTIONS) add(o.value, o.label);
     syncExtRuntimeOptions();
   }
-  rt.value = [...rt.options].some((o) => o.value === was) ? was : (rt.options[0]?.value || 'local');
+  applyRuntimeOffer();
+  rt.value = [...rt.options].some((o) => o.value === was && !o.disabled) ? was : firstOpenRuntime();
+}
+
+// The deck's own word on each runtime (graph.runtimeOffer, or another deck's
+// descriptor): one it doesn't offer is hidden, and one it offers but can't launch
+// on (a location runtime beside one on its own machine) is disabled with the
+// reason shown under the select. The server refuses both either way.
+function applyRuntimeOffer() {
+  const rt = document.getElementById('m-runtime');
+  const offer = dispatchDeck ? deckRuntimes(remoteDecks.entryFor(dispatchDeck)?.descriptor) : ownRuntimeOffer;
+  const reasons = [];
+  for (const opt of rt.options) {
+    const found = offer.find((r) => r.id === opt.value);
+    const reason = found?.unavailable || '';
+    const base = opt.dataset.label || opt.textContent.replace(/ — unavailable$/, '');
+    opt.dataset.label = base;
+    const notOffered = Boolean(reason) && !found?.location;
+    opt.hidden = notOffered;
+    if (reason) opt.dataset.unavailable = reason; else delete opt.dataset.unavailable;
+    opt.title = reason;
+    opt.textContent = reason && !notOffered ? `${base} — unavailable` : base;
+    if (reason && !notOffered) reasons.push(reason);
+  }
+  const note = document.getElementById('m-runtime-note');
+  if (note) {
+    note.textContent = reasons.join(' ');
+    note.classList.toggle('hidden', !reasons.length);
+  }
+}
+
+function firstOpenRuntime() {
+  const rt = document.getElementById('m-runtime');
+  return [...rt.options].find((o) => !o.disabled && !o.dataset.unavailable)?.value || '';
 }
 
 // Moves the open dialog onto another deck (or back to the board's own): its
@@ -6410,9 +6447,9 @@ function syncRuntimeToggle() {
   const sel = document.getElementById('m-model');
   const agent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   const rt = document.getElementById('m-runtime');
-  for (const opt of rt.options) opt.disabled = !runtimeAllowsAgent(opt, agent);
+  for (const opt of rt.options) opt.disabled = Boolean(opt.dataset.unavailable) || !runtimeAllowsAgent(opt, agent);
   const cur = rt.options[rt.selectedIndex];
-  if (cur && cur.disabled) rt.value = 'local';
+  if (cur && cur.disabled) rt.value = firstOpenRuntime();
   const foldersEnabled = rt.value === 'local';
   additionalFolders.setEnabled(foldersEnabled);
   document.getElementById('m-add-dirs-note').classList.toggle('hidden', foldersEnabled);
@@ -6482,7 +6519,7 @@ function syncExtRuntimeOptions() {
     if (!opt.dataset.ext) continue;
     const w = want.get(opt.value);
     if (w && w.extId === opt.dataset.ext) {
-      if (opt.textContent !== w.label) opt.textContent = w.label;
+      if (opt.dataset.label !== w.label) { opt.textContent = w.label; opt.dataset.label = w.label; }
       want.delete(opt.value);
     } else { opt.remove(); changed = true; }
   }
@@ -6493,11 +6530,13 @@ function syncExtRuntimeOptions() {
     opt.value = id;
     opt.dataset.ext = extId;
     opt.textContent = label; // third-party string: text, never markup
+    opt.dataset.label = label;
     rt.appendChild(opt);
     changed = true;
   }
+  applyRuntimeOffer();
   if (!changed) return;
-  rt.value = [...rt.options].some((o) => o.value === selected) ? selected : 'local';
+  rt.value = [...rt.options].some((o) => o.value === selected) ? selected : firstOpenRuntime();
   // A freshly appended option starts enabled; re-gate it for a non-Claude agent.
   syncRuntimeToggle();
 }
@@ -6810,7 +6849,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   const rtSel = document.getElementById('m-runtime');
   const wantRuntime = (schedule ? d.runtime : defaultRuntime) || 'local';
   rtSel.value = wantRuntime;
-  if (rtSel.value !== wantRuntime) rtSel.value = 'local';
+  if (rtSel.value !== wantRuntime || rtSel.options[rtSel.selectedIndex]?.disabled) rtSel.value = firstOpenRuntime();
   if (dispatchDeck) populateModelSelect();
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   // A saved schedule restores its Codex pick; a new draft starts from Settings.
@@ -7066,11 +7105,12 @@ function listDispatchRuntimes() {
   const agentIds = availableAgents.map((a) => a.id);
   return [...document.getElementById('m-runtime').options].map((o) => ({
     id: o.value,
-    label: o.textContent,
+    label: o.dataset.label || o.textContent,
     ownsModel: Boolean(o.dataset.ext) && runtimeOwnsModel(o.dataset.ext, o.value),
     ownLaunch: Boolean(o.dataset.ext) && runtimeOwnLaunch(o.dataset.ext, o.value),
     agents: o.value === 'local' ? null : agentIds.filter((a) => runtimeAllowsAgent(o, a)),
     location: Boolean(o.dataset.ext) && runtimeIdHasLocation(o.value),
+    unavailable: o.dataset.unavailable || null,
   }));
 }
 
@@ -7646,6 +7686,7 @@ initSettings({
       if (id === 'prModelFooter') return prModelFooter;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'defaultRuntime') return defaultRuntime;
+      if (id === 'deckRuntimes') return deckRuntimesSetting;
       if (id === 'backgroundModel') return backgroundModel ? `${backgroundModel.agent}:${backgroundModel.model}` : undefined;
       if (CODEX_DEFAULT_SETTINGS[id]) return codexPolicyDefaults[CODEX_DEFAULT_SETTINGS[id]];
       if (id === 'autoUpdate') return autoUpdate;
@@ -7681,6 +7722,9 @@ initSettings({
       } else if (id === 'defaultSessionCwd') {
         defaultSessionCwd = String(value || '').trim();
         send({ type: 'set-default-session-cwd', cwd: defaultSessionCwd });
+      } else if (id === 'deckRuntimes') {
+        deckRuntimesSetting = String(value || '').trim();
+        send({ type: 'set-deck-runtimes', runtimes: deckRuntimesSetting });
       } else if (id === 'defaultRuntime') {
         defaultRuntime = String(value || 'local');
         send({ type: 'set-default-runtime', runtime: defaultRuntime });

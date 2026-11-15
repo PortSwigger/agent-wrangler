@@ -4,13 +4,21 @@ import { CODEX_APPROVALS, codexApprovalPolicyError } from '../../extensions/code
 import { knownAgentIds, modelChoicesText, effortChoicesText, supportsRemoteControl } from '../../agents/index.js';
 import { performSpawn, errorResult } from './spawn-common.js';
 import { knownRuntimes, findRuntime, runtimeAgentError, DEFAULT_RUNTIME } from '../../runtimes/index.js';
+import { runtimeOffer } from '../../runtimes/offer.js';
 
 // e.g. "`local` (default), `devcontainer`, `cloud` (extension)".
 function runtimeChoicesText() {
-  return knownRuntimes().map(({ id, extId }) => {
+  const offer = runtimeOffer();
+  const open = offer.filter((r) => !r.unavailable).map(({ id, extId }) => {
     if (id === DEFAULT_RUNTIME) return `\`${id}\` (default)`;
     return extId ? `\`${id}\` (extension)` : `\`${id}\``;
-  }).join(', ');
+  });
+  const shut = offer.filter((r) => r.unavailable).map(({ id, unavailable }) => `\`${id}\` is unavailable: ${unavailable}`);
+  return [
+    open.length ? open.join(', ') : 'none (this deck offers no runtime it can launch on)',
+    ...(offer.some((r) => r.location) ? ['A session at a location gets its own runtime when none is named, and may only name a runtime at a location'] : []),
+    ...shut,
+  ].join('. ');
 }
 
 // Spin the caller's current work off into a brand-new full board session (not a

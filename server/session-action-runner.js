@@ -46,7 +46,9 @@ export async function runSessionAction(action, deps) {
   // up after archive — there is no interactive recreate prompt here, so recreate it
   // (the transcript lives under ~/.claude, so the conversation resumes; only working
   // files are gone), falling back to home if even that fails.
+  const refusal = sessionManager.callerRefusal?.(deps.scheduledBy, entry.runtime);
+  if (refusal) throw new Error(refusal);
   const dir = await wakeDir(entry, id);
-  await sessionManager.resume(id, dir, { intent: message, reason: 'schedule' });
+  await sessionManager.resume(id, dir, { intent: message, reason: 'schedule', ...(deps.scheduledBy ? { caller: deps.scheduledBy } : {}) });
   return { sessionId: id };
 }

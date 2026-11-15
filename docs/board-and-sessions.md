@@ -73,7 +73,10 @@ Optional launch controls include:
 - **Auto-compaction threshold:** set the working-context budget.
 - **Runtime:** launch Claude locally, inside the project's devcontainer, or on a runtime an enabled extension adds. Codex currently runs on the
   host. **Settings → Sessions → Default runtime for new sessions** picks which one is pre-selected; a runtime that is
-  no longer offered or can't run the chosen agent falls back to Local.
+  no longer offered or can't run the chosen agent falls back to Local. **Settings → Sessions → Runtimes this deck
+  offers** limits the list to the runtime ids you give (blank offers all). A runtime that runs sessions at a location
+  is offered only when every runtime the deck offers does: beside Local or Devcontainer it shows as unavailable with the
+  reason, and a deck of location runtimes starts nothing on its own machine, not even a plain terminal.
 - **Codex sandbox and approvals:** for a Codex model only, pick the sandbox (read-only, workspace-write or
   danger-full-access), the approval policy (on-request, the default, which shows the card as needs-you while Codex
   waits for your answer; or never, which lets Codex carry on without asking), **Approve for me** (Codex's automatic review,

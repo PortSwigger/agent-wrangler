@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmuxSocketArgs } from './tmux-socket.js';
 import { sendKeys } from './tmux-scraper.js';
+import { localProcessRefusal } from './runtimes/offer.js';
 
 const exec = promisify(execFile);
 
@@ -10,6 +11,8 @@ const exec = promisify(execFile);
 // pre-populating the prompt with `command` (no Enter — the user decides when to run).
 // Returns the tmux session name (`sh_<hex4>`).
 export async function createShellSession(cwd, socket, tmuxBin, command = '') {
+  const refusal = localProcessRefusal();
+  if (refusal) throw new Error(refusal);
   const name = `sh_${crypto.randomBytes(2).toString('hex')}`;
   const tmux = (args) => exec(tmuxBin, [...tmuxSocketArgs(socket), ...args]);
 

@@ -1561,6 +1561,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   runtime that builds its own command; it is `false` for `local` and `devcontainer`.
   `location` (1.86.0) marks a runtime whose sessions run at a location (see
   [Runtimes](#runtimes)); it is `false` for `local` and `devcontainer`.
+  `unavailable` (1.87.0) is the reason the deck won't launch on a runtime it
+  has, or null: one left out of the deck's offered runtimes (hidden from the
+  dialog), or a location runtime on a deck that also offers one on its own
+  machine (shown disabled with this reason). See [the deck's runtime offer](#runtimes).
 - **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
   adds a keyboard shortcut through the board's keybinding registry
   (`public/keybindings.js`) and returns an unbind function. The manifest must
@@ -2793,6 +2797,26 @@ Maintainer notes:
   hook or an unknown key, or an off-shape `suspendIdleHours`. While the extension is
   inactive the bound copy throws from `provision`, `open`, `resume`, `unpushed` and
   `diff`, and reads nothing.
+- **The deck's runtime offer (1.87.0).** Settings › Sessions › "Runtimes this deck
+  offers" (config `deckRuntimes`, an array of runtime ids; graph `deckRuntimes`)
+  picks the runtimes a deck offers; blank offers every runtime it has. A location
+  runtime is offered only when every runtime the deck offers is one, so a deck that
+  runs location sessions starts nothing on its own machine. On a deck that also
+  offers a runtime on its own machine (`local`, `devcontainer`, or an extension's
+  without `location`), a location runtime is shown disabled with the reason
+  (`unavailable` on `api.runtimes()`, graph `runtimeOffer` and the `/deck`
+  descriptor's `runtimes`), dispatch to it is refused, and its existing cards are
+  neither resumed, woken nor forked. On a deck of location runtimes only, every
+  launch on a runtime it doesn't offer is refused (a dispatch naming no runtime
+  means `local`), and so are plain terminals (`create_terminal`, the board's Open
+  terminal, `api.openTerminal`). A pick whose extensions are all off offers
+  nothing, rather than falling back to `local`. Every path that launches checks
+  this in core: the dispatch dialog, `spawn_session`, `spawn_workflow`, schedules,
+  `sessions.spawn`, `sessions.wake`, restore, resume, fork, and mail, message, PR
+  and snooze wakes. A session at a location starts children on its own runtime
+  when it names none and is refused a runtime on this machine, on every path that
+  starts or wakes a session for it (`spawn_session`, `spawn_workflow`,
+  `schedule_session`, `restore_session`, `restore_task`).
 - **Follow-up extraction.** Devcontainer is still special-cased outside the contract:
   the archive stop-container offer and its cascade (`control/handlers/archive.js`,
   `public/archive-cascade.js`), `archive-session`'s `stop_container`, the add-dirs resync in

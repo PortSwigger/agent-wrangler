@@ -79,7 +79,7 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     autoCompactTokens: opts.autoCompactTokens,
     ...(opts.approvalPolicy === undefined ? {} : { approvalPolicy: opts.approvalPolicy }),
     agent: opts.agent ?? 'claude',
-    runtime: opts.runtime || 'local',
+    runtime: opts.runtime || undefined,
     addDirs: opts.addDirs || [],
     repos: Array.isArray(opts.repos) && opts.repos.length ? opts.repos : undefined,
     branch: typeof opts.branch === 'string' && opts.branch ? opts.branch : undefined,

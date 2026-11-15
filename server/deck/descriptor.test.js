@@ -40,3 +40,15 @@ test('each extension is listed with its own boardApi, else the one the deck serv
   });
   assert.deepEqual(d.extensions, [{ id: 'split', version: '2.0.0', boardApi: '^1.74.0' }, { id: 'plain', version: null, boardApi: '1.74.0' }]);
 });
+
+test('a location runtime carries location, and one the deck will not launch on says why', () => {
+  const d = deckDescriptor({
+    deckId: 'd1',
+    name: 'laptop',
+    actions: [],
+    runtimes: [{ id: 'local', label: 'Local', agents: null, location: false }, { id: 'box', label: 'Box', agents: ['claude'], location: true, unavailable: 'Mixed deck.' }],
+    extensions: [],
+    boardApi: '1.87.0',
+  });
+  assert.deepEqual(d.runtimes, [{ id: 'local', label: 'Local', agents: null }, { id: 'box', label: 'Box', agents: ['claude'], location: true, unavailable: 'Mixed deck.' }]);
+});

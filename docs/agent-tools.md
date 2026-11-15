@@ -22,7 +22,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | Tool | Purpose |
 | --- | --- |
 | `get_model_front` | List launchable settings on the quality/cost/time front, cheapest first, with units, source credit, and quality/cost curve membership. Optionally judge a pick against the whole installed-agent front. `reviewFor` returns `reviewAgent` by declared provider preference, excluding the source; `null` means no independent provider is available. Read-only. |
-| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, optional Claude Remote Control (`remote_control`), and runtime (`local`, `devcontainer`, or one an enabled extension adds). A runtime that runs sessions at a location takes GitHub `repos` (`owner/name`), with an optional `branch` and `base`, instead of a folder; a session at a location may only give its children its own repos. `notify_status: true` subscribes to status notices; `nest: true` implies it. |
+| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, optional Claude Remote Control (`remote_control`), and runtime (`local`, `devcontainer`, or one an enabled extension adds). A runtime that runs sessions at a location takes GitHub `repos` (`owner/name`), with an optional `branch` and `base`, instead of a folder; a session at a location may only give its children its own repos, starts them on its own runtime when it names none, and is refused a runtime on the deck's machine. A runtime the deck doesn't offer, or a location runtime on a deck that also offers one on its own machine, is refused with the reason. `notify_status: true` subscribes to status notices; `nest: true` implies it. |
 | `spawn_workflow` | Launch the issue-to-PR autopilot in a dedicated worktree. `notify_status: true` subscribes to status notices; `nest: true` nests it and implies the subscription. |
 | `assign_session` | Move a session and its descendants to a task, or back to Ad-hoc. |
 | `attach_session` | Nest a session under another compatible session on the board. |
@@ -141,7 +141,7 @@ same provider and lifecycle limits.
 | `schedule_session` | Create a one-off or cron schedule that launches a new session, resumes a dormant one, or messages a live one. |
 | `update_schedule` | Edit a schedule by id, retaining omitted values. Uses the `schedule_session` fields; `at` or `cron` replaces timing and `tz` alone edits a cron timezone. Timing edits recompute `nextRunAt`; name and action edits preserve it. Returns the existing id and updated summary, or an error for an unknown id or invalid patch. |
 | `cancel_schedule` | Delete a schedule by id (from `schedule_session`) — retract a pending one-off or stop a cron. One-offs delete themselves after firing. |
-| `create_terminal` | Open a plain shell in the caller's directory and optionally prefill, but never execute, one command. |
+| `create_terminal` | Open a plain shell in the caller's directory and optionally prefill, but never execute, one command. Refused on a deck whose runtimes all run at a location. |
 
 ## Shared checklist
 

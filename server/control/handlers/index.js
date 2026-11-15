@@ -21,7 +21,7 @@ import { suppressNudgedPrToastsHandler } from './suppress-nudged-pr-toasts.js';
 import { prModelFooterHandler } from './pr-model-footer.js';
 import { childFullViewHandler } from './child-full-view.js';
 import { defaultSessionCwdHandler } from './default-session-cwd.js';
-import { defaultRuntimeHandler } from './default-runtime.js';
+import { defaultRuntimeHandler, deckRuntimesHandler } from './default-runtime.js';
 import { backgroundModelHandler } from './background-model.js';
 import { codexPolicyDefaultsHandler } from './codex-policy-defaults.js';
 import { extensionEnabledHandler } from './extension-enabled.js';
@@ -95,6 +95,7 @@ export const CONTROL_HANDLERS = [
   childFullViewHandler,
   defaultSessionCwdHandler,
   defaultRuntimeHandler,
+  deckRuntimesHandler,
   backgroundModelHandler,
   codexPolicyDefaultsHandler,
   extensionEnabledHandler,

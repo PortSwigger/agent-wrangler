@@ -31,7 +31,9 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   // A runtime that defines `validateModel` owns the model vocabulary for its
   // sessions, so core's per-agent check is skipped for it and the runtime is
   // asked instead; the accepted model reaches it as `ext.<extId>.model`.
-  const rt = args.runtime ? findRuntime(args.runtime) : null;
+  const callerEntry = caller ? deps.sessionManager?.entryFor(caller) : null;
+  const runtimeId = args.runtime || (callerEntry?.location !== undefined ? callerEntry.runtime : null);
+  const rt = runtimeId ? findRuntime(runtimeId) : null;
   const ownsModel = typeof rt?.validateModel === 'function';
   const badTarget = launchTargetError(agent, ownsModel ? undefined : args.model, args.effort);
   if (badTarget) return errorResult(badTarget);
@@ -56,7 +58,6 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
   // vocabularies differ per adapter (codex offers `ultra`, claude does not), so a
   // cross-agent spawn falls back to that agent's own default.
   let { model, effort } = args;
-  const callerEntry = caller ? deps.sessionManager?.entryFor(caller) : null;
   if (callerEntry && (callerEntry.agent ?? 'claude') === agent) {
     // The caller's model belongs to the caller's agent, not to a runtime that owns its own.
     if (model == null && !ownsModel) model = callerEntry.model || undefined;

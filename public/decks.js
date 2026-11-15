@@ -106,7 +106,13 @@ export function deckRuntimes(descriptor) {
   const out = [];
   for (const r of list) {
     if (typeof r?.id !== 'string' || !r.id || out.some((x) => x.id === r.id)) continue;
-    out.push({ id: r.id, label: typeof r.label === 'string' && r.label ? r.label : r.id, agents: Array.isArray(r.agents) ? r.agents.filter((a) => typeof a === 'string') : null });
+    out.push({
+      id: r.id,
+      label: typeof r.label === 'string' && r.label ? r.label : r.id,
+      agents: Array.isArray(r.agents) ? r.agents.filter((a) => typeof a === 'string') : null,
+      ...(r.location === true ? { location: true } : {}),
+      ...(typeof r.unavailable === 'string' && r.unavailable ? { unavailable: r.unavailable } : {}),
+    });
   }
   return out.length ? out : [{ id: 'local', label: 'Local (host)', agents: null }];
 }

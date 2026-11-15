@@ -7,7 +7,7 @@ export function deckDescriptor({ deckId, name, actions, runtimes, extensions, bo
     deckId,
     name,
     api: DECK_API_VERSION,
-    runtimes: runtimes.map(({ id, label, agents }) => ({ id, label, agents: agents ?? null })),
+    runtimes: runtimes.map(({ id, label, agents, location, unavailable }) => ({ id, label, agents: agents ?? null, ...(location ? { location: true } : {}), ...(unavailable ? { unavailable } : {}) })),
     actions: [...actions].sort(),
     extensions: extensions
       .filter((e) => e.enabled)

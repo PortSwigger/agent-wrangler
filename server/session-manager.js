@@ -8,7 +8,8 @@ import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, adapterForTmux, agentError, isOwnedTmux, discoveryFloor, supportsRemoteControl, supportsDisallowedTools } from './agents/index.js';
-import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError, takesStatusEvents } from './runtimes/index.js';
+import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError, takesStatusEvents, DEFAULT_RUNTIME } from './runtimes/index.js';
+import { launchRefusal } from './runtimes/offer.js';
 import { hasLocation, atLocation, sameLocation, checkRef, openLocation, withLocationReads, locationIdleMs, locationCodexId } from './locations/index.js';
 import { normaliseRepos, reposBrief, checkLocationBranch, childRepos, prLinkRefusal, renameLocationBranchText } from './locations/repos.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
@@ -872,6 +873,17 @@ export class SessionManager {
     }
   }
 
+  // Null when session `callerId` may start or wake a session on runtime `id`,
+  // else why not: a session at a location only reaches sessions at a location.
+  callerRefusal(callerId, id) {
+    const caller = callerId ? this.map.get(callerId) : null;
+    if (!atLocation(caller)) return null;
+    const rt = findRuntime(id);
+    if (hasLocation(rt)) return null;
+    const name = rt ? rt.label || rt.id : id;
+    return `A session at a location starts and wakes sessions only at a location, and "${name}" runs on this deck's machine. Leave runtime out to use this session's own ("${caller.runtime}").`;
+  }
+
   isArchived(sessionId) {
     return Boolean(this.map.get(sessionId)?.archivedAt);
   }
@@ -1377,7 +1389,7 @@ export class SessionManager {
 
   // Resume an existing session's conversation in a fresh, attachable tmux
   // session (used for sessions not already running in tmux).
-  async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified', automatic = false } = {}) {
+  async _doResume(sessionId, cwd, { intent = '', reason = 'unspecified', automatic = false, caller = null } = {}) {
     // A prompt riding the relaunch, for telemetry's source: a caller that knows
     // better (deliverMessage) noted it already, and this only fills the gap.
     if (intent) notePrompt(intent, promptSourceForReason(reason), { fallback: true });
@@ -1385,7 +1397,7 @@ export class SessionManager {
     // A runtime that can't be resumed (or one whose extension is gone) refuses
     // HERE, before the kill below: a held pane may be the only thing keeping a
     // non-resumable card's work visible, and a refused resume must not take it.
-    const refusal = relaunchRefusal(prev);
+    const refusal = relaunchRefusal(prev) || this.callerRefusal(caller, prev?.runtime) || launchRefusal(prev?.runtime);
     if (refusal) throw new Error(refusal);
     const agent = prev?.agent ?? 'claude';
     if (prev?.remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
@@ -1566,7 +1578,7 @@ export class SessionManager {
 
   async _doFork({ sourceId, parentId, parentEntry, cwd, prompt = '', name = '' } = {}) {
     // Same gate as _doResume: a fork relaunches the parent's runtime.
-    const refusal = relaunchRefusal(parentEntry);
+    const refusal = relaunchRefusal(parentEntry) || launchRefusal(parentEntry?.runtime);
     if (refusal) throw new Error(refusal);
     const agent = parentEntry?.agent ?? 'claude';
     if (parentEntry?.disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
@@ -2205,7 +2217,7 @@ export class SessionManager {
     });
   }
 
-  async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime = 'local', addDirs = [], taskId, launchReason = 'dispatch',
+  async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime, addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, approvalPolicy, codexPolicy: pickedCodexPolicy,
                    launchSource, spawner, scheduledBy, repos: reposOpt, branch: branchOpt, base: baseOpt } = {}, pending = {}) {
@@ -2221,6 +2233,12 @@ export class SessionManager {
     if (autoCompactError) throw new Error(autoCompactError);
     const normalizedAutoCompactTokens = autoCompactTokens == null || autoCompactTokens === '' ? undefined : autoCompactTokens;
     if (!Array.isArray(addDirs)) throw new Error('Additional folders must be an array of paths');
+    // A session at a location starts its children at a location: its own
+    // runtime when none is named, and never one on this machine.
+    const callerEntry = this.map.get(spawnedBy || scheduledBy || '') || null;
+    runtime ||= atLocation(callerEntry) ? callerEntry.runtime : DEFAULT_RUNTIME;
+    const placeRefusal = this.callerRefusal(spawnedBy || scheduledBy, runtime) || launchRefusal(runtime);
+    if (placeRefusal) throw new Error(placeRefusal);
     // A session at a location works on GitHub repos it clones there; this
     // machine's folders, worktrees and grants name nothing where it runs.
     const remoteRt = runtimeFor(runtime);
@@ -2229,7 +2247,7 @@ export class SessionManager {
     if (remote && worktree) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime takes GitHub repos instead of a worktree; the session branches in its own clones.`);
     let repos = normaliseRepos(reposOpt);
     if (repos.length && !remote) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime runs on this machine; give it a folder instead of GitHub repos.`);
-    if (remote && spawnedBy) repos = childRepos(this.map.get(spawnedBy), repos);
+    if (remote && callerEntry) repos = childRepos(callerEntry, repos);
     const locationBranch = checkLocationBranch({ branch: branchOpt, base: baseOpt, repos });
     const remoteCwd = remote && cwd != null && String(cwd).trim() ? String(cwd).trim() : null;
     if (remoteCwd && (!remoteCwd.startsWith('/') || /[\0\n\r]/.test(remoteCwd))) throw new Error('A folder at a location must be an absolute path there.');

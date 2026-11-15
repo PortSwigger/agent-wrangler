@@ -134,6 +134,15 @@ export const SETTINGS = [
     help: 'Pre-selects the Runtime field when you start a session. If the runtime is no longer offered (its extension is off) or cannot run the chosen agent, the session starts on Local. Resumed and forked sessions keep their own runtime.',
     default: 'local',
   },
+  {
+    id: 'deckRuntimes',
+    type: 'text',
+    scope: 'server',
+    label: 'Runtimes this deck offers',
+    help: 'Runtime ids, comma-separated (for example local, devcontainer). Blank offers every runtime. A runtime that runs sessions at a location is offered only when every runtime listed does, and then this deck starts nothing on its own machine: no local sessions and no plain terminals.',
+    placeholder: 'every runtime',
+    default: '',
+  },
   // Settings › Sessions' Codex defaults: one config.json object
   // (`codexPolicyDefaults`), one row per field. What the dispatch dialog's Codex
   // controls prefill from, and what a dispatch with no dialog (spawn_session, a
@@ -222,7 +231,7 @@ export const SETTINGS_TABS = [
     label: 'Sessions',
     settingIds: [
       'subagentsExpandedByDefault',
-      'childFullViewByDefault', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime',
+      'childFullViewByDefault', 'chatViewDefault', 'defaultSessionCwd', 'defaultRuntime', 'deckRuntimes',
       'codexDefaultSandbox', 'codexDefaultApproval', 'codexDefaultApproveForMe', 'codexDefaultBypass',
     ],
   },

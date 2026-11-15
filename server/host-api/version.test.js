@@ -90,11 +90,12 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.84.0 the runtime `location` hooks,
 // 1.85.0 `sessions.spawn({ runtime, repos, branch, base })`, `allowUnpushed` and projection `repos`,
 // 1.86.0 `location` in the client `api.runtimes()`,
+// 1.87.0 the deck's runtime offer and `unavailable`,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders.
-test('the served version is 1.86.0, and every 1.x manifest range it can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '1.86.0');
+test('the served version is 1.87.0, and every 1.x manifest range it can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '1.87.0');
   assert.equal(servesRange('^1.47.0'), true);
   assert.equal(servesRange('^1.48.0'), true);
   assert.equal(servesRange('^1.49.0'), true);
@@ -135,7 +136,8 @@ test('the served version is 1.86.0, and every 1.x manifest range it can honour p
   assert.equal(servesRange('^1.84.0'), true);
   assert.equal(servesRange('^1.85.0'), true);
   assert.equal(servesRange('^1.86.0'), true);
-  assert.equal(servesRange('^1.87.0'), false);
+  assert.equal(servesRange('^1.87.0'), true);
+  assert.equal(servesRange('^1.88.0'), false);
   assert.equal(servesRange('^1.46.0'), true);
   assert.equal(servesRange('^1.45.0'), true);
   assert.equal(servesRange('^1.44.0'), true);

@@ -60,6 +60,7 @@ export const BOARD_ACTIONS = {
   'set-pr-model-footer': 'admin.set-pr-model-footer',
   'set-default-session-cwd': 'admin.set-default-session-cwd',
   'set-default-runtime': 'admin.set-default-runtime',
+  'set-deck-runtimes': 'admin.set-deck-runtimes',
   'set-background-model': 'admin.set-background-model',
   'set-codex-policy-default': 'admin.set-codex-policy-default',
   'set-auto-update-mode': 'admin.set-auto-update-mode',

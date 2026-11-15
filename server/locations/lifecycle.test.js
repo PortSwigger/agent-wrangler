@@ -2,56 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
-import { SessionManager } from '../session-manager.js';
-import { registerRuntime, unregisterRuntimesFor } from '../runtimes/index.js';
+import { WORK, testLocationRuntime, withRuntime, manager } from '../fixtures/location-runtime.js';
 import { buildGraph } from '../state-reader.js';
 import { findUnpushed } from './repos.js';
 import { wakeDir } from '../wake-dir.js';
 import { locationCodexId } from './index.js';
-
-const WORK = '/srv/location-only/work';
-
-const TRANSCRIPT = [
-  JSON.stringify({ type: 'ai-title', aiTitle: 'Fix the widget' }),
-  JSON.stringify({ type: 'assistant', timestamp: '2026-11-15T10:00:00.000Z', message: { id: 'm1', model: 'claude-sonnet-4-5', usage: { input_tokens: 1000, output_tokens: 500 }, content: [{ type: 'text', text: 'done' }] } }),
-].join('\n');
-
-export function testLocationRuntime(calls = [], over = {}) {
-  let n = 0;
-  return {
-    id: 'testloc',
-    label: 'Test location',
-    agents: ['claude', 'codex'],
-    wrapLaunch: async (args) => { calls.push(['wrap', args]); return `run-at-location ${JSON.stringify(args.location)}`; },
-    location: {
-      provision: async (args) => { calls.push(['provision', args]); n += 1; return { box: `box-${n}` }; },
-      open: async ({ ref, phase }) => { calls.push(['open', ref, phase]); return { cwd: `${WORK}/${ref.box}` }; },
-      suspend: async ({ ref }) => { calls.push(['suspend', ref]); },
-      resume: async ({ ref }) => { calls.push(['resume', ref]); },
-      delete: async ({ ref }) => { calls.push(['delete', ref]); },
-      unpushed: async ({ ref }) => { calls.push(['unpushed', ref]); return []; },
-      transcript: async () => TRANSCRIPT,
-      codexId: async () => null,
-      ...over,
-    },
-  };
-}
-
-export async function withRuntime(rt, fn) {
-  registerRuntime(rt, 'testext');
-  try { return await fn(); } finally { unregisterRuntimesFor('testext'); }
-}
-
-export function manager() {
-  const sm = new SessionManager();
-  sm.map.clear();
-  sm._newSession = async () => {};
-  sm._save = () => {};
-  sm.refreshAlive = async () => {};
-  sm.killForSession = async () => [];
-  sm._trustLaunchCwd = async () => { throw new Error('host trust must not run for a location card'); };
-  return sm;
-}
 
 const settle = () => new Promise((r) => setTimeout(r, 10));
 const kinds = (calls) => calls.map(([k]) => k);
@@ -164,8 +119,10 @@ test('add_dirs, worktree and a host folder grant are refused at a location befor
     await assert.rejects(sm.dispatch({ intent: 'x', runtime: 'testloc', addDirs: [os.tmpdir()] }), /this machine's folders can't be granted/);
     await assert.rejects(sm.dispatch({ intent: 'x', runtime: 'testloc', worktree: true, cwd: '/srv/repo' }), /instead of a worktree/);
     await assert.rejects(sm.dispatch({ intent: 'x', runtime: 'testloc', cwd: 'relative/dir' }), /absolute path there/);
-    await assert.rejects(sm.dispatch({ intent: 'x', cwd: os.tmpdir(), repos: ['acme/widgets'] }), /runs on this machine; give it a folder/);
   });
+  await withRuntime(testLocationRuntime(calls), async () => {
+    await assert.rejects(sm.dispatch({ intent: 'x', cwd: os.tmpdir(), repos: ['acme/widgets'] }), /runs on this machine; give it a folder/);
+  }, { picked: null });
   assert.deepEqual(calls, []);
   assert.equal(sm.map.size, 0);
 });

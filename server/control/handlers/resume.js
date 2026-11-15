@@ -1,6 +1,7 @@
 import { waitForComposerReady } from '../../pane-ready.js';
 import { adapterFor } from '../../agents/index.js';
 import { ensureLaunchDir } from './resume-dir.js';
+import { launchRefusal } from '../../runtimes/offer.js';
 import { prefillPane, paneTitle, claudeTitle } from '../../tmux-scraper.js';
 import { nudgeAndWaitForJobs, descendantIdsOf } from './archive.js';
 
@@ -53,9 +54,12 @@ export async function deliverWakeNote(name, socket, comment, {
 // the bulk task-restore path (taskUnarchiveHandler resuming every session a
 // task-archive cascaded), so relaunch, memory-binding, and the
 // archived-task-fallback logic below can't drift between the two callers.
-export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst } = {}) {
+export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst, caller = null } = {}) {
   const s = ctx.sessionFromGraph(sessionId);
   const entry = ctx.sessionManager.entryFor(sessionId);
+  // Refused before the snooze claim and the launch dir, so nothing changes.
+  const refusal = ctx.sessionManager.callerRefusal?.(caller, entry?.runtime) || launchRefusal(entry?.runtime);
+  if (refusal) throw new Error(refusal);
   // clearSnooze is the atomic delivery CLAIM. Read the note and claim it in the
   // SAME synchronous block — NO await between the read and the clear — and BEFORE
   // resume(), so exactly one actor delivers. The 30s auto-wake sweep can claim +
@@ -121,7 +125,7 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   // NB restart newly routes a *live* session through resume(): _doResume kills the
   // tmux only after its resume refuse-guards (resumePlan/resumeLaunchPlan), so a
   // refuse leaves the session live and surfaces as an error toast.
-  const { tmux } = await ctx.sessionManager.resume(sessionId, dir, { reason: 'manual' });
+  const { tmux } = await ctx.sessionManager.resume(sessionId, dir, { reason: 'manual', ...(caller ? { caller } : {}) });
   await ctx.rebuild();
   // Deliver the (pre-resume) snooze note into the freshly-launched pane once the
   // agent is ready. After rebuild, so the readiness wait never delays the board

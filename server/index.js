@@ -12,7 +12,8 @@ import openModule from 'open';
 import { buildGraph, createWatcher, sessionLabel } from './state-reader.js';
 import { analyze, resolveResumeDir } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
-import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, knownRuntimes, findRuntime, takesStatusEvents } from './runtimes/index.js';
+import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, findRuntime, takesStatusEvents } from './runtimes/index.js';
+import { runtimeOffer } from './runtimes/offer.js';
 import { createStatusEventStore, createStatusEventHandler } from './status-events.js';
 import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
@@ -40,7 +41,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, deckRuntimes, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
@@ -891,7 +892,7 @@ function performScheduleAction(action, now, scheduledBy) {
   if (!action || action.kind === 'dispatch') {
     return runDispatch(action?.dispatch || {}, { sessionManager, taskStore, launchSource: 'schedule', scheduledBy }, now);
   }
-  return runSessionAction(action, { sessionManager, tmuxFor, socketFor });
+  return runSessionAction(action, { sessionManager, tmuxFor, socketFor, scheduledBy });
 }
 
 // Fire one schedule (shared by the ~30s tick and schedule-run-now): perform its
@@ -1121,7 +1122,7 @@ function deckHandler(req, res) {
       deckId,
       name: os.hostname(),
       actions: deckActions().keys(),
-      runtimes: knownRuntimes().map((rt) => (rt.id === 'local' && localAgents ? { ...rt, agents: localAgents } : rt)),
+      runtimes: runtimeOffer().map((rt) => (rt.id === 'local' && localAgents ? { ...rt, agents: localAgents } : rt)),
       extensions: ext.list,
       boardApi: HOST_API_VERSION,
     });
@@ -1311,6 +1312,8 @@ async function rebuildOnce() {
   graph.prModelFooter = prModelFooterEnabled();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();
+  graph.deckRuntimes = deckRuntimes() || [];
+  graph.runtimeOffer = runtimeOffer().map(({ id, location, unavailable }) => ({ id, location, ...(unavailable ? { unavailable } : {}) }));
   // Settings › Background model, resolved: never null, a stored pair that can
   // no longer run reads back as the default it falls back to.
   graph.backgroundModel = backgroundModel();
