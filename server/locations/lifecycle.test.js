@@ -132,13 +132,20 @@ test('children of a location session inherit only its repos', async () => {
   const sm = manager();
   await withRuntime(testLocationRuntime(calls), async () => {
     const { sessionId: parent } = await sm.dispatch({ intent: 'x', runtime: 'testloc', repos: ['acme/widgets', 'acme/gadgets'] });
-    const { sessionId: all } = await sm.dispatch({ intent: 'y', runtime: 'testloc', spawnedBy: parent });
+    const { sessionId: all, withheldRepos: none } = await sm.dispatch({ intent: 'y', runtime: 'testloc', spawnedBy: parent });
     assert.deepEqual(sm.map.get(all).repos, ['acme/widgets', 'acme/gadgets']);
+    assert.equal(none, undefined);
     const { sessionId: one } = await sm.dispatch({ intent: 'y', runtime: 'testloc', spawnedBy: parent, repos: ['ACME/gadgets'] });
     assert.deepEqual(sm.map.get(one).repos, ['ACME/gadgets']);
-    const before = calls.filter(([k]) => k === 'provision').length;
-    await assert.rejects(sm.dispatch({ intent: 'y', runtime: 'testloc', spawnedBy: parent, repos: ['evil/repo'] }), /evil\/repo is not one of the spawning session's repos/);
-    assert.equal(calls.filter(([k]) => k === 'provision').length, before, 'refused before provisioning');
+    calls.length = 0;
+    const { sessionId: some, withheldRepos } = await sm.dispatch({ intent: 'y', runtime: 'testloc', spawnedBy: parent, repos: ['acme/widgets', 'evil/repo'] });
+    assert.deepEqual(sm.map.get(some).repos, ['acme/widgets']);
+    assert.deepEqual(withheldRepos, ['evil/repo']);
+    assert.deepEqual(calls.find(([k]) => k === 'provision')[1].repos, ['acme/widgets'], 'the runtime is never handed a withheld repo');
+    const inner = calls.find(([k]) => k === 'wrap')[1].inner;
+    assert.match(inner, /acme\/widgets\.git/);
+    assert.doesNotMatch(inner, /evil\/repo\.git/);
+    assert.match(inner, /evil\/repo, which the session that started you cannot reach.*request_repo/);
   });
 });
 

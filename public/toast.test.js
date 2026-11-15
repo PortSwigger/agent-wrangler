@@ -200,3 +200,12 @@ test('index.html declares the stack as a manual popover', () => {
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
   assert.match(html, /<div id="toast" popover="manual"><\/div>/);
 });
+
+test('dismiss takes down the toast with that id and leaves the rest', () => {
+  const { doc, toasts } = fakeWorld();
+  toasts.show('fyi', false, { duration: Infinity });
+  toasts.show('Asks to reach acme/c', 'warning', { id: 'repo-request:rr_1', duration: Infinity, actions: [{ label: 'Allow', onClick() {} }] });
+  toasts.dismiss('repo-request:rr_1');
+  toasts.dismiss('repo-request:gone');
+  assert.deepEqual(shown(doc), ['fyi']);
+});

@@ -33,6 +33,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | `restore_session` | Resume an archived or dormant session onto the board. Refuses a live session; `recreate_dir: true` recreates a deleted launch dir. |
 | `restore_task` | Restore an archived task (ids from `list_tasks` with `archived: true`), and by default resume the sessions archived with it (`restore_sessions: false` for the empty tile). |
 | `name_branch` | Rename the caller's Wrangler-managed worktree branch, or record a location session's new branch name and return the `git branch -m` to run in its clones. |
+| `request_repo` | At a remote location, ask the human to let the caller reach more GitHub repos (`repos` as `owner/name`, and a one-sentence `why`), including one withheld when it was spawned. The answer comes as mail; an allowed request's mail says where to clone. Refused on this machine, where the session already reaches your checkouts. |
 | `workflow_phase` | Update a Workflow card's phase chip. |
 
 Call `get_model_front` when choosing a model for a spawn, handoff, advisor, or reviewer.

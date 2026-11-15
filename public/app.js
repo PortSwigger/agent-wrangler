@@ -57,7 +57,7 @@ import {
 import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
-import { toast } from './toast.js';
+import { toast, dismissToast } from './toast.js';
 import { createDeckClient, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
@@ -70,6 +70,7 @@ import { createInputGates } from './input-gate.js';
 import { prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
+import { createRepoAccess } from './repo-access.js';
 import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
 import { createExtFileViewer } from './ext-file-viewer.js';
@@ -281,6 +282,7 @@ function noteExtClientFacts(list) {
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
 // slots.apiFor, which is the only place the extension id is known.
 const notifications = createNotifications({ document });
+const repoAccess = createRepoAccess({ document, send: (m) => send(m), toast, dismissToast });
 // Back api.targets / api.front and api.rail (slots binds the extension id).
 const boardTargets = createBoardTargets({
   doc: document,
@@ -1016,6 +1018,7 @@ function barWord(s) {
 
 function applyGraph(graph) {
   latestSessions = graph.sessions || [];
+  repoAccess.onGraph(latestSessions);
   // history is the one key the server may leave OUT: it's the archive of every
   // session ever set aside and it changes a handful of times a day against a ~2s
   // broadcast, so it rides only the ticks that change it (server/deck/state.js).
@@ -3094,6 +3097,7 @@ function openCardMenu(card, x, y) {
     ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', run: () => peerReviewSession(sessionId) }] : []),
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => openDiffPanel(card) },
     { label: 'Copy reference', icon: COPY_ICON, run: () => copySessionReference(s) },
+    ...reposMenuItems(s),
     ...(s.exitOutput ? [{ label: 'Show last output', icon: ROBOT_ICON, run: () => selectSession(card) }] : []),
     { sep: true },
     ...(snoozed ? [
@@ -3127,6 +3131,13 @@ function openCardMenu(card, x, y) {
   mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
 }
 
+// A location card's repos dialog, named for what is waiting in it.
+function reposMenuItems(s) {
+  if (!Array.isArray(s.repos)) return [];
+  const waiting = s.repoRequests?.length || 0;
+  return [{ label: waiting ? `GitHub repos (${waiting} waiting)…` : 'GitHub repos…', icon: GITHUB_ICON, run: () => repoAccess.open(s.sessionId) }];
+}
+
 // A line to paste into another agent's chat: the id is what read_session_transcript
 // takes, and naming the tool saves the reader a list_sessions lookup.
 function copySessionReference(s) {
@@ -3151,6 +3162,7 @@ function openActionsMenu(card, x, y) {
     { label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
     // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => { openDiffPanel(card); if (sessionEmbed.active()) renderPanel(card); } },
+    ...reposMenuItems(s),
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
@@ -8258,7 +8270,7 @@ export function deckAct(action, { card = null, ...opts } = {}) {
 // settings, extensions and updates are its own and stay off this board.
 const REMOTE_DECK_MESSAGES = new Set([
   'notify', 'diff', 'diff-comments-result', 'pr-checks', 'pr-merge', 'pr-dirty', 'pr-unresolved',
-  'auto-archived', 'archived', 'archive-unpushed', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
+  'auto-archived', 'archived', 'archive-unpushed', 'repos-added', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
   'forked', 'resume-needs-dir', 'open-terminal', 'subagent-detail', 'chat', 'message-result',
   'paste-image-result', 'interrupt-restore', 'model-set', 'error',
   'schedule-fired', 'schedule-error', 'schedule-missed',
@@ -8424,6 +8436,7 @@ function onDeckMessage(msg) {
     }
   }
   else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);
+  else if (msg.type === 'repos-added') repoAccess.onAdded(msg);
   // The "Kill jobs & archive" outcome — the immediate toast in archiveSession()
   // already fired; this replaces it once the nudge/wait/teardown actually finish.
   else if (msg.type === 'archive-unpushed') {

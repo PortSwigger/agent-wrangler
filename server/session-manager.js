@@ -11,7 +11,7 @@ import { adapterFor, adapterForTmux, agentError, isOwnedTmux, discoveryFloor, su
 import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError, takesStatusEvents, DEFAULT_RUNTIME } from './runtimes/index.js';
 import { launchRefusal } from './runtimes/offer.js';
 import { hasLocation, atLocation, sameLocation, checkRef, openLocation, withLocationReads, locationIdleMs, locationCodexId } from './locations/index.js';
-import { normaliseRepos, reposBrief, checkLocationBranch, childRepos, prLinkRefusal, renameLocationBranchText } from './locations/repos.js';
+import { normaliseRepos, reposBrief, checkLocationBranch, childRepos, prLinkRefusal, renameLocationBranchText, reposToAdd, holdsRepo, withheldReposBrief } from './locations/repos.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName, sanitizeBranch } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
@@ -35,6 +35,9 @@ import { notePrompt, promptSourceForReason } from './prompt-ledger.js';
 import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
 import { checkGuiSession } from './gui-session.js';
 import { gentleKill } from './tmux-gentle-kill.js';
+
+export const MAX_REPO_REQUESTS = 5;
+export const MAX_REPO_REQUEST_WHY = 500;
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -1173,6 +1176,77 @@ export class SessionManager {
     return { branch, from, text: branch === from ? null : renameLocationBranchText(entry, from, branch) };
   }
 
+  _locationEntry(sessionId) {
+    const entry = this.map.get(sessionId);
+    if (!entry) throw new Error('Unknown session.');
+    if (!atLocation(entry)) throw new Error('This session runs on this machine, where it can already reach your checkouts; only a session at a location takes GitHub repos.');
+    if (entry.archivedAt) throw new Error('This session is archived.');
+    return entry;
+  }
+
+  // Give a location card more GitHub repos (`owner/name`). Every card sharing its
+  // location (a fork shares its parent's) gets them too. The runtime's `open` is
+  // handed the new list (phase 'repos') before this returns, so the repos are
+  // reachable before the session is told; if it refuses, nothing is added. A
+  // suspended card's runtime hears at resume, whose `open` carries the list.
+  async addLocationRepos(sessionId, repos) {
+    const entry = this._locationEntry(sessionId);
+    const added = reposToAdd(entry.repos, repos);
+    if (!added.length) return { added, repos: [...(entry.repos || [])] };
+    const cards = [...this.map.values()].filter((e) => e === entry || sameLocation(e, entry));
+    const before = new Map(cards.map((e) => [e, e.repos]));
+    for (const e of cards) e.repos = [...(e.repos || []), ...added.filter((r) => !holdsRepo(e.repos, r))];
+    if (!entry.suspendedAt) {
+      const rt = runtimeFor(entry.runtime);
+      try {
+        if (!hasLocation(rt)) throw new Error('its runtime is not available');
+        await openLocation(rt, entry, 'repos');
+      } catch (err) {
+        for (const [e, r] of before) { if (r === undefined) delete e.repos; else e.repos = r; }
+        throw new Error(`Could not give this session ${added.join(', ')}: ${err?.message || err}`);
+      }
+    }
+    this._save();
+    return { added, repos: [...entry.repos] };
+  }
+
+  // A location session asking the human for GitHub repos it cannot reach yet.
+  // Repos it holds or has already asked for are left out; `request` is null when
+  // nothing is left to ask for.
+  requestLocationRepos(sessionId, repos, why) {
+    const entry = this._locationEntry(sessionId);
+    const pending = entry.repoRequests || [];
+    const asked = pending.flatMap((r) => r.repos);
+    const ask = reposToAdd(entry.repos, repos).filter((r) => !holdsRepo(asked, r));
+    if (!ask.length) return { request: null };
+    if (pending.length >= MAX_REPO_REQUESTS) throw new Error(`This session already has ${pending.length} requests waiting for the human; wait for an answer before asking again.`);
+    const request = { id: `rr_${crypto.randomBytes(4).toString('hex')}`, repos: ask, why: String(why || '').trim().slice(0, MAX_REPO_REQUEST_WHY), at: Date.now() };
+    entry.repoRequests = [...pending, request];
+    this._save();
+    return { request };
+  }
+
+  // The human's answer to a request: allowed, its repos are added (any it got
+  // meanwhile are skipped); declined, it is dropped. A request whose repos the
+  // runtime refuses stays waiting, so the human can try again.
+  async answerRepoRequest(sessionId, requestId, allow) {
+    const entry = this._locationEntry(sessionId);
+    const request = (entry.repoRequests || []).find((r) => r.id === requestId);
+    this._answering ??= new Set();
+    if (!request || this._answering.has(request.id)) throw new Error('That request has already been answered.');
+    this._answering.add(request.id);
+    let added = [];
+    try {
+      if (allow) added = (await this.addLocationRepos(sessionId, request.repos)).added;
+    } finally {
+      this._answering.delete(request.id);
+    }
+    entry.repoRequests = (entry.repoRequests || []).filter((r) => r !== request);
+    if (!entry.repoRequests.length) delete entry.repoRequests;
+    this._save();
+    return { request, added };
+  }
+
   // Read a session's links (by card id). Empty for an unmapped session.
   getLinks(sessionId) {
     const entry = this.map.get(sessionId);
@@ -2247,7 +2321,8 @@ export class SessionManager {
     if (remote && worktree) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime takes GitHub repos instead of a worktree; the session branches in its own clones.`);
     let repos = normaliseRepos(reposOpt);
     if (repos.length && !remote) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime runs on this machine; give it a folder instead of GitHub repos.`);
-    if (remote && callerEntry) repos = childRepos(callerEntry, repos);
+    let withheldRepos = [];
+    if (remote && callerEntry) ({ repos, withheld: withheldRepos } = childRepos(callerEntry, repos));
     const locationBranch = checkLocationBranch({ branch: branchOpt, base: baseOpt, repos });
     const remoteCwd = remote && cwd != null && String(cwd).trim() ? String(cwd).trim() : null;
     if (remoteCwd && (!remoteCwd.startsWith('/') || /[\0\n\r]/.test(remoteCwd))) throw new Error('A folder at a location must be an absolute path there.');
@@ -2399,7 +2474,7 @@ export class SessionManager {
     // as the card's: the caller pastes it into the booted composer itself, which is
     // the only way a first prompt can carry images (dispatch-runner.js). A launch
     // argument has no composer for an image path to be absorbed into.
-    const launchIntent = [remote ? reposBrief(cwd, repos, { branch: locationBranch.branch, base: locationBranch.branchBase }) : '', deferIntent ? '' : (intent ?? '')].filter(Boolean).join('\n\n');
+    const launchIntent = [remote ? reposBrief(cwd, repos, { branch: locationBranch.branch, base: locationBranch.branchBase }) : '', withheldReposBrief(withheldRepos), deferIntent ? '' : (intent ?? '')].filter(Boolean).join('\n\n');
     // Asked on both paths so a buildLaunch runtime logs the secrets it skips.
     const secretEnvFile = this._secretEnvFileFor(rt, tmux, launchContext);
     const toolFingerprint = this._extensionToolFingerprint();
@@ -2437,7 +2512,7 @@ export class SessionManager {
     await this._fireExtHooks('onDispatch', { sessionId, entry });
     this._launched({ sessionId, entry, source: launchSource || (spawnedBy ? 'agent' : 'board'), spawner: spawner || null });
     await this.refreshAlive();
-    return { sessionId, tmux, cwd };
+    return { sessionId, tmux, cwd, ...(withheldRepos.length ? { withheldRepos } : {}) };
   }
 }
 

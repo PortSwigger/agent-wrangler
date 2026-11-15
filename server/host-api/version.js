@@ -620,7 +620,18 @@ import semver from 'semver';
 // `api.openTerminal` refuse the same. A session at a location starts children on
 // its own runtime when none is named and is refused one on this machine. A
 // manifest or board half reading `unavailable` declares `^1.87.0`.
-export const HOST_API_VERSION = '1.87.0';
+//
+// 1.88.0 lets a location card gain GitHub repos after dispatch: the human adds
+// them from the card, or allows a session's `request_repo`. Core appends them to
+// `entry.repos` on the card and every card sharing its ref, then calls the
+// runtime's `open({ ref, entry, phase: 'repos' })` before the session is told,
+// so a runtime limiting what a card reaches lets the new repos through there; a
+// throw adds nothing. A suspended card's runtime hears at its next `resume`
+// open. A session spawned by a location session gets only the named repos its
+// spawner holds; the rest are withheld (`withheldRepos` on the dispatch result)
+// until the human allows a request. A runtime that reads `phase: 'repos'`
+// declares `^1.88.0`.
+export const HOST_API_VERSION = '1.88.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

@@ -57,8 +57,9 @@ function checkCwd(cwd, rt) {
   return cwd;
 }
 
-// Readies the location for a launch ('dispatch', 'resume' or 'fork'). Its
-// answer may name the folder the agent starts in there.
+// Readies the location for a launch ('dispatch', 'resume' or 'fork'), or for
+// the card's grown `entry.repos` ('repos'). Its answer may name the folder the
+// agent starts in there.
 export async function openLocation(rt, entry, phase) {
   if (typeof rt.location.open !== 'function') return {};
   let out;

@@ -207,11 +207,16 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
   }
   watch();
 
-  return { show, count: () => live.length, clear: () => { for (const t of [...live]) dismiss(t); } };
+  const dismissId = (id) => { const t = live.find((x) => x.id === id); if (t) dismiss(t); };
+  return { show, dismiss: dismissId, count: () => live.length, clear: () => { for (const t of [...live]) dismiss(t); } };
 }
 
 let shared = null;
 export function toast(text, isErr, opts) {
   shared ||= createToasts({ document: globalThis.document });
   shared.show(text, isErr, opts);
+}
+
+export function dismissToast(id) {
+  shared?.dismiss(id);
 }
