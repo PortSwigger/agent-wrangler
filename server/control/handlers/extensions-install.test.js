@@ -10,6 +10,11 @@ import {
 import { externalDir, tmpDir, readProvenance, putRecord } from '../../extensions/provenance.js';
 import { loadExtensions, registerExtension, unregisterExtension } from '../../extensions/index.js';
 import { discoverExternal } from '../../extensions/external.js';
+import { setExtensionInstallsOffForTest, INSTALLS_OFF_MESSAGE } from '../../extensions/installs.js';
+import { extensionEnabledHandler } from './extension-enabled.js';
+import { extSettingSetHandler } from './ext-setting-set.js';
+import { routeControlMessage } from '../router.js';
+import { readConfig } from '../../config-store.js';
 import { DATA_DIR } from '../../data-dir.js';
 import { HOST_API_VERSION } from '../../host-api/version.js';
 import { createExtensionUpdateCheck } from '../../extensions/update-check.js';
@@ -831,5 +836,83 @@ test('a recorded ref blocks automatic installs until an install without a ref cl
   assert.equal(readProvenance().notes.autoUpdate, true);
   useFakes({ sha: 'd'.repeat(40) });
   assert.equal((await autoUpdateExtension('notes', c)).applied, true);
+  reset();
+});
+
+const installsOff = (fn) => async () => {
+  setExtensionInstallsOffForTest(() => true);
+  try { await fn(); } finally { setExtensionInstallsOffForTest(null); reset(); }
+};
+const OFF = /Extension installs are off on this deck/;
+
+test('installs off: install, update and uninstall are refused and nothing is cloned or removed', installsOff(async () => {
+  reset();
+  setExtensionInstallsOffForTest(null);
+  await install(ctx(), { requires: ['tasks:read'] });
+  setExtensionInstallsOffForTest(() => true);
+  const before = readProvenance().notes;
+  let cloned = 0;
+  _setInstallRunnersForTests({ clone: async () => { cloned += 1; } });
+  const c = ctx([{ id: 'notes', external: true }]);
+
+  await assert.rejects(() => extInstallHandler.handler({ type: 'ext-install', url: 'https://example.invalid/other.git' }, c), OFF);
+  await assert.rejects(() => extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, c), OFF, 'an update is an install against the recorded origin');
+  await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c), OFF);
+  assert.deepEqual(await autoUpdateExtension('notes', (putRecord({ ...before, autoUpdate: true }), c)), { applied: false, reason: INSTALLS_OFF_MESSAGE });
+
+  assert.equal(cloned, 0);
+  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')), 'the installed extension is left in place');
+  assert.equal(readProvenance().notes.sha, before.sha);
+  assert.deepEqual(c.calls.replies, []);
+  assert.deepEqual(c.calls.deactivated, []);
+}));
+
+test('installs off: a consent staged before the deck refused installs cannot complete it', installsOff(async () => {
+  reset();
+  setExtensionInstallsOffForTest(null);
+  const c = ctx();
+  const disclosure = await disclose(c);
+  setExtensionInstallsOffForTest(() => true);
+  await assert.rejects(() => extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, c), OFF);
+  assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
+  await extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: false }, c);
+  assert.equal(reply(c, 'ext-install-done').cancelled, true, 'declining still clears the staged clone');
+}));
+
+test('installs off: the deck API install and uninstall actions are refused with the message', installsOff(async () => {
+  reset();
+  const c = ctx([{ id: 'notes', external: true }]);
+  const replies = c.calls.replies;
+  for (const [action, args] of [['admin.ext-install', { url: URL_NOTES }], ['admin.ext-uninstall', { id: 'notes' }]]) {
+    await routeControlMessage(JSON.stringify({ type: 'action', id: action, action, args }), c);
+    const r = replies.find((x) => x.id === action);
+    assert.equal(r.ok, false, action);
+    assert.equal(r.error.message, INSTALLS_OFF_MESSAGE, action);
+  }
+}));
+
+test('installs off: turning an extension off and on and changing its settings still work', installsOff(async () => {
+  reset();
+  const c = ctx([{ id: 'demo', label: 'Demo', defaultEnabled: true, settings: [{ key: 'pollMs', type: 'number', label: 'Poll' }] }]);
+  await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'demo', enabled: false }, c);
+  assert.equal(readConfig().extensions.demo, false);
+  assert.deepEqual(c.calls.deactivated, ['demo']);
+  await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'demo', enabled: true }, c);
+  assert.equal(readConfig().extensions.demo, true);
+  assert.deepEqual(c.calls.activated, ['demo']);
+  await extSettingSetHandler.handler({ type: 'ext-setting-set', id: 'demo', key: 'pollMs', value: 5000 }, c);
+  assert.equal(readConfig().extensionSettings.demo.pollMs, 5000);
+}));
+
+test('without the option a deck still installs, updates and uninstalls', async () => {
+  reset();
+  setExtensionInstallsOffForTest(null);
+  await install(ctx());
+  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  const c = ctx([{ id: 'notes', external: true }]);
+  await install(c, { sha: 'd'.repeat(40) });
+  assert.equal(readProvenance().notes.sha, 'd'.repeat(40));
+  await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c);
+  assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
   reset();
 });

@@ -25,6 +25,7 @@ const cases = [
     want: { action: 'run', env: { AW_ALLOWED_ORIGINS: 'http://localhost:7878, http://127.0.0.1:7878' } },
   },
   { name: '--runtimes', argv: ['--runtimes', ' testloc, cloud ,'], want: { action: 'run', env: { AW_RUNTIMES: 'testloc,cloud' } } },
+  { name: '--extension-installs-off', argv: ['--extension-installs-off'], want: { action: 'run', env: { AW_EXTENSION_INSTALLS_OFF: '1' } } },
   {
     name: 'flags combine',
     argv: ['--port', '7998', '--data-dir', '/tmp/aw', '--open'],
@@ -65,7 +66,7 @@ for (const { name, argv, match } of errors) {
 
 test('usage names every flag and the env var it sets', () => {
   const text = usage();
-  for (const s of ['--port', 'AW_PORT', '--data-dir', 'AW_DATA_DIR', '--open', 'AW_OPEN_BROWSER', '--host', 'AW_BIND_HOST', '--runtimes', 'AW_RUNTIMES', '--help', '--version']) {
+  for (const s of ['--port', 'AW_PORT', '--data-dir', 'AW_DATA_DIR', '--open', 'AW_OPEN_BROWSER', '--host', 'AW_BIND_HOST', '--runtimes', 'AW_RUNTIMES', '--extension-installs-off', 'AW_EXTENSION_INSTALLS_OFF', '--help', '--version']) {
     assert.ok(text.includes(s), `usage mentions ${s}`);
   }
 });

@@ -7585,6 +7585,7 @@ function mountExtensionsPanel(host) {
     checking: extChecking,
     progress: extInstallProgress,
     busy: extInstallBusy,
+    installsOff: deck.descriptor()?.extensionInstalls === false,
     pendingRemoval: [...extPendingRemoval],
     pendingInstall: extPendingInstall,
     canRestart: canRestartServer,

@@ -141,6 +141,8 @@ bin/agent-wrangler --port 7999 --data-dir ~/aw-scratch --open
 - `--allowed-origins <list>` — same as `AW_ALLOWED_ORIGINS`
 - `--runtimes <ids>` — same as `AW_RUNTIMES`: the runtimes this deck offers (see
   [Choosing a deck's runtimes](#choosing-a-decks-runtimes))
+- `--extension-installs-off` — same as `AW_EXTENSION_INSTALLS_OFF=1`: the deck refuses extension
+  installs, updates and uninstalls (see [Fixing a deck's extensions](#fixing-a-decks-extensions))
 - `-v`/`--version`, `-h`/`--help`
 
 A flag overrides its environment variable. Running the launcher directly never auto-installs
@@ -166,6 +168,7 @@ Environment variables:
   own loopback origins. `allowedOrigins` in the data dir's `config.json` (a list) adds more
 - `AW_DECK_ONLY=1` — start the deck alone, with no board server (see below)
 - `AW_RUNTIMES` — comma-separated runtime ids this deck offers, read once at start (default every runtime it has; see below)
+- `AW_EXTENSION_INSTALLS_OFF=1` — refuse extension installs, updates and uninstalls on this deck, read once at start (see below)
 - `AW_DATA_DIR` — state directory (default `~/.agent-wrangler`); set it with a distinct `AW_PORT` to run an isolated instance
 - `AW_OPEN_BROWSER=1` — auto-open the board in a browser on startup (default: off; the legacy `AW_NO_OPEN=1` still suppresses)
 - `AW_DEFAULT_MODEL` — model pre-selected in the dispatch dialog, by value (e.g. `fable`, `opus`, `opusplan`, `sonnet`, `sonnet[1m]`, `haiku`); unset or unrecognised leaves the built-in default (`opus`)
@@ -232,6 +235,15 @@ bin/agent-wrangler --deck-only --data-dir ~/aw-remote --port 7892 --runtimes clo
 
 `GET /deck` reports the pick as `offeredRuntimes` (null for every runtime), and **Settings › Decks**
 shows each deck's runtimes, with the reason any it offers can't launch.
+
+### Fixing a deck's extensions
+
+`--extension-installs-off` (or `AW_EXTENSION_INSTALLS_OFF=1`) starts a deck whose extensions are fixed
+when it starts, for a deck built with the extensions it should run. It refuses to install, update or
+uninstall an extension, from any board or deck API client, and says installs are off on this deck;
+auto-update applies nothing. Turning an installed extension on or off and changing its settings still
+work. `GET /deck` reports it as `extensionInstalls: false`, and the board's Extensions tab then
+disables install, update, uninstall and auto-update for that deck. It is read once at start.
 
 ### Run as a background service
 
