@@ -5,7 +5,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { REPO_ROOT, findChrome, openTab, sleep, startInstance, waitFor } from './browser-harness.js';
+import { REPO_ROOT, browserTestSkipReason, findChrome, openTab, sleep, startInstance, waitFor } from './browser-harness.js';
 
 // One board half serving several decks, in a real browser: the board's own
 // instance (deck A) and two deck-only instances (B, and C, whose copy of the
@@ -73,7 +73,7 @@ const SECTIONS = `JSON.stringify([...document.querySelectorAll('.pdp-deck')].map
   count: s.querySelector('.pdp-count')?.textContent ?? null, note: s.querySelector('.pdp-status')?.textContent ?? null,
 })))`;
 
-test('one board half shows a section per deck, acts on that deck alone, and marks a deck with another boardApi incompatible', { timeout: 180_000 }, async (t) => {
+test('one board half shows a section per deck, acts on that deck alone, and marks a deck with another boardApi incompatible', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');

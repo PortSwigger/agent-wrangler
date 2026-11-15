@@ -5,7 +5,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { REPO_ROOT, findChrome, openTab, sleep, startInstance, waitFor } from './browser-harness.js';
+import { REPO_ROOT, browserTestSkipReason, findChrome, openTab, sleep, startInstance, waitFor } from './browser-harness.js';
 
 // One board, two decks, in a real browser: the board's own instance (deck A)
 // and a deck-only instance (deck B), each holding a session with the same id.
@@ -68,7 +68,7 @@ const CARDS = `JSON.stringify([...document.querySelectorAll('.session-card')].ma
   deck: e.querySelector('.deck-badge')?.textContent ?? null, unreachable: e.classList.contains('deck-unreachable'),
 })))`;
 
-test('one board shows two decks\' cards, routes each card\'s action to its own deck, and keeps a stopped deck\'s cards disabled', { timeout: 180_000 }, async (t) => {
+test('one board shows two decks\' cards, routes each card\'s action to its own deck, and keeps a stopped deck\'s cards disabled', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
@@ -139,7 +139,7 @@ const TILES = `JSON.stringify([...document.querySelectorAll('.task-cell:not(.no-
   cards: [...e.querySelectorAll('.session-card')].map((c) => c.dataset.card),
 })))`;
 
-test('each deck\'s tasks and schedules show under its name, and each task or schedule action reaches only its own deck', { timeout: 180_000 }, async (t) => {
+test('each deck\'s tasks and schedules show under its name, and each task or schedule action reaches only its own deck', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
@@ -237,7 +237,7 @@ const LAUNCH_ON_PROBE = (intent, runtime = 'probe-shell') => `(() => {
   document.getElementById('m-go').click();
 })()`;
 
-test('the new-session dialog starts a session on the deck picked, in that deck\'s task, and an unreachable deck cannot be picked', { timeout: 180_000 }, async (t) => {
+test('the new-session dialog starts a session on the deck picked, in that deck\'s task, and an unreachable deck cannot be picked', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
@@ -351,7 +351,7 @@ test('the new-session dialog starts a session on the deck picked, in that deck\'
 // deck picked, and with one deck neither asks for a deck.
 const MENU = `JSON.stringify([...document.querySelectorAll('.context-menu > *')].map((e) => [e.textContent.trim(), Boolean(e.disabled)]))`;
 
-test('a new task or schedule lands on the deck picked, and an unreachable deck cannot be picked', { timeout: 180_000 }, async (t) => {
+test('a new task or schedule lands on the deck picked, and an unreachable deck cannot be picked', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');

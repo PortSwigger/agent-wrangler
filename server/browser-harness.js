@@ -4,12 +4,16 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
+import { browserTestSkipReason } from './browser-test-policy.js';
+
+export { browserTestSkipReason };
 
 // An isolated dev instance and a headless Chrome tab on it, for tests that pin
 // what extension board code sees in a real browser.
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 export function findChrome() {
+  if (browserTestSkipReason()) return null;
   if (process.env.CHROME_BIN) return existsSync(process.env.CHROME_BIN) ? process.env.CHROME_BIN : null;
   return [
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',

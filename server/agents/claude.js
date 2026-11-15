@@ -159,14 +159,14 @@ const claudeHeadless = {
   },
 };
 
-export function buildInnerCommand({ args, intent = '', sessionId, worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
+export function buildInnerCommand({ toolRefreshNote, args, intent = '', sessionId, worktree = null, workflow = false, spawnedBy, launchContext, disabledSkills }) {
   // memory/links are wrangler-meta skills now (loaded via --plugin-dir below), but
   // skill discovery alone isn't reliable for one that must be followed at every
   // session start regardless of task relevance — so a mandatory skill's nudge
   // still rides the always-on appended prompt, alongside the conditional
   // worktree guardrail. An extension-shipped nudge (task-memory's) rides here
   // too, gated by that extension being enabled (agent-skills.js).
-  const appendPrompt = [mandatorySkillPrompt(undefined, { disabledSkills }), worktree ? worktreeGuardrailPrompt(worktree) : '']
+  const appendPrompt = [toolRefreshNote, mandatorySkillPrompt(undefined, { disabledSkills }), worktree ? worktreeGuardrailPrompt(worktree) : '']
     .filter(Boolean).join('\n\n');
   // The directories the enabled extensions granted this launch (task-memory's
   // per-session notes dir) — see launch-context.js.
@@ -410,7 +410,7 @@ export const claude = {
     return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, worktree, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
-  buildResume({ sessionId, resumeId, addDirs = [], effort, permissionMode, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills, remoteControl, disallowedTools }) {
+  buildResume({ toolRefreshNote, sessionId, resumeId, addDirs = [], effort, permissionMode, autoCompactTokens, workflow = false, intent = '', spawnedBy, launchContext, disabledSkills, remoteControl, disallowedTools }) {
     // Plain --resume continues the conversation in place under its own id (no
     // --fork-session), so the live id stays equal to resumeId and the transcript
     // grows rather than duplicating. Safe because resume() kills the old tmux first.
@@ -423,7 +423,8 @@ export const claude = {
     if (autoCompactTokens) args.push('--autocompact', autoCompactTokens);
     args.push(...remoteControlArgs(remoteControl));
     args.push(...disallowedToolsArgs(disallowedTools));
-    return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ args, intent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
+    const resumeIntent = toolRefreshNote && intent.trim() ? `${toolRefreshNote}\n\n${intent}` : intent;
+    return launchEnvGuard(launchContext, shellQuote) + withCleanClaudeEnv(buildInnerCommand({ toolRefreshNote: intent.trim() ? undefined : toolRefreshNote, args, intent: resumeIntent, sessionId, workflow, spawnedBy, launchContext, disabledSkills }));
   },
 
   buildFork({ sessionId, liveSessionId, sourceId, addDirs = [], model, effort, permissionMode, autoCompactTokens, intent = '', launchContext, disabledSkills, disallowedTools }) {
