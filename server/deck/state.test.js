@@ -61,3 +61,13 @@ test('PR toast suppression follows server settings through deck state updates', 
   stream.observe(graph({ suppressNudgedPrToasts: false }));
   assert.equal(JSON.parse(stream.next()).settings.suppressNudgedPrToasts, false);
 });
+
+test('missing extension incidents survive state snapshots and recovery frames', () => {
+  const stream = createStateStream({ startRev: 100 });
+  const missing = [{ id: 'demo', label: 'Demo' }];
+  stream.observe(graph({ missingExtensionFiles: missing }));
+  assert.deepEqual(JSON.parse(stream.snapshot()).status.missingExtensionFiles, missing);
+  stream.next();
+  stream.observe(graph({ missingExtensionFiles: [] }));
+  assert.deepEqual(JSON.parse(stream.next()).status.missingExtensionFiles, []);
+});
