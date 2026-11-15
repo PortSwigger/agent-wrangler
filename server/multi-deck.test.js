@@ -486,10 +486,11 @@ test('a launch whose agent command is missing shows its card with the command\'s
     const post = (body) => fetch(`${board}/api/decks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: board }, body: JSON.stringify(body) });
     assert.equal((await post({ op: 'add', url: `http://127.0.0.1:${portB}`, name: 'Laptop B' })).status, 200);
     tab = await openTab(chromePath, `${board}/`);
+    assert.ok(await waitFor(async () => JSON.parse(await tab.evaluate(CARDS) || '[]').length === 1), 'the board never drew its card');
 
     for (const intent of ['Launch on an empty tmux server', 'Launch beside another session']) {
-      assert.ok(await waitFor(async () => tab.evaluate(`[...document.getElementById('m-deck').options].some((o) => o.value === ${JSON.stringify(deckB)} && !o.disabled)`)), 'deck B is offered');
       await tab.evaluate(`document.getElementById('new-session').click()`);
+      assert.ok(await waitFor(async () => tab.evaluate(`[...document.getElementById('m-deck').options].some((o) => o.value === ${JSON.stringify(deckB)} && !o.disabled)`)), 'deck B is offered');
       await tab.evaluate(`(() => { const s = document.getElementById('m-deck'); s.value = ${JSON.stringify(deckB)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
       await tab.evaluate(LAUNCH_ON_PROBE(intent, 'probe-missing'));
       const failed = await waitFor(async () => {
