@@ -11,6 +11,7 @@ import { deliverFirstPrompt } from '../dispatch-runner.js';
 import { requestOrigin } from '../request-origin.js';
 import { supportsRemoteControl, supportsDisallowedTools } from '../agents/index.js';
 import { agentList } from '../agents/listing.js';
+import { modelFront } from '../agents/model-front.js';
 import { runHeadless } from '../headless.js';
 import { codexApprovalPolicyError } from '../extensions/codex-policy.js';
 import { findRuntime } from '../runtimes/index.js';
@@ -646,6 +647,7 @@ const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
 const agentsRead = ({ listAgents = agentList }) => ({
   agents: {
     list: async () => deepFreeze(await listAgents()),
+    front: async (options) => deepFreeze(modelFront((await listAgents()).filter((a) => a.available), options)),
   },
 });
 

@@ -2471,6 +2471,29 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
   A manifest using it declares `^1.66.0` (`^1.67.0` to read `headless` or `background`).
 
+- **`host.agents.front({ agent?, maxUsd?, minQuality? } = {})`** (capability
+  `agents:read`, 1.92.0) resolves a deeply frozen
+  `{ read, credit, units, front }`, using the same benchmark data, Pareto maths and
+  projection as `get_model_front`. The server reads installed agents and their
+  launchable models and efforts afresh each call. Each `front` row is
+  `{ agent, model, effort, quality, usd, minutes, onCurve }`; `agent` is the provider
+  id accepted by session spawning. Rows are ordered by ascending `usd`, breaking
+  ties by descending `quality`. An empty installed or measured set returns `[]`.
+  The front contains settings nothing beats on quality, cost and time together.
+  `onCurve` identifies membership of the quality/cost curve (ignoring time).
+  Filters apply after computing the entire installed-agent front and curve, so
+  filtering never promotes a dominated setting or changes `onCurve`.
+
+  `agent` restricts output to one installed provider id; an unknown or unavailable
+  id rejects the promise. `maxUsd` is a positive finite number and `minQuality` a
+  finite number from 0 to 100, both inclusive output thresholds; invalid values
+  reject the promise. `read` is the benchmark snapshot date (`YYYY-MM-DD`), `credit`
+  its source attribution, and `units` is
+  `{ quality: 'Terminal-Bench 4.0 points', usd: 'list-price dollars per task',
+  minutes: 'wall-clock minutes per task' }`. These are coding-task measurements,
+  not review-specific scores. Unmeasured settings are omitted. A manifest using
+  this method declares `^1.92.0`.
+
 - **`host.agents.headless({ prompt, stdin?, agent?, model?, effort?, timeoutMs? })`**
   (capability `agents:headless`, 1.67.0) runs one tool-less one-shot and resolves a
   frozen `{ text, liveSessionId, agent, model, error }`. `prompt` goes in argv and

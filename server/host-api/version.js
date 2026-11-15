@@ -638,7 +638,8 @@ import semver from 'semver';
 // 1.90.0 adds own-only host.extension.receipt() and graph.extensions[].runningSha.
 //
 // 1.91.0 exposes provider-neutral lastTurn outcomes on session projections.
-export const HOST_API_VERSION = '1.91.0';
+// 1.92.0 adds host.agents.front() under agents:read.
+export const HOST_API_VERSION = '1.92.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

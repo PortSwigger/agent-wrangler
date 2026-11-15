@@ -7,6 +7,7 @@ import { adapterFor } from '../agents/index.js';
 import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
 import { buildHostApi, buildExtSettings } from './index.js';
 import { V1_BUILDERS, usdByCard } from './v1.js';
+import { getModelFrontTool } from '../mcp/tools/get-model-front.js';
 import { HOST_API_VERSION } from './version.js';
 import { MailboxStore } from '../mailbox-store.js';
 import { _resetUsageCache } from '../usage-scan-memo.js';
@@ -673,13 +674,45 @@ test('agents.list() marks the Background model, Claude Haiku by default', async 
   assert.deepEqual(marked, [['claude', 'haiku']]);
 });
 
+test('agents.front() projects the installed-agent MCP front and freezes fresh results', async () => {
+  let agents = [
+    { id: 'claude', available: true, efforts: [{ value: 'low' }, { value: 'high' }], models: [{ value: 'opus', efforts: ['low', 'high'] }] },
+    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-sol', efforts: ['low', 'xhigh'] }, { value: 'gpt-6-luna', efforts: ['low'] }] },
+    { id: 'unavailable', available: false, efforts: [], models: [] },
+  ];
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => agents }) });
+  for (const options of [undefined, { agent: 'claude' }, { maxUsd: 1 }, { minQuality: 60 }, { agent: 'claude', maxUsd: 1 }]) {
+    const installed = agents.filter((a) => a.available);
+    const { structuredContent: { reviewAgent, providers, ...expected } } = await getModelFrontTool.handler({ deps: { agents: async () => installed } }, options);
+    const result = await host.agents.front(options);
+    assert.deepEqual(result, expected);
+    assert.ok(Object.isFrozen(result.front));
+    assert.ok(Object.isFrozen(result.units));
+    if (result.front.length) assert.throws(() => { result.front[0].quality = 0; }, TypeError);
+  }
+  assert.equal((await host.agents.front({ agent: 'claude' })).front.find((p) => p.effort === 'low').onCurve, false);
+  agents = [agents[0]];
+  assert.equal((await host.agents.front()).front.find((p) => p.effort === 'low').onCurve, true);
+  agents = [];
+  assert.deepEqual((await host.agents.front()).front, []);
+});
+
+test('agents.front() requires agents:read and rejects unavailable agents and invalid filters', async () => {
+  const headless = buildHostApi({ id: 'x', requires: ['agents:headless'], ...wiring() });
+  assert.equal('front' in headless.agents, false);
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => [] }) });
+  await assert.rejects(host.agents.front({ agent: 'missing' }), /Unknown or unavailable agent/);
+  for (const maxUsd of [0, -1, NaN, Infinity, '1']) await assert.rejects(host.agents.front({ maxUsd }), /maxUsd/);
+  for (const minQuality of [-1, 101, NaN, '1']) await assert.rejects(host.agents.front({ minQuality }), /minQuality/);
+});
+
 // ---- agents:headless -----------------------------------------------------
 test('agents.headless is ABSENT without agents:headless, and agents:read alone does not bring it', () => {
   assert.equal('agents' in buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring() }), false);
   const reader = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
-  assert.deepEqual(Object.keys(reader.agents), ['list']);
+  assert.deepEqual(Object.keys(reader.agents), ['list', 'front']);
   const both = buildHostApi({ id: 'x', requires: ['agents:read', 'agents:headless'], ...wiring() });
-  assert.deepEqual(Object.keys(both.agents).sort(), ['headless', 'list']);
+  assert.deepEqual(Object.keys(both.agents).sort(), ['front', 'headless', 'list']);
 });
 
 test('agents.headless passes only the documented options through and returns a frozen result with an error message', async () => {
