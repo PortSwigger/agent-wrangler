@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   extensionSettingRowsEl, extensionsPanelEl, consentBodyEl, consentButtonLabels, updateStatusText, progressText,
   uninstallBodyText, TRANSIENT_PROGRESS_PHASES, TRUST_STATEMENT,
-  commitFocusedField, focusedFieldState, restoreFocusedField, MAX_TEXTAREA_LENGTH, BROWSE_NOTICE, normalizeRepoUrl, updatedAgoText, AUTO_UPDATE_WARNING,
+  commitFocusedField, focusedFieldState, restoreFocusedField, MAX_TEXTAREA_LENGTH, BROWSE_NOTICE, normalizeRepoUrl, updatedAgoText, AUTO_UPDATE_WARNING, INSTALLS_OFF_NOTE,
 } from './extensions-panel.js';
 import { MAX_TEXTAREA_LENGTH as SERVER_MAX_TEXTAREA_LENGTH } from '../server/extensions/setting-constraints.js';
 
@@ -1119,5 +1119,37 @@ test('a pin reports why automatic updates are blocked without waiting for a remo
     const reason = 'Pinned to v1. Install without an exact ref to resume automatic updates.';
     const panel = showing({ ...INSTALLED, pinnedRef: 'v1', autoUpdate: true, autoUpdateBlocked: reason });
     assert.ok(texts(detailOf(panel)).includes(reason));
+  });
+});
+
+test('installs off: install, update, uninstall and auto-update are disabled; the enable switch is not', () => {
+  withDom(() => {
+    const withSettings = { ...EXT1, origin: INSTALLED.origin, settings: [{ key: 'pollMs', type: 'number', label: 'Poll' }] };
+    const panel = extensionsPanelEl({ entries: [withSettings], statuses: { ext1: BEHIND }, selectedId: 'ext1', installsOff: true });
+    assert.ok(texts(panel).includes(INSTALLS_OFF_NOTE), 'the panel says installs are off');
+    const [update] = byClass(panel, 'ext-btn-square');
+    assert.equal(update.disabled, true);
+    const all = byClass(panel, 'ext-btn').find((b) => b._text === 'Update all');
+    assert.equal(all.disabled, true);
+    const uninstall = byClass(panel, 'ext-btn-danger')[0];
+    assert.equal(uninstall.disabled, true);
+    const toggles = byClass(panel, 'setting-toggle');
+    assert.equal(toggles.find((t) => t.attrs['aria-label'] === 'Auto-update One').disabled, true);
+    assert.equal(toggles.find((t) => t.attrs['aria-label'] === 'One').disabled, false, 'the enable switch still works');
+
+    const adding = extensionsPanelEl({ entries: [], adding: true, addMode: 'url', installsOff: true });
+    const install = byClass(adding, 'ext-btn-primary').find((b) => b._text === 'Install…');
+    assert.equal(install.disabled, true);
+  });
+});
+
+test('installs on (the default): install, update and uninstall stay enabled', () => {
+  withDom(() => {
+    const panel = extensionsPanelEl({ entries: [EXT1], statuses: { ext1: BEHIND }, selectedId: 'ext1' });
+    assert.ok(!texts(panel).includes(INSTALLS_OFF_NOTE));
+    assert.equal(byClass(panel, 'ext-btn-square')[0].disabled, false);
+    assert.equal(byClass(panel, 'ext-btn-danger')[0].disabled, false);
+    const adding = extensionsPanelEl({ entries: [], adding: true, addMode: 'url' });
+    assert.equal(byClass(adding, 'ext-btn-primary').find((b) => b._text === 'Install…').disabled, false);
   });
 });

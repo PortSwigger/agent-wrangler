@@ -101,6 +101,7 @@ import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.
 import { createUpdateService, updateSupport, installDriftStatus } from './update-service.js';
 import { createExtensionUpdateCheck, currentExtensionUpdates } from './extensions/update-check.js';
 import { autoUpdateExtension } from './control/handlers/extensions-install.js';
+import { extensionInstallsOff } from './extensions/installs.js';
 import { createInstallDriftWatch } from './install-root.js';
 import { nextSessionToRefresh } from './session-refresh.js';
 import { headlessRunsInFlight, backgroundModel, runHeadless } from './headless.js';
@@ -1128,6 +1129,7 @@ function deckHandler(req, res) {
       runtimes: runtimeOffer().map((rt) => (rt.id === 'local' && localAgents ? { ...rt, agents: localAgents } : rt)),
       offeredRuntimes: startupRuntimes(),
       extensions: ext.list,
+      extensionInstalls: !extensionInstallsOff(),
       boardApi: HOST_API_VERSION,
     });
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });

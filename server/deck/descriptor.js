@@ -2,7 +2,7 @@ export const DECK_API_VERSION = '1.0';
 
 // GET /deck. A board needs the same major `api` and ignores any field or action
 // it does not know; minor versions only add.
-export function deckDescriptor({ deckId, name, actions, runtimes, offeredRuntimes = null, extensions, boardApi }) {
+export function deckDescriptor({ deckId, name, actions, runtimes, offeredRuntimes = null, extensions, extensionInstalls = true, boardApi }) {
   return {
     deckId,
     name,
@@ -13,6 +13,7 @@ export function deckDescriptor({ deckId, name, actions, runtimes, offeredRuntime
     extensions: extensions
       .filter((e) => e.enabled)
       .map((e) => ({ id: e.id, version: e.version ?? null, boardApi: e.boardApi || boardApi })),
+    extensionInstalls: extensionInstalls !== false,
   };
 }
 

@@ -19,7 +19,13 @@ test('the descriptor carries the id, api 1.0, sorted actions and enabled extensi
     offeredRuntimes: null,
     actions: ['deck.search', 'task.create'],
     extensions: [{ id: 'todos', version: '1.2.0', boardApi: '1.73.0' }],
+    extensionInstalls: true,
   });
+});
+
+test('the descriptor says when extension installs are off on the deck', () => {
+  const d = deckDescriptor({ deckId: 'd1', name: 'pod', actions: [], runtimes: [], extensions: [], extensionInstalls: false, boardApi: '1.73.0' });
+  assert.equal(d.extensionInstalls, false);
 });
 
 test('/ws?api= picks the legacy protocol, the deck API, or refuses a major it cannot serve', () => {

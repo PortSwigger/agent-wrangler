@@ -34,6 +34,11 @@ Select an extension to see its **Enabled** switch, **Uninstall…** (installed
 only), its **Auto-update** switch (installed from a git URL only), its **Source** (type, repository and
 commit) and its **Settings**.
 
+On a deck started with `--extension-installs-off` (env `AW_EXTENSION_INSTALLS_OFF=1`), the tab says
+extension installs are off on this deck, and installing, updating, uninstalling and the
+**Auto-update** switch are disabled; the deck refuses them from any board or API, and auto-update
+applies nothing. The **Enabled** switch and **Settings** still work.
+
 When a Claude or Codex session resumes, Wrangler compares the enabled extension tools with the
 schemas recorded at its last launch. If they differ, it adds a reminder to re-run ToolSearch and
 disregard earlier schema results. For Claude, the reminder precedes an existing resume prompt, or

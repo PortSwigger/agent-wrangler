@@ -34,6 +34,10 @@ Options:
                      AW_RUNTIMES), read once at start; default every runtime.
                      A deck offering only runtimes that run at a location
                      starts nothing on its own machine.
+  --extension-installs-off
+                     Refuse extension installs, updates and uninstalls from
+                     any board or API (env AW_EXTENSION_INSTALLS_OFF=1).
+                     Turning extensions on or off and their settings still work.
   -h, --help         Show this help
   -v, --version      Show the version
 
@@ -52,6 +56,7 @@ const OPTIONS = {
   'deck-only': { type: 'boolean' },
   'allowed-origins': { type: 'string' },
   runtimes: { type: 'string' },
+  'extension-installs-off': { type: 'boolean' },
 };
 
 // Returns { action: 'help' | 'version' | 'run', env } or { action: 'error', error }.
@@ -97,5 +102,6 @@ export function parseCliArgs(argv) {
     if (!ids.length || bad) return { action: 'error', error: `--runtimes takes runtime ids separated by commas, like local,devcontainer (got '${bad ?? values.runtimes}')` };
     env.AW_RUNTIMES = ids.join(',');
   }
+  if (values['extension-installs-off']) env.AW_EXTENSION_INSTALLS_OFF = '1';
   return { action: 'run', env };
 }

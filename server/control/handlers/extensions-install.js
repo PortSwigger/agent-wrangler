@@ -9,6 +9,7 @@ import { unconsentedCapabilities, admitExternal, importViolation } from '../../e
 import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, assertExactRef, commitRelation, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
 import { HOST_API_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
 import { log } from '../../log.js';
+import { assertExtensionInstallsOn, extensionInstallsOff, INSTALLS_OFF_MESSAGE } from '../../extensions/installs.js';
 
 // Installing an external extension, in two frames with a human decision between
 // them: `ext-install` clones and DISCLOSES (nothing is installed, no registry is
@@ -299,6 +300,7 @@ async function loadStagedManifest(dir) {
 export const extInstallHandler = {
   type: 'ext-install',
   async handler(msg, ctx) {
+    assertExtensionInstallsOn();
     if (busy && !reclaimable(busy)) {
       throw new Error(`An extension install is already running (${busy.url}). Wait for it to finish and try again.`);
     }
@@ -390,6 +392,7 @@ export const extInstallHandler = {
 export const extConsentHandler = {
   type: 'ext-consent',
   async handler(msg, ctx) {
+    if (msg.approve) assertExtensionInstallsOn();
     const staged = pending.get(msg.tempId);
     if (!staged) throw new Error('That install is no longer pending — start it again.');
     pending.delete(msg.tempId);
@@ -477,6 +480,7 @@ export const extConsentHandler = {
 export const extUninstallHandler = {
   type: 'ext-uninstall',
   async handler(msg, ctx) {
+    assertExtensionInstallsOn();
     const id = String(msg.id || '');
     const known = ctx.ext.list.find((e) => e.id === id);
     if (!known) throw new Error(`Unknown extension: ${id}`);
@@ -601,6 +605,7 @@ function earlyAdopterBranchFor(url) {
 // update's `ext-install-done` is broadcast instead, so every tab gets the
 // restart affordance.
 export async function autoUpdateExtension(id, ctx) {
+  if (extensionInstallsOff()) return { applied: false, reason: INSTALLS_OFF_MESSAGE };
   const record = recordFor(id);
   if (!record?.autoUpdate || !record.originUrl) return { applied: false, reason: 'Auto-update is off.' };
   const pinned = pinnedUpdateReason(record);
