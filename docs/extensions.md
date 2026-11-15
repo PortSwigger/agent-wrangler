@@ -2213,7 +2213,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `task_started`. Otherwise `user_message` and `agent_message` clear the previous result.
   Some Codex versions omit errors from rollouts; without that evidence a trailing
   `task_complete` reports `ok`, or the outcome remains unknown without a terminal mark.
-  Codex cards on remote runtimes currently report `null`.
+  An error more than about 64 KiB before a trailing `task_complete` can fall outside
+  the read window and report `ok`. Codex cards on remote runtimes currently report `null`.
   Claude uses assistant `stop_reason: 'end_turn'`, `isApiErrorMessage`, and the
   explicit `[Request interrupted by user]` (including `for tool use`) user marker.
   Later message progress clears the outcome. Sidechain and inherited fork history

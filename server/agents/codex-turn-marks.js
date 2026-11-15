@@ -47,7 +47,8 @@ export async function readTurnMarks(rolloutPath, { tailBytes = 65536, maxBytes =
         text = nl === -1 ? '' : text.slice(nl + 1);
       }
       marks = parseTurnMarks(text);
-      if (marks.startedAt != null || start === 0 || length >= maxBytes) break;
+      const found = Object.values(marks).some((v) => v != null);
+      if (found || start === 0 || length >= maxBytes) break;
     }
     return { ...marks, mtimeMs };
   } catch {
