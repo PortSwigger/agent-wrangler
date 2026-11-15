@@ -649,11 +649,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   returns `installedSha`, `runningSha` and `restartPending`. Fresh installs load
   immediately; updates retain their running commit until server restart.
   Empty strings mean no recorded commit, as with builtins and hand-placed code.
-  On server host API **1.84.0**, every extension can call
+  On server host API **1.90.0**, every extension can call
   `host.extension.receipt()` without a capability grant to read its **own**
   `{ installedSha, runningSha, restartPending }`. The returned object is a copy,
   the installed receipt is read afresh on every call, and no extension-id
-  argument is accepted. Declare `engines.wranglerApi: '^1.84.0'` when using it.
+  argument is accepted. Declare `engines.wranglerApi: '^1.90.0'` when using it.
 - **Installed extensions live in `<DATA_DIR>/extensions/<id>/`; their provenance is
   `<DATA_DIR>/extensions.json`, deliberately NOT config.json.** config.json keeps the
   `extensions.<id>` enable flags and is untouched by this feature. A record is
