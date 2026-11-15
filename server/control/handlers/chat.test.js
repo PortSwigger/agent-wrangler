@@ -856,3 +856,103 @@ test('chat: an ordinary follow-up poll leaves the epoch alone', async () => {
   assert.deepEqual(c.sent[1].events.map((e) => e.text), ['next prompt']);
   assert.equal(c.sent[1].epoch, c.sent[0].epoch);
 });
+
+function locationCtx(liveSessionId, { agent = 'claude', transcript } = {}) {
+  const c = ctx(null, { liveSessionId, agent });
+  const entry = { liveSessionId, agent, runtime: 'remote', location: { box: 'b1' } };
+  const hookCalls = [];
+  c.sessionManager = { entryFor: () => entry };
+  c.findConversationFile = async () => { throw new Error('a location card must not read the deck disk'); };
+  c.findRuntime = (id) => (id === 'remote' ? {
+    id: 'remote',
+    location: { transcript: async (args) => { hookCalls.push(args); return transcript(); } },
+  } : null);
+  return { c, entry, hookCalls };
+}
+
+const jsonl = (lines) => lines.map((o) => JSON.stringify(o)).join('\n') + '\n';
+
+test('chat: a Claude card at a location reads its conversation from the transcript hook, not the deck disk', async () => {
+  const lines = [userLine('from the hook', '2026-11-01T10:00:00.000Z')];
+  const { c, entry, hookCalls } = locationCtx('loc-read', { transcript: () => jsonl(lines) });
+  const disk = await tmpTranscript([userLine('from the deck disk', '2026-11-01T09:00:00.000Z')]);
+  c.findConversationFile = async () => disk;
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc', token: 't1' }, c);
+  const reply = c.sent[0];
+  assert.deepEqual(reply.events.map((e) => e.text), ['from the hook']);
+  assert.equal(reply.offset, Buffer.byteLength(jsonl(lines)));
+  assert.equal(reply.unavailable, undefined);
+  assert.equal(reply.token, 't1');
+  assert.deepEqual(hookCalls[0], { ref: entry.location, entry, liveSid: 'loc-read' });
+});
+
+test('chat: a location transcript that grows yields only the new turn on the next poll, pairing tools across polls', async () => {
+  const lines = [userLine('one', '2026-11-01T10:00:00.000Z'), toolUseLine('tu-1', 'Bash', { command: 'ls' }, '2026-11-01T10:00:01.000Z')];
+  const { c } = locationCtx('loc-grow', { transcript: () => jsonl(lines) });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc' }, c);
+  const first = c.sent[0];
+  assert.equal(first.pending?.name, 'Bash');
+  lines.push(toolResultLine('tu-1', '2026-11-01T10:00:02.000Z'), userLine('two', '2026-11-01T10:00:03.000Z'));
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc', sinceOffset: first.offset }, c);
+  const second = c.sent[1];
+  assert.equal(second.epoch, first.epoch);
+  assert.equal(second.events.at(-1).text, 'two');
+  assert.ok(!second.events.some((e) => e.text === 'one'), 'nothing already sent comes back');
+  assert.equal(second.pending, null, 'the tool_result paired with the tool_use from the previous poll');
+  assert.equal(second.offset, Buffer.byteLength(jsonl(lines)));
+});
+
+test('chat: a location hook that answers nothing says the conversation cannot be read right now', async () => {
+  let text = null;
+  const { c } = locationCtx('loc-null', { transcript: () => text });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc', token: 't2' }, c);
+  assert.equal(c.sent[0].unavailable, 'unreadable');
+  assert.deepEqual(c.sent[0].events, []);
+  assert.equal(c.sent[0].token, 't2');
+  assert.equal(c.sent[0].epoch, 0);
+
+  const failing = locationCtx('loc-throw', { transcript: () => { throw new Error('offline'); } });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc', sinceOffset: 40 }, failing.c);
+  assert.equal(failing.c.sent[0].unavailable, 'unreadable');
+  assert.equal(failing.c.sent[0].offset, 40, 'a later poll keeps its place');
+
+  text = jsonl([userLine('back again', '2026-11-01T10:00:00.000Z')]);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc' }, c);
+  assert.equal(c.sent[1].unavailable, undefined);
+  assert.deepEqual(c.sent[1].events.map((e) => e.text), ['back again']);
+});
+
+test('chat: a Codex card at a location says Chat is not available, without asking the hook', async () => {
+  const { c, hookCalls } = locationCtx('loc-codex', { agent: 'codex', transcript: () => jsonl([codexUser('x', '2026-11-01T10:00:00.000Z')]) });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc', token: 't3' }, c);
+  assert.equal(c.sent[0].unavailable, 'unsupported');
+  assert.deepEqual(c.sent[0].events, []);
+  assert.equal(c.sent[0].token, 't3');
+  assert.equal(hookCalls.length, 0);
+});
+
+test('chat: a location transcript trimmed at the front moves the epoch and a fresh read shows what remains', async () => {
+  let lines = [userLine('oldest', '2026-11-01T10:00:00.000Z'), userLine('middle', '2026-11-01T10:00:01.000Z')];
+  const { c } = locationCtx('loc-trim', { transcript: () => jsonl(lines) });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc' }, c);
+  const first = c.sent[0];
+  lines = [lines[1], userLine('newest', '2026-11-01T10:00:02.000Z')];
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc', sinceOffset: first.offset }, c);
+  assert.equal(c.sent[1].epoch, first.epoch + 1);
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc' }, c);
+  const fresh = c.sent[2];
+  assert.equal(fresh.epoch, first.epoch + 1);
+  assert.deepEqual(fresh.events.map((e) => e.text), ['middle', 'newest']);
+  assert.equal(fresh.offset, Buffer.byteLength(jsonl(lines)));
+  lines.push(userLine('after trim', '2026-11-01T10:00:03.000Z'));
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc', sinceOffset: fresh.offset }, c);
+  assert.equal(c.sent[3].epoch, fresh.epoch, 'plain growth after the trim is an ordinary continuation');
+  assert.deepEqual(c.sent[3].events.map((e) => e.text), ['after trim']);
+});
+
+test('chat: a stale offset that lands mid-line in a trimmed location transcript moves the epoch even with no cached scanner', async () => {
+  const lines = [userLine('kept', '2026-11-01T10:00:00.000Z'), userLine('more', '2026-11-01T10:00:01.000Z')];
+  const { c } = locationCtx('loc-stale', { transcript: () => jsonl(lines) });
+  await chatHandler.handler({ type: 'chat', sessionId: 'card-loc', sinceOffset: 7 }, c);
+  assert.equal(c.sent[0].epoch, 1);
+});

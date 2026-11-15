@@ -2954,10 +2954,15 @@ Maintainer notes:
   | `resume` | before every resume or fork; a quick no-op when running | — |
   | `delete` | archive (after the unpushed check), forget, a failed dispatch | — |
   | `unpushed` | before archive | `[{ repo, dir, commits: [{ sha, subject }], error? }]` |
-  | `transcript({ ref, entry, liveSid })` | every graph tick, when there is no `analyze` | a Claude transcript's JSONL text |
+  | `transcript({ ref, entry, liveSid })` | every graph tick, when there is no `analyze`, and every Chat poll of a Claude card | a Claude transcript's JSONL text |
   | `diff({ ref, entry, mode })` | the diff panel (`working-tree` or `branch`) | `{ diff, baseRef?, dir? }`, or null for no repo |
   | `codexId({ ref, entry, since, excludeIds })` | a Codex launch, and a resume that has no id | the conversation id, or null |
 
+  A Claude card's Chat reads only from `transcript`, never from this machine's disk:
+  answer the whole text each time, appending to it or dropping whole lines from its
+  front (Chat then redraws from a fresh window). No answer shows "can't read the
+  conversation right now" until one comes back. A card of any other agent at a location
+  has no Chat.
   `suspendIdleHours` (a number, or a function of `{ ref, entry }`) sets this location's
   idle-suspend threshold in place of the install's; `0` turns the timer off.
   Every answer is checked: an off-shape ref or `cwd` fails the launch, a transcript over
