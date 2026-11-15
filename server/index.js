@@ -42,6 +42,7 @@ import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoar
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
+import { createInstalledAgents } from './agents/installed.js';
 import { createMcpRequestHandler } from './mcp/server.js';
 import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
@@ -1078,6 +1079,8 @@ const mcpRequestHandler = createMcpRequestHandler({
   boardClients: () => controlWss.clients.size,
 });
 
+const installedAgents = createInstalledAgents({ adapters: registeredAgents });
+
 // GET /deck — the deck API's descriptor. Host-pinned like /file.
 function deckHandler(req, res) {
   if (!isAllowedHost(req.headers.host, deckAuthorities())) {
@@ -1085,16 +1088,18 @@ function deckHandler(req, res) {
     res.end(JSON.stringify({ error: 'forbidden' }));
     return;
   }
-  const body = deckDescriptor({
-    deckId,
-    name: os.hostname(),
-    actions: deckActions().keys(),
-    runtimes: knownRuntimes(),
-    extensions: ext.list,
-    boardApi: HOST_API_VERSION,
+  installedAgents().catch(() => null).then((localAgents) => {
+    const body = deckDescriptor({
+      deckId,
+      name: os.hostname(),
+      actions: deckActions().keys(),
+      runtimes: knownRuntimes().map((rt) => (rt.id === 'local' && localAgents ? { ...rt, agents: localAgents } : rt)),
+      extensions: ext.list,
+      boardApi: HOST_API_VERSION,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(body));
   });
-  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-  res.end(JSON.stringify(body));
 }
 
 // The session API (server/session-api): /mcp, /pr-attach and /pr-model behind

@@ -786,11 +786,32 @@ let availableAgents = [];
 let dispatchDeck = null;
 // The deck whose agents #m-model lists now.
 let modelSelectDeck = null;
-// The agents the dialog offers: on another deck, those its runtimes run.
+// The agents the dialog offers: on another deck, those the picked runtime runs there.
+function dispatchRuntime() {
+  const runtimes = deckRuntimes(remoteDecks.entryFor(dispatchDeck)?.descriptor);
+  return runtimes.find((r) => r.id === document.getElementById('m-runtime').value) || runtimes[0];
+}
 function dispatchAgentList() {
   if (!dispatchDeck) return availableAgents;
-  const runtimes = deckRuntimes(remoteDecks.entryFor(dispatchDeck)?.descriptor);
-  return availableAgents.filter((a) => deckRunsAgent(runtimes, a.id));
+  const runtime = dispatchRuntime();
+  return availableAgents.filter((a) => deckRunsAgent([runtime], a.id));
+}
+const noDispatchAgent = () => Boolean(dispatchDeck) && dispatchAgentList().length === 0;
+
+// A deck re-reads which agent CLIs it has on each GET /deck, so the dialog
+// re-reads the picked deck's descriptor to see one installed since it connected.
+function refreshDispatchDeckAgents() {
+  const deckId = dispatchDeck;
+  const client = deckId && remoteDecks.clientFor(deckId);
+  if (!client) return;
+  client.refresh().then(() => {
+    if (dispatchDeck !== deckId || modal.classList.contains('hidden')) return;
+    syncDispatchRuntimes();
+    populateModelSelect();
+    syncRuntimeToggle();
+    dispatchModelPicker?.sync();
+    renderWorktreeState();
+  });
 }
 
 let dispatchModelPicker = null;
@@ -843,9 +864,18 @@ function populateModelSelect() {
   // server-marked default win (the seed's default must not clobber it on first load).
   applyDispatchPick(prev);
   modelEdited = Boolean(prev);
+  syncNoAgentState();
   syncQuickLaunch();
   populateEffortSelect();
   syncAutoCompactPresets();
+}
+
+function syncNoAgentState() {
+  const none = noDispatchAgent();
+  document.getElementById('m-model-picker').classList.toggle('hidden', none);
+  const note = document.getElementById('m-no-agents');
+  note.classList.toggle('hidden', !none);
+  if (none) note.textContent = dispatchRuntime().id === 'local' ? 'No agent is installed on this deck.' : `No agent is installed for ${dispatchRuntime().label} on this deck.`;
 }
 
 function syncAutoCompactPresets() {
@@ -900,7 +930,7 @@ let quickLaunchModels = [...QUICK_LAUNCH_FALLBACK];
 // Recompute the top-3 most-used models from live + archived sessions. Only models
 // still offered in the current list count (a retired model can't be a launch target).
 function computeQuickLaunchModels() {
-  const offered = new Set(availableAgents.flatMap((a) => a.models.map((m) => m.value)));
+  const offered = new Set(dispatchAgentList().flatMap((a) => a.models.map((m) => m.value)));
   const counts = new Map();
   for (const s of [...latestSessions, ...latestHistory]) {
     const m = s.model;
@@ -6114,15 +6144,14 @@ function syncDispatchRuntimes() {
   const rt = document.getElementById('m-runtime');
   const was = rt.value;
   rt.innerHTML = '';
-  const add = (value, label, agents) => {
+  const add = (value, label) => {
     const opt = document.createElement('option');
     opt.value = value;
     opt.textContent = label;
-    if (agents !== undefined) opt.dataset.agents = JSON.stringify(agents);
     rt.appendChild(opt);
   };
   if (dispatchDeck) {
-    for (const r of deckRuntimes(remoteDecks.entryFor(dispatchDeck)?.descriptor)) add(r.id, r.label, r.agents);
+    for (const r of deckRuntimes(remoteDecks.entryFor(dispatchDeck)?.descriptor)) add(r.id, r.label);
   } else {
     for (const o of OWN_RUNTIME_OPTIONS) add(o.value, o.label);
     syncExtRuntimeOptions();
@@ -6148,6 +6177,7 @@ function setDispatchDeck(deckId) {
   requestFolderBrowse();
   syncDispatchExtFields();
   syncScheduleGo();
+  refreshDispatchDeckAgents();
 }
 // A deck that comes or goes while the dialog is open updates the picker; one
 // that can no longer be picked hands the dialog back to the board's own deck.
@@ -6246,7 +6276,7 @@ function renderWorktreeState() {
   // In schedule mode the worktree validation is advisory (the authoritative
   // create+classify happens at fire time), so Save is gated only by the picker.
   if (scheduleMode()) { syncScheduleGo(); return; }
-  go.disabled = wtPending || nonGit || cwdBlocked() || Boolean(wt && wt.blocks);
+  go.disabled = wtPending || nonGit || cwdBlocked() || Boolean(wt && wt.blocks) || noDispatchAgent();
   go.textContent = wtPending ? 'Creating…' : 'Launch';
 }
 
@@ -6339,13 +6369,11 @@ function setDispatchMode(mode) { dispatchMode = mode; syncWorkflow(); }
 // (the issue-to-pr skill dir is copied into the container). The loop reads
 // rt.options at call time, so it covers the built-ins in index.html and the
 // options syncExtRuntimeOptions appends alike. The server enforces the same rule
-// (runtimeAgentError), so this is the dialog's courtesy, not the guard.
+// (runtimeAgentError), so this is the dialog's courtesy, not the guard. On
+// another deck it runs the other way: the picked runtime decides the agents
+// offered (dispatchAgentList), from what that deck says it has installed.
 function runtimeAllowsAgent(opt, agent) {
-  if (!opt || opt.value === 'local') return true;
-  if (opt.dataset.agents !== undefined) {
-    const listed = JSON.parse(opt.dataset.agents);
-    return listed === null || listed.includes(agent);
-  }
+  if (!opt || opt.value === 'local' || dispatchDeck) return true;
   const agents = opt.dataset.ext
     ? latestExtensions.find((e) => e.id === opt.dataset.ext)?.runtimes?.find((r) => r?.id === opt.value)?.agents
     : null;
@@ -6506,7 +6534,7 @@ function syncScheduleGo() {
   if (!scheduleMode()) return;
   const go = document.getElementById('m-go');
   go.textContent = 'Save schedule';
-  go.disabled = !(whenValid(readPicker(), Date.now()) && scheduleActionValid());
+  go.disabled = !(whenValid(readPicker(), Date.now()) && scheduleActionValid()) || (scheduleAction === 'dispatch' && noDispatchAgent());
 }
 function scheduleActionValid() {
   if (scheduleAction === 'dispatch') return !additionalFolders.invalid();
@@ -6707,6 +6735,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   const wantTask = typeof taskId === 'string' ? taskId : (d.taskId || null);
   dispatchDeck = mode === 'launch' && isRemoteTask(wantTask) ? findTask(wantTask).deckId : null;
   syncDeckPicker();
+  refreshDispatchDeckAgents();
   populateTargetSelect(action?.sessionId);
   populateTaskSelect(wantTask);
   dispatchMode = d.workflow ? 'workflow' : 'standard'; // never sticky otherwise
@@ -6731,6 +6760,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   const wantRuntime = (schedule ? d.runtime : defaultRuntime) || 'local';
   rtSel.value = wantRuntime;
   if (rtSel.value !== wantRuntime) rtSel.value = 'local';
+  if (dispatchDeck) populateModelSelect();
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   // A saved schedule restores its Codex pick; a new draft starts from Settings.
   // Marked as already-Codex so the syncs below do not refill over a schedule's.
@@ -6887,6 +6917,7 @@ function onSubagentDetail(msg) {
 function submitDispatch(over) {
   if (modal.classList.contains('hidden')) return false;
   if (modalMode === 'subagent') return false; // read-only view: no primary action
+  if (noDispatchAgent() && (!scheduleMode() || scheduleAction === 'dispatch')) return false;
   if (scheduleMode()) { submitSchedule(); return false; }
   const fields = readDispatchFields();
   for (const [extId, slice] of Object.entries(over?.ext || {})) {
@@ -7685,6 +7716,12 @@ document.getElementById('m-model').addEventListener('change', () => {
 });
 // And the runtime choice, for a contribution that reacts to it (its update
 // sees ctx.draft.runtime, a function `hides` the same draft).
+document.getElementById('m-runtime').addEventListener('change', () => {
+  if (!dispatchDeck) return;
+  populateModelSelect();
+  dispatchModelPicker?.sync();
+  renderWorktreeState();
+});
 document.getElementById('m-runtime').addEventListener('change', syncRuntimeToggle);
 document.getElementById('m-runtime').addEventListener('change', syncDispatchExtFields);
 for (const id of ['m-codex-approve-for-me', 'm-codex-bypass']) {
@@ -7702,7 +7739,7 @@ document.getElementById('m-effort').addEventListener('change', () => { effortEdi
 dispatchModelPicker = createDispatchModelPicker({
   root: document.getElementById('m-model-picker'),
   storage: (() => { try { return localStorage; } catch { return null; } })(),
-  agents: () => availableAgents,
+  agents: () => dispatchAgentList(),
   read: () => {
     const model = document.getElementById('m-model');
     return { agent: model.options[model.selectedIndex]?.dataset.agent ?? 'claude', model: model.value, effort: document.getElementById('m-effort').value };
