@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
+import { runInNewContext } from 'node:vm';
 import { browserTestSkipReason, findChrome, startInstance } from './browser-harness.js';
 
 // The board is only really "working" if a browser can load it, and two blank-dashboard
@@ -73,6 +74,57 @@ async function launchChrome(chromePath, profile) {
   return { proc, port: port === 'stopped' ? null : port,
     diagnosis: () => `Chrome ${stopped || 'never reported a DevTools port (still running)'}${stderr ? `\n${stderr}` : ''}` };
 }
+
+async function evaluatePage(send, expression, isSocketClosed = () => false) {
+  const reply = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+  assert.notEqual(reply, UNANSWERED,
+    `CDP stopped answering while evaluating \`${expression}\` (socket ${isSocketClosed() ? 'closed' : 'open'})`);
+  assert.ok(!reply.error, `CDP rejected \`${expression}\`: ${JSON.stringify(reply.error)}`);
+  // A throw inside the page comes back as the THROWN VALUE in the same RemoteObject
+  // slot as a real result, so `throw true` would satisfy a boolean assertion without
+  // the expression ever having evaluated. exceptionDetails is the only thing that
+  // distinguishes them.
+  assert.ok(!reply.result?.exceptionDetails,
+    `\`${expression}\` threw in the page: ${reply.result?.exceptionDetails?.text ?? ''} ${reply.result?.exceptionDetails?.exception?.description ?? ''}`.trim());
+  return reply.result?.result?.value;
+}
+
+function probeTaskOrder() {
+  if (!window.__probeApi) return null;
+  return JSON.stringify([...document.querySelectorAll('#grid .task-cell')].map((cell) => cell.dataset.taskid || 'adhoc'));
+}
+
+test('the reload readiness probe waits for extension registration after the grid renders', () => {
+  const window = {};
+  const document = { querySelectorAll: () => [{ dataset: { taskid: 'layout-1' } }, { dataset: {} }] };
+  const expression = `(${probeTaskOrder})()`;
+  assert.equal(runInNewContext(expression, { window, document }), null);
+  window.__probeApi = { requestBoardRender() {} };
+  assert.equal(runInNewContext(expression, { window, document }), '["layout-1","adhoc"]');
+  runInNewContext('delete window.__probeApi', { window });
+  assert.equal(runInNewContext(expression, { window, document }), null, 'the old document must stop satisfying readiness before reload');
+});
+
+test('checked page evaluation waits for asynchronous results', async () => {
+  const send = async (method, params) => {
+    assert.equal(method, 'Runtime.evaluate');
+    const value = runInNewContext(params.expression);
+    return { result: { result: params.awaitPromise ? { value: await value } : { subtype: 'promise' } } };
+  };
+  assert.equal(await evaluatePage(send, 'Promise.resolve(42)'), 42);
+});
+
+test('checked page evaluation reports asynchronous exceptions at the evaluated expression', async () => {
+  const send = async (method, params) => {
+    const value = runInNewContext(params.expression);
+    try { await value; } catch (error) {
+      return { result: params.awaitPromise
+        ? { exceptionDetails: { exception: { description: error.stack } } }
+        : { result: { subtype: 'promise' } } };
+    }
+  };
+  await assert.rejects(evaluatePage(send, 'Promise.reject(new Error("probe failed"))'), /threw in the page:.*Error: probe failed/s);
+});
 
 test('the board loads in a real browser with no console errors', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
@@ -181,19 +233,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     // unanswered call collapse to `undefined` — which downstream reads as "the page says
     // no". So the assertions after the wait go through here and say what really happened
     // rather than blaming the DOM for a dead socket.
-    const evaluateChecked = async (expression) => {
-      const reply = await send('Runtime.evaluate', { expression, returnByValue: true });
-      assert.notEqual(reply, UNANSWERED,
-        `CDP stopped answering while evaluating \`${expression}\` (socket ${socketClosed ? 'closed' : 'open'})`);
-      assert.ok(!reply.error, `CDP rejected \`${expression}\`: ${JSON.stringify(reply.error)}`);
-      // A throw inside the page comes back as the THROWN VALUE in the same RemoteObject
-      // slot as a real result, so `throw true` would satisfy a boolean assertion without
-      // the expression ever having evaluated. exceptionDetails is the only thing that
-      // distinguishes them.
-      assert.ok(!reply.result?.exceptionDetails,
-        `\`${expression}\` threw in the page: ${reply.result?.exceptionDetails?.text ?? ''} ${reply.result?.exceptionDetails?.exception?.description ?? ''}`.trim());
-      return reply.result?.result?.value;
-    };
+    const evaluateChecked = (expression) => evaluatePage(send, expression, () => socketClosed);
 
     // Not fire-and-forget: if Runtime.enable is never acknowledged nothing subscribes to
     // Runtime.exceptionThrown/consoleAPICalled, and the console-error assertion at the end
@@ -486,8 +526,10 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     await dragTask('layout-0', 'layout-2', false);
     const firstOrder = ['layout-1', 'layout-0', 'layout-2', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
     assert.ok(await waitFor(() => JSON.stringify(JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8')).order) === JSON.stringify(firstOrder)), 'moving before must persist the shifted order');
+    // Invalidate the old document's signal before reload can acknowledge without navigating yet.
+    await evaluateChecked('delete window.__probeApi');
     await ack('Page.reload');
-    const renderedOrder = `JSON.stringify([...document.querySelectorAll('#grid .task-cell')].map((cell) => cell.dataset.taskid || 'adhoc'))`;
+    const renderedOrder = `(${probeTaskOrder})()`;
     assert.ok(await waitFor(() => evaluate(renderedOrder).then((order) => order === JSON.stringify(firstOrder))), 'the moved order must survive reload');
     await dragTask('layout-2', 'layout-1', true);
     const secondOrder = ['layout-1', 'layout-2', 'layout-0', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
@@ -514,6 +556,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     await evaluateChecked(`document.getElementById('m-cancel').click(); document.getElementById('new-session').click()`);
     assert.deepEqual(await evaluateChecked(readPick), chosen, 'Cancel must retain the last explicit choice');
     await evaluateChecked(`document.getElementById('m-cancel').click()`);
+    await evaluateChecked('delete window.__probeApi');
     await ack('Page.reload');
     assert.ok(await waitFor(() => evaluate(`window.__probeApi?.agents().some((a) => a.models.length > 1)`)), 'live agents must load after reload');
     await evaluateChecked(`document.getElementById('new-session').click()`);
@@ -523,6 +566,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       effort.value = ''; effort.dispatchEvent(new Event('change', { bubbles: true }));
       document.getElementById('m-cancel').click();
     })()`);
+    await evaluateChecked('delete window.__probeApi');
     await ack('Page.reload');
     assert.ok(await waitFor(() => evaluate(`window.__probeApi?.agents().some((a) => a.models.length > 1)`)));
     await evaluateChecked(`document.getElementById('new-session').click()`);
