@@ -220,7 +220,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
   }
 
   function open(entry) {
-    const d = { entry, deckId: null, graph: null, ext: null, status: 'connecting', duplicate: null, started: ++opened };
+    const d = { entry, deckId: null, graph: null, ext: null, status: 'connecting', live: false, duplicate: null, started: ++opened };
     const cached = cache?.get(entry);
     if (cached && typeof cached.deckId === 'string' && Array.isArray(cached.sessions) && cached.url === entry.url) {
       d.deckId = cached.deckId;
@@ -230,6 +230,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
       origin: () => originOfUrl(d.entry.url),
       onStatus: (status) => {
         d.status = status;
+        if (status !== 'ready') d.live = false;
         const id = d.client.descriptor()?.deckId;
         if (id) d.deckId = id;
         d.duplicate = duplicateOf(d);
@@ -242,6 +243,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
         if (!d.deckId) return;
         d.graph = stampDeck(stateToGraph(frame), d.deckId);
         d.ext = frame.ext && typeof frame.ext === 'object' ? frame.ext : null;
+        d.live = true;
         cache?.set(d.entry, { url: d.entry.url, deckId: d.deckId, sessions: d.graph.sessions || [], tasks: d.graph.tasks, schedules: d.graph.schedules });
         onChange();
       },
@@ -273,6 +275,9 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
     graph: d.duplicate ? null : d.graph,
     ext: d.duplicate ? null : d.ext,
     status: d.duplicate ? 'incompatible' : d.status,
+    // Whether `graph` is this connection's own state rather than the cached
+    // sessions left from before: only then are the deck's settings in it.
+    live: !d.duplicate && d.live,
     duplicate: d.duplicate,
     descriptor: d.client.descriptor(),
     name: deckLabel(d.entry, d.client.descriptor()),
