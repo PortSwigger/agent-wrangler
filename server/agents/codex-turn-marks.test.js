@@ -59,3 +59,24 @@ test('readTurnMarks gives up widening at maxBytes', async () => {
 test('readTurnMarks on a missing file is all null', async () => {
   assert.deepEqual(await readTurnMarks('/nonexistent'), { startedAt: null, completedAt: null, abortedAt: null, lastTurn: null, mtimeMs: null });
 });
+
+test('a fatal Codex error survives task completion until a new turn starts', () => {
+  const start = started('2026-11-15T10:00:00.000Z');
+  const error = line('2026-11-15T10:00:01.000Z', 'error', { codex_error_info: 'usage_limit_exceeded' });
+  const progress = line('2026-11-15T10:00:02.000Z', 'agent_message');
+  const end = complete('2026-11-15T10:00:03.000Z');
+  const text = [start, error, progress, end].join('\n');
+  assert.deepEqual(parseTurnMarks(text).lastTurn, { outcome: 'error', errorKind: 'usage_limit_exceeded', at: t('2026-11-15T10:00:01.000Z') });
+  assert.equal(parseTurnMarks(text + '\n' + started('2026-11-15T10:01:00.000Z')).lastTurn, null);
+  assert.deepEqual(parseTurnMarks(text + '\n' + started('2026-11-15T10:01:00.000Z') + '\n' + complete('2026-11-15T10:01:01.000Z')).lastTurn, { outcome: 'ok', at: t('2026-11-15T10:01:01.000Z') });
+});
+
+test('readTurnMarks widens past task_complete to retain the same turn error', async (ctx) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-marks-'));
+  ctx.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'rollout.jsonl');
+  const error = line('2026-11-15T10:00:01.000Z', 'error', { codex_error_info: 'usage_limit_exceeded' });
+  const filler = JSON.stringify({ type: 'response_item', payload: { type: 'message', text: 'x'.repeat(2000) } });
+  fs.writeFileSync(file, [started('2026-11-15T10:00:00.000Z'), error, filler, complete('2026-11-15T10:00:03.000Z')].join('\n') + '\n');
+  assert.deepEqual((await readTurnMarks(file, { tailBytes: 500 })).lastTurn, { outcome: 'error', errorKind: 'usage_limit_exceeded', at: t('2026-11-15T10:00:01.000Z') });
+});

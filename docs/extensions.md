@@ -2209,7 +2209,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   record clears the projected outcome to `null`; a later terminal record replaces it.
   Without a graph node the outcome is `null`; it is not persisted in the mapping.
   Codex uses rollout `task_complete`, `turn_aborted` and explicit `error` events;
-  `task_started`, `user_message` and `agent_message` supersede the previous result.
+  a recorded fatal `error` survives trailing `task_complete` events until the next
+  `task_started`. Otherwise `user_message` and `agent_message` clear the previous result.
+  Some Codex versions omit errors from rollouts; without that evidence a trailing
+  `task_complete` reports `ok`, or the outcome remains unknown without a terminal mark.
+  Codex cards on remote runtimes currently report `null`.
   Claude uses assistant `stop_reason: 'end_turn'`, `isApiErrorMessage`, and the
   explicit `[Request interrupted by user]` (including `for tool use`) user marker.
   Later message progress clears the outcome. Sidechain and inherited fork history

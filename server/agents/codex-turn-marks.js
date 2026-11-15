@@ -16,6 +16,7 @@ export function parseTurnMarks(text) {
     if (key) marks[key] = at;
     const type = record.payload?.type;
     if (type === 'task_started') marks.lastTurn = null;
+    else if (marks.lastTurn?.outcome === 'error') continue;
     else if (type === 'task_complete') marks.lastTurn = { outcome: 'ok', at };
     else if (type === 'turn_aborted') marks.lastTurn = { outcome: 'aborted', at };
     else if (type === 'error') {
@@ -46,8 +47,7 @@ export async function readTurnMarks(rolloutPath, { tailBytes = 65536, maxBytes =
         text = nl === -1 ? '' : text.slice(nl + 1);
       }
       marks = parseTurnMarks(text);
-      const found = Object.values(marks).some((v) => v != null);
-      if (found || start === 0 || length >= maxBytes) break;
+      if (marks.startedAt != null || start === 0 || length >= maxBytes) break;
     }
     return { ...marks, mtimeMs };
   } catch {
