@@ -39,7 +39,8 @@ import { createRebuildCoalescer } from './rebuild-coalescer.js';
 import { diffNeedsYou, notifyLabel, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
-import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
+import { mergePr } from './pr-status.js';
+import { createPrObservationStore, createPrObservationPoller } from './pr-observations.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
@@ -260,6 +261,8 @@ const hostApiFor = (id) => hostApis.get(id);
 // subscribes through `host.events`. A subscription belongs to its extension and
 // is dropped on deactivate, so a disabled extension hears nothing.
 const coreEvents = createEventBus({ onError: logError, isActive: (id) => hostApis.has(id) });
+const prObservations = createPrObservationStore({ directory: path.join(DATA_DIR, 'pr-observations'), events: coreEvents, onError: logError });
+const observePrLinks = createPrObservationPoller({ observations: prObservations });
 // name -> the instance an extension's store factory returned. Filled by
 // activateExtension below (and emptied by deactivateExtension), never here: an
 // extension can be activated at boot, at an install, or at a settings flip, and
@@ -361,6 +364,7 @@ const paneDeferral = createPaneDeferral({
 const extFiles = createExtFiles();
 const extWiring = {
   core: extCore,
+  prObservations,
   extFiles,
   events: coreEvents,
   telemetry,
@@ -742,8 +746,7 @@ async function runPrStatusSweep(only) {
   // merged/closed line here, plus all three transition loops), so one tick can't
   // gate two of them on different defaults.
   const fixPrDefault = autoFixPrChecksDefault();
-  for (const { scope, ownerId, url, number, unresolvedCount: prevUnresolvedCount } of links) {
-    const res = await fetchPrStatus(url);
+  for await (const { scope, ownerId, url, number, unresolvedCount, previousUnresolvedCount, status: res, fetchedAt } of observePrLinks(links)) {
     if (res == null) continue;
     const store = scope === 'task' ? taskStore : sessionManager;
     // A merged/closed PR is dead: drop its link automatically (any pr link,
@@ -766,13 +769,8 @@ async function runPrStatusSweep(only) {
       }
       continue;
     }
-    // A second gh call, sequenced right after the first (still a handful of PRs
-    // per sweep). On failure fall back to the link's existing stored count
-    // rather than clobbering it with null — a transient gh hiccup must not look
-    // like every thread just got resolved.
-    const unresolvedCount = (await fetchUnresolvedThreadCount(url)) ?? prevUnresolvedCount;
-    const at = new Date().toISOString();
-    if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, at, unresolvedCount, res.headSha)) changed = true;
+    if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, fetchedAt,
+      unresolvedCount ?? previousUnresolvedCount, res.headSha)) changed = true;
   }
   // Detect check-status transitions only on the full sweep (the on-attach fast
   // path skips other links, so its baseline would be incomplete and re-fire).

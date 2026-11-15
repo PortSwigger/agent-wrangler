@@ -2229,6 +2229,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension hears nothing. `emit` publishes `ext:<id>:<name>` (forced), so an
   extension cannot forge a core event. Core event: `archive-review:completed
   { sid, taskId, markdown }` (the review is skipped when nobody listens).
+  Since 1.93.0, `pr:observation` publishes the full PR observation described
+  below; `events` alone grants these payloads without `links:read`.
   Since 1.59.0, `session-status:needs-you`, `session-status:idle-held`,
   `session-status:quiet` and `session-status:exited` publish
   `{ sid, kind, at, waitingFor, idleMs, quietMs, exitReason }` for every session,
@@ -2258,7 +2260,77 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `remove_links` matches non-`pr` links generically (key, case-insensitive, or url).
 - **`host.links.get(sessionId)`** (capability `links:read`, 1.70.0) returns a
   copy of the card's session links, including PR links, or `[]` for an unknown
-  card. This capability exposes only `get`; it does not expose `attach`.
+  card. It also exposes the PR observation readers below; it does not expose `attach`.
+- **PR observations** (capability `links:read`, 1.93.0):
+  `host.links.prObservation(url)` synchronously returns the latest observation
+  for that exact stored PR URL, or `null` when core has never attempted it.
+  `host.links.prObservations()` returns an object keyed by URL containing all
+  retained observations. Both readers also accompany `links:write`. Reads are
+  local and perform no GitHub requests. Returned objects, including nested check
+  data, are deeply frozen snapshots.
+
+  Each observation has this shape (all keys are present):
+
+  ```js
+  {
+    url,                 // exact PR URL used by the sweep
+    nodeId,              // GitHub GraphQL PR node id
+    createdAt,           // GitHub PR creation timestamp
+    state,               // "open", "merged", or "closed"
+    title, number, isDraft,
+    headSha,             // GitHub headRefOid
+    mergeStateStatus,    // GitHub enum, e.g. "CLEAN", "BLOCKED", "DIRTY"
+    statusCheckRollup,    // raw gh pr view array, including CheckRun/StatusContext fields
+    reviewDecision,      // "", "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"
+    checkStatus,         // derived readiness: passing, failing, pending, none,
+                         // awaiting-review, or changes-requested
+    dirty,               // mergeStateStatus === "DIRTY"
+    fetchedAt,           // ISO timestamp of the last successful PR status fetch
+    attemptedAt,         // ISO timestamp of the last PR status fetch attempt
+    lastError,           // null on success, diagnostic string on failure
+  }
+  ```
+
+  Before the first successful fetch, all PR data fields and `fetchedAt` are
+  `null`; `url`, `attemptedAt` and `lastError` identify the failed attempt.
+  Later failures preserve the last successful PR data and `fetchedAt`, update
+  `attemptedAt` and `lastError`, and a successful fetch clears `lastError`.
+  Error reporting covers the PR status fetch, not the separate unresolved-thread
+  count query. `statusCheckRollup` describes checks already attached to the head;
+  it does not enumerate absent required checks. `checkStatus: "passing"` means
+  mergeable according to core's readiness rules, not simply all reported CI green.
+  An unknown future review decision normalises to `""`.
+
+  The existing PR sweep supplies observations using its existing requests, with
+  additional fields on the same `gh pr view`. Duplicate task/session links share
+  one fetch per URL in each sweep; overlapping fetches of that URL share in-flight
+  work. Only currently linked PRs are polled. Observations are stored atomically
+  in separate URL-hashed JSON files under the data directory’s `pr-observations/`
+  directory and retained without expiry
+  across link removal, merge/close, and server restarts. Retained observations can
+  therefore be stale: consumers must assess `fetchedAt` and `lastError`.
+  Reattaching a URL resumes observation. A different `nodeId` at the same URL
+  replaces the previous PR record entirely; compare `nodeId` and `createdAt`
+  when detecting URL reuse. Timestamp-only refreshes update memory without disk
+  writes; those timestamps persist with the next meaningful change for that URL.
+  After a restart, freshness timestamps therefore conservatively reflect the last
+  durable change rather than every successful poll. Each write touches only its
+  own URL file; retained history does not multiply sweep write costs.
+
+  Capability `events` alone grants observation payloads, without `links:read`.
+  Subscribe using
+  `host.events.on('pr:observation', observation => { /* ... */ })`.
+  The payload is the full deeply frozen observation above. Core emits once on
+  the first observation, any PR data change (including identity or head), and
+  error changes/recovery. Changes only to `fetchedAt`/`attemptedAt` do not emit.
+  Events follow the durable write and precede terminal link removal. A failed
+  write is logged and leaves the prior observation snapshot intact for retry.
+  Open PR link status updates and notifications continue; terminal links stay
+  attached until their terminal observation is durable.
+  Events are in-process notifications with no replay on subscription or restart;
+  subscribe and read the snapshot to establish a baseline. Normal event-bus
+  subscriber isolation and extension deactivation rules apply. Consumers using
+  this contract declare host API `^1.93.0`.
 - **`host.links`** (capability `links:write`, 1.19.0) lets server code put a link
   on a card when no agent will call `set_links` for it, e.g. a sweep that learns a
   URL after launch. `get(sid)` returns a copy of the card's session links (`[]` for

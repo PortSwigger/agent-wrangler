@@ -597,9 +597,11 @@ const usageRead = ({ scanUsage }) => ({
   },
 });
 
-const linksRead = ({ core }) => ({
+const linksRead = ({ core, prObservations }) => ({
   links: {
     get: (sid) => core.sessionManager.getLinks(sid).map((l) => ({ ...l })),
+    prObservation: (url) => prObservations.get(url),
+    prObservations: () => prObservations.all(),
   },
 });
 
@@ -615,7 +617,7 @@ const linksRead = ({ core }) => ({
 // externally-discovered session) and never an extension's. Upsert by
 // linkMatches, so a sweep re-attaching the same key updates it in place.
 // Synchronous like the hook itself; the rebuild is fire-and-forget.
-const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
+const linksWrite = ({ id, core, prObservations, linkNormalisersFor, hostApiFor, rebuild }) => {
   const normalise = (link) => {
     for (const { fn } of linkNormalisersFor(id)) {
       const out = fn({ link, host: hostApiFor(id) });
@@ -625,7 +627,7 @@ const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
   };
   return {
     links: {
-      ...linksRead({ core }).links,
+      ...linksRead({ core, prObservations }).links,
       attach: (sid, link) => {
         if (!core.sessionManager.entryFor(sid)) throw new Error(`links.attach: unknown session ${sid}`);
         const stored = normalise(link);
