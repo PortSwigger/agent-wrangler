@@ -649,7 +649,7 @@ const linksWrite = ({ id, core, prObservations, linkNormalisersFor, hostApiFor, 
 const agentsRead = ({ listAgents = agentList }) => ({
   agents: {
     list: async () => deepFreeze(await listAgents()),
-    front: async (options) => deepFreeze(modelFront((await listAgents()).filter((a) => a.available), options)),
+    front: async (options) => deepFreeze(modelFront((await listAgents()).filter((a) => a.available), options, options)),
   },
 });
 

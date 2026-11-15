@@ -2543,7 +2543,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
   A manifest using it declares `^1.66.0` (`^1.67.0` to read `headless` or `background`).
 
-- **`host.agents.front({ agent?, maxUsd?, minQuality? } = {})`** (capability
+- **`host.agents.front({ agents?, excludeModels?, agent?, maxUsd?, minQuality? } = {})`** (capability
   `agents:read`, 1.92.0) resolves a deeply frozen
   `{ read, credit, units, front }`, using the same benchmark data, Pareto maths and
   projection as `get_model_front`. The server reads installed agents and their
@@ -2553,8 +2553,21 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   ties by descending `quality`. An empty installed or measured set returns `[]`.
   The front contains settings nothing beats on quality, cost and time together.
   `onCurve` identifies membership of the quality/cost curve (ignoring time).
-  Filters apply after computing the entire installed-agent front and curve, so
-  filtering never promotes a dominated setting or changes `onCurve`.
+  `agents` and `excludeModels` (1.94.0) restrict candidates **before** computing
+  the front and curve. `agents` is an optional array of installed provider ids;
+  omitting it uses all installed agents, while `[]` returns an empty front.
+  Unknown or unavailable ids reject the promise. `excludeModels` is an optional
+  array of model values from `host.agents.list()`, matched exactly across all
+  selected providers and all efforts. Unknown model values are harmless, so an
+  exclusion list can span different installations. An empty exclusion list
+  excludes nothing; duplicate entries in either array have no extra effect.
+  Both options require arrays of non-empty strings. Excluding candidates can
+  promote settings dominated in the global front and change `onCurve`.
+
+  The output filters `agent`, `maxUsd` and `minQuality` apply after computing the
+  candidate front and curve; they never promote settings or change `onCurve`.
+  `agent` is validated against all installed providers, so an installed provider
+  outside `agents` returns an empty front.
 
   `agent` restricts output to one installed provider id; an unknown or unavailable
   id rejects the promise. `maxUsd` is a positive finite number and `minQuality` a
@@ -2564,7 +2577,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `{ quality: 'Terminal-Bench 4.0 points', usd: 'list-price dollars per task',
   minutes: 'wall-clock minutes per task' }`. These are coding-task measurements,
   not review-specific scores. Unmeasured settings are omitted. A manifest using
-  this method declares `^1.92.0`.
+  this method declares `^1.92.0`, or `^1.94.0` when using candidate restrictions.
+  For example, `host.agents.front({ agents: ['claude'], excludeModels: ['opus'] })`
+  computes the front over Claude's launchable models other than Opus.
+  These options do not affect `get_model_front` or the board's model picker.
 
 - **`host.agents.headless({ prompt, stdin?, agent?, model?, effort?, timeoutMs? })`**
   (capability `agents:headless`, 1.67.0) runs one tool-less one-shot and resolves a

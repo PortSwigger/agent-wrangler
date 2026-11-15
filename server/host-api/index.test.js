@@ -697,6 +697,52 @@ test('agents.front() projects the installed-agent MCP front and freezes fresh re
   assert.deepEqual((await host.agents.front()).front, []);
 });
 
+test('agents.front() restricts candidates before dominance and curve calculation', async () => {
+  const agents = [
+    { id: 'claude', available: true, efforts: [{ value: 'low' }, { value: 'high' }], models: [{ value: 'opus' }, { value: 'sonnet' }] },
+    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-sol' }, { value: 'gpt-6-luna' }] },
+    { id: 'offline', available: false, efforts: [], models: [] },
+  ];
+  const before = structuredClone(agents);
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => agents }) });
+  const all = await host.agents.front();
+  assert.equal(all.front.some((p) => p.model === 'sonnet'), false);
+  const claude = await host.agents.front({ agents: ['claude'] });
+  assert.ok(claude.front.some((p) => p.model === 'sonnet'), 'removing Codex promotes Sonnet');
+  assert.ok(claude.front.every((p) => p.agent === 'claude'));
+  assert.equal(claude.front.find((p) => p.model === 'opus' && p.effort === 'low').onCurve, true);
+  assert.equal((await host.agents.front({ agent: 'claude' })).front.find((p) => p.model === 'opus' && p.effort === 'low').onCurve, false);
+  const excluded = await host.agents.front({ excludeModels: ['gpt-6.1-sol', 'gpt-6-luna'] });
+  assert.deepEqual(excluded, claude);
+  const onlySonnet = await host.agents.front({ agents: ['claude'], excludeModels: ['opus'] });
+  assert.ok(onlySonnet.front.length > 0);
+  assert.ok(onlySonnet.front.every((p) => p.model === 'sonnet'));
+  assert.ok(Object.isFrozen(onlySonnet.front[0]));
+  assert.deepEqual((await host.agents.front({ agents: [] })).front, []);
+  assert.deepEqual((await host.agents.front({ agents: ['claude'], agent: 'codex' })).front, []);
+  assert.deepEqual(await host.agents.front({ agents: ['claude', 'codex', 'claude'], excludeModels: ['unknown'] }), all);
+  assert.deepEqual(await host.agents.front(), all, 'restrictions do not persist');
+  assert.deepEqual(agents, before, 'the catalog is not mutated');
+  const filtered = await host.agents.front({ agents: ['claude'], maxUsd: 2, minQuality: 30 });
+  assert.deepEqual(filtered.front, claude.front.filter((p) => p.usd <= 2 && p.quality >= 30));
+});
+
+test('agents.front() validates candidate restrictions', async () => {
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => [
+    { id: 'claude', available: true, models: [], efforts: [] },
+    { id: 'offline', available: false, models: [], efforts: [] },
+  ] }) });
+  for (const agents of [null, 'claude', {}, [null], [1], ['']]) {
+    await assert.rejects(host.agents.front({ agents }), /agents must be an array of non-empty strings/);
+  }
+  for (const agents of [['missing'], ['offline']]) {
+    await assert.rejects(host.agents.front({ agents }), /Unknown or unavailable agent/);
+  }
+  for (const excludeModels of [null, 'opus', {}, [null], [1], ['']]) {
+    await assert.rejects(host.agents.front({ excludeModels }), /excludeModels must be an array of non-empty strings/);
+  }
+});
+
 test('agents.front() requires agents:read and rejects unavailable agents and invalid filters', async () => {
   const headless = buildHostApi({ id: 'x', requires: ['agents:headless'], ...wiring() });
   assert.equal('front' in headless.agents, false);
