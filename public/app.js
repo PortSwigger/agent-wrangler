@@ -81,7 +81,9 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { CODEX_POLICY_FALLBACK, syncCodexPolicyControls, fillCodexPolicyControls, readCodexPolicyControls } from './codex-policy-field.js';
-import { initSettings, flashSettingsSaved, getSetting, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows, refreshDeckSettings, OWN_DECK } from './settings.js';
+import { CODEX_DEFAULT_SETTINGS, deckSettingValue, deckSettingFrame, settingsDeckChoices, startupChoices } from './deck-settings.js';
+import { createDeckSettingsPanels } from './deck-settings-panels.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -7581,12 +7583,48 @@ function openExtConsent(payload) {
   modal.addEventListener('mousedown', onBackdrop);
 }
 
-// Settings row id -> its field of graph.codexPolicyDefaults.
-const CODEX_DEFAULT_SETTINGS = { codexDefaultSandbox: 'sandbox', codexDefaultApproval: 'approval', codexDefaultApproveForMe: 'approveForMe', codexDefaultBypass: 'bypass' };
+// Settings' deck picker names a deck by its deck list entry id; any deck but
+// the board's own is read off its own graph and written over its deck API. A
+// value just written shows until that deck sends its next state.
+const remoteSettingOverlay = new Map();
+const remoteSettingsDeck = (key) => (key && key !== OWN_DECK ? boardDecks().find((d) => d.id === key && !d.own && d.deckId) || null : null);
+function remoteSettingGet(d, id) {
+  const overlay = remoteSettingOverlay.get(d.id);
+  if (overlay?.graph === d.graph && Object.hasOwn(overlay.values, id)) return overlay.values[id];
+  return deckSettingValue(d.graph, id);
+}
+function remoteSettingSet(d, id, value) {
+  const frame = deckSettingFrame(id, value);
+  if (!frame) return;
+  const overlay = remoteSettingOverlay.get(d.id);
+  remoteSettingOverlay.set(d.id, { graph: d.graph, values: { ...(overlay?.graph === d.graph ? overlay.values : {}), [id]: value } });
+  send({ ...frame, deck: d.deckId });
+}
+const deckSettingsPanels = createDeckSettingsPanels({
+  deckOf: (deckId) => boardDecks().find((d) => d.deckId === deckId && !d.own) || null,
+  sendTo: (deckId, frame) => send({ ...frame, deck: deckId }),
+  get: (id, deckId) => { const d = boardDecks().find((x) => x.deckId === deckId && !x.own); return d ? remoteSettingGet(d, id) : undefined; },
+  set: (id, value, deckId) => { const d = boardDecks().find((x) => x.deckId === deckId && !x.own); if (d) remoteSettingSet(d, id, value); },
+});
+function releaseExtensionsPanel() {
+  if (extSettingsPanelHost) {
+    slots.unmountHost('settings.panel', extSettingsPanelHost);
+    extSettingsPanelHost = null;
+    pruneSampleHosts();
+  }
+  extPanelHost = null;
+}
 
 initSettings({
   server: {
-    get: (id) => {
+    options: (id, key) => {
+      const d = remoteSettingsDeck(key);
+      if (!d || id !== 'defaultRuntime') return null;
+      return deckRuntimes(d.descriptor).map((r) => ({ value: r.id, label: r.label }));
+    },
+    get: (id, key) => {
+      const remote = remoteSettingsDeck(key);
+      if (remote) return remoteSettingGet(remote, id);
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
@@ -7608,7 +7646,9 @@ initSettings({
       }
       return undefined;
     },
-    set: (id, value) => {
+    set: (id, value, key) => {
+      const remote = remoteSettingsDeck(key);
+      if (remote) { remoteSettingSet(remote, id, value); return; }
       if (id === 'trustCodexLaunchCwd') {
         trustCodexLaunchCwd = Boolean(value);
         send({ type: 'set-trust-codex-launch-cwd', enabled: trustCodexLaunchCwd });
@@ -7675,9 +7715,27 @@ initSettings({
     onFontSize: setTermFontSize,
     onChatFontSize: setChatFontSize,
   },
-  extensions: { mount: openExtensionsPanel },
-  updates: { mount: mountUpdatePanel },
+  extensions: {
+    mount: (host, key) => {
+      const remote = remoteSettingsDeck(key);
+      if (!remote) { deckSettingsPanels.mountExtensions(null, null); openExtensionsPanel(host); return; }
+      releaseExtensionsPanel();
+      deckSettingsPanels.mountExtensions(host, remote.deckId);
+    },
+  },
+  updates: {
+    mount: (host, key) => {
+      const remote = remoteSettingsDeck(key);
+      if (!remote) { deckSettingsPanels.mountUpdates(null, null); mountUpdatePanel(host); return; }
+      updatePanelHost = null;
+      deckSettingsPanels.mountUpdates(host, remote.deckId);
+    },
+  },
   decks: { mount: (el) => mountDecksPanel(el, decksPanelBridge) },
+  deckScope: {
+    decks: () => settingsDeckChoices(boardDecks()),
+    startup: (key) => startupChoices(boardDecks().find((d) => d.id === key)?.descriptor),
+  },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', () => submitDispatch());
@@ -8002,13 +8060,15 @@ const ownDeckEntry = () => deckEntries.find((e) => e.own) || { id: OWN_ENTRY, ow
 function boardDecks() {
   const own = ownDeckEntry();
   return [
-    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, descriptor: deck.descriptor(), ext: ownExt, name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
+    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, live: Boolean(ownGraph), descriptor: deck.descriptor(), ext: ownExt, name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
     ...remoteDecks.list(),
   ];
 }
 const deckNameOf = (deckId) => boardDecks().find((d) => d.deckId === deckId)?.name || 'That deck';
 function applyDecks() {
   syncExtDecks();
+  refreshDeckSettings();
+  deckSettingsPanels.refresh();
   if (!ownGraph) return;
   const [own, ...remotes] = boardDecks();
   const multi = deckEntries.length > 1;
@@ -8088,7 +8148,7 @@ export function send(obj, extId = null) {
   }
   const remote = deckId && deckId !== boardDeckId ? deckId : null;
   client.act(call.action, call).then((r) => withDeckContext(deckId, () => {
-    if (r.ok) { if (r.data && typeof r.data.type === 'string') onDeckMessage(scopeReply(r.data, remote)); }
+    if (r.ok) { if (r.data && typeof r.data.type === 'string' && !deckSettingsPanels.note(remote, r.data)) onDeckMessage(scopeReply(r.data, remote)); }
     else onDeckMessage({ type: 'error', message: r.error?.message || 'The action failed' });
   }));
   return true;
@@ -8114,6 +8174,7 @@ const REMOTE_DECK_MESSAGES = new Set([
   'schedule-fired', 'schedule-error', 'schedule-missed',
 ]);
 function onRemoteDeckMessage(deckId, msg) {
+  if (deckSettingsPanels.note(deckId, msg)) return;
   if (!msg || (!REMOTE_DECK_MESSAGES.has(msg.type) && !String(msg.type).startsWith('ext:'))) return;
   withDeckContext(deckId, () => onDeckMessage(msg));
 }

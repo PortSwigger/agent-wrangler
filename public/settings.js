@@ -236,6 +236,39 @@ export const SETTINGS_TABS = [
   { id: 'updates', label: 'Updates', settingIds: ['autoUpdate', 'refreshSessionsAfterUpdate'] },
 ];
 
+// The layout once the board shows more than one deck. Board tabs hold what is
+// this browser's or the board's own (per-browser rows, the deck list, and what
+// only changes how the board displays things); deck tabs hold what a deck does
+// with its own sessions, read from and written to the deck chosen in the
+// picker. A board with only its own deck keeps SETTINGS_TABS.
+export const BOARD_TABS = [
+  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide'] },
+  { id: 'board', label: 'Board', settingIds: ['subagentsExpandedByDefault', 'childFullViewByDefault', 'chatViewDefault', 'suppressNudgedPrToasts'] },
+  { id: 'decks', label: 'Decks', settingIds: [] },
+  { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },
+];
+export const DECK_TABS = [
+  {
+    id: 'sessions',
+    label: 'Sessions',
+    deck: true,
+    settingIds: ['defaultSessionCwd', 'defaultRuntime', 'codexDefaultSandbox', 'codexDefaultApproval', 'codexDefaultApproveForMe', 'codexDefaultBypass'],
+  },
+  {
+    id: 'automation',
+    label: 'Automation',
+    deck: true,
+    settingIds: ['autoFixPrChecksDefault', 'prModelFooter', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd', 'mailWakesDormant', 'backgroundModel'],
+  },
+  { id: 'extensions', label: 'Extensions', deck: true, settingIds: [] },
+  { id: 'updates', label: 'Updates', deck: true, settingIds: ['autoUpdate', 'refreshSessionsAfterUpdate'] },
+];
+export const OWN_DECK = 'own';
+const DECK_SETTING_IDS = new Set(DECK_TABS.flatMap((t) => t.settingIds));
+// Whether a setting belongs to a deck rather than to the board: every row on a
+// deck tab, and every extension toggle.
+export const isDeckSetting = (id) => DECK_SETTING_IDS.has(id) || String(id).startsWith('ext:');
+
 // Every extension toggle is a scope:'server' def under this prefix, so app.js's
 // bridge handles them all with ONE `startsWith` rung instead of a branch per
 // feature flag — the ladder this replaces.
@@ -360,13 +393,20 @@ let changeBridge = () => {};
 let extensionsBridge = { mount: () => {} };
 let updatesBridge = { mount: () => {} };
 let decksBridge = { mount: () => {} };
+// { decks() } lists the board's decks for the picker as deck-settings.js
+// settingsDeckChoices does, own first; { startup(key) } is that deck's startup
+// choices. One deck means the single-deck layout.
+let deckScope = { decks: () => [], startup: () => [] };
+let selectedDeck = OWN_DECK;
+let multiDeck = false;
+let layoutTabs = SETTINGS_TABS;
 let openModal = () => {};
 
 const byId = new Map(SETTINGS.map((s) => [s.id, s]));
 
-function readStored(def) {
+function readStored(def, deck = OWN_DECK) {
   if (def.scope === 'server') {
-    const v = serverBridge.get(def.id);
+    const v = serverBridge.get(def.id, deck);
     return v == null ? def.default : v;
   }
   const raw = localStorage.getItem(STORE_PREFIX + def.id);
@@ -380,8 +420,8 @@ function readStored(def) {
   return raw;
 }
 
-function writeStored(def, value) {
-  if (def.scope === 'server') { serverBridge.set(def.id, value); return; }
+function writeStored(def, value, deck = OWN_DECK) {
+  if (def.scope === 'server') { serverBridge.set(def.id, value, deck); return; }
   const raw = def.type === 'toggle' ? (value ? '1' : '0') : String(value);
   localStorage.setItem(STORE_PREFIX + def.id, raw);
 }
@@ -416,15 +456,26 @@ export function migrateLegacySettings(legacy, storage = localStorage) {
   return migrated;
 }
 
-export function setSetting(id, value) {
+export function setSetting(id, value, deck = OWN_DECK) {
   const def = byId.get(id);
   if (!def) return;
-  writeStored(def, value);
-  changeBridge(id, value);
+  writeStored(def, value, deck);
+  if (deck === OWN_DECK) changeBridge(id, value);
 }
 
-function rowHtml(def) {
-  const on = readStored(def);
+// A deck row's def with the options that deck offers (its own runtimes, say)
+// in place of the board's own deck's.
+function defForDeck(def, deck) {
+  if (deck === OWN_DECK || !serverBridge.options) return def;
+  const options = serverBridge.options(def.id, deck);
+  return Array.isArray(options) && options.length ? { ...def, options } : def;
+}
+
+const deckOfRow = (row) => (row?.closest('[data-deck-panel]') ? selectedDeck : OWN_DECK);
+
+function rowHtml(baseDef, deck = OWN_DECK) {
+  const def = defForDeck(baseDef, deck);
+  const on = readStored(def, deck);
   // type dispatch: only 'toggle' today, but the switch keeps the door open for
   // select/number rows without touching the open/close/escape wiring below.
   if (def.type === 'toggle') {
@@ -496,7 +547,44 @@ function appearanceItemHtml(label, help, body) {
     </div>`;
 }
 
+function startupChoicesHtml(deck) {
+  const choices = deckScope.startup(deck) || [];
+  const rows = choices.length
+    ? choices.map((c) => `<div class="setting-row setting-row-readonly" data-startup="${esc(c.key)}">
+        <div class="setting-copy"><div class="setting-label">${esc(c.label)}</div></div>
+        <div class="setting-readonly-value">${esc(c.value)}</div>
+      </div>`).join('')
+    : '<div class="settings-empty">This deck reports no startup choices.</div>';
+  return `<div class="settings-startup">
+      <div class="setting-label">Startup choices</div>
+      <div class="setting-help">Fixed when the deck started. Change them by restarting the deck with other options.</div>
+      <div class="settings-list">${rows}</div>
+    </div>`;
+}
+
+// What a deck tab shows above its rows: whose settings these are, or, for a
+// deck that is not connected, only that they are unavailable (never the last
+// values it sent).
+function deckPanelInner(tab) {
+  const choice = deckScope.decks().find((d) => d.key === selectedDeck) || { key: selectedDeck, label: 'This deck', available: false, why: 'unreachable' };
+  if (!choice.available) {
+    return `<div class="settings-deck-unavailable" role="status"><div class="setting-label">${esc(choice.label)} is ${esc(choice.why || 'unreachable')}</div>
+      <div class="setting-help">Its settings are unavailable until the board is connected to it again.</div></div>`;
+  }
+  const note = `<div class="settings-deck-note">Saved on <strong>${esc(choice.label)}</strong>${choice.own ? ', this board\'s own deck' : ''}.</div>`;
+  const rows = tab.settingIds.map((id) => rowHtml(byId.get(id), selectedDeck)).join('');
+  let inner = `${note}<div class="settings-list">${rows}</div>`;
+  if (tab.id === 'sessions') inner += startupChoicesHtml(selectedDeck);
+  else if (tab.id === 'extensions') inner = `${note}<div class="ext-installed" id="settings-ext-installed"></div>`;
+  else if (tab.id === 'updates') inner = `${note}<div id="settings-updates"></div><div class="settings-list">${rows}</div>`;
+  return inner;
+}
+
 function tabPanelHtml(tab, selected) {
+  if (multiDeck && tab.deck) {
+    return `<div id="settings-panel-${tab.id}" class="settings-panel${selected ? '' : ' hidden'}" data-deck-panel
+      role="tabpanel" aria-labelledby="settings-tab-${tab.id}">${deckPanelInner(tab)}</div>`;
+  }
   const rows = tab.settingIds.map((id) => rowHtml(byId.get(id))).join('');
   let inner = `<div class="settings-list">${rows}</div>`;
   if (tab.id === 'appearance') {
@@ -527,16 +615,74 @@ function tabPanelHtml(tab, selected) {
       role="tabpanel" aria-labelledby="settings-tab-${tab.id}">${inner}</div>`;
 }
 
+function deckPickerHtml() {
+  const opts = deckScope.decks().map((d) => `<option value="${esc(d.key)}"${d.key === selectedDeck ? ' selected' : ''}>${esc(d.available ? d.label : `${d.label} (${d.why})`)}</option>`).join('');
+  return `<select class="settings-deck-picker" aria-label="Deck whose settings to show">${opts}</select>`;
+}
+
 function render(body) {
-  const selectedId = SETTINGS_TABS[0].id;
-  const tabs = SETTINGS_TABS.map((tab) => `<button type="button" id="settings-tab-${tab.id}"
+  const choices = deckScope.decks();
+  multiDeck = choices.length > 1;
+  if (!multiDeck || !choices.some((d) => d.key === selectedDeck)) selectedDeck = OWN_DECK;
+  layoutTabs = multiDeck ? [...BOARD_TABS, ...DECK_TABS] : SETTINGS_TABS;
+  const selectedId = layoutTabs[0].id;
+  const tabHtml = (tab) => `<button type="button" id="settings-tab-${tab.id}"
       class="settings-tab${tab.id === selectedId ? ' active' : ''}" role="tab"
       aria-selected="${tab.id === selectedId ? 'true' : 'false'}"
       aria-controls="settings-panel-${tab.id}" tabindex="${tab.id === selectedId ? '0' : '-1'}"
-      data-tab="${tab.id}">${esc(tab.label)}</button>`).join('');
-  const panels = SETTINGS_TABS.map((tab) => tabPanelHtml(tab, tab.id === selectedId)).join('');
-  body.innerHTML = `<div class="settings-tabs" role="tablist" aria-label="Settings sections">${tabs}</div>
+      data-tab="${tab.id}">${esc(tab.label)}</button>`;
+  const tabs = multiDeck
+    ? `<span class="settings-tab-group">Board</span>${BOARD_TABS.map(tabHtml).join('')}<span class="settings-tab-group settings-tab-group-deck">Deck</span>${deckPickerHtml()}${DECK_TABS.map(tabHtml).join('')}`
+    : layoutTabs.map(tabHtml).join('');
+  const panels = layoutTabs.map((tab) => tabPanelHtml(tab, tab.id === selectedId)).join('');
+  body.innerHTML = `<div class="settings-tabs${multiDeck ? ' settings-tabs-grouped' : ''}" role="tablist" aria-label="Settings sections">${tabs}</div>
     <div class="settings-panels">${panels}</div>`;
+}
+
+// Redraws the deck tabs for the deck now chosen, keeping the tab shown.
+function renderDeckPanels(body) {
+  for (const tab of DECK_TABS) {
+    const panel = body.querySelector(`#settings-panel-${tab.id}`);
+    if (panel) panel.innerHTML = deckPanelInner(tab);
+  }
+  const picker = body.querySelector('.settings-deck-picker');
+  if (picker) picker.outerHTML = deckPickerHtml();
+  mountDeckHosts(body);
+}
+
+function mountDeckHosts(body) {
+  extensionsBridge.mount(body.querySelector('#settings-ext-installed'), selectedDeck);
+  updatesBridge.mount(body.querySelector('#settings-updates'), selectedDeck);
+}
+
+let lastDeckChoices = '';
+// Called by app.js whenever a deck's connection or state moves. An open
+// Settings follows: a change of how many decks there are redraws it whole, a
+// change in whether the chosen deck is available redraws its deck tabs. Values
+// that merely moved wait for the next open, so a half-typed field survives.
+export function refreshDeckSettings() {
+  const body = settingsBody;
+  const choices = deckScope.decks();
+  const sig = JSON.stringify(choices);
+  if (sig === lastDeckChoices) return;
+  lastDeckChoices = sig;
+  const modal = document.getElementById('settings-modal');
+  if (!body || !modal || modal.classList.contains('hidden') || detail) return;
+  if ((choices.length > 1) !== multiDeck) {
+    const active = body.querySelector('.settings-tab.active')?.dataset.tab;
+    render(body);
+    if (active && layoutTabs.some((t) => t.id === active)) selectTab(body, active);
+    mountAll(body);
+    return;
+  }
+  if (!multiDeck) return;
+  if (!choices.some((d) => d.key === selectedDeck)) selectedDeck = OWN_DECK;
+  renderDeckPanels(body);
+}
+
+function mountAll(body) {
+  mountDeckHosts(body);
+  decksBridge.mount(body.querySelector('#settings-decks'));
 }
 
 let settingsBody = null;
@@ -652,7 +798,8 @@ function selectTab(body, tabId, focus = false) {
 // `server` is the { get(id), set(id, value) } bridge for scope:'server' entries;
 // `appearance` is the theme/font-size bridge described above; `onChange(id, value)`
 // fires after every write, either scope.
-export function initSettings({ server, appearance, onChange, extensions, updates, decks } = {}) {
+export function initSettings({ server, appearance, onChange, extensions, updates, decks, deckScope: scope } = {}) {
+  if (scope) deckScope = scope;
   if (server) serverBridge = server;
   if (appearance) appearanceBridge = appearance;
   if (onChange) changeBridge = onChange;
@@ -671,14 +818,14 @@ export function initSettings({ server, appearance, onChange, extensions, updates
   // file-preview / schedule modals use.
   const open = (tabId) => {
     endDetail();
+    selectedDeck = OWN_DECK;
+    lastDeckChoices = JSON.stringify(deckScope.decks());
     render(body);
     if (typeof tabId === 'string') selectTab(body, tabId);
     // After render, because the mount point only exists once the panels are in
     // the DOM. Every open rebuilds it, so a quarantine reason or a SHA that
     // changed since the last open is current without any subscription here.
-    extensionsBridge.mount(body.querySelector('#settings-ext-installed'));
-    updatesBridge.mount(body.querySelector('#settings-updates'));
-    decksBridge.mount(body.querySelector('#settings-decks'));
+    mountAll(body);
     modal.classList.remove('hidden');
     closeBtn?.focus();
   };
@@ -749,7 +896,7 @@ export function initSettings({ server, appearance, onChange, extensions, updates
       const segRow = segOpt.closest('.setting-row');
       const segDef = byId.get(segRow?.dataset.id);
       if (!segDef || segDef.type !== 'segmented') return;
-      setSetting(segDef.id, segOpt.dataset.value);
+      setSetting(segDef.id, segOpt.dataset.value, deckOfRow(segRow));
       // Scoped to this row's group, like the two .fontsize-row groups above: a
       // body-wide query would clear another segmented row's highlight too.
       segRow.querySelectorAll('.setting-seg-opt').forEach((b) => {
@@ -764,8 +911,9 @@ export function initSettings({ server, appearance, onChange, extensions, updates
     const row = toggle.closest('.setting-row');
     const def = byId.get(row?.dataset.id);
     if (!def || def.type !== 'toggle') return;
-    const next = !getSetting(def.id);
-    setSetting(def.id, next);
+    const deck = deckOfRow(row);
+    const next = !readStored(def, deck);
+    setSetting(def.id, next, deck);
     toggle.classList.toggle('on', next);
     toggle.setAttribute('aria-checked', next ? 'true' : 'false');
     // Extension rows only: what just happened and what is still pending. Shown
@@ -777,11 +925,18 @@ export function initSettings({ server, appearance, onChange, extensions, updates
   });
 
   body.addEventListener('change', (e) => {
+    const picker = e.target.closest('.settings-deck-picker');
+    if (picker) {
+      selectedDeck = picker.value;
+      renderDeckPanels(body);
+      body.querySelector('.settings-deck-picker')?.focus();
+      return;
+    }
     const select = e.target.closest('.setting-select');
     if (select) {
       const selectDef = byId.get(select.closest('.setting-row')?.dataset.id);
       if (!selectDef || selectDef.type !== 'select') return;
-      setSetting(selectDef.id, select.value);
+      setSetting(selectDef.id, select.value, deckOfRow(select));
       flashSettingsSaved();
       return;
     }
@@ -790,7 +945,7 @@ export function initSettings({ server, appearance, onChange, extensions, updates
     const def = byId.get(input.closest('.setting-row')?.dataset.id);
     if (!def || def.type !== 'text') return;
     input.value = input.value.trim();
-    setSetting(def.id, input.value);
+    setSetting(def.id, input.value, deckOfRow(input));
     flashSettingsSaved();
   });
 
@@ -802,10 +957,10 @@ export function initSettings({ server, appearance, onChange, extensions, updates
     }
     const tab = e.target.closest('.settings-tab');
     if (!tab) return;
-    const index = SETTINGS_TABS.findIndex(({ id }) => id === tab.dataset.tab);
-    const next = tabIndexAfterKey(index, e.key, SETTINGS_TABS.length);
+    const index = layoutTabs.findIndex(({ id }) => id === tab.dataset.tab);
+    const next = tabIndexAfterKey(index, e.key, layoutTabs.length);
     if (next === index) return;
     e.preventDefault();
-    selectTab(body, SETTINGS_TABS[next].id, true);
+    selectTab(body, layoutTabs[next].id, true);
   });
 }
