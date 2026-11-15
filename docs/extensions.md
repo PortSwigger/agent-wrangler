@@ -613,6 +613,47 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension with a reason about server core modules it never imported. Matching
   by name costs nothing and claims nothing: a static import hidden in `x.test.js`
   is no more caught than the `await import()` the whole rule concedes.
+- **An install can select an exact commit or tag.** In **Git URL**, enter an optional
+  tag or full 40-hex commit SHA. The equivalent control frame is
+  `{ type: 'ext-install', url, ref }`; omit `ref` to follow the default branch or
+  the installed extension's opted-in early-adopter branch. An explicit empty,
+  invalid, missing or ambiguous ref is refused. Branch names, abbreviated SHAs
+  and revision expressions are not accepted as exact refs. Tags consisting only
+  of 4–39 hexadecimal characters (such as `2024` or `deadbeef`) are refused
+  because they resemble abbreviated SHAs. A name shared by a
+  branch and a tag is ambiguous. Annotated tags resolve to their commit; the
+  disclosed `sha` is the commit fetched and checked out, with no fallback to HEAD.
+  The requested `ref` is recorded alongside `sha` and blocks automatic updates
+  until an install without a ref clears the pin. The auto-update and branch
+  opt-ins are preserved. `graph.extensions[]` and update-check results expose
+  `pinnedRef` and an `autoUpdateBlocked` reason; the panel shows that reason
+  even before a remote check. A manual update without a ref clears the pin.
+  A remote's ability to serve a SHA does not prove that its owner authored or
+  published it: GitHub can serve commits that exist only in a fork in the same
+  repository network. Verify the exact commit and its provenance before consent.
+- **Replacing a newer commit needs explicit downgrade confirmation.** The
+  disclosure includes `previousSha`, `relation` (`same`, `upgrade`, `downgrade`,
+  `diverged` or `unknown`), `downgrade` and `requiresDowngradeConfirmation`.
+  A target that is an ancestor of the installed commit is a downgrade. Diverged
+  or unavailable history also requires confirmation because a forward update
+  cannot be established. Consent is
+  `{ type: 'ext-consent', tempId, approve: true, allowDowngrade: true }` when
+  `requiresDowngradeConfirmation` is true; `approve` alone is refused before npm
+  or replacement. The board labels its confirmation as a downgrade and shows
+  both commits. Auto-update leaves these installs for human confirmation.
+- **Installed and running commits are separate receipts.** `graph.extensions[]`
+  exposes `installedSha` (the current on-disk record), `runningSha` (the loaded
+  module's provenance), the backward-compatible `sha` alias for `runningSha`,
+  and `restartPending` when the commits differ. The Source panel shows both full
+  SHAs and keeps the restart notice across reloads. `ext-install-done` also
+  returns `installedSha`, `runningSha` and `restartPending`. Fresh installs load
+  immediately; updates retain their running commit until server restart.
+  Empty strings mean no recorded commit, as with builtins and hand-placed code.
+  On server host API **1.90.0**, every extension can call
+  `host.extension.receipt()` without a capability grant to read its **own**
+  `{ installedSha, runningSha, restartPending }`. The returned object is a copy,
+  the installed receipt is read afresh on every call, and no extension-id
+  argument is accepted. Declare `engines.wranglerApi: '^1.90.0'` when using it.
 - **Installed extensions live in `<DATA_DIR>/extensions/<id>/`; their provenance is
   `<DATA_DIR>/extensions.json`, deliberately NOT config.json.** config.json keeps the
   `extensions.<id>` enable flags and is untouched by this feature. A record is

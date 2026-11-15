@@ -7605,7 +7605,7 @@ function mountExtensionsPanel(host) {
     },
     onAdd: () => { extAdding = true; if (!extBrowse) searchExtBrowse(); remountExtensions(); },
     onBrowse: () => { searchExtBrowse(); remountExtensions(); },
-    onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
+    onInstall: (url, ref) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url, ...(ref ? { ref } : {}) }); remountExtensions(); },
     // An update IS an install against the recorded origin — same frame, same
     // consent modal, same handler. There is deliberately no separate path.
     onUpdate: (entry) => { extUpdateQueue = []; extRestartAfterUpdates = false; startExtUpdate(entry); },
@@ -7668,7 +7668,7 @@ function openExtConsent(payload) {
     modal.removeEventListener('keydown', onKey);
     modal.removeEventListener('mousedown', onBackdrop);
     extRestartOnDone = restart;
-    send({ type: 'ext-consent', tempId: payload.tempId, approve });
+    send({ type: 'ext-consent', tempId: payload.tempId, approve, ...(approve && (payload.downgrade || payload.requiresDowngradeConfirmation) ? { allowDowngrade: true } : {}) });
   };
   const onOk = () => done(true, Boolean(labels.later));
   const onLater = () => done(true);
