@@ -58,7 +58,6 @@ export const SETTINGS_KEYS = [
   'prModelFooter',
   'defaultSessionCwd',
   'defaultRuntime',
-  'deckRuntimes',
   'runtimeOffer',
   'backgroundModel',
   'codexPolicyDefaults',

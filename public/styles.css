@@ -3857,7 +3857,10 @@ a.ext-row-origin { color: var(--blue-fg); }
 
 .decks-panel { display: flex; flex-direction: column; gap: 10px; }
 .decks-panel .setting-help { margin-bottom: 4px; }
-.deck-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border-muted); border-radius: 8px; }
+.deck-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border-muted); border-radius: 8px; }
+.deck-runtimes { flex: 1 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-muted); }
+.deck-runtime { padding: 1px 8px; border: 1px solid var(--border-muted); border-radius: 10px; color: var(--fg); }
+.deck-runtime.unavailable { color: var(--fg-muted); text-decoration: line-through; cursor: help; }
 .deck-row input[type="color"] { width: 28px; height: 24px; padding: 0; border: none; background: none; cursor: pointer; flex: 0 0 auto; }
 .deck-row .deck-name-input { flex: 0 1 200px; min-width: 0; }
 .deck-row .deck-url { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

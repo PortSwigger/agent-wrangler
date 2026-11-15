@@ -7,13 +7,3 @@ export const defaultRuntimeHandler = {
     await ctx.rebuild();
   },
 };
-
-export const deckRuntimesHandler = {
-  type: 'set-deck-runtimes',
-  async handler(msg, ctx) {
-    const raw = Array.isArray(msg.runtimes) ? msg.runtimes : typeof msg.runtimes === 'string' ? msg.runtimes.split(',') : [];
-    const ids = [...new Set(raw.filter((v) => typeof v === 'string').map((v) => v.trim()).filter(Boolean))];
-    writeConfig({ deckRuntimes: ids.length ? ids : undefined });
-    await ctx.rebuild();
-  },
-};

@@ -26,7 +26,6 @@ test('each registered setting appears in exactly one tab', () => {
     'chatViewDefault',
     'defaultSessionCwd',
     'defaultRuntime',
-    'deckRuntimes',
     'codexDefaultSandbox',
     'codexDefaultApproval',
     'codexDefaultApproveForMe',

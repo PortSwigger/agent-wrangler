@@ -205,7 +205,6 @@ let suppressNudgedPrToasts = true;
 let prModelFooter = true;
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
-let deckRuntimesSetting = ''; // Settings › Runtimes this deck offers, comma-separated ids
 let ownRuntimeOffer = []; // graph.runtimeOffer: [{ id, location, unavailable? }]
 // Settings › Background model (server config, resolved, every graph push).
 let backgroundModel = null;
@@ -1033,7 +1032,6 @@ function applyGraph(graph) {
   prModelFooter = graph.prModelFooter !== false;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
-  deckRuntimesSetting = Array.isArray(graph.deckRuntimes) ? graph.deckRuntimes.join(', ') : '';
   ownRuntimeOffer = Array.isArray(graph.runtimeOffer) ? graph.runtimeOffer : [];
   backgroundModel = graph.backgroundModel && typeof graph.backgroundModel === 'object' ? graph.backgroundModel : null;
   codexPolicyDefaults = graph.codexPolicyDefaults && typeof graph.codexPolicyDefaults === 'object' ? { ...CODEX_POLICY_FALLBACK, ...graph.codexPolicyDefaults } : { ...CODEX_POLICY_FALLBACK };
@@ -7686,7 +7684,6 @@ initSettings({
       if (id === 'prModelFooter') return prModelFooter;
       if (id === 'defaultSessionCwd') return defaultSessionCwd;
       if (id === 'defaultRuntime') return defaultRuntime;
-      if (id === 'deckRuntimes') return deckRuntimesSetting;
       if (id === 'backgroundModel') return backgroundModel ? `${backgroundModel.agent}:${backgroundModel.model}` : undefined;
       if (CODEX_DEFAULT_SETTINGS[id]) return codexPolicyDefaults[CODEX_DEFAULT_SETTINGS[id]];
       if (id === 'autoUpdate') return autoUpdate;
@@ -7722,9 +7719,6 @@ initSettings({
       } else if (id === 'defaultSessionCwd') {
         defaultSessionCwd = String(value || '').trim();
         send({ type: 'set-default-session-cwd', cwd: defaultSessionCwd });
-      } else if (id === 'deckRuntimes') {
-        deckRuntimesSetting = String(value || '').trim();
-        send({ type: 'set-deck-runtimes', runtimes: deckRuntimesSetting });
       } else if (id === 'defaultRuntime') {
         defaultRuntime = String(value || 'local');
         send({ type: 'set-default-runtime', runtime: defaultRuntime });

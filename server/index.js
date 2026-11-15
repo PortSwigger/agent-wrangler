@@ -13,7 +13,7 @@ import { buildGraph, createWatcher, sessionLabel } from './state-reader.js';
 import { analyze, resolveResumeDir } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
 import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, findRuntime, takesStatusEvents } from './runtimes/index.js';
-import { runtimeOffer } from './runtimes/offer.js';
+import { runtimeOffer, startupRuntimes } from './runtimes/offer.js';
 import { createStatusEventStore, createStatusEventHandler } from './status-events.js';
 import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
@@ -41,7 +41,7 @@ import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, deckRuntimes, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
@@ -1123,6 +1123,7 @@ function deckHandler(req, res) {
       name: os.hostname(),
       actions: deckActions().keys(),
       runtimes: runtimeOffer().map((rt) => (rt.id === 'local' && localAgents ? { ...rt, agents: localAgents } : rt)),
+      offeredRuntimes: startupRuntimes(),
       extensions: ext.list,
       boardApi: HOST_API_VERSION,
     });
@@ -1312,7 +1313,6 @@ async function rebuildOnce() {
   graph.prModelFooter = prModelFooterEnabled();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();
-  graph.deckRuntimes = deckRuntimes() || [];
   graph.runtimeOffer = runtimeOffer().map(({ id, location, unavailable }) => ({ id, location, ...(unavailable ? { unavailable } : {}) }));
   // Settings › Background model, resolved: never null, a stored pair that can
   // no longer run reads back as the default it falls back to.

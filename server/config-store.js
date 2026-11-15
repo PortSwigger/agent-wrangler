@@ -286,16 +286,6 @@ export function backgroundModelConfig(cfg = readConfig()) {
   return agent && model ? { agent, model } : null;
 }
 
-// The runtime ids this deck offers, or null for every runtime it has. Ids not
-// registered right now stay in the list (their extension may come back on).
-export function deckRuntimes(cfg = readConfig()) {
-  const raw = cfg.deckRuntimes;
-  const list = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : null;
-  if (!list) return null;
-  const ids = [...new Set(list.filter((v) => typeof v === 'string').map((v) => v.trim()).filter(Boolean))];
-  return ids.length ? ids : null;
-}
-
 // The runtime id the dispatch dialog pre-selects for a new session. Not checked
 // against the registry: an extension runtime can be off now and on again later,
 // and the dialog falls back to local for any id it doesn't offer.

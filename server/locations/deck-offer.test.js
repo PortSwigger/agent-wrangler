@@ -2,8 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { parseCliArgs } from '../cli-args.js';
 import { testLocationRuntime, withRuntime, manager } from '../fixtures/location-runtime.js';
-import { runtimeOffer, launchRefusal, localProcessRefusal, runsNothingHere } from '../runtimes/offer.js';
+import { runtimeOffer, launchRefusal, localProcessRefusal, runsNothingHere, parseRuntimeIds } from '../runtimes/offer.js';
 import { spawnSessionTool } from '../mcp/tools/spawn-session.js';
 import { createTerminalTool } from '../mcp/tools/create-terminal.js';
 import { restoreSessionTool } from '../mcp/tools/restore-session.js';
@@ -162,10 +166,61 @@ test('a deck picking runtimes hides the rest; a pick whose runtimes are all off 
   assert.match(launchRefusal('local', { picked: ['cloud-box'], known }), /doesn't offer/);
 });
 
-test('the deck option is read from config as ids, a comma list or nothing', async () => {
-  const { deckRuntimes } = await import('../config-store.js');
-  assert.equal(deckRuntimes({}), null);
-  assert.equal(deckRuntimes({ deckRuntimes: [] }), null);
-  assert.deepEqual(deckRuntimes({ deckRuntimes: ['cloud', ' cloud ', 'local', 3] }), ['cloud', 'local']);
-  assert.deepEqual(deckRuntimes({ deckRuntimes: 'cloud, devcontainer' }), ['cloud', 'devcontainer']);
+test('the --runtimes value is read as ids, a comma list, or nothing for every runtime', () => {
+  assert.equal(parseRuntimeIds(undefined), null);
+  assert.equal(parseRuntimeIds(' , '), null);
+  assert.deepEqual(parseRuntimeIds('testloc, testloc ,cloud'), ['testloc', 'cloud']);
+});
+
+function startDeck(env) {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-offer-'));
+  const childEnv = { ...process.env, AW_DATA_DIR: dataDir, AW_PORT: '0', ...env };
+  if (env.AW_RUNTIMES === undefined) delete childEnv.AW_RUNTIMES;
+  try {
+    const out = execFileSync(process.execPath, ['--import', fileURLToPath(new URL('../test-setup.js', import.meta.url)), fileURLToPath(new URL('../fixtures/startup-offer-probe.js', import.meta.url))], { env: childEnv, encoding: 'utf8' });
+    return JSON.parse(out);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
+test('a deck started with --runtimes set to only the test location runtime offers it and refuses local sessions and terminals', () => {
+  const { env } = parseCliArgs(['--runtimes', 'testloc']);
+  const deck = startDeck(env);
+  assert.deepEqual(deck.startup, ['testloc']);
+  assert.deepEqual(deck.offer.find((r) => r.id === 'testloc'), { id: 'testloc' });
+  assert.match(deck.offer.find((r) => r.id === 'local').unavailable, /doesn't offer the "Local \(host\)" runtime \(the deck's --runtimes startup option, env AW_RUNTIMES\)/);
+  assert.deepEqual(deck.testloc, { ok: 'testloc' });
+  assert.match(deck.local.refused, /doesn't offer the "Local \(host\)" runtime/);
+  assert.match(deck.terminalRefusal, /starts nothing on its own machine \(the deck's --runtimes startup option/);
+  assert.match(deck.terminal.refused, /starts nothing on its own machine/);
+  assert.deepEqual(deck.offerAfterConfigWrite, deck.offer, 'a config.json deckRuntimes key changes nothing');
+});
+
+test('a deck started with no option offers every runtime and launches locally as before', () => {
+  const deck = startDeck({ AW_RUNTIMES: undefined });
+  assert.equal(deck.startup, null);
+  assert.deepEqual(deck.offer.map((r) => r.id), ['local', 'devcontainer', 'testloc']);
+  assert.equal(deck.offer.find((r) => r.id === 'local').unavailable, undefined);
+  assert.equal(deck.offer.find((r) => r.id === 'devcontainer').unavailable, undefined);
+  assert.match(deck.offer.find((r) => r.id === 'testloc').unavailable, /Choose its runtimes with the deck's --runtimes startup option/);
+  assert.deepEqual(deck.local, { ok: 'local' });
+  assert.match(deck.testloc.refused, /which a deck offers only when every runtime it offers does/);
+  assert.equal(deck.terminalRefusal, null);
+  assert.deepEqual(deck.offerAfterConfigWrite, deck.offer);
+});
+
+test('no API call changes the offer: no control handler, deck action or host API method sets it', async () => {
+  const { CONTROL_HANDLERS } = await import('../control/handlers/index.js');
+  const { CORE_ACTIONS } = await import('../deck/actions.js');
+  const { BOARD_ACTIONS } = await import('../../public/deck-actions.js');
+  const types = CONTROL_HANDLERS.map((h) => h.type);
+  assert.ok(types.includes('set-default-runtime'));
+  assert.deepEqual(types.filter((t) => /runtimes|offer/i.test(t)), []);
+  assert.deepEqual(Object.keys(CORE_ACTIONS).filter((t) => /runtimes|offer/i.test(t)), []);
+  assert.deepEqual(Object.keys(BOARD_ACTIONS).filter((t) => /runtimes|offer/i.test(t)), []);
+  const dir = fileURLToPath(new URL('../host-api/', import.meta.url));
+  for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.js') && !n.endsWith('.test.js') && n !== 'version.js')) {
+    assert.doesNotMatch(fs.readFileSync(path.join(dir, f), 'utf8'), /setPickedRuntimes|AW_RUNTIMES|deckRuntimes/, f);
+  }
 });

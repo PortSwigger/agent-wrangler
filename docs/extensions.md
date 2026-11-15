@@ -1562,8 +1562,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `location` (1.86.0) marks a runtime whose sessions run at a location (see
   [Runtimes](#runtimes)); it is `false` for `local` and `devcontainer`.
   `unavailable` (1.87.0) is the reason the deck won't launch on a runtime it
-  has, or null: one left out of the deck's offered runtimes (hidden from the
-  dialog), or a location runtime on a deck that also offers one on its own
+  has, or null: one left out of the deck's `--runtimes` startup option (hidden
+  from the dialog), or a location runtime on a deck that also offers one on its own
   machine (shown disabled with this reason). See [the deck's runtime offer](#runtimes).
 - **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
   adds a keyboard shortcut through the board's keybinding registry
@@ -2797,9 +2797,12 @@ Maintainer notes:
   hook or an unknown key, or an off-shape `suspendIdleHours`. While the extension is
   inactive the bound copy throws from `provision`, `open`, `resume`, `unpushed` and
   `diff`, and reads nothing.
-- **The deck's runtime offer (1.87.0).** Settings › Sessions › "Runtimes this deck
-  offers" (config `deckRuntimes`, an array of runtime ids; graph `deckRuntimes`)
-  picks the runtimes a deck offers; blank offers every runtime it has. A location
+- **The deck's runtime offer (1.87.0).** The deck's `--runtimes <ids>` startup
+  option (env `AW_RUNTIMES`, comma-separated runtime ids) picks the runtimes it
+  offers. It is read once at start: no setting, control message, deck action or
+  host API call changes it while the deck runs. Without it the deck offers every
+  runtime it has. The `/deck` descriptor reports the pick as `offeredRuntimes`
+  (null for every runtime), and Settings › Decks shows it per deck. A location
   runtime is offered only when every runtime the deck offers is one, so a deck that
   runs location sessions starts nothing on its own machine. On a deck that also
   offers a runtime on its own machine (`local`, `devcontainer`, or an extension's

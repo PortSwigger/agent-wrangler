@@ -24,6 +24,7 @@ const cases = [
     argv: ['--allowed-origins', 'http://localhost:7878, http://127.0.0.1:7878'],
     want: { action: 'run', env: { AW_ALLOWED_ORIGINS: 'http://localhost:7878, http://127.0.0.1:7878' } },
   },
+  { name: '--runtimes', argv: ['--runtimes', ' testloc, cloud ,'], want: { action: 'run', env: { AW_RUNTIMES: 'testloc,cloud' } } },
   {
     name: 'flags combine',
     argv: ['--port', '7998', '--data-dir', '/tmp/aw', '--open'],
@@ -49,6 +50,8 @@ const errors = [
   { name: 'fractional port', argv: ['--port', '80.5'], match: /1 to 65535/ },
   { name: 'empty data dir', argv: ['--data-dir='], match: /--data-dir/ },
   { name: 'empty host', argv: ['--host='], match: /--host/ },
+  { name: 'empty runtimes', argv: ['--runtimes', ' , '], match: /--runtimes/ },
+  { name: 'runtimes with a bad id', argv: ['--runtimes', 'local,a b'], match: /--runtimes.*a b/ },
   { name: 'value on a boolean flag', argv: ['--open=yes'], match: /--open/ },
 ];
 
@@ -62,7 +65,7 @@ for (const { name, argv, match } of errors) {
 
 test('usage names every flag and the env var it sets', () => {
   const text = usage();
-  for (const s of ['--port', 'AW_PORT', '--data-dir', 'AW_DATA_DIR', '--open', 'AW_OPEN_BROWSER', '--host', 'AW_BIND_HOST', '--help', '--version']) {
+  for (const s of ['--port', 'AW_PORT', '--data-dir', 'AW_DATA_DIR', '--open', 'AW_OPEN_BROWSER', '--host', 'AW_BIND_HOST', '--runtimes', 'AW_RUNTIMES', '--help', '--version']) {
     assert.ok(text.includes(s), `usage mentions ${s}`);
   }
 });

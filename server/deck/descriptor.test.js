@@ -16,6 +16,7 @@ test('the descriptor carries the id, api 1.0, sorted actions and enabled extensi
     name: 'laptop',
     api: '1.0',
     runtimes: [{ id: 'local', label: 'Local', agents: null }],
+    offeredRuntimes: null,
     actions: ['deck.search', 'task.create'],
     extensions: [{ id: 'todos', version: '1.2.0', boardApi: '1.73.0' }],
   });
@@ -51,4 +52,13 @@ test('a location runtime carries location, and one the deck will not launch on s
     boardApi: '1.87.0',
   });
   assert.deepEqual(d.runtimes, [{ id: 'local', label: 'Local', agents: null }, { id: 'box', label: 'Box', agents: ['claude'], location: true, unavailable: 'Mixed deck.' }]);
+});
+
+test('offeredRuntimes reports the ids the deck was started with, or null for every runtime', () => {
+  const base = { deckId: 'd1', name: 'laptop', actions: [], runtimes: [], extensions: [], boardApi: '1.87.0' };
+  assert.equal(deckDescriptor(base).offeredRuntimes, null);
+  const picked = ['box'];
+  const d = deckDescriptor({ ...base, offeredRuntimes: picked });
+  assert.deepEqual(d.offeredRuntimes, ['box']);
+  assert.notEqual(d.offeredRuntimes, picked);
 });

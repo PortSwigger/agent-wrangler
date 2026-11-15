@@ -1,19 +1,32 @@
-import { deckRuntimes } from '../config-store.js';
 import { knownRuntimes } from './index.js';
 
 // Which runtimes this deck offers, and why one it has is unavailable. A runtime
 // whose sessions run at a location is offered only when every runtime the deck
 // offers is one, so a deck that runs location sessions starts nothing on its own
-// machine. Settings › Sessions › "Runtimes this deck offers" (`deckRuntimes`)
-// picks the runtimes; unset, the deck offers every runtime it has.
+// machine. The --runtimes startup option (env AW_RUNTIMES) picks the runtimes,
+// read once at start; unset, the deck offers every runtime it has.
 
-export const OFFER_SETTING = 'Settings → Sessions → Runtimes this deck offers';
+export const OFFER_OPTION = 'the deck\'s --runtimes startup option, env AW_RUNTIMES';
 
-let pickedSource = () => deckRuntimes();
+// The runtime ids in a --runtimes / AW_RUNTIMES value, or null for every runtime.
+export function parseRuntimeIds(raw) {
+  if (typeof raw !== 'string') return null;
+  const ids = [...new Set(raw.split(',').map((v) => v.trim()).filter(Boolean))];
+  return ids.length ? ids : null;
+}
 
-// Test seam: the picked runtime ids without touching config.json. Null restores it.
+const STARTUP_PICK = Object.freeze(parseRuntimeIds(process.env.AW_RUNTIMES));
+
+let pickedSource = () => STARTUP_PICK;
+
+// The runtime ids the deck was started with, or null for every runtime it has.
+export function startupRuntimes() {
+  return pickedSource();
+}
+
+// Test seam: the picked runtime ids without restarting. Null restores the startup pick.
 export function setPickedRuntimesForTest(fn) {
-  pickedSource = fn || (() => deckRuntimes());
+  pickedSource = fn || (() => STARTUP_PICK);
 }
 
 function labelOf(r) {
@@ -28,9 +41,9 @@ export function runtimeOffer({ picked = pickedSource(), known = knownRuntimes() 
   return known.map((r) => {
     let unavailable;
     if (!chosen.includes(r)) {
-      unavailable = `This deck doesn't offer the "${labelOf(r)}" runtime (${OFFER_SETTING}).`;
+      unavailable = `This deck doesn't offer the "${labelOf(r)}" runtime (${OFFER_OPTION}).`;
     } else if (r.location && here.length) {
-      unavailable = `"${labelOf(r)}" runs sessions at a location, which a deck offers only when every runtime it offers does; this one also offers ${here.map((h) => `"${labelOf(h)}"`).join(', ')}, which run on this machine. Choose its runtimes in ${OFFER_SETTING}.`;
+      unavailable = `"${labelOf(r)}" runs sessions at a location, which a deck offers only when every runtime it offers does; this one also offers ${here.map((h) => `"${labelOf(h)}"`).join(', ')}, which run on this machine. Choose its runtimes with ${OFFER_OPTION}.`;
     }
     return unavailable ? { ...r, unavailable } : { ...r };
   });
@@ -53,6 +66,6 @@ export function launchRefusal(id, opts) {
 // launch (a plain terminal), else why not.
 export function localProcessRefusal(opts) {
   return runsNothingHere(opts)
-    ? `This deck runs its sessions at a location and starts nothing on its own machine (${OFFER_SETTING}).`
+    ? `This deck runs its sessions at a location and starts nothing on its own machine (${OFFER_OPTION}).`
     : null;
 }

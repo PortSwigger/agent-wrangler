@@ -609,15 +609,17 @@ import semver from 'semver';
 // 1.86.0 adds `location` to the client `api.runtimes()`: true for a runtime
 // whose sessions run at a location. A board half reading it declares `^1.86.0`.
 //
-// 1.87.0 adds the deck's runtime offer. Settings › Sessions › "Runtimes this deck
-// offers" (`deckRuntimes` on the graph) picks the runtimes a deck offers, and a
-// location runtime is offered only when every runtime it offers is one, so such
-// a deck starts nothing on its own machine (no local launch, no plain terminal).
-// The client `api.runtimes()` and graph.runtimeOffer carry `unavailable`, the
-// reason a runtime the deck has can't be launched on; `sessions.spawn`,
-// `sessions.wake` and `api.openTerminal` refuse the same. A session at a location
-// starts children on its own runtime when none is named and is refused one on
-// this machine. A manifest or board half reading `unavailable` declares `^1.87.0`.
+// 1.87.0 adds the deck's runtime offer. The deck's `--runtimes <ids>` startup
+// option (env `AW_RUNTIMES`), read once at start, picks the runtimes it offers;
+// nothing changes it while the deck runs. A location runtime is offered only when
+// every runtime the deck offers is one, so such a deck starts nothing on its own
+// machine (no local launch, no plain terminal). The client `api.runtimes()` and
+// graph.runtimeOffer carry `unavailable`, the reason a runtime the deck has can't
+// be launched on, and the `/deck` descriptor carries `offeredRuntimes` (the
+// startup pick, null for every runtime); `sessions.spawn`, `sessions.wake` and
+// `api.openTerminal` refuse the same. A session at a location starts children on
+// its own runtime when none is named and is refused one on this machine. A
+// manifest or board half reading `unavailable` declares `^1.87.0`.
 export const HOST_API_VERSION = '1.87.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
