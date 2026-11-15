@@ -640,7 +640,8 @@ import semver from 'semver';
 // 1.91.0 exposes provider-neutral lastTurn outcomes on session projections.
 // 1.92.0 adds host.agents.front() under agents:read.
 // 1.93.0 adds durable URL-keyed PR observations and pr:observation events.
-export const HOST_API_VERSION = '1.93.0';
+// 1.94.0 adds pre-front agents and excludeModels restrictions to host.agents.front().
+export const HOST_API_VERSION = '1.94.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

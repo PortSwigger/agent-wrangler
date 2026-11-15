@@ -9,7 +9,17 @@ const units = {
 };
 export const point = ({ agent, model, effort, quality, usd, minutes }) => ({ agent, model, effort, quality, usd, minutes });
 
-export function modelFront(agents, { agent, maxUsd, minQuality } = {}) {
+export function modelFront(agents, { agent, maxUsd, minQuality } = {}, { agents: selectedAgents, excludeModels } = {}) {
+  for (const [name, values] of Object.entries({ agents: selectedAgents, excludeModels })) {
+    if (values !== undefined && (!Array.isArray(values) || values.some((v) => typeof v !== 'string' || !v.trim()))) {
+      throw new Error(`${name} must be an array of non-empty strings`);
+    }
+  }
+  for (const id of selectedAgents || []) {
+    if (!agents.some((a) => a.id === id)) {
+      throw new Error(`Unknown or unavailable agent "${id}". Valid agents: ${agents.map((a) => a.id).join(', ') || '(none installed)'}.`);
+    }
+  }
   if (agent !== undefined && !agents.some((a) => a.id === agent)) {
     throw new Error(`Unknown or unavailable agent "${agent}". Valid agents: ${agents.map((a) => a.id).join(', ') || '(none installed)'}.`);
   }
@@ -19,7 +29,9 @@ export function modelFront(agents, { agent, maxUsd, minQuality } = {}) {
   if (minQuality !== undefined && (typeof minQuality !== 'number' || !Number.isFinite(minQuality) || minQuality < 0 || minQuality > 100)) {
     throw new Error('minQuality must be a number between 0 and 100');
   }
-  const front = frontOf(agents, data);
+  const candidates = agents.filter((a) => selectedAgents === undefined || selectedAgents.includes(a.id))
+    .map((a) => ({ ...a, models: (a.models || []).filter((m) => !excludeModels?.includes(m.value)) }));
+  const front = frontOf(candidates, data);
   const curve = curveOf(front);
   return {
     read: data.read,
