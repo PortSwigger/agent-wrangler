@@ -538,6 +538,14 @@ flow through these variables, so both built-in and custom styles re-theme the wh
 
 ![The Appearance section's theme picker, showing the built-in and extension themes](docs/images/theme-picker.png)
 
+## Testing
+
+Run `AW_BROWSER_TESTS=0 npm test` for the suite without launching Chrome. Browser tests
+skip by default locally. To opt in, run `AW_BROWSER_TESTS=1 npm test` with Chrome or
+Chromium installed (or set `CHROME_BIN` to its executable). CI runs browser tests
+automatically. `CI=true` (case-insensitive) or `CI=1` also enables them;
+`AW_BROWSER_TESTS=0` overrides CI too. See [Contributing](CONTRIBUTING.md).
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).

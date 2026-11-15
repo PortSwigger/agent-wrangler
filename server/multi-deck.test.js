@@ -463,7 +463,7 @@ test('a new task or schedule lands on the deck picked, and an unreachable deck c
 // at once. The first lands on a tmux server with no other sessions, the second
 // on one that still holds the first's corpse; both keep their dead pane, so the
 // board shows the card with the command's output, and the deck logs the failure.
-test('a launch whose agent command is missing shows its card with the command\'s output, and the deck logs it', { timeout: 180_000 }, async (t) => {
+test('a launch whose agent command is missing shows its card with the command\'s output, and the deck logs it', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
@@ -531,7 +531,7 @@ const AGENTS = `JSON.stringify({
   goDisabled: document.getElementById('m-go').disabled,
 })`;
 
-test('the dialog offers only the agents a deck has installed, and says so when it has none', { timeout: 180_000 }, async (t) => {
+test('the dialog offers only the agents a deck has installed, and says so when it has none', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
