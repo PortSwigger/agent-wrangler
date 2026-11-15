@@ -1,41 +1,17 @@
 import { execFile } from 'node:child_process';
 
-// The jq derivation runs INSIDE gh (-q), so stdout is five tab-separated fields:
-// `<state>\t<rollup>\t<mergeStateStatus>\t<reviewDecision>\t<headRefOid>`. The
-// merge/review fields turn the rollup into an authoritative checkStatus; the
-// head SHA distinguishes a real PR push from a base-relative merge-state flap.
-//
-// The rollup word mirrors paddy-log's logic, including the in-progress gotcha: a
-// running CheckRun reports .conclusion as an empty string '' (not null), so
-// normalise '' to absent FIRST, then fall back to .status/.state — otherwise a
-// running check is misread as passing. The PR `.state` referenced last is the
-// top-level field; the per-check `.state` inside the map() is a separate scope.
-//
-// CRITICAL: .statusCheckRollup holds ONLY the checks already attached to the head
-// commit at fetch time — it has NO knowledge of branch-protection required
-// contexts. A required check whose suite hasn't started is simply ABSENT (not
-// present-as-pending), so an all-green rollup can still be unmergeable. That's
-// why the rollup word alone is NOT the answer: the final passing verdict is
-// gated on mergeStateStatus == CLEAN (computed by GitHub against the full
-// required-contexts list + reviews + up-to-dateness) in deriveCheckStatus below.
-// mergeStateStatus/reviewDecision are free fields on the same gh call — no extra
-// API request and no admin token (the branch-protection contexts endpoint needs
-// admin and 403s on non-admin repos, so we deliberately do not call it).
-const JQ = `
-  ( .statusCheckRollup
-    | (map( (.conclusion // "") as $c | (if $c=="" then (.status // .state) else $c end) )) as $s
-    | if ($s|length)==0 then "none"
-      elif ($s|any(. as $x | ["FAILURE","ERROR","CANCELLED","TIMED_OUT","ACTION_REQUIRED"]|index($x))) then "failing"
-      elif ($s|any(. as $x | ["PENDING","IN_PROGRESS","QUEUED","EXPECTED"]|index($x))) then "pending"
-      else "passing" end ) as $rollup
-  | "\\(.state)\\t\\($rollup)\\t\\(.mergeStateStatus // "")\\t\\(.reviewDecision // "")\\t\\(.headRefOid // "")"`;
+const FIELDS = 'id,createdAt,state,title,number,isDraft,statusCheckRollup,mergeStateStatus,reviewDecision,headRefOid';
+const FAILING = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED']);
+const PENDING = new Set(['PENDING', 'IN_PROGRESS', 'QUEUED', 'EXPECTED']);
 
-// The raw word the JQ derives from the rollup alone (validated on input). The
-// final checkStatus deriveCheckStatus emits is a wider vocabulary — it also
-// yields `awaiting-review`/`changes-requested` by folding in reviewDecision so
-// the notifier can fire distinct nudges; those persist on links and are compared
-// by the diff, so the value set must stay forward-compatible.
-const ROLLUP = new Set(['passing', 'failing', 'pending', 'none']);
+function checkRollup(checks) {
+  if (!checks.length) return 'none';
+  const states = checks.map((c) => c.conclusion || c.status || c.state);
+  if (states.some((s) => FAILING.has(s))) return 'failing';
+  if (states.some((s) => PENDING.has(s))) return 'pending';
+  return 'passing';
+}
+
 const VALID_STATE = new Set(['OPEN', 'MERGED', 'CLOSED']);
 const VALID_REVIEW = new Set(['', 'APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']);
 
@@ -62,41 +38,40 @@ function deriveCheckStatus(rollup, mergeStateStatus, reviewDecision) {
   return 'pending';
 }
 
-// Default runner: run `gh pr view <url> --json <fields> -q <jq>`.
 function defaultRun(url) {
   return new Promise((resolve) => {
-    execFile('gh', ['pr', 'view', url, '--json', 'state,statusCheckRollup,mergeStateStatus,reviewDecision,headRefOid',
-      '-q', JQ], { timeout: 15000 },
-      (err, stdout) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: stdout || '' }));
+    execFile('gh', ['pr', 'view', url, '--json', FIELDS], { timeout: 15000 },
+      (err, stdout, stderr) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: stdout || '', stderr: stderr || '' }));
   });
 }
 
-// Resolve a PR's { state, checkStatus, reviewDecision, dirty, headSha }, or null on any
-// failure (caller keeps the prior value). `state` drives auto-removal on
-// MERGED/CLOSED; `checkStatus` drives the CI board/pane notifier; `reviewDecision`
-// is the attribution signal for a non-CLEAN block (REVIEW_REQUIRED/CHANGES_REQUESTED
-// ⇒ reviews are the blocker; ''/APPROVED ⇒ a BLOCKED state is checks/base-ahead, not
-// reviews). `dirty` is GitHub's own DIRTY value of mergeStateStatus — the branch has
-// merge conflicts against its base and needs a rebase before it can be merged at
-// all, orthogonal to CI: a PR can be DIRTY with fully green checks (checkStatus
-// stays `pending` there, since mergeStateStatus isn't CLEAN), so it needs its own
-// signal rather than folding into checkStatus's vocabulary. Never throws.
-export async function fetchPrStatus(url, run = defaultRun) {
+export async function fetchPrObservation(url, run = defaultRun) {
   try {
-    const { code, stdout } = await run(url);
-    if (code !== 0) return null;
-    // Strip only the trailing newline: headRefOid defensively defaults to an
-    // empty final field, whose delimiter trim() would otherwise consume.
-    const parts = String(stdout).replace(/\r?\n$/, '').split('\t');
-    if (parts.length !== 5) return null;
-    const [state, rollup, mergeStateStatus, review, headSha] = parts;
-    if (!VALID_STATE.has(state) || !ROLLUP.has(rollup)) return null;
-    const reviewDecision = VALID_REVIEW.has(review) ? review : '';
-    const checkStatus = deriveCheckStatus(rollup, mergeStateStatus, reviewDecision);
-    return { state, checkStatus, reviewDecision, dirty: mergeStateStatus === 'DIRTY', headSha };
-  } catch {
-    return null;
+    const { code, stdout, stderr } = await run(url);
+    if (code !== 0) return { status: null, error: String(stderr || '').trim().split('\n')[0] || `gh pr view exited ${code}` };
+    const raw = JSON.parse(stdout);
+    if (!VALID_STATE.has(raw?.state) || !Array.isArray(raw.statusCheckRollup)
+        || raw.statusCheckRollup.some((c) => !c || typeof c !== 'object')
+        || typeof raw.title !== 'string' || !Number.isSafeInteger(raw.number) || raw.number <= 0
+        || typeof raw.id !== 'string' || !raw.id || typeof raw.createdAt !== 'string' || !Number.isFinite(Date.parse(raw.createdAt))
+        || typeof raw.isDraft !== 'boolean' || typeof raw.headRefOid !== 'string') {
+      return { status: null, error: 'Invalid gh pr view response' };
+    }
+    const reviewDecision = VALID_REVIEW.has(raw.reviewDecision) ? raw.reviewDecision : '';
+    const mergeStateStatus = raw.mergeStateStatus ?? '';
+    return { error: null, status: {
+      nodeId: raw.id, createdAt: raw.createdAt, state: raw.state, title: raw.title, number: raw.number, isDraft: raw.isDraft,
+      statusCheckRollup: raw.statusCheckRollup, mergeStateStatus, reviewDecision,
+      checkStatus: deriveCheckStatus(checkRollup(raw.statusCheckRollup), mergeStateStatus, reviewDecision),
+      dirty: mergeStateStatus === 'DIRTY', headSha: raw.headRefOid,
+    } };
+  } catch (err) {
+    return { status: null, error: err instanceof SyntaxError ? 'Invalid gh pr view response' : (err?.message || 'gh pr view failed') };
   }
+}
+
+export async function fetchPrStatus(url, run = defaultRun) {
+  return (await fetchPrObservation(url, run)).status;
 }
 
 // Default merge runner: `gh pr merge <url> --squash`. --squash is hardcoded

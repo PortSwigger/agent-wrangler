@@ -246,12 +246,12 @@ test('links:write get returns a copy of the card\'s links, [] for an unknown car
   assert.deepEqual(host.links.get('gone'), []);
 });
 
-test('links:read exposes only get and returns independent link copies', () => {
+test('links:read exposes observations and returns independent link copies', () => {
   const { host, stored } = linksWiring({
     requires: ['links:read'],
     links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }],
   });
-  assert.deepEqual(Object.keys(host.links), ['get']);
+  assert.deepEqual(Object.keys(host.links), ['get', 'prObservation', 'prObservations']);
   const got = host.links.get('c1');
   assert.deepEqual(got, stored.c1);
   got[0].url = 'mutated';
