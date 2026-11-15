@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from './browser-harness.js';
+import { REPO_ROOT, browserTestSkipReason, findChrome, waitFor, startInstance, openTab, sleep } from './browser-harness.js';
 
 // Every member of the extension api a board half gets, as a real board hands it
 // out. The fixture in fixtures/ext-api-probe is an unsplit manifest that calls
@@ -23,7 +23,7 @@ const MEMBERS = [
   'ui', 'updateStatus', 'updateStatusFor', 'version', 'withdrawNotification',
 ];
 
-test('an unsplit extension calling every api member works on top of the deck API', { timeout: 120_000 }, async (t) => {
+test('an unsplit extension calling every api member works on top of the deck API', { timeout: 120_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');

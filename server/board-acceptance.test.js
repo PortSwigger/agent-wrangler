@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import { startInstance } from './browser-harness.js';
+import { browserTestSkipReason, findChrome, startInstance } from './browser-harness.js';
 
 // The board is only really "working" if a browser can load it, and two blank-dashboard
 // regressions shipped through a green CI in one afternoon (a deleted element the module
@@ -24,20 +24,6 @@ import { startInstance } from './browser-harness.js';
 // the live board's tmux sessions — see the run-dev skill) and SKIPS when no Chrome is
 // present, so a contributor without one still gets a green `npm test`.
 
-
-function findChrome() {
-  // An explicitly-set CHROME_BIN is authoritative: falling back to some other browser
-  // when it doesn't resolve would silently test something the caller didn't ask for.
-  if (process.env.CHROME_BIN) return existsSync(process.env.CHROME_BIN) ? process.env.CHROME_BIN : null;
-  const candidates = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-  ].filter(Boolean);
-  return candidates.find((p) => existsSync(p)) || null;
-}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Bounds a HUNG call; it is not a latency budget. Every real CDP call here answers in
@@ -86,7 +72,7 @@ async function launchChrome(chromePath, profile) {
     diagnosis: () => `Chrome ${stopped || 'never reported a DevTools port (still running)'}${stderr ? `\n${stderr}` : ''}` };
 }
 
-test('the board loads in a real browser with no console errors', { timeout: 180_000 }, async (t) => {
+test('the board loads in a real browser with no console errors', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     // CI sets AW_REQUIRE_BROWSER so a runner that loses its Chrome fails loudly instead

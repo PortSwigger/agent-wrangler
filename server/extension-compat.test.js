@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from './browser-harness.js';
+import { REPO_ROOT, browserTestSkipReason, findChrome, waitFor, startInstance, openTab, sleep } from './browser-harness.js';
 
 // A local collector: every event core sends, in order.
 async function stubCollector() {
@@ -33,7 +33,7 @@ async function stubCollector() {
 // surface per extension show. Skips without Chrome, like board-acceptance.test.js.
 const FIXTURE = join(REPO_ROOT, 'server', 'fixtures', 'compat-probe');
 
-test('an extension using the pre-deck surfaces still works, each through its adapter', { timeout: 120_000 }, async (t) => {
+test('an extension using the pre-deck surfaces still works, each through its adapter', { timeout: 120_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
