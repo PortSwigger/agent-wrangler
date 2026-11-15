@@ -2086,8 +2086,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   answers nonsense. Dispatch, resume and fork await it before building the
   command; the Claude and Codex adapters and the devcontainer runtime (which
   copies each granted dir into the container) read the result through the same
-  helpers. `reason` is one of `dispatch | resume | fork | message | snooze-wake |
-  spawn | assign | adopt | headless`; `assign` (a running session moved to another task) and
+  helpers. `reason` is one of `dispatch | resume | restore | fork | message | snooze-wake |
+  spawn | assign | adopt | headless`. `restore` identifies a manual restore of an
+  archived session through the board, `restore_session`, or task restoration.
+  Scheduled session actions use `resume`; message and snooze wakes keep
+  `message` and `snooze-wake`. Interactive resumes or restarts of sessions that
+  are not archived use `resume`. A hook can return `{ refuse: 'reason' }` for
+  `resume` while allowing `restore`. Neither path calls `session.beforeSpawn`
+  or `session.spawned`. After a successful relaunch, `session.onResume` receives
+  `{ sessionId, entry, reason }`; its reason is `restore` for archived manual
+  restores and otherwise retains the caller's reason (for example `manual`,
+  `schedule`, `message`, or `snooze-wake`). Concurrent resumes of one session
+  share the first caller's relaunch and reason. `assign` (a running session moved to another task) and
   `adopt` (server boot) are not launches: the hook still runs and the result is
   discarded. Turning an extension on or off applies to new launches; running
   sessions keep their env until relaunched. `parentId` (1.47.0) is the parent
