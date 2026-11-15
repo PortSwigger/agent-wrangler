@@ -312,7 +312,11 @@ picked. With only this board's own deck, neither asks for a deck.
 New sessions can start on any connected deck. With more than one deck, the new-session dialog has a
 **Deck** picker listing every deck on the board, this board's own first and picked by default. The
 tasks, runtimes and agents it offers are the picked deck's: its runtimes come from the deck's
-`GET /deck`, and a folder left blank becomes a new scratch folder on that deck. A deck that is not
+`GET /deck`, and a folder left blank becomes a new scratch folder on that deck. On another deck the
+agents offered are those the picked runtime runs there: for its local runtime, the agent CLIs that
+deck has installed (re-checked every few seconds, so one installed later shows up without a
+restart). When there are none, the dialog says no agent is installed on that deck and Launch stays
+disabled. A deck that is not
 connected is listed but cannot be picked. Another deck's task tile has its own new-session button,
 and each of its TODOs a start button; either opens the dialog on that deck, in that task, and a TODO
 started this way is used up on that deck once the session launches. While that deck is unreachable
