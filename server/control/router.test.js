@@ -133,3 +133,18 @@ test('an extension handler runs with its own tab as the request origin; a core h
   assert.equal(during, c.reply);
   assert.equal(requestOrigin(), null);
 });
+
+test('restart drains the triggering control request and refuses new actions with a retryable result', async () => {
+  const { createRestartBarrier } = await import('../restart-barrier.js');
+  const exits = [];
+  const barrier = createRestartBarrier({ timeoutMs: 1000, settleMs: 0, exit: () => exits.push('exit') });
+  let restarting;
+  const c = ctx({ restartBarrier: barrier, canRestart: true, restart: () => { restarting = barrier.request('manual'); } });
+  await routeControlMessage(action('admin.restart-server'), c);
+  assert.deepEqual(result(c), { type: 'result', ok: true, data: { type: 'restart-ack' } });
+  await routeControlMessage(action('deck.refresh'), c);
+  assert.equal(result(c).error.code, 'restarting');
+  assert.equal(result(c).error.retryable, true);
+  assert.equal(await restarting, true);
+  assert.deepEqual(exits, ['exit']);
+});

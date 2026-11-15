@@ -89,6 +89,7 @@ import { createLinkNormaliser } from './mcp/links.js';
 import { createExtDeliver } from './ext-deliver.js';
 import { sweepStaging, sweepGenerations } from './extensions/external.js';
 import { log, logWarn, logError } from './log.js';
+import { createRestartBarrier, restartIsQuiet } from './restart-barrier.js';
 import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange, knownModelId } from './price-catalog.js';
@@ -131,7 +132,17 @@ process.on('uncaughtException', (err) => logError('[uncaughtException]', err));
 process.on('unhandledRejection', (err) => logError('[unhandledRejection]', err));
 
 // Registered before anything can exit, so even a failed boot says why it went.
+let publishRestartStatus = () => {};
+const restartBarrier = createRestartBarrier({
+  isIdle: () => headlessRunsInFlight() === 0,
+  onStatus: (status) => {
+    log(`[agent-wrangler] ${status.message}`);
+    publishRestartStatus(status);
+  },
+  exit: (reason) => { shutdownLog.noteReason(reason); process.exit(0); },
+});
 const shutdownLog = installShutdownLog();
+shutdownLog.onSignal((signal, finish) => { restartBarrier.request(`signal ${signal}`, finish); });
 
 ensurePtyHelperExecutable();
 
@@ -192,7 +203,7 @@ function quarantineFor(id, err) {
   const entry = ext.list.find((e) => e.id === id);
   log(`[agent-wrangler] extension ${id} quarantined (${entry?.external ? 'installed' : 'builtin'}): ${reason}`);
 }
-const sessionManager = new SessionManager();
+const sessionManager = new SessionManager({ runWork: restartBarrier.run });
 const taskStore = new TaskStore();
 // Core telemetry (server/telemetry.js): one queue for core and every extension
 // declaring `telemetry:emit`, sent to the built-in collector (or the URL
@@ -221,7 +232,7 @@ const coreTelemetry = createCoreTelemetry({
   // Tool-less, on Settings › Background model, billed to the card whose
   // prompts it typed.
   classify: async ({ prompt, stdin, sessionId }) => {
-    const r = await runHeadless({ prompt, stdin, timeoutMs: 60000 });
+    const r = await restartBarrier.run(() => runHeadless({ prompt, stdin, timeoutMs: 60000 }));
     if (r.liveSessionId && sessionManager.entryFor(sessionId)) sessionManager.recordPriorLiveSessionId(sessionId, r.liveSessionId, r.agent);
     return r;
   },
@@ -261,7 +272,7 @@ const hostApiFor = (id) => hostApis.get(id);
 // The core event bus (server/events.js): core announces on it, an extension
 // subscribes through `host.events`. A subscription belongs to its extension and
 // is dropped on deactivate, so a disabled extension hears nothing.
-const coreEvents = createEventBus({ onError: logError, isActive: (id) => hostApis.has(id) });
+const coreEvents = createEventBus({ onError: logError, isActive: (id) => hostApis.has(id) && restartBarrier.accepting(), runWork: restartBarrier.run });
 const prObservations = createPrObservationStore({ directory: path.join(DATA_DIR, 'pr-observations'), events: coreEvents, onError: logError });
 const observePrLinks = createPrObservationPoller({ observations: prObservations });
 // name -> the instance an extension's store factory returned. Filled by
@@ -460,12 +471,12 @@ function activateExtension(id, { startSweeps = true } = {}) {
     // place a file under a per-extension path needs the latter, and renaming
     // `id` would break every store that already reads it.
     for (const name of e.storeNames) {
-      extStores[name] = ext.stores[name]({
+      extStores[name] = restartBarrier.wrapStore(ext.stores[name]({
         id: name,
         extId: id,
         settings: buildExtSettings({ id, settingDefs: e.settings, readSettings: (extId) => extensionSettings(extId) }),
         log,
-      });
+      }));
     }
     // buildHostApi still THROWS as its contract (an unsatisfiable
     // engines.wranglerApi, an unknown capability) — what changed is that the
@@ -595,7 +606,8 @@ function startSweepsFor(id) {
   for (const sweep of ext.sweeps) {
     if (sweep.extId !== id) continue;
     const t = setInterval(() => {
-      Promise.resolve(sweep.run({ host: hostApiFor(id) })).catch((err) => logError(`[ext:${id}:${sweep.id}]`, err));
+      if (restartBarrier.draining()) return;
+      Promise.resolve().then(() => restartBarrier.run(() => sweep.run({ host: hostApiFor(id) }))).catch((err) => logError(`[ext:${id}:${sweep.id}]`, err));
     }, sweep.everyMs);
     t.unref();
     handles.push(t);
@@ -722,7 +734,7 @@ let lastControlActivity = Date.now();
 // could interleave diffCheckStatus's last-notified state and re-fire a transition into a
 // duplicate wake/resume. A targeted poll (`only` set) is never guarded — it must not be
 // starved by a long full sweep and never runs the transition diff below.
-const pollPrStatuses = createFullSweepGuard(runPrStatusSweep);
+const pollPrStatuses = createFullSweepGuard((only) => backgroundWork(() => runPrStatusSweep(only)));
 
 // Broadcast a PR event once its pane nudge has been delivered. `nudged` is true
 // only when the session actually has the line: pasted into a live pane, or
@@ -1076,6 +1088,7 @@ const legacyFileRoutes = createLegacyFileRoutes({
 // dispatch (mints the card id, collects the launch context pre-launch) → assign →
 // rebuild.
 const mcpRequestHandler = createMcpRequestHandler({
+  restartBarrier,
   agents: dispatchAgents,
   taskStore,
   graph: () => lastGraph,
@@ -1162,7 +1175,7 @@ const sessionApi = createSessionApi({
     if (entry.archivedAt) return 'archived';
     return entry.tmux && sessionManager.alive.has(entry.tmux) ? 'running' : 'stopped';
   },
-  handlers: { '/mcp': mcpRequestHandler, '/pr-attach': prAttachHandler, '/pr-model': prModelHandler, '/status-event': statusEventHandler },
+  handlers: { '/mcp': mcpRequestHandler, '/pr-attach': restartBarrier.http(prAttachHandler), '/pr-model': prModelHandler, '/status-event': restartBarrier.http(statusEventHandler) },
   log, logWarn, logError,
 });
 // Every launch starts a fresh status lifecycle with its fresh token.
@@ -1368,7 +1381,7 @@ async function rebuildOnce() {
   return graph;
 }
 
-const rebuild = createRebuildCoalescer(rebuildOnce);
+const rebuild = createRebuildCoalescer(() => backgroundWork(rebuildOnce));
 let codeVersion = null;
 // codeVersion as a log shows it: a checkout's short commit, a package's whole
 // version (slicing "10.10.10" to seven characters would name another release).
@@ -1378,15 +1391,25 @@ const UPDATE_CHECK_MS = (Number(process.env.AW_UPDATE_CHECK_MINUTES) || 60) * 60
 const ROLLBACK_CLEAR_AFTER_MS = 30000;
 const QUIET_SCHEDULE_WINDOW_MS = 2 * 60 * 1000;
 
+publishRestartStatus = (status) => broadcast({ type: 'restart-status', ...status });
+
+async function backgroundWork(fn) {
+  if (!restartBarrier.accepting()) return;
+  return restartBarrier.run(fn);
+}
+
 function exitForRestart(reason) {
-  shutdownLog.noteReason(reason);
-  setTimeout(() => process.exit(0), 250).unref();
+  restartBarrier.request(reason).catch((err) => logError('[restart]', err));
 }
 
 function wranglerIsQuiet() {
-  return headlessRunsInFlight() === 0
-    && !sessionManager.hasLaunchInFlight()
-    && scheduleStore.due(Date.now() + QUIET_SCHEDULE_WINDOW_MS).length === 0;
+  return restartIsQuiet({
+    barrier: restartBarrier,
+    headless: headlessRunsInFlight(),
+    launching: sessionManager.hasLaunchInFlight(),
+    due: scheduleStore.due(Date.now() + QUIET_SCHEDULE_WINDOW_MS),
+    sessions: lastGraph?.sessions || [],
+  });
 }
 
 let refreshInFlight = false;
@@ -1442,7 +1465,7 @@ controlWss.on('connection', (ws) => {
   if (ws.legacy) warnLegacy('A /ws connection without ?api=', 'GET /deck and /ws?api=1 (action frames)');
   const wire = (obj) => JSON.stringify(ws.legacy ? legacyReply(deckEvent(obj)) : deckEvent(obj));
   const send = (obj) => ws.send(wire(obj));
-  send({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() });
+  send({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice(), restartStatus: restartBarrier.status() });
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
@@ -1489,6 +1512,7 @@ controlWss.on('connection', (ws) => {
     // the shutdown log, and a self-inflicted exit must record WHY or its line
     // reads exactly like the hard kill a missing reason is supposed to mean. The
     // small delay lets the ack reach the browser before the socket dies with us.
+    restartBarrier,
     restart: () => exitForRestart('restart requested from the board'),
     canRestart: restartSupported(),
     updates,
@@ -1560,6 +1584,7 @@ async function main() {
     }),
     mode: () => autoUpdateMode(),
     isQuiet: wranglerIsQuiet,
+    runWork: restartBarrier.run,
     rolledBack: readRolledBack(),
     onStatus: (status) => broadcast({ type: 'update-status', ...status }),
     onApplied: (result) => {
@@ -1604,7 +1629,8 @@ async function main() {
   // Suspend reconcile on a slower cadence than rebuild — teardown is rare and the
   // 4h idle threshold gives ample hysteresis. Rebuild only when it actually acts.
   setInterval(() => {
-    sessionManager.reconcileSuspend(lastGraph?.sessions || [], readConfig())
+    if (restartBarrier.draining()) return;
+    restartBarrier.run(() => sessionManager.reconcileSuspend(lastGraph?.sessions || [], readConfig()))
       .then((ids) => { if (ids.length) return rebuild(); })
       .catch(() => {});
   }, 60000);
@@ -1726,11 +1752,11 @@ async function main() {
   });
 
   if (!process.env.AW_DEV) {
-    setTimeout(() => updates.tick(), 60 * 1000).unref();
-    setInterval(() => updates.tick(), UPDATE_CHECK_MS).unref();
+    setTimeout(() => { if (!restartBarrier.draining()) updates.tick(); }, 60 * 1000).unref();
+    setInterval(() => { if (!restartBarrier.draining()) updates.tick(); }, UPDATE_CHECK_MS).unref();
   }
   setInterval(() => installDrift.poll(), 60 * 1000).unref();
-  setInterval(() => refreshOneStaleSession().catch((err) => logError('[agent-wrangler] session refresh failed:', err?.message || err)), 60 * 1000).unref();
+  setInterval(() => backgroundWork(refreshOneStaleSession).catch((err) => logError('[agent-wrangler] session refresh failed:', err?.message || err)), 60 * 1000).unref();
 
   // Background PR check-status poll. setInterval fires on a fixed cadence regardless
   // of whether the prior async tick has settled, so a slow sweep CAN overlap the next
@@ -1746,8 +1772,8 @@ async function main() {
   // process alive. The single-instance-per-DATA_DIR lock makes this the sole
   // scheduler owner, so a schedule can never double-fire across instances.
   const schedulePoll = setInterval(() => {
-    fireDueSchedules().catch(() => {});
-    fireDueSnoozeWakesTick().catch(() => {});
+    backgroundWork(fireDueSchedules).catch(() => {});
+    backgroundWork(fireDueSnoozeWakesTick).catch(() => {});
   }, 30000);
   schedulePoll.unref();
 
@@ -1757,9 +1783,9 @@ async function main() {
   // passed while the server was down fires on this first sweep rather than
   // waiting up to 2s more — and, more importantly, so it's not lost entirely if
   // the process is killed again before the interval's first tick.
-  fireMailSettlesTick().catch(() => {});
+  backgroundWork(fireMailSettlesTick).catch(() => {});
   const mailPoll = setInterval(() => {
-    fireMailSettlesTick().catch(() => {});
+    backgroundWork(fireMailSettlesTick).catch(() => {});
   }, 2000);
   mailPoll.unref();
 
@@ -1770,7 +1796,7 @@ async function main() {
   // tick captures no panes and runs no tmux at all. No logging here for the same
   // reason as the sweeps above: at 2s a line would be tens of thousands a day.
   const paneDrainPoll = setInterval(() => {
-    paneDeferral.drain().catch(() => {});
+    backgroundWork(() => paneDeferral.drain()).catch(() => {});
   }, 2000);
   paneDrainPoll.unref();
 

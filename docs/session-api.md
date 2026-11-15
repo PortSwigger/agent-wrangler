@@ -236,3 +236,14 @@ fixed })` before the deck and board bind, so every launch names the port it actu
 logs `session API at http://<host>:<port>`. A deck started with `--deck-only` runs the same
 startup with no board, so it serves its session API too. Another startup needs only the same two
 calls plus the handlers.
+
+## Requests during restart draining
+
+During a graceful restart, new `/mcp`, `/pr-attach` and `/status-event` requests
+receive HTTP 503 with `Retry-After: 1` and a JSON body containing
+`error: 'restarting'` and `retryable: true`. An admitted MCP tool or write keeps
+running, even if its client disconnects, and connected clients have their responses flushed before
+core exits. If draining times out after 30 seconds, the restart remains pending
+and requests are accepted again. A retryable refusal means the handler did not
+run; a disconnected admitted request still needs its normal outcome check
+before a caller repeats a mutation.

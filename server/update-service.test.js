@@ -326,3 +326,14 @@ test('no extension applied, no restart', async () => {
   assert.equal(events.applied.length, 0);
   assert.equal(timers.length, 0);
 });
+
+test('an update-triggered restart drains its own apply without deadlocking', async () => {
+  const { createRestartBarrier } = await import('./restart-barrier.js');
+  const exits = [];
+  const barrier = createRestartBarrier({ timeoutMs: 1000, settleMs: 0, exit: () => exits.push('exit') });
+  let restart;
+  const { svc } = service({ runWork: barrier.run, onApplied: () => { restart = barrier.request('updated'); } });
+  await svc.apply();
+  assert.equal(await restart, true);
+  assert.deepEqual(exits, ['exit']);
+});

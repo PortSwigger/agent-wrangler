@@ -1,4 +1,4 @@
-export const ERROR_CODES = ['unsupported', 'not-found', 'invalid', 'forbidden', 'conflict', 'failed'];
+export const ERROR_CODES = ['unsupported', 'not-found', 'invalid', 'forbidden', 'conflict', 'failed', 'restarting'];
 
 export class DeckError extends Error {
   constructor(code, message) {

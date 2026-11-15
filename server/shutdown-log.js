@@ -30,19 +30,25 @@ export function shutdownLine({ reason = null, code = 0, uptimeMs, pid }) {
 // unrecorded and read exactly like the hard kill this is meant to distinguish.
 // Cleanups (releasing the instance lock) register through `onShutdown` instead of
 // adding their own handler, so there stays exactly one path down.
-export function installShutdownLog({ pid = process.pid, startedAt = Date.now(), onLine = log } = {}) {
+export function installShutdownLog({ pid = process.pid, startedAt = Date.now(), onLine = log, process: lifecycle = process } = {}) {
   let reason = null;
   const cleanups = [];
-  process.on('exit', (code) => onLine(shutdownLine({ reason, code, uptimeMs: Date.now() - startedAt, pid })));
+  let signalHandler = null;
+  lifecycle.on('exit', (code) => onLine(shutdownLine({ reason, code, uptimeMs: Date.now() - startedAt, pid })));
   for (const sig of ['SIGTERM', 'SIGINT']) {
-    process.once(sig, () => {
-      reason = `signal ${sig}`;
-      for (const fn of cleanups) { try { fn(); } catch { /* never block the exit on a cleanup */ } }
-      process.exit(0);
+    lifecycle.on(sig, () => {
+      const finish = () => {
+        reason = `signal ${sig}`;
+        for (const fn of cleanups) { try { fn(); } catch { /* never block the exit on a cleanup */ } }
+        lifecycle.exit(0);
+      };
+      if (signalHandler) signalHandler(sig, finish);
+      else finish();
     });
   }
   return {
     onShutdown: (fn) => cleanups.push(fn),
+    onSignal: (fn) => { signalHandler = fn; },
     // For a self-inflicted exit that knows why (the dev instance reaping itself):
     // records the reason so the exit hook's single line carries it, instead of the
     // caller logging its own line and leaving a bare "exit code 0" beside it.

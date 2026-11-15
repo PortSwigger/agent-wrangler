@@ -659,6 +659,21 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `{ installedSha, runningSha, restartPending }`. The returned object is a copy,
   the installed receipt is read afresh on every call, and no extension-id
   argument is accepted. Declare `engines.wranglerApi: '^1.90.0'` when using it.
+- **Restart draining.** Core stops accepting new MCP calls,
+  control actions and launches before a restart. It waits up to 30 seconds for
+  admitted requests, responses, extension sweeps, event subscribers and
+  store-method promises to finish. Nested work belonging to an admitted
+  operation may finish. New calls receive a retryable
+  `restarting` error (HTTP 503 with `Retry-After: 1` for session API requests).
+  If work does not finish, core cancels the restart, reopens admission and shows
+  **Restart pending** in Settings › Updates; the installed update still awaits
+  a restart. Automatic activation also waits for interactive working turns,
+  headless runs, launches and schedules due within two minutes. Manual restarts
+  drain server work while worker panes carry on.
+
+  Tools, handlers, sweeps, event subscribers and store methods must return their
+  complete write promise so core can drain it. Detached writes through raw
+  references or an extension's own untracked timers are outside this barrier.
 - **Installed extensions live in `<DATA_DIR>/extensions/.generations/<id>/<token>/`;
   `<DATA_DIR>/extensions.json` selects the installed generation.** Each install
   gets a unique directory, including reinstalls of the same commit. The running
@@ -808,7 +823,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   instance started from a pane doesn't inherit the button either; see
   [Install signals](install-signals.md). The handler (`control/handlers/restart.js`) acks BEFORE the exit is armed
   (the socket dies with the process) and the exit itself lives in `index.js`'s
-  `ctx.restart`, which calls `shutdownLog.noteReason` first — a self-inflicted exit
+  `ctx.restart`, which drains admitted work and records the reason before exiting — a self-inflicted exit
   with no reason logs exactly like the hard kill an absent reason is supposed to
   mean. The board's own pending notes (an uninstalled row, a finished install) are
   cleared by the next `config` frame, which is the first frame of every reconnect

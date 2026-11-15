@@ -7305,6 +7305,7 @@ let updateUnavailable = null;
 // connect config and `install-drift`; null when the install matches.
 let installDrift = null;
 let installDriftRestarting = false;
+let restartStatus = null;
 const UPDATE_IN_FLIGHT = new Set(['checking', 'applying', 'restarting']);
 
 function mountUpdatePanel(host) {
@@ -7317,8 +7318,9 @@ function mountUpdatePanel(host) {
   host.parentElement?.querySelector('.setting-row[data-id="autoUpdate"]')?.classList.toggle('hidden', Boolean(updateUnavailable));
   const restart = restartPanelEl({
     drift: installDrift,
+    restartStatus,
     canRestart: canRestartServer,
-    restarting: installDriftRestarting || updatePhase === 'restarting' || extRestarting,
+    restarting: restartStatus?.phase === 'draining' || restartStatus?.phase === 'restarting' || installDriftRestarting || updatePhase === 'restarting' || extRestarting,
     onRestart: () => { installDriftRestarting = true; send({ type: 'restart-server' }); remountUpdatePanel(); },
   });
   if (restart) host.append(restart);
@@ -7441,6 +7443,19 @@ function noteCodeVersion(version) {
   if (UPDATE_IN_FLIGHT.has(updatePhase)) { updatePhase = 'idle'; updateStatus = null; remountUpdatePanel(); }
 }
 
+function noteRestartStatus(status) {
+  restartStatus = status || null;
+  if (status?.phase === 'pending') {
+    installDriftRestarting = false;
+    extRestarting = false;
+    updatePhase = 'error';
+    updateError = status.message;
+    toast(status.message, true);
+  }
+  remountUpdatePanel();
+  remountExtensions();
+}
+
 function noteConfigUpdate(msg) {
   updateUnavailable = msg.updateUnavailable || null;
   installDrift = msg.installDrift || null;
@@ -7449,6 +7464,7 @@ function noteConfigUpdate(msg) {
   applyUpdateStatus(msg.update);
   applyExtUpdateStatus(msg.extensionUpdates);
   noteRolledBack(msg.updateRolledBack);
+  noteRestartStatus(msg.restartStatus);
   // applyUpdateStatus skips a null status, and a restart that cleared the drift
   // must still take its notice and the Settings dot away.
   remountUpdatePanel();
@@ -8408,6 +8424,7 @@ function onDeckMessage(msg) {
   else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
   // The board is about to lose this socket; ws.onclose already retries every
   // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
+  else if (msg.type === 'restart-status') noteRestartStatus(msg);
   else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
   else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
   else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); setBackgroundModelOptions(availableAgents); } populateModelSelect(); }

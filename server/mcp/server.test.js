@@ -269,3 +269,28 @@ test('a session at a location is offered exactly the tools any other session is'
   assert.deepEqual(atLocation, await names('HOST'));
   assert.equal(atLocation.length, tools.length);
 });
+
+test('restart waits for an MCP mutation and its response, then refuses fresh calls', async (t) => {
+  const { createRestartBarrier } = await import('../restart-barrier.js');
+  let release;
+  let entered;
+  const started = new Promise((r) => { entered = r; });
+  const gate = new Promise((r) => { release = r; });
+  t.after(() => release());
+  const exits = [];
+  const barrier = createRestartBarrier({ timeoutMs: 1000, settleMs: 0, exit: () => exits.push('exit') });
+  const deps = { ...fakeDeps(), restartBarrier: barrier, dispatch: async () => { entered(); await gate; return { sessionId: 'NEW', cwd: '/a' }; }, rebuild: async () => {} };
+  deps.taskStore.assign = () => true;
+  await withServer(deps, async (port) => {
+    const pending = rpc(port, 'tools/call', { name: 'spawn_session', arguments: { intent: 'work' } }, 100, { Authorization: 'Bearer tok-CARD1' });
+    await started;
+    const restarting = barrier.request('update');
+    assert.deepEqual(exits, []);
+    const refused = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { Authorization: 'Bearer tok-CARD1' }, body: '{}' });
+    assert.equal(refused.status, 503);
+    release();
+    const response = await pending;
+    assert.equal(response.result.structuredContent.sessionId, 'NEW');
+    assert.equal(await restarting, true);
+  });
+});

@@ -89,3 +89,19 @@ test('hasListeners: true only while some ACTIVE owner (or core) would hear the e
   bus.on('x', () => {});
   assert.equal(bus.hasListeners('x'), true);
 });
+
+test('asynchronous extension subscribers participate in restart draining', async () => {
+  const { createRestartBarrier } = await import('./restart-barrier.js');
+  const exits = [];
+  const barrier = createRestartBarrier({ timeoutMs: 1000, settleMs: 0, exit: () => exits.push('exit') });
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const bus = createEventBus({ runWork: barrier.run, isActive: () => barrier.accepting() });
+  bus.on('write', () => gate, 'example');
+  assert.equal(bus.emit('write', {}), 1);
+  const restart = barrier.request('update');
+  assert.equal(bus.emit('write', {}), 0);
+  assert.deepEqual(exits, []);
+  release();
+  assert.equal(await restart, true);
+});

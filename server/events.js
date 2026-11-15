@@ -16,7 +16,7 @@
 //     subscriptions (offOwner), and `isActive` is the belt to that braces: a
 //     handler registered by an extension that has since been disabled is inert
 //     even in the window before the drop lands.
-export function createEventBus({ onError = () => {}, isActive = () => true } = {}) {
+export function createEventBus({ onError = () => {}, isActive = () => true, runWork = (fn) => fn() } = {}) {
   const handlers = new Map(); // event name -> Set<{ fn, owner }>
 
   function on(name, fn, owner = null) {
@@ -38,7 +38,7 @@ export function createEventBus({ onError = () => {}, isActive = () => true } = {
       if (owner != null && !isActive(owner)) continue;
       delivered += 1;
       try {
-        const out = fn(payload);
+        const out = runWork(() => fn(payload));
         if (out && typeof out.then === 'function') out.then(undefined, (err) => onError(`[events] handler for "${name}"${owner ? ` (${owner})` : ''} rejected`, err));
       } catch (err) {
         onError(`[events] handler for "${name}"${owner ? ` (${owner})` : ''} threw`, err);
