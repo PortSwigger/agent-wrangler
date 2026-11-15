@@ -7,7 +7,8 @@ import { discoverClaudeSessions, capturePane, classifyPane, claudeTitle, hasBack
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
 import { codexStatus as realCodexStatus } from './agents/codex-status.js';
 import { adapterFor, modelPillFor, maxContextWindowFor, discoveryFloor } from './agents/index.js';
-import { runtimeFor, findRuntime } from './runtimes/index.js';
+import { runtimeFor, findRuntime, takesStatusEvents } from './runtimes/index.js';
+import { cardStatusOf } from './status-events.js';
 import { worktreeStatus } from './worktree.js';
 import { repoSlugFor } from './repo-slug.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
@@ -142,10 +143,12 @@ function isAlive(pid) {
 
 // Read all session descriptors written by every live Claude process, skipping
 // stale files whose process has already exited.
-function readSessions() {
+// `skipPids`: the processes whose status comes from events, whose files are
+// never opened.
+function readSessions(skipPids = new Set()) {
   let files;
   try {
-    files = fs.readdirSync(SESSIONS_DIR).filter((f) => f.endsWith('.json'));
+    files = fs.readdirSync(SESSIONS_DIR).filter((f) => f.endsWith('.json') && !skipPids.has(Number(f.slice(0, -5))));
   } catch {
     return [];
   }
@@ -330,7 +333,17 @@ export async function applyRuntimeCost(runtime, args, enr) {
 
 export const resolveRuntimeForGraph = (id) => findRuntime(id) || runtimeFor(undefined);
 
-export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, codexStatus = realCodexStatus, mailStore, mailDraftBlocked } = {}) {
+// The live blob for a card whose status comes from events (`statusEvents`, the
+// store server/status-events.js keeps): what the last event said, and the
+// conversation id it named, or unknown before the first one.
+export function eventLive(entry, event) {
+  return { liveSid: event?.sessionId || entry?.liveSessionId || null, ...cardStatusOf(event), rawStatus: null, name: null, updatedAt: event?.at ?? null };
+}
+
+export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, codexStatus = realCodexStatus, mailStore, mailDraftBlocked, statusEvents = null } = {}) {
+  // A card on a runtime with `statusEvents: true` takes its status from the
+  // events its hooks post: none of its status files is read below.
+  const eventDriven = (entry) => Boolean(statusEvents && entry && takesStatusEvents(runtimeResolver(entry.runtime), entry.agent ?? 'claude'));
   const graphAnalysis = (agent, id, opts) => {
     const adapter = adapterFor(agent);
     return adapter.graphAnalysis ? adapter.graphAnalysis(id, opts, enrich) : adapter.analyze(id, opts);
@@ -350,7 +363,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   // file read and this is per-session, three times over), so a mid-build settings
   // flip can't hand two cards in one graph different defaults.
   const fixPrDefault = autoFixPrChecksDefault();
-  const sessions = readSessions();
   const roster = readRosterBySession();
 
   // Discover every Claude session running in tmux (not just app-launched ones)
@@ -414,12 +426,22 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   }
   pidToTmux = new Map(primary.map((d) => [d.claudePid, d.tmuxName]));
 
+  const eventTmux = new Set();
+  const eventPids = new Set();
+  for (const d of primary) {
+    if (!eventDriven(sessionManager?.entryByTmux?.(d.tmuxName))) continue;
+    eventTmux.add(d.tmuxName);
+    if (d.claudePid) eventPids.add(d.claudePid);
+  }
+  const sessions = readSessions(eventPids);
+
   // The live Claude running in each owned tmux, keyed by tmux name: its post-fork
   // session id, hook-written status, and dispatch name. A resume forks the
   // conversation under a new id, so the *owner* id's own session file goes frozen;
   // this lets both passes below read the running fork's live state instead.
   const liveByTmux = new Map();
   for (const d of primary) {
+    if (eventTmux.has(d.tmuxName)) continue;
     const ls = liveState(d.claudePid);
     if (ls) liveByTmux.set(d.tmuxName, ls);
   }
@@ -676,7 +698,10 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // transcript. Fall back to a pane scrape + owner enrichment when the file is
     // absent (no regression for sessions without a hook-written file).
     const runtime = runtimeResolver(appEntry?.runtime);
-    const live = (runtime.readLive ? await runtime.readLive({ entry: appEntry, tmuxName: d.tmuxName, socket: d.socket }) : null)
+    const fromEvents = eventDriven(appEntry);
+    const live = fromEvents
+      ? eventLive(appEntry, statusEvents.get(realSid))
+      : (runtime.readLive ? await runtime.readLive({ entry: appEntry, tmuxName: d.tmuxName, socket: d.socket }) : null)
       || adapter.readLive({ pid: d.claudePid, cwd: d.cwd })
       || (adapter.presetsSessionId
         ? null
@@ -694,7 +719,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // A recognized live status wins (Claude's mapped status, or Codex's). Else
     // surface a reported-but-unrecognized status as 'unknown', and only scrape when
     // nothing was reported (Codex has no status file → live.rawStatus is absent).
-    let status = live && live.status !== 'unknown' ? live.status : liveStatusDecision(live?.rawStatus);
+    let status = fromEvents || (live && live.status !== 'unknown') ? live.status : liveStatusDecision(live?.rawStatus);
     const paneText = await capture(d.paneId || d.tmuxName, 60, d.socket || '');
     // classify() may also carry a hint (e.g. devcontainer bring-up/failure) alongside
     // the status — only meaningful on the scrape branch, since a recognized live
@@ -751,7 +776,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       hasBackgroundShell,
       rawStatus: null,
       waitingFor: apiError ? apiError.waitingFor : (live?.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? (status === 'needs-you' ? scrapeWaitingReason : null)),
+      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? (status === 'needs-you' ? (live?.waitingReason || scrapeWaitingReason) : null)),
       autoBlockSeconds: waiting?.autoBlockSeconds ?? null,
       kind: 'tmux',
       cwd: fcwd,

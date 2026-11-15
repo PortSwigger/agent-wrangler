@@ -2642,7 +2642,8 @@ define it and the runtime owns its sessions' model vocabulary: `spawn_session` s
 per-agent check, asks this instead, and passes the accepted model as `ext.<yourId>.model`;
 `coreModelError(agent, model)` is core's own check, to reuse),
 `resumable` (default `true`), `skipsHostResumeGuard` and `liveByTmux` (1.34.0, default
-`false`; see below), and `agents` (1.37.0; the agent ids it runs, default `['claude']`:
+`false`; see below), `statusEvents` (1.83.0, default `false`; see below), and `agents`
+(1.37.0; the agent ids it runs, default `['claude']`:
 dispatch and `spawn_session` refuse any other agent, and the dialog disables the option
 for one). Every function is also handed
 `host` (the extension's façade) and `settings` (its own setting values), and `ext` is
@@ -2708,6 +2709,22 @@ Maintainer notes:
   while it runs and offers a Resume. Discovery and costing are otherwise unchanged, so
   the agent's transcript must still land on the host. An older server ignores the key,
   so a manifest that needs it declares `^1.34.0`.
+- **`statusEvents: true` (1.83.0) takes card status as events instead of status files.**
+  The Claude and Codex sessions it launches carry status hooks in their command, and
+  each hook posts the session's state to the session API's `POST /status-event`
+  (docs/session-api.md, "Status events") with the session's own token. The card's
+  status, and for needs-you what it waits for, then comes from the last event alone:
+  the graph tick reads none of that card's status files, never calls the runtime's
+  `readLive`, and never reads a Codex rollout for status. Before the first event the
+  card shows `unknown`. Chat, cost and the transcript are read as before. The hooks
+  run one self-contained script with Node; `wrapLaunch` is also handed `statusHook:
+  { script }`, its host path, so a runtime whose agent runs somewhere else copies that
+  one file to the same path (or rewrites the path in `inner`, as devcontainer does for
+  the PR hook), and must let the agent reach the session API's URL in
+  `AW_STATUS_EVENT_URL`. `launchContext.statusEvents` is `true` on such a launch. A
+  `buildLaunch` runtime and an agent with no status hooks (Gemini) are not affected,
+  and every runtime without the flag keeps file-based status. An older server ignores
+  the key, so a manifest that needs it declares `^1.83.0`.
 - **`deliver` sits on send_message's legacy push path**, before the tmux check, and gets
   the BEGIN/END-fenced text, because the target is a raw prompt stream. The footer drops
   the "reply with send_message" line, since that agent has no wrangler MCP. A card whose

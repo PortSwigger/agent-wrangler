@@ -586,7 +586,13 @@ import semver from 'semver';
 // 1.82.0 lets the client `api.openDispatch({ taskId })` name another deck's task
 // by its board id (`<deckId>/<id>`): the dialog opens on that deck, in that task,
 // and the session starts there. A board half that does declares `^1.82.0`.
-export const HOST_API_VERSION = '1.82.0';
+//
+// 1.83.0 adds a runtime's `statusEvents: true`: its Claude and Codex sessions post
+// their status to the session API's POST /status-event, and their cards take
+// status from those events instead of status files. `wrapLaunch` is handed
+// `statusHook: { script }` for such a launch. A manifest that needs it declares
+// `^1.83.0`.
+export const HOST_API_VERSION = '1.83.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

@@ -1,12 +1,13 @@
 # Session API
 
-Launched sessions talk back to Agent Wrangler over three HTTP routes, together called the session API:
+Launched sessions talk back to Agent Wrangler over four HTTP routes, together called the session API:
 
 | Route | Who calls it | What it does |
 | --- | --- | --- |
 | `POST /mcp` | the agent's MCP client (Claude, Codex, Gemini) | the board's MCP tools, acting as the calling session |
 | `POST /pr-attach` | the PR-attach hook after `gh pr create` | attaches the new PR to the calling session's card |
 | `POST /pr-model` | the PR model footer | answers which model to tag the calling session's PR with |
+| `POST /status-event` | the status hooks, on a runtime with `statusEvents: true` | sets the calling session's card status (see [Status events](#status-events)) |
 
 They are served on their own port, `AW_SESSION_API_PORT` (default the deck's port + 1: `AW_PORT` + 2
 with a board, `AW_DECK_PORT` + 1 for a deck started with `--deck-only`), bound like the
@@ -40,7 +41,8 @@ no token. An extension's own `AW_SESSION_TOKEN` variable is dropped. Each agent 
 - **Gemini**: the board's Gemini settings name the header as `Bearer $AW_SESSION_TOKEN`, which
   Gemini expands.
 - **PR hooks** (`scripts/pr-attach-hook.mjs`, `scripts/codex-pr-footer-hook.mjs`,
-  `server/pr-footer.js`): read `AW_SESSION_TOKEN` and send the same header.
+  `server/pr-footer.js`) and the **status hook** (`scripts/status-event-hook.mjs`): read
+  `AW_SESSION_TOKEN` and send the same header.
 
 `AW_SESSION_ID` is still the card id. It identifies the session to itself and to other tools, and
 it is not a credential.
@@ -56,7 +58,7 @@ with its own check (below).
 
 ## The caller check
 
-Every request to the three routes is decided by one function before any handler runs:
+Every request to the four routes is decided by one function before any handler runs:
 
 ```js
 resolve(req, { legacy }) -> { cardId } | { refuse, reason }
@@ -108,10 +110,97 @@ async function resolveFromTokenReview(req) {
 `resolve` may return a promise. Everything after the check is unchanged: handlers only ever see
 the resolved `cardId`.
 
+## Status events
+
+A runtime that declares `statusEvents: true` (docs/extensions.md, Runtimes) gets its card status
+from events its sessions post, instead of from the agent's status files. Every other runtime,
+including `local` and `devcontainer`, keeps file-based status unchanged.
+
+### The route
+
+`POST /status-event` with the session's token as `Authorization: Bearer <token>`, behind the same
+caller check as the other routes, so a session can only ever set its own card's status. The body
+is JSON (`Content-Type: application/json`), at most 1024 bytes, and exactly:
+
+```json
+{ "state": "waiting-permission", "at": 1781000000000, "sessionId": "5f0c…", "detail": "Claude needs your permission to use Bash" }
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `state` | yes | `working`, `waiting-permission`, `waiting-input` or `idle` (the turn finished) |
+| `at` | no | when the hook ran, in milliseconds since the epoch; defaults to when the server got it |
+| `sessionId` | no | the agent's conversation id (1-128 of `A-Za-z0-9_-`); the card follows it, as it follows a `/clear` |
+| `detail` | no | what the session waits for, up to 200 characters |
+
+Any other field, another type or another state is refused. The answers:
+
+| Status | `error` | When |
+| --- | --- | --- |
+| `204` | | recorded, and the board rebuilds |
+| `400` | `bad-body` | not JSON, or not the shape above (`reason` says which field) |
+| `403` | the caller check's refusal | no token, an unknown token, an archived card, or an `X-AW-Session` claim naming another card |
+| `409` | `not-opted-in` | the token's card runs on a runtime without `statusEvents`; its status stays file-based |
+| `413` | `too-large` | the body is over 1024 bytes |
+| `415` | `bad-content-type` | not `application/json` |
+
+A token whose card the board has not recorded yet is accepted, since a hook can fire before the
+launch has recorded the card. An event older (by `at`) than the one the card already has is
+dropped, since hooks may run concurrently and arrive out of order. The server keeps the last
+event per card in `session-status.json` in the data directory, so a restart shows the same
+status. A new launch of the card, and purging it, clear it.
+
+### The card's status
+
+| Last event | Card |
+| --- | --- |
+| `working` | working |
+| `waiting-permission` | needs-you, waiting reason `permission`, waiting for `detail` or "Waiting for permission" |
+| `waiting-input` | needs-you, waiting for `detail` or "Waiting for your input" |
+| `idle` | idle |
+| none yet | unknown |
+
+For these cards the graph tick reads no status file, never calls the runtime's `readLive` and never
+reads a Codex rollout for status. Chat, cost, activity and the transcript-based API error check
+read the transcript as before.
+
+### The hooks
+
+The deck adds the hooks to the agent's launch command for a session on an opted-in runtime, with
+`AW_STATUS_EVENT_URL` (this route's URL) beside `AW_SESSION_TOKEN`. Each runs
+`scripts/status-event-hook.mjs <state>`, which reads the hook payload on stdin for the
+conversation id and, for a waiting state, a notification's message or the tool a
+`PermissionRequest` asks for ("Permission to use Bash"), posts the event with a 2 second timeout, and always
+exits 0 with no output, so it never changes what the agent does.
+
+| Agent | Hook (matcher) | State |
+| --- | --- | --- |
+| Claude | `SessionStart` | `idle` |
+| Claude | `UserPromptSubmit` | `working` |
+| Claude | `PreToolUse` (`AskUserQuestion`) | `waiting-input` |
+| Claude | `PermissionRequest` (`*`) | `waiting-permission` |
+| Claude | `PostToolUse` (`*`) | `working` |
+| Claude | `Notification` (`permission_prompt`) | `waiting-permission` |
+| Claude | `Notification` (`elicitation_dialog`) | `waiting-input` |
+| Claude | `Stop` | `idle` |
+| Codex | `SessionStart` | `idle` |
+| Codex | `UserPromptSubmit` | `working` |
+| Codex | `PermissionRequest` | `waiting-permission` |
+| Codex | `PostToolUse` | `working` |
+| Codex | `Stop` | `idle` |
+
+Claude gets them in `--settings`, after the PR-attach hook. Its `PermissionRequest` fires as the
+dialog opens; the `permission_prompt` notification that follows a few seconds later is a fallback. Codex gets them as `-c` hook overrides,
+trusted in the same flags as the PR footer's hook (`server/codex-hook-config.js`) and run async.
+The runtime's `wrapLaunch` is handed `statusHook: { script }`, the script's host path, so a runtime
+whose agent runs somewhere else can copy that one self-contained file in. A session interrupted
+mid-turn (Esc) fires no hook, so its card shows working until its next event.
+
 ## The old routes on the deck and board ports
 
 Before the session API had its own port, sessions called `POST /mcp`, `/pr-attach` and `/pr-model`
-on the board's port, which forwards them to the deck. Those routes still work, as an adapter onto
+on the board's port, which forwards them to the deck. `/status-event` is served only on the session
+API's port. The old routes still work, as an adapter onto
 the session API: the same caller check decides every request, and handlers see only the resolved
 card. The first call to any of them logs one deprecation warning naming the session API's address:
 
