@@ -105,6 +105,7 @@ function stubDom() {
     'chat-wrap', 'chat-stream', 'chat-input', 'chat-send', 'chat-stop',
     'chat-hint', 'chat-suggestion', 'chat-current-model', 'chat-context-bar', 'chat-attachments',
     'chat-notice-bar', 'chat-jump-nav', 'chat-jump-prev', 'chat-jump-next', 'chat-exit-notice',
+    'chat-unavailable',
   ]) byId.set(id, make(id === 'chat-input' ? 'textarea' : 'div'));
 
   const body = make('body');
@@ -1401,4 +1402,29 @@ test('blocking API errors keep the terminal action and disabled composer until r
   view.setStatus('idle');
   assert.equal(bar.hidden, true);
   assert.equal(input.disabled, false);
+});
+
+// --- a location card whose conversation Chat cannot read ---------------------
+
+test('a reply marked unreadable says the conversation cannot be read right now, and clears once it can', async () => {
+  const { view, byId } = await mountView();
+  view.mount('d1/s1');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 0, epoch: 0, events: [], unavailable: 'unreadable' });
+  const el = byId.get('chat-unavailable');
+  assert.equal(el.hidden, false);
+  assert.match(el.textContent, /can't read this conversation right now/i);
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 10, epoch: 0, events: [{ kind: 'user', text: 'hello' }] });
+  assert.equal(el.hidden, true);
+  assert.equal(el.textContent, '');
+});
+
+test('a reply marked unsupported says Chat is not available for this card, and a remount clears it', async () => {
+  const { view, byId } = await mountView();
+  view.mount('d1/s1');
+  view.onChatReply({ sessionId: 's1', token: 1, offset: 0, epoch: 0, events: [], unavailable: 'unsupported' });
+  const el = byId.get('chat-unavailable');
+  assert.equal(el.hidden, false);
+  assert.match(el.textContent, /Chat isn't available for this card/);
+  view.mount('d1/s2');
+  assert.equal(el.hidden, true);
 });
