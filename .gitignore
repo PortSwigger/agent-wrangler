@@ -16,6 +16,7 @@ docs/*
 !docs/reviews-and-prs.md
 !docs/install-signals.md
 !docs/session-api.md
+!docs/browser-options-claude.md
 !.claude/
 .claude/*
 !.claude/skills/
