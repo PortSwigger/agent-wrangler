@@ -258,6 +258,26 @@ name and a strip of its accent, green and red. The button handles no clicks itse
 For development, place it under `<AW_DATA_DIR>/extensions/<id>/` and restart. Hand-placed extensions
 have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 
+## Store identity
+
+`host.stores.<name>` is a restart-barrier `Proxy` around the store returned by its factory.
+Methods run with `this` bound to the underlying store, so `this !== host.stores.<name>`.
+Do not compare those objects by identity or use one as a `Map`/`WeakMap` key and look it up
+with the other. Non-function properties pass through unchanged, including object identity.
+When shared bookkeeping needs an identity key, expose a dedicated object property:
+
+```js
+const bookkeeping = new WeakMap();
+class ExampleStore {
+  identity = {};
+  remember(value) { bookkeeping.set(this.identity, value); }
+}
+
+// In a handler with access to host:
+host.stores.example.remember('saved');
+bookkeeping.get(host.stores.example.identity); // 'saved'
+```
+
 ## Deck and board halves
 
 Agent Wrangler is two parts: the deck, which runs sessions, tasks and schedules, and the board, the
