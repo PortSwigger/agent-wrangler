@@ -1,3 +1,5 @@
+import { errorKind } from '../turn-outcome.js';
+
 // What an extension sees of a session or a task: an explicit, frozen allow-list
 // COPY, never the live mapping entry. Two independent reasons, and both have to
 // hold — a deny-list would silently start leaking whatever field lands next.
@@ -35,6 +37,14 @@ export function worktreeSummary(wt) {
   return { branch: wt.branch ?? null, path: wt.path ?? null, repoRoot: wt.repoRoot ?? null };
 }
 
+function projectLastTurn(node, entry) {
+  const turn = node?.lastTurn;
+  if (!turn || node.status === 'working' || !['ok', 'error', 'aborted'].includes(turn.outcome)
+      || !Number.isFinite(turn.at) || turn.at < Math.max(entry.relaunchedAt ?? 0, entry.forkedFrom ? entry.createdAt ?? 0 : 0)) return null;
+  const kind = errorKind(turn.errorKind);
+  return { outcome: turn.outcome, ...(turn.outcome === 'error' && kind ? { errorKind: kind } : {}), at: turn.at };
+}
+
 // `taskId` is passed in rather than read off the entry: the session→task link
 // lives in task-store, not in the mapping, and this stays a pure projection.
 export function projectSession(entry, id, { taskId = null, node = null } = {}) {
@@ -53,6 +63,7 @@ export function projectSession(entry, id, { taskId = null, node = null } = {}) {
     status: node?.status ?? null,
     dormant: Boolean(node && !node.managed && !node.exitOutput),
     waitingReason: node?.waitingReason ?? null,
+    lastTurn: projectLastTurn(node, e),
     // Seconds until Claude Code's timed safety check denies itself ('auto-block').
     autoBlockSeconds: node?.autoBlockSeconds ?? null,
     hasBackgroundShell: Boolean(node?.hasBackgroundShell),

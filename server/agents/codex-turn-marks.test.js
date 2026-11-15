@@ -13,12 +13,12 @@ const t = (s) => Date.parse(s);
 
 test('parseTurnMarks returns the latest mark of each kind', () => {
   const text = [started('2026-10-22T11:08:31.140Z'), complete('2026-10-22T11:08:33.695Z'), started('2026-10-22T11:10:00.000Z'), aborted('2026-10-22T11:10:05.000Z'), started('2026-10-22T11:12:00.000Z')].join('\n');
-  assert.deepEqual(parseTurnMarks(text), { startedAt: t('2026-10-22T11:12:00.000Z'), completedAt: t('2026-10-22T11:08:33.695Z'), abortedAt: t('2026-10-22T11:10:05.000Z') });
+  assert.deepEqual(parseTurnMarks(text), { startedAt: t('2026-10-22T11:12:00.000Z'), completedAt: t('2026-10-22T11:08:33.695Z'), abortedAt: t('2026-10-22T11:10:05.000Z'), lastTurn: null });
 });
 
 test('parseTurnMarks ignores other records and malformed lines', () => {
   const text = ['not json', JSON.stringify({ timestamp: '2026-10-22T11:00:00.000Z', type: 'response_item', payload: { type: 'task_started' } }), started('2026-10-22T11:01:00.000Z')].join('\n');
-  assert.deepEqual(parseTurnMarks(text), { startedAt: t('2026-10-22T11:01:00.000Z'), completedAt: null, abortedAt: null });
+  assert.deepEqual(parseTurnMarks(text), { startedAt: t('2026-10-22T11:01:00.000Z'), completedAt: null, abortedAt: null, lastTurn: null });
 });
 
 test('readTurnMarks ignores a truncated leading line', async () => {
@@ -57,5 +57,5 @@ test('readTurnMarks gives up widening at maxBytes', async () => {
 });
 
 test('readTurnMarks on a missing file is all null', async () => {
-  assert.deepEqual(await readTurnMarks('/nonexistent'), { startedAt: null, completedAt: null, abortedAt: null, mtimeMs: null });
+  assert.deepEqual(await readTurnMarks('/nonexistent'), { startedAt: null, completedAt: null, abortedAt: null, lastTurn: null, mtimeMs: null });
 });

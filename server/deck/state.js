@@ -11,6 +11,7 @@ export const SESSION_VIEW_DROPPED = [
   'launchedCodeVersion',
   'autoBlockSeconds',
   'suspendedAt',
+  'lastTurn',
 ];
 
 // What a board does read off a session record. The coverage test fails on any

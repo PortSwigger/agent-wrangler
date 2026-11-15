@@ -484,6 +484,11 @@ test('sessions:read joins the latest graph for get, list and forTask', () => {
   }) });
   assert.equal(host.sessions.get('c1').dormant, true);
   assert.equal(host.sessions.get('c2').status, null);
+  const lastTurn = { outcome: 'error', errorKind: 'server_error', at: 123 };
+  nodes[0].lastTurn = lastTurn;
+  assert.deepEqual(host.sessions.get('c1').lastTurn, lastTurn);
+  assert.deepEqual(host.sessions.list().map((r) => r.lastTurn), [lastTurn, null]);
+  assert.deepEqual(host.sessions.forTask('t1').map((r) => r.lastTurn), [lastTurn, null]);
   graphReads = 0;
   assert.deepEqual(host.sessions.list().map((r) => r.status), ['idle', null]);
   assert.equal(graphReads, 1);
