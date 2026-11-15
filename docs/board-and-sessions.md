@@ -333,6 +333,26 @@ its tiles offer neither. With only this board's own deck, the dialog has no pick
 
 **Remove** takes a deck off the board; its sessions keep running on it.
 
+### Settings for each deck
+
+With more than one deck, **Settings** splits into **Board** tabs and **Deck** tabs. The Board tabs
+are this board's own: Appearance, the per-browser session view defaults and **Hide PR toasts the
+session already got** (under **Board**), the deck list, and Shortcuts. The Deck tabs (Sessions,
+Automation, Extensions and Updates) belong to the deck chosen in the picker beside them, this board's
+own deck by default. Each value is read from that deck and saved in that deck's own `config.json`,
+so changing another deck's default runtime, PR auto-fix default or an extension's switch changes
+nothing on this board's deck. Its **Default runtime** row offers the runtimes that deck reports.
+
+On another deck, **Extensions** turns each of its extensions on or off and edits their settings;
+installing, updating and removing extensions stays with the board on that deck's own machine.
+**Updates** checks that deck for updates, and offers **Restart** when that deck can restart itself.
+**Sessions** also lists the deck's **Startup choices**, read-only: any option its `GET /deck` reports
+beyond the deck API's own fields, such as the runtimes it was started to offer.
+
+A deck that is not connected shows as unavailable in every Deck tab, never with the values it last
+sent, until the board reaches it again. With only this board's own deck, Settings has its usual tabs
+and no picker.
+
 Extensions load once, from the board's own install. A card's checklist is the one its own deck
 keeps, and ticking an item changes it on that deck alone. Another deck's task tile shows that deck's
 TODOs, and its **Task memory** opens that deck's memory; edits go to that deck alone. TODOs move only

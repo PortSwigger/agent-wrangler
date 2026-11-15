@@ -123,10 +123,14 @@ test('a stopped deck turns unreachable and keeps its cards; when it comes back t
   await net.runTimers();
   const [down] = remotes.list();
   assert.equal(down.status, 'unreachable');
+  assert.equal(down.live, false, 'a deck that dropped no longer offers its settings');
   assert.equal(mergeDeckGraphs({ graph: { sessions: [] }, status: 'ready' }, remotes.list(), { multi: true }).sessions[0].deckUnreachable, true);
   net.down.delete('http://127.0.0.1:7001');
   await net.runTimers(); await flush();
   assert.equal(remotes.list()[0].status, 'ready');
+  assert.equal(remotes.list()[0].live, false, 'not live again until it sends its state');
+  net.socketOf('http://127.0.0.1:7001').receive(stateFrame([{ sessionId: 'b1' }]));
+  assert.equal(remotes.list()[0].live, true);
   assert.equal(mergeDeckGraphs({ graph: { sessions: [] }, status: 'ready' }, remotes.list(), { multi: true }).sessions[0].deckUnreachable, undefined);
 });
 
