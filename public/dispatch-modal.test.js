@@ -464,7 +464,7 @@ test('Codex quick launch restores retained grants when switching from a non-loca
     const app = loadApp(
       ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
       ['quickLaunch', 'syncRuntimeToggle', 'dispatched'],
-      `let modelEdited = false; const dispatchMode = 'standard'; const reviewMode = false;
+      `let modelEdited = false; const dispatchMode = 'standard'; const reviewMode = false; const dispatchDeck = null;
        const autoCompactTokens = undefined; const parentSessionId = null;
        let codexPolicyDraftWasCodex = false; const codexPolicyDefaults = {};
        const dispatched = []; const submitDispatch = () => dispatched.push(readCoreDispatchFields());`,
@@ -551,7 +551,7 @@ function scheduleHarness(kind = 'dispatch', editing = false, { deck = null, refu
   const app = loadApp(
     ['function scheduleActionValid() {', 'function syncScheduleGo() {', 'function submitSchedule() {'],
     ['submitSchedule', 'syncScheduleGo'],
-    `const scheduleAction = ${JSON.stringify(kind)}; const modalMode = ${JSON.stringify(editing ? 'schedule-edit' : 'schedule-create')}; const editingScheduleId = 'SCH1'; const dispatchDeck = ${JSON.stringify(deck)};`,
+    `const scheduleAction = ${JSON.stringify(kind)}; const modalMode = ${JSON.stringify(editing ? 'schedule-edit' : 'schedule-create')}; const editingScheduleId = 'SCH1'; const dispatchDeck = ${JSON.stringify(deck)}; const noDispatchAgent = () => false;`,
     {
       document, additionalFolders: { invalid: () => state.invalid },
       scheduleMode: () => true, readPicker: () => ({}), whenValid: () => true,
@@ -994,7 +994,7 @@ function extSubmitHarness({ mode = 'launch', hidden = false, images = [], images
     ['function scheduleMode() {', 'function readDispatchFields() {', 'function dispatchFieldCtx(core = readCoreDispatchFields()) {', 'function submitDispatch(over) {', 'function submitDispatchFromExt({ model, effort, runtime } = {}) {', 'function runtimeOwnsModel(extId, runtimeId) {'],
     ['submitDispatch', 'submitDispatchFromExt', 'flags', 'pickDeck'],
     `let modalMode = ${JSON.stringify(mode)}; let modelEdited = false; let effortEdited = false;
-     let dispatchDeck = null; const pickDeck = (id) => { dispatchDeck = id; };
+     let dispatchDeck = null; const pickDeck = (id) => { dispatchDeck = id; }; const noDispatchAgent = () => false;
      const findTask = (id) => (id === 'deck-b/t_1' ? { id, deckId: 'deck-b', localId: 't_1' } : null);
      let wtPending = false; const dispatchMode = 'standard'; const wtValidation = null; const availableAgents = [];
      const flags = () => ({ modelEdited, effortEdited });
@@ -1192,6 +1192,7 @@ test('the client runtime list exposes ownLaunch for extension runtimes and false
   }
   const heads = ['function listDispatchRuntimes() {', 'function runtimeOwnsModel(extId, runtimeId) {', 'function runtimeAllowsAgent(opt, agent) {', 'function runtimeOwnLaunch(extId, runtimeId) {'];
   const app = loadApp(heads, ['listDispatchRuntimes'], `
+    const dispatchDeck = null;
     const availableAgents = [{ id: 'claude' }, { id: 'codex' }];
     const latestExtensions = [{ id: 'toy', runtimes: [{ id: 'own', ownLaunch: true, agents: ['claude', 'codex'] }, { id: 'wrapped', ownLaunch: false }] }];
   `, { document: { getElementById: () => runtime } });

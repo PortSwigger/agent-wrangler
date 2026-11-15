@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from './browser-harness.js';
+import { REPO_ROOT, browserTestSkipReason, findChrome, waitFor, startInstance, openTab, sleep } from './browser-harness.js';
 
 // Pins the surfaces an extension written before the deck API reaches: the
 // fixture in fixtures/compat-probe reads dropped session fields off the graph,
@@ -15,7 +15,7 @@ import { REPO_ROOT, findChrome, waitFor, startInstance, openTab, sleep } from '.
 // board-acceptance.test.js.
 const FIXTURE = join(REPO_ROOT, 'server', 'fixtures', 'compat-probe');
 
-test('an extension using the pre-deck surfaces still works, each through its adapter', { timeout: 120_000 }, async (t) => {
+test('an extension using the pre-deck surfaces still works, each through its adapter', { timeout: 120_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');

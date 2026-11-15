@@ -16,6 +16,7 @@ import { DATA_DIR } from './data-dir.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
 import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, codexPolicyDefaults } from './config-store.js';
+import { TOOL_REFRESH_NOTE } from './extensions/tool-fingerprint.js';
 import { cleanCodexPolicy, codexApprovalPolicyError } from './extensions/codex-policy.js';
 import { ensureCodexTrust } from './codex-trust.js';
 import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
@@ -497,6 +498,7 @@ export class SessionManager {
     this._resuming = new Map(); // card id -> in-flight resume promise (coalesces concurrent resumes)
     this._launchesInFlight = 0; // dispatches/forks between their first side effect and map.set
     this.codeVersion = null;
+    this._extensionToolFingerprint = () => undefined;
     // Seam (like _newSession/_save) so a test can observe/stub the one call in
     // dispatch/resume/fork that touches a real machine-global dotfile
     // (~/.codex/config.toml) instead of this class's own owned state.
@@ -1366,7 +1368,11 @@ export class SessionManager {
     const addDirs = await withGitDirAddDirs(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'resume', sessionId, entry: prev }, prev?.codexPolicy) : undefined;
+    const toolFingerprint = this._extensionToolFingerprint();
+    const toolRefreshNote = !freshAfterUpdate && prev?.launchedToolFingerprint && toolFingerprint
+      && prev.launchedToolFingerprint !== toolFingerprint ? TOOL_REFRESH_NOTE : '';
     const inner = adapter[freshAfterUpdate ? 'buildLaunch' : 'buildResume']({
+      toolRefreshNote,
       sessionId, resumeId: plan.resumeId, cwd: dir, model: prev?.model || undefined, effort: prev?.effort || undefined, permissionMode: prev?.permissionMode, autoCompactTokens: prev?.autoCompactTokens,
       worktree: prev?.worktree || null,
       addDirs,
@@ -1406,6 +1412,7 @@ export class SessionManager {
       ...(freshAfterUpdate ? { intent: prev?.intent || '' } : {}),
       paneId: paneId || undefined,
       launchedCodeVersion: this.codeVersion || undefined,
+      launchedToolFingerprint: toolFingerprint,
     });
     this._save();
     // Here, not in resume(): that wrapper coalesces concurrent callers onto one
@@ -1471,6 +1478,7 @@ export class SessionManager {
     // `parentId` too: onFork (which could copy the parent's stored policy) only
     // fires after this launch, so the parent's card id is how an extension finds it.
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'fork', sessionId, entry: parentEntry, parentId }, parentEntry?.codexPolicy) : undefined;
+    const toolFingerprint = this._extensionToolFingerprint();
     const inner = adapter.buildFork({
       sessionId, liveSessionId: presetLiveId, sourceId, cwd: dir, model: parentEntry?.model || undefined, effort: parentEntry?.effort || undefined, permissionMode: parentEntry?.permissionMode, autoCompactTokens: parentEntry?.autoCompactTokens, intent: prompt ?? '',
       addDirs,
@@ -1498,6 +1506,7 @@ export class SessionManager {
     entry.socket = this.socket;
     entry.paneId = paneId || undefined;
     entry.launchedCodeVersion = this.codeVersion || undefined;
+    entry.launchedToolFingerprint = toolFingerprint;
     this.map.set(sessionId, entry);
     this._save();
     await this._spawned({ ...spawnPayload, sessionId, cwd: dir }, spawnData);
@@ -2188,6 +2197,7 @@ export class SessionManager {
     const launchIntent = deferIntent ? '' : (intent ?? '');
     // Asked on both paths so a buildLaunch runtime logs the secrets it skips.
     const secretEnvFile = this._secretEnvFileFor(rt, tmux, launchContext);
+    const toolFingerprint = this._extensionToolFingerprint();
     const inner = builds
       ? await rt.buildLaunch({ phase: 'dispatch', intent: launchIntent, cwd, sessionId, model, ext: ext || null })
       : await rt.wrapLaunch({
@@ -2212,7 +2222,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined, launchedToolFingerprint: toolFingerprint };
     this.map.set(sessionId, entry);
     this._save();
     await this._spawned({ ...spawnPayload, sessionId, cwd }, spawnData);
