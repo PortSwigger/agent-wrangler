@@ -134,15 +134,18 @@ A new install-scoped signal must be added to `INSTALL_SCOPED_ENV` in `server/ins
 
 ## Graceful restart barrier
 
-Board restarts, automatic update activation, and graceful `SIGTERM`/`SIGINT`
-shutdowns close admission and drain in-flight server requests and extension
-writes before exiting. A manual restart client should send the deck action
+Board restarts and automatic update activation close admission and drain
+in-flight server requests and extension writes before exiting. Graceful
+`SIGTERM`/`SIGINT` shutdowns attempt the same drain for up to five seconds,
+then stop even if work remains. A second signal stops immediately. A signal
+received during an existing restart drain makes that drain a stop request too;
+shutdown cleanups run before the process exits. A manual restart client should send the deck action
 `admin.restart-server` (or the legacy `restart-server` control message) and wait
 for reconnection. A `restart-ack` acknowledges the request; `restart-status`
 reports `draining`, `restarting`, or `pending`, and `config.restartStatus` retains
 that state for a newly connected tab.
 
-Draining is bounded to 30 seconds. A timeout leaves the process serving,
+Board and update draining is bounded to 30 seconds. A timeout leaves the process serving,
 reopens admission, and shows **Restart pending** in Settings › Updates so the
 restart can be retried. The instance lock stays held until the process exits.
 Running worker panes survive this restart; automatic activation waits for

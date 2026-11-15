@@ -244,3 +244,19 @@ test('a pending restart remains visible and offers retry', async (t) => {
   assert.equal(panel.children[0].children[1].disabled, false);
   assert.match(panel.children.at(-1).textContent, /Restart pending/);
 });
+
+test('a pending restart renders on reconnect without repeating its error toast', async () => {
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+  const start = source.indexOf('function noteRestartStatus(');
+  const fn = source.slice(start, source.indexOf('\n}\n', start) + 3);
+  const toasts = [];
+  const ctx = { restartStatus: null, toast: (...args) => toasts.push(args), remountUpdatePanel() {}, remountExtensions() {} };
+  vm.runInNewContext(`${fn}\nnoteRestartStatus({ phase: 'pending', message: 'Restart pending' }, { notify: false });`, ctx);
+  assert.equal(ctx.restartStatus.phase, 'pending');
+  assert.equal(ctx.updatePhase, 'error');
+  assert.equal(toasts.length, 0);
+  vm.runInNewContext("noteRestartStatus({ phase: 'pending', message: 'Restart pending' });", ctx);
+  assert.equal(toasts.length, 1);
+});

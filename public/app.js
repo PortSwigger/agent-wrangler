@@ -7443,14 +7443,14 @@ function noteCodeVersion(version) {
   if (UPDATE_IN_FLIGHT.has(updatePhase)) { updatePhase = 'idle'; updateStatus = null; remountUpdatePanel(); }
 }
 
-function noteRestartStatus(status) {
+function noteRestartStatus(status, { notify = true } = {}) {
   restartStatus = status || null;
   if (status?.phase === 'pending') {
     installDriftRestarting = false;
     extRestarting = false;
     updatePhase = 'error';
     updateError = status.message;
-    toast(status.message, true);
+    if (notify) toast(status.message, true);
   }
   remountUpdatePanel();
   remountExtensions();
@@ -7464,7 +7464,7 @@ function noteConfigUpdate(msg) {
   applyUpdateStatus(msg.update);
   applyExtUpdateStatus(msg.extensionUpdates);
   noteRolledBack(msg.updateRolledBack);
-  noteRestartStatus(msg.restartStatus);
+  noteRestartStatus(msg.restartStatus, { notify: false });
   // applyUpdateStatus skips a null status, and a restart that cleared the drift
   // must still take its notice and the Settings dot away.
   remountUpdatePanel();

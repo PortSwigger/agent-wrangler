@@ -15,6 +15,7 @@ export function createRestartBarrier({ timeoutMs = 30000, settleMs = 250, exit =
   let closed = false;
   let status = null;
   let restarting = null;
+  let afterRestart = exit;
 
   function publish(phase, reason, message) {
     status = { phase, reason, message };
@@ -35,7 +36,8 @@ export function createRestartBarrier({ timeoutMs = 30000, settleMs = 250, exit =
     });
   }
 
-  function request(reason, afterDrain = exit) {
+  function request(reason, afterDrain = null) {
+    if (afterDrain) afterRestart = afterDrain;
     if (restarting) return restarting;
     closed = true;
     publish('draining', reason, 'Waiting for in-flight requests and writes before restarting…');
@@ -47,10 +49,14 @@ export function createRestartBarrier({ timeoutMs = 30000, settleMs = 250, exit =
         if (inFlight === 0 && isIdle()) {
           publish('restarting', reason, 'Restarting…');
           await delay(settleMs);
-          afterDrain(reason);
+          afterRestart(reason);
           return true;
         }
       } while (Date.now() < deadline);
+      if (afterRestart !== exit) {
+        afterRestart(reason);
+        return true;
+      }
       closed = false;
       restarting = null;
       publish('pending', reason, 'Restart pending: requests or writes are still running. Retry when they finish.');

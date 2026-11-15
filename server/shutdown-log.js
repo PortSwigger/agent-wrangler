@@ -30,20 +30,32 @@ export function shutdownLine({ reason = null, code = 0, uptimeMs, pid }) {
 // unrecorded and read exactly like the hard kill this is meant to distinguish.
 // Cleanups (releasing the instance lock) register through `onShutdown` instead of
 // adding their own handler, so there stays exactly one path down.
-export function installShutdownLog({ pid = process.pid, startedAt = Date.now(), onLine = log, process: lifecycle = process } = {}) {
+export function installShutdownLog({ pid = process.pid, startedAt = Date.now(), onLine = log, process: lifecycle = process, signalTimeoutMs = 5000 } = {}) {
   let reason = null;
   const cleanups = [];
   let signalHandler = null;
+  let stopping = false;
+  let finished = false;
+  let stopTimer = null;
   lifecycle.on('exit', (code) => onLine(shutdownLine({ reason, code, uptimeMs: Date.now() - startedAt, pid })));
   for (const sig of ['SIGTERM', 'SIGINT']) {
     lifecycle.on(sig, () => {
       const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(stopTimer);
         reason = `signal ${sig}`;
         for (const fn of cleanups) { try { fn(); } catch { /* never block the exit on a cleanup */ } }
         lifecycle.exit(0);
       };
-      if (signalHandler) signalHandler(sig, finish);
-      else finish();
+      if (stopping || !signalHandler) return finish();
+      stopping = true;
+      stopTimer = setTimeout(finish, signalTimeoutMs);
+      try {
+        Promise.resolve(signalHandler(sig, finish)).then(finish, finish);
+      } catch {
+        finish();
+      }
     });
   }
   return {

@@ -142,7 +142,7 @@ const restartBarrier = createRestartBarrier({
   exit: (reason) => { shutdownLog.noteReason(reason); process.exit(0); },
 });
 const shutdownLog = installShutdownLog();
-shutdownLog.onSignal((signal, finish) => { restartBarrier.request(`signal ${signal}`, finish); });
+shutdownLog.onSignal((signal, finish) => restartBarrier.request(`signal ${signal}`, finish));
 
 ensurePtyHelperExecutable();
 

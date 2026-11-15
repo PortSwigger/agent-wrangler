@@ -29,7 +29,7 @@ for (const mode of ['control', 'signal']) {
     const token = createTokenStore({ file: path.join(data, 'session-tokens.json') }).issue('probe');
     const child = spawn(process.execPath, ['server/index.js'], {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
-      env: { ...process.env, AW_DATA_DIR: data, AW_DEV: '', AW_SUPERVISED: '1', AW_GIT_UPDATES: '', AW_PORT: '0', AW_DECK_PORT: '0', AW_SESSION_API_PORT: '0', AW_NO_OPEN: '1', AW_OPEN_BROWSER: '', CHOKIDAR_USEPOLLING: '1' },
+      env: { ...process.env, AW_DATA_DIR: data, AW_DEV: '', AW_SUPERVISED: '1', AW_GIT_UPDATES: '', AW_PORT: '0', AW_DECK_PORT: '0', AW_SESSION_API_PORT: '0', AW_NO_OPEN: '1', AW_OPEN_BROWSER: '', AW_BIND_HOST: '127.0.0.1', CHOKIDAR_USEPOLLING: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';
