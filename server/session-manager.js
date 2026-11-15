@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { discoverClaudeSessions, tmuxesForSession, codexUpdateState } from './tmux-scraper.js';
 import { buildInnerCommand, withCleanClaudeEnv, shellQuote } from './agents/claude.js';
 import { adapterFor, adapterForTmux, agentError, isOwnedTmux, discoveryFloor, supportsRemoteControl, supportsDisallowedTools } from './agents/index.js';
-import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError } from './runtimes/index.js';
+import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError, takesStatusEvents } from './runtimes/index.js';
 import { hasLocation, atLocation, sameLocation, checkRef, openLocation, withLocationReads, locationIdleMs, locationCodexId } from './locations/index.js';
 import { normaliseRepos, reposBrief, checkLocationBranch, childRepos, prLinkRefusal, renameLocationBranchText } from './locations/repos.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
@@ -25,6 +25,7 @@ import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from '
 import { launchEnvOf, launchSecretEnvOf, withoutSecretEnv } from './launch-context.js';
 import { writeSecretEnvFile } from './launch-secrets.js';
 import { SESSION_TOKEN_ENV } from './mcp/client-config.js';
+import { STATUS_HOOK_PATH } from './status-hooks.js';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
 import { resolveTmuxBin } from './tmux-resolve.js';
@@ -623,15 +624,26 @@ export class SessionManager {
   // carries it, as it would any variable). An extension's variable of the same
   // name is dropped, so it can never override the token. A runtime that builds
   // its own launch runs none of our agent commands and gets no token.
-  _withSessionToken(rt, sessionId, launchContext) {
+  // With `agent`, a launch on a runtime that takes status events
+  // (takesStatusEvents) is also marked `statusEvents: true`, which is what makes
+  // the agent's command carry the status hooks; they post with this token.
+  _withSessionToken(rt, sessionId, launchContext, agent) {
     if (rt?.buildLaunch) return launchContext;
     const token = this._issueSessionToken(sessionId);
     if (!token) return launchContext;
-    const { [SESSION_TOKEN_ENV]: _ext, ...env } = launchEnvOf(launchContext);
+    const { statusEvents: _claimed, ...ctx } = launchContext || {};
+    if (agent && takesStatusEvents(rt, agent)) ctx.statusEvents = true;
+    const { [SESSION_TOKEN_ENV]: _ext, ...env } = launchEnvOf(ctx);
     if (rt?.secretEnv) {
-      return { ...launchContext, env, secretEnv: { ...launchSecretEnvOf(launchContext), [SESSION_TOKEN_ENV]: token } };
+      return { ...ctx, env, secretEnv: { ...launchSecretEnvOf(ctx), [SESSION_TOKEN_ENV]: token } };
     }
-    return { ...launchContext, env: { ...env, [SESSION_TOKEN_ENV]: token } };
+    return { ...ctx, env: { ...env, [SESSION_TOKEN_ENV]: token } };
+  }
+
+  // What wrapLaunch is handed for a launch whose status hooks post events: the
+  // hook script's host path, for a runtime whose agent runs elsewhere to install.
+  _statusHookFor(launchContext) {
+    return launchContext?.statusEvents ? { statusHook: { script: STATUS_HOOK_PATH } } : {};
   }
 
   _launched(payload) {
@@ -1475,7 +1487,7 @@ export class SessionManager {
     const launchContext = this._withSessionToken(runtime, sessionId, await this._launchContext({
       sid: sessionId, task: this._taskFor(sessionId) || null, agent, runtime: prev?.runtime || 'local',
       reason: ['message', 'snooze-wake'].includes(reason) ? reason : 'resume',
-    }));
+    }), agent);
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
     if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
@@ -1507,7 +1519,7 @@ export class SessionManager {
       codexPolicy,
     });
     const secretEnvFile = this._secretEnvFileFor(runtime, tmux, launchContext);
-    const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext: runtimeLaunchContext(runtime, launchContext), secretEnvFile, ...(remote ? { location: prev.location } : {}) });
+    const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext: runtimeLaunchContext(runtime, launchContext), secretEnvFile, ...this._statusHookFor(launchContext), ...(remote ? { location: prev.location } : {}) });
     const launchedAt = Date.now();
     const paneId = await this._newSession(tmux, remote ? os.homedir() : dir, launchCmd, this.socket);
     if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt, at: remote ? { rt: runtime, entry: { ...prev, cwd: dir } } : null }) || undefined;
@@ -1589,7 +1601,7 @@ export class SessionManager {
     // state, like task-memory, must see it first).
     const launchContext = this._withSessionToken(runtimeFor(parentEntry?.runtime), sessionId, await this._launchContext({
       sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork', parentId,
-    }));
+    }), agent);
     const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
     if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
@@ -1613,6 +1625,7 @@ export class SessionManager {
     const launchCmd = await forkRuntime.wrapLaunch({
       inner, cwd: dir, sessionId, parentId, worktree: parentEntry?.worktree, launchContext: runtimeLaunchContext(forkRuntime, launchContext),
       secretEnvFile: this._secretEnvFileFor(forkRuntime, tmux, launchContext),
+      ...this._statusHookFor(launchContext),
       ...(remote ? { location: parentEntry.location } : {}),
     });
     const launchedAt = Date.now();
@@ -2343,7 +2356,7 @@ export class SessionManager {
     // handing in anything pre-built.
     const launchContext = this._withSessionToken(rt, sessionId, await this._launchContext({
       sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
-    }));
+    }), agent);
     const ownLaunch = ownLaunchRefusal(rt, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
     if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext });
@@ -2377,6 +2390,7 @@ export class SessionManager {
       : await rt.wrapLaunch({
         inner: adapter.buildLaunch({ sessionId, liveSessionId: presetLiveId, cwd, intent: launchIntent, model, effort, permissionMode, autoCompactTokens: normalizedAutoCompactTokens, addDirs, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, spawnedBy, launchContext, disabledSkills, codexPolicy, remoteControl, disallowedTools }),
         cwd, sessionId, worktree: worktreeEntry || null, workflow: loadWorkflowSkill, launchContext: runtimeLaunchContext(rt, launchContext), secretEnvFile,
+        ...this._statusHookFor(launchContext),
         ...(remote ? { location: locationRef } : {}),
       });
     const launchedAt = Date.now();

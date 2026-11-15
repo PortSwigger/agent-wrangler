@@ -26,6 +26,14 @@ export function prModelUrl(port = sessionApiPort()) {
   return `http://127.0.0.1:${port}/pr-model`;
 }
 
+// Where a session on a runtime with `statusEvents: true` posts its status
+// changes (scripts/status-event-hook.mjs). The launch hands it over as
+// STATUS_EVENT_URL_ENV.
+export const STATUS_EVENT_URL_ENV = 'AW_STATUS_EVENT_URL';
+export function statusEventUrl(port = sessionApiPort()) {
+  return `http://127.0.0.1:${port}/status-event`;
+}
+
 // Claude expands `${VAR}` in --mcp-config, so the token stays in the
 // environment and never reaches argv.
 export function claudeMcpConfigArg(port = sessionApiPort()) {

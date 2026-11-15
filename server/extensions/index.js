@@ -435,7 +435,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
         }
         if (new Set(rt.agents).size !== rt.agents.length) fail(ext, `runtime ${rt.id} agents has a duplicate`);
       }
-      for (const k of ['resumable', 'skipsHostResumeGuard', 'liveByTmux']) {
+      for (const k of ['resumable', 'skipsHostResumeGuard', 'liveByTmux', 'statusEvents']) {
         if (rt[k] != null && typeof rt[k] !== 'boolean') fail(ext, `runtime ${rt.id} ${k} must be a boolean`);
       }
       if (rt.buildLaunch && rt.resumable !== false) fail(ext, `runtime ${rt.id} uses buildLaunch, so it must declare resumable: false`);

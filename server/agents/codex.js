@@ -15,7 +15,9 @@ import { codexMcpConfigArgs, prModelUrl } from '../mcp/client-config.js';
 import { codexPolicyArgs, codexPolicyAllowsAddDirs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
 import { tomlString, notifyOverride } from '../codex-notify-config.js';
-import { postToolHookOverrides } from '../codex-hook-config.js';
+import { codexHookOverrides, PR_FOOTER_MATCHER } from '../codex-hook-config.js';
+import { codexStatusHooks } from '../status-hooks.js';
+import { statusEventEnv } from './claude.js';
 import { fileURLToPath } from 'node:url';
 import { installPath } from '../install-root.js';
 
@@ -33,7 +35,7 @@ const PR_FOOTER_HOOK_PATH = installPath(fileURLToPath(new URL('../../scripts/cod
 // `agent: 'codex'`, because Codex 0.149+ rejects a symlinked writable root.
 function envPrefix(sessionId, spawnedBy, launchContext) {
   let env = launchEnvGuard(launchContext, shellQuote) + launchEnvPrefix(launchContext, shellQuote)
-    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `;
+    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} ` + statusEventEnv(launchContext);
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
 }
@@ -67,7 +69,9 @@ function commonFlags({ toolRefreshNote, sessionId, cwd, addDirs = [], worktree =
   args.push(...launchCodexConfigArgs(launchContext));
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
   args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
-  for (const o of postToolHookOverrides(`${shellQuote(process.execPath)} ${shellQuote(PR_FOOTER_HOOK_PATH)}`)) args.push('-c', o);
+  const hooks = [{ event: 'PostToolUse', matcher: PR_FOOTER_MATCHER, command: `${shellQuote(process.execPath)} ${shellQuote(PR_FOOTER_HOOK_PATH)}` }];
+  if (launchContext?.statusEvents) hooks.push(...codexStatusHooks());
+  for (const o of codexHookOverrides(hooks)) args.push('-c', o);
   // A read-only sandbox refuses any --add-dir and the launch dies (see
   // codexPolicyAllowsAddDirs); it reads every folder anyway.
   if (codexPolicyAllowsAddDirs(codexPolicy)) {
@@ -142,7 +146,7 @@ export const codex = {
     permissionModes: ['auto'],
     autoCompact: { min: 50000, presets: [50000, 100000, 250000] },
   },
-  launch: { grantPaths: 'realpath', availabilityOverride: 'codexAvailable', trust: 'codex-config', gitMetadataGrants: true, codexPolicy: true, recoverMissingConversation: true },
+  launch: { grantPaths: 'realpath', availabilityOverride: 'codexAvailable', trust: 'codex-config', gitMetadataGrants: true, codexPolicy: true, recoverMissingConversation: true, statusEvents: true },
   terminal: {
     readySignal: 'composer',
     contextSource: 'analysis',

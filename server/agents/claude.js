@@ -11,7 +11,8 @@ import { launchAddDirArgs, launchClaudeHooksOf, launchEnvGuard, launchEnvPrefix 
 import { analyze, listResumable, activityInRange, findTranscript, subagentDetail } from '../transcript-reader.js';
 import { liveState } from '../claude-paths.js';
 import { worktreeGuardrailPrompt } from '../worktree.js';
-import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl, prModelUrl } from '../mcp/client-config.js';
+import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl, prModelUrl, statusEventUrl, STATUS_EVENT_URL_ENV } from '../mcp/client-config.js';
+import { claudeStatusHookGroups } from '../status-hooks.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
 import { modelFamilies, priceCatalogVersion } from '../price-catalog.js';
 
@@ -50,14 +51,24 @@ export const PR_FOOTER_DEP_PATH = path.join(INSTALL_ROOT, 'server', 'pr-footer.j
 //     per session, never in the user's own settings.
 //   - the enabled extensions' `claudeHooks` (launch-context.js), appended AFTER
 //     core's groups per event, so they add to core's hooks and never replace them.
+//   - on a runtime with `statusEvents: true` (launchContext.statusEvents), the
+//     status hooks (status-hooks.js) that post each state change to the session API.
 export function launchSettings(launchContext) {
   const hooks = { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: PR_HOOK_PATH }] }] };
+  if (launchContext?.statusEvents) {
+    for (const [event, groups] of Object.entries(claudeStatusHookGroups())) hooks[event] = [...(hooks[event] || []), ...groups];
+  }
   for (const [event, groups] of Object.entries(launchClaudeHooksOf(launchContext))) hooks[event] = [...(hooks[event] || []), ...groups];
   return JSON.stringify({
     tui: 'fullscreen',
     crossSessionInbound: 'accept',
     hooks,
   });
+}
+
+// `AW_STATUS_EVENT_URL='…' ` for a launch whose status hooks post events, else ''.
+export function statusEventEnv(launchContext) {
+  return launchContext?.statusEvents ? `${STATUS_EVENT_URL_ENV}=${shellQuote(statusEventUrl())} ` : '';
 }
 
 // Defined here (not imported from tmux-scraper) to keep agents a leaf layer.
@@ -198,7 +209,8 @@ export function buildInnerCommand({ toolRefreshNote, args, intent = '', sessionI
   // Extension env first, core's after: in a shell prefix the LAST assignment of
   // a name wins, so an extension can add variables but never override ours.
   let inner = launchEnvPrefix(launchContext, shellQuote)
-    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `;
+    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `
+    + statusEventEnv(launchContext);
   if (spawnedBy) inner += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   inner += `claude ${full.map(shellQuote).join(' ')}`;
   // `--` terminates option parsing: the trailing flags (--mcp-config,
@@ -322,7 +334,7 @@ export const claude = {
     permissionModes: ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'],
     autoCompact: { min: 100000, presets: [100000, 250000, 500000, 1000000] },
   },
-  launch: { grantPaths: 'symlink', trust: 'claude-config', gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false },
+  launch: { grantPaths: 'symlink', trust: 'claude-config', gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false, statusEvents: true },
   terminal: {
     readySignal: 'title',
     contextSource: 'pane',

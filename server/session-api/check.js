@@ -1,5 +1,5 @@
-// The session API's caller check. Every request to /mcp, /pr-attach and
-// /pr-model goes through a `resolve(req, { legacy })` function that answers
+// The session API's caller check. Every request to /mcp, /pr-attach,
+// /pr-model and /status-event goes through a `resolve(req, { legacy })` function that answers
 // either `{ cardId }` (the one card this request acts as) or
 // `{ refuse, reason }` (refuse is a short code, reason a sentence for the log
 // and the response body). Nothing else decides who the caller is: handlers get
