@@ -3367,8 +3367,8 @@ test('the launch context is awaited before the launch command is built', async (
   assert.deepEqual(order, ['context', 'launch']);
 });
 
-test('resume asks with the session\'s current task and the resume reason (message / snooze-wake pass through)', async () => {
-  for (const [reason, want] of [['message', 'message'], ['snooze-wake', 'snooze-wake'], ['schedule', 'resume'], [undefined, 'resume']]) {
+test('resume launch context preserves restore and wake reasons and normalizes other callers', async () => {
+  for (const [reason, want] of [['restore', 'restore'], ['manual', 'resume'], ['message', 'message'], ['snooze-wake', 'snooze-wake'], ['schedule', 'resume'], [undefined, 'resume']]) {
     const sm = resumableCodex('card-ctx');
     sm.killForSession = async () => [];
     sm._taskFor = (sid) => (sid === 'card-ctx' ? { id: 'T3', name: 'n' } : null);
@@ -4090,4 +4090,27 @@ test('a fork records the current extension schemas for its next resume', async (
     cwd: os.tmpdir(),
   });
   assert.equal(sm.map.get(result.sessionId).launchedToolFingerprint, 'current-tools');
+});
+
+test('launchContext can refuse scheduled resume and allow restore of the same archived session', async () => {
+  const sm = resumableCodex('archived-card');
+  sm.map.get('archived-card').archivedAt = 1;
+  sm.killForSession = async () => [];
+  let launches = 0;
+  const resumed = [];
+  sm._newSession = async () => { launches += 1; };
+  sm._fireExtHooks = async (name, payload) => { if (name === 'onResume') resumed.push(payload.reason); };
+  sm._launchContext = (payload) => collectLaunchContext(payload, {
+    ext: { hooks: { 'session.launchContext': [{ extId: 'guard', fn: ({ reason }) =>
+      reason === 'restore' ? {} : { refuse: 'Automatic resume refused' } }] } },
+    onError: () => {},
+  });
+  await assert.rejects(sm.resume('archived-card', os.tmpdir(), { reason: 'schedule' }), /Automatic resume refused/);
+  assert.equal(launches, 0);
+  assert.equal(sm.map.get('archived-card').archivedAt, 1);
+  assert.deepEqual(resumed, []);
+  await sm.resume('archived-card', os.tmpdir(), { reason: 'restore' });
+  assert.equal(launches, 1);
+  assert.equal(sm.map.get('archived-card').archivedAt, undefined);
+  assert.deepEqual(resumed, ['restore']);
 });

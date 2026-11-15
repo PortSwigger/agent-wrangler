@@ -22,7 +22,7 @@ const quiet = () => {
 };
 
 test('LAUNCH_REASONS is the documented closed set', () => {
-  assert.deepEqual(LAUNCH_REASONS, ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt', 'headless']);
+  assert.deepEqual(LAUNCH_REASONS, ['dispatch', 'resume', 'restore', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt', 'headless']);
 });
 
 test('no hooks: an empty context', async () => {

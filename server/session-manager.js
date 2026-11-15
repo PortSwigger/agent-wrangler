@@ -1573,7 +1573,7 @@ export class SessionManager {
     // passed through when it is one a hook distinguishes, else plain 'resume'.
     const launchContext = this._withSessionToken(runtime, sessionId, await this._launchContext({
       sid: sessionId, task: this._taskFor(sessionId) || null, agent, runtime: prev?.runtime || 'local',
-      reason: ['message', 'snooze-wake'].includes(reason) ? reason : 'resume',
+      reason: ['restore', 'message', 'snooze-wake'].includes(reason) ? reason : 'resume',
     }), agent);
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);

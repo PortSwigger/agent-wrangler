@@ -125,7 +125,7 @@ export async function resumeSession(sessionId, ctx, { recreateDir, killJobsFirst
   // NB restart newly routes a *live* session through resume(): _doResume kills the
   // tmux only after its resume refuse-guards (resumePlan/resumeLaunchPlan), so a
   // refuse leaves the session live and surfaces as an error toast.
-  const { tmux } = await ctx.sessionManager.resume(sessionId, dir, { reason: 'manual', ...(caller ? { caller } : {}) });
+  const { tmux } = await ctx.sessionManager.resume(sessionId, dir, { reason: entry?.archivedAt ? 'restore' : 'manual', ...(caller ? { caller } : {}) });
   await ctx.rebuild();
   // Deliver the (pre-resume) snooze note into the freshly-launched pane once the
   // agent is ready. After rebuild, so the readiness wait never delays the board
