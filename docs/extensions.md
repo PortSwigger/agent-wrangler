@@ -2087,7 +2087,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   command; the Claude and Codex adapters and the devcontainer runtime (which
   copies each granted dir into the container) read the result through the same
   helpers. `reason` is one of `dispatch | resume | restore | fork | message | snooze-wake |
-  spawn | assign | adopt | headless`. `restore` identifies a manual restore of an
+  spawn | assign | adopt | headless`. `restore` (1.95.0) identifies a manual restore of an
   archived session through the board, `restore_session`, or task restoration.
   Scheduled session actions use `resume`; message and snooze wakes keep
   `message` and `snooze-wake`. Interactive resumes or restarts of sessions that

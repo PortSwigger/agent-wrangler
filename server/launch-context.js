@@ -40,7 +40,7 @@ import { logError } from './log.js';
 // The hook may be async and may do work (task-memory binds the session's
 // by-session symlink here), so callers AWAIT collectLaunchContext before they
 // build the launch command. Reasons a launch asks:
-//   dispatch | resume | fork | message | snooze-wake | spawn | assign | adopt | headless
+//   dispatch | resume | restore | fork | message | snooze-wake | spawn | assign | adopt | headless
 // `assign` and `adopt` are not launches (a running session was re-pointed, or
 // the server adopted it at boot); the hook still runs so side effects land and
 // the caller discards the result.
@@ -48,7 +48,7 @@ import { logError } from './log.js';
 // Fork payloads include parentId, the parent card id, before inherited state is saved.
 // A hook that throws, or answers something unusable, is logged and skipped:
 // one broken extension must not keep a session from launching.
-export const LAUNCH_REASONS = ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt', 'headless'];
+export const LAUNCH_REASONS = ['dispatch', 'resume', 'restore', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt', 'headless'];
 
 export const CLAUDE_HOOK_EVENTS = ['PreToolUse', 'PostToolUse'];
 
