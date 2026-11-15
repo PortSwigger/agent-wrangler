@@ -13,12 +13,12 @@ const t = (s) => Date.parse(s);
 
 test('parseTurnMarks returns the latest mark of each kind', () => {
   const text = [started('2026-10-22T11:08:31.140Z'), complete('2026-10-22T11:08:33.695Z'), started('2026-10-22T11:10:00.000Z'), aborted('2026-10-22T11:10:05.000Z'), started('2026-10-22T11:12:00.000Z')].join('\n');
-  assert.deepEqual(parseTurnMarks(text), { startedAt: t('2026-10-22T11:12:00.000Z'), completedAt: t('2026-10-22T11:08:33.695Z'), abortedAt: t('2026-10-22T11:10:05.000Z') });
+  assert.deepEqual(parseTurnMarks(text), { startedAt: t('2026-10-22T11:12:00.000Z'), completedAt: t('2026-10-22T11:08:33.695Z'), abortedAt: t('2026-10-22T11:10:05.000Z'), lastTurn: null });
 });
 
 test('parseTurnMarks ignores other records and malformed lines', () => {
   const text = ['not json', JSON.stringify({ timestamp: '2026-10-22T11:00:00.000Z', type: 'response_item', payload: { type: 'task_started' } }), started('2026-10-22T11:01:00.000Z')].join('\n');
-  assert.deepEqual(parseTurnMarks(text), { startedAt: t('2026-10-22T11:01:00.000Z'), completedAt: null, abortedAt: null });
+  assert.deepEqual(parseTurnMarks(text), { startedAt: t('2026-10-22T11:01:00.000Z'), completedAt: null, abortedAt: null, lastTurn: null });
 });
 
 test('readTurnMarks ignores a truncated leading line', async () => {
@@ -57,5 +57,28 @@ test('readTurnMarks gives up widening at maxBytes', async () => {
 });
 
 test('readTurnMarks on a missing file is all null', async () => {
-  assert.deepEqual(await readTurnMarks('/nonexistent'), { startedAt: null, completedAt: null, abortedAt: null, mtimeMs: null });
+  assert.deepEqual(await readTurnMarks('/nonexistent'), { startedAt: null, completedAt: null, abortedAt: null, lastTurn: null, mtimeMs: null });
+});
+
+test('a fatal Codex error survives task completion until a new turn starts', () => {
+  const start = started('2026-11-15T10:00:00.000Z');
+  const error = line('2026-11-15T10:00:01.000Z', 'error', { codex_error_info: 'usage_limit_exceeded' });
+  const progress = line('2026-11-15T10:00:02.000Z', 'agent_message');
+  const end = complete('2026-11-15T10:00:03.000Z');
+  const text = [start, error, progress, end].join('\n');
+  assert.deepEqual(parseTurnMarks(text).lastTurn, { outcome: 'error', errorKind: 'usage_limit_exceeded', at: t('2026-11-15T10:00:01.000Z') });
+  assert.equal(parseTurnMarks(text + '\n' + started('2026-11-15T10:01:00.000Z')).lastTurn, null);
+  assert.deepEqual(parseTurnMarks(text + '\n' + started('2026-11-15T10:01:00.000Z') + '\n' + complete('2026-11-15T10:01:01.000Z')).lastTurn, { outcome: 'ok', at: t('2026-11-15T10:01:01.000Z') });
+});
+
+test('readTurnMarks keeps an error beside task_complete without widening to the turn start', async (ctx) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-marks-'));
+  ctx.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'rollout.jsonl');
+  const error = line('2026-11-15T10:00:01.000Z', 'error', { codex_error_info: 'usage_limit_exceeded' });
+  const filler = JSON.stringify({ type: 'response_item', payload: { type: 'message', text: 'x'.repeat(2000) } });
+  fs.writeFileSync(file, [started('2026-11-15T10:00:00.000Z'), filler, error, complete('2026-11-15T10:00:03.000Z')].join('\n') + '\n');
+  const marks = await readTurnMarks(file, { tailBytes: 500 });
+  assert.equal(marks.startedAt, null, 'does not read back to the turn start');
+  assert.deepEqual(marks.lastTurn, { outcome: 'error', errorKind: 'usage_limit_exceeded', at: t('2026-11-15T10:00:01.000Z') });
 });

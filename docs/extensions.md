@@ -2198,6 +2198,31 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   pane (`null` otherwise). The board still shows it as needs-you. From 1.63.0 a
   Codex session at its command or patch approval prompt is needs-you with
   waitingReason 'permission' and waitingFor 'Codex is asking for approval'.
+- **Last turn outcome** (`sessions:read`, 1.91.0): `host.sessions.get(id)`,
+  `list()` and `forTask(taskId)` include `lastTurn`, either `null` when unknown or
+  `{ outcome: 'ok' | 'error' | 'aborted', errorKind?, at }`. `at` is the provider
+  record's timestamp in Unix milliseconds. `errorKind` is optional, appears only
+  for `error`, and contains a provider machine code, never error text. Codes are
+  provider-specific and are not an exhaustive enum; consumers must handle absence
+  and unfamiliar codes. The object is copied and frozen like the session projection.
+  A working session, a later turn starting, or a relaunch newer than the terminal
+  record clears the projected outcome to `null`; a later terminal record replaces it.
+  Without a graph node the outcome is `null`; it is not persisted in the mapping.
+  Codex uses rollout `task_complete`, `turn_aborted` and explicit `error` events;
+  a recorded fatal `error` survives trailing `task_complete` events until the next
+  `task_started`. Otherwise `user_message` and `agent_message` clear the previous result.
+  Some Codex versions omit errors from rollouts; without that evidence a trailing
+  `task_complete` reports `ok`, or the outcome remains unknown without a terminal mark.
+  An error more than about 64 KiB before a trailing `task_complete` can fall outside
+  the read window and report `ok`. Codex cards on remote runtimes currently report `null`.
+  Claude uses assistant `stop_reason: 'end_turn'`, `isApiErrorMessage`, and the
+  explicit `[Request interrupted by user]` (including `for tool use`) user marker.
+  Later message progress clears the outcome. Sidechain and inherited fork history
+  do not set it. Claude transcripts without these terminal markers, abrupt process
+  death, and provider failures absent from the transcript remain unknown. Idle status
+  alone never implies success. Codex reads are bounded to the latest rollout's last
+  8 MiB, so terminal records outside that window can also be unknown. Extensions
+  using this field declare `^1.91.0`.
 - **`host.events`** (capability `events`, 1.17.0): `on(name, fn)` and `emit(name, payload)`.
   Subscriber errors are caught and logged per handler, `emit` does not wait, and
   an extension's subscriptions are dropped when it deactivates, so a disabled

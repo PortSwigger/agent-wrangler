@@ -1,3 +1,4 @@
+import { readLastTurn } from './last-turn.js';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -636,6 +637,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       tasks: readJobInFlight(s.jobId),
       updatedAt: s.updatedAt || null,
       lastActivity: enrichment?.lastActivity ?? null,
+      lastTurn: await readLastTurn(agentId, mapEntry?.liveSessionId || s.sessionId, enrichment),
       hasTranscript: enrichment?.hasTranscript ?? false,
       tty: proc.get(s.pid)?.tty ?? null,
       managed: Boolean(tmux),
@@ -826,6 +828,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       // pure-scrape session (no live file) falls back to its last activity.
       updatedAt: live?.updatedAt ?? enr?.lastActivity ?? null,
       lastActivity: enr?.lastActivity ?? null,
+      lastTurn: remote ? (enr?.lastTurn ?? null) : await readLastTurn(agentId, costSid || realSid, enr),
       hasTranscript: enr?.hasTranscript ?? false,
       tty: proc.get(d.claudePid)?.tty ?? null,
       managed: true,
@@ -921,6 +924,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       tasks: null,
       updatedAt: null,
       lastActivity: enrichment?.lastActivity ?? null,
+      lastTurn: hasLocation(runtime) ? (enrichment?.lastTurn ?? null) : await readLastTurn(agentId, entry.liveSessionId || sid, enrichment),
       tty: null,
       managed: false, // no live tmux → click takes the Resume path, not attach
       // Set while this dormant card's own Resume/Restart is in flight (the tmux is

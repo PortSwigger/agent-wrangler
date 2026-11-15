@@ -1280,3 +1280,27 @@ for (const managed of [false, true]) {
     assert.equal(row.dormant, false);
   });
 }
+
+
+test('buildGraph carries lastTurn to host projections for discovered and dormant Claude and Codex cards', async (t) => {
+  const stamp = '2026-11-15T10:00:00.000Z';
+  const lastTurn = { outcome: 'aborted', at: Date.parse(stamp) };
+  const liveSid = '22222222-2222-4222-8222-222222222222';
+  const dir = path.join(os.homedir(), '.codex', 'sessions');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `rollout-2026-11-15T10-00-00-${liveSid}.jsonl`);
+  fs.writeFileSync(file, JSON.stringify({ type: 'event_msg', timestamp: stamp, payload: { type: 'turn_aborted' } }) + '\n');
+  t.after(() => fs.rmSync(file, { force: true }));
+  for (const agent of ['claude', 'codex']) {
+    for (const dormant of [true, false]) {
+      const entry = { sessionId: 'outcome-card', agent, liveSessionId: liveSid };
+      const mgr = makeDiscoveredManager(entry, 'outcome-tmux');
+      mgr.activeEntries = () => dormant ? [entry] : [];
+      const discover = async () => dormant ? [] : [{ tmuxName: 'outcome-tmux', claudePid: 4242, agent, command: agent }];
+      const runtimeResolver = () => ({ analyze: async () => ({ lastTurn }) });
+      const graph = await buildGraph(mgr, async () => ({}), { runtimeResolver, discover, capture: async () => '' });
+      const node = graph.sessions.find((s) => s.sessionId === entry.sessionId);
+      assert.deepEqual(projectSession(entry, entry.sessionId, { node }).lastTurn, lastTurn, `${agent} dormant=${dormant}`);
+    }
+  }
+});

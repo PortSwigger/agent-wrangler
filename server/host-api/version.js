@@ -636,7 +636,9 @@ import semver from 'semver';
 // from live graph activity. Extensions relying on these declare `^1.89.0`.
 //
 // 1.90.0 adds own-only host.extension.receipt() and graph.extensions[].runningSha.
-export const HOST_API_VERSION = '1.90.0';
+//
+// 1.91.0 exposes provider-neutral lastTurn outcomes on session projections.
+export const HOST_API_VERSION = '1.91.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

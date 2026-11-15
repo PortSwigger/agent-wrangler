@@ -1,3 +1,4 @@
+import { claudeLastTurn } from './turn-outcome.js';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -427,6 +428,7 @@ export function scanLine(line, state) {
   // The error's own text rides along so the board can say which error it was
   // and whether waiting it out can help (see state-reader's apiErrorPromotion).
   if (!entry.isSidechain) {
+    if (!inherited) state.lastTurn = claudeLastTurn(entry);
     state.apiError = Boolean(entry.isApiErrorMessage);
     state.apiErrorText = state.apiError ? textOf(msg.content) : null;
   }
@@ -889,6 +891,7 @@ function summarise(state) {
     summary: state.summary || null,
     aiTitle: state.aiTitle || null,
     currentModel: state.currentModel || null,
+    lastTurn: state.lastTurn ?? null,
     apiError: Boolean(state.apiError),
     apiErrorText: state.apiErrorText || null,
   };
