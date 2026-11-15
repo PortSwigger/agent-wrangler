@@ -14,6 +14,8 @@ export const BOARD_ACTIONS = {
   'branch-delete': 'session.branch-delete',
   'remove': 'session.remove',
   'rename': 'session.rename',
+  'add-repos': 'session.add-repos',
+  'repo-request': 'session.repo-request',
   'detach': 'session.detach',
   'attach': 'session.attach',
   'snooze-set': 'session.snooze-set',

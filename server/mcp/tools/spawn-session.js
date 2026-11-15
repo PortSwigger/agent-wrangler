@@ -89,8 +89,9 @@ export const spawnSessionTool = {
     },
     repos: z.array(z.string()).optional().describe(
       'GitHub repos (owner/name) for a runtime that runs sessions at a location, in place of a folder: '
-      + 'the session clones them there. A session spawned by a session at a location may only name '
-      + 'that session\'s own repos, and gets all of them when it names none.',
+      + 'the session clones them there. A session spawned by a session at a location gets only those '
+      + 'of that session\'s own repos it names (all of them when it names none); any other repo named is '
+      + 'withheld (returned as `withheldRepos`) and reaches it only by request_repo and the human\'s approval.',
     ),
     branch: z.string().optional().describe('With repos: the branch the session creates in each clone and pushes to.'),
     base: z.string().optional().describe('With branch: the remote branch it starts from (default: each repo\'s default branch).'),

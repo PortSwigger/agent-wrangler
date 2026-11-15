@@ -23,7 +23,7 @@ export const SESSION_VIEW_FIELDS = [
   'spawnedBy', 'autoFixPrChecks', 'autoMergeOnPass', 'childFullView', 'offBoard', 'links',
   'worktree', 'tasks', 'tty', 'managed', 'restarting', 'tmux', 'dormant', 'exitOutput', 'usd',
   'advisorUsd', 'tokens', 'subAgents', 'teammates', 'mail', 'statusNoticeBlocked',
-  'repos',
+  'repos', 'repoRequests',
 ];
 
 const DROPPED = new Set(SESSION_VIEW_DROPPED);

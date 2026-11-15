@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseRepos, childRepos, prLinkRefusal, prRepoOf, reposBrief, checkLocationBranch, findUnpushed, unpushedText, renameLocationBranchText, MAX_UNPUSHED_COMMITS } from './repos.js';
+import { normaliseRepos, childRepos, withheldReposBrief, prLinkRefusal, prRepoOf, reposBrief, checkLocationBranch, findUnpushed, unpushedText, renameLocationBranchText, MAX_UNPUSHED_COMMITS } from './repos.js';
 
 test('repos normalise to owner/name, drop repeats, and refuse anything else', () => {
   assert.deepEqual(normaliseRepos([' acme/widgets', 'https://github.com/acme/gadgets.git', 'git@github.com:acme/x', 'ACME/Widgets']), ['acme/widgets', 'acme/gadgets', 'acme/x']);
@@ -12,13 +12,16 @@ test('repos normalise to owner/name, drop repeats, and refuse anything else', ()
   assert.throws(() => normaliseRepos(Array.from({ length: 21 }, (_, i) => `a/r${i}`)), /at most 20 repos/);
 });
 
-test('a child of a location session gets only its repos', () => {
-  const parent = { location: {}, repos: ['acme/widgets', 'acme/gadgets'] };
-  assert.deepEqual(childRepos(parent, []), ['acme/widgets', 'acme/gadgets']);
-  assert.deepEqual(childRepos(parent, ['acme/Gadgets']), ['acme/Gadgets']);
-  assert.throws(() => childRepos(parent, ['acme/widgets', 'other/x']), /other\/x is not one of the spawning session's repos/);
-  assert.deepEqual(childRepos({ cwd: '/host' }, ['other/x']), ['other/x'], 'a host spawner has no repos to limit to');
-  assert.deepEqual(childRepos(undefined, []), []);
+test('a child of a location session gets only the repos its spawner holds, and the rest are withheld', () => {
+  const parent = { location: {}, repos: ['acme/a', 'acme/b'] };
+  assert.deepEqual(childRepos(parent, []), { repos: ['acme/a', 'acme/b'], withheld: [] });
+  assert.deepEqual(childRepos(parent, ['ACME/b']), { repos: ['ACME/b'], withheld: [] });
+  assert.deepEqual(childRepos(parent, ['acme/a', 'acme/c']), { repos: ['acme/a'], withheld: ['acme/c'] });
+  assert.deepEqual(childRepos(parent, ['acme/c']), { repos: [], withheld: ['acme/c'] });
+  assert.deepEqual(childRepos({ cwd: '/host' }, ['other/x']), { repos: ['other/x'], withheld: [] }, 'a host spawner has no repos to limit to');
+  assert.deepEqual(childRepos(undefined, []), { repos: [], withheld: [] });
+  assert.equal(withheldReposBrief([]), '');
+  assert.match(withheldReposBrief(['acme/c']), /acme\/c, which the session that started you cannot reach.*request_repo/);
 });
 
 test('a location card links only pull requests in its own repos', () => {

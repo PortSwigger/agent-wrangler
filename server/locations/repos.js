@@ -42,16 +42,22 @@ export function holdsRepo(repos, repo) {
   return (repos || []).some((r) => r.toLowerCase() === want);
 }
 
-// The repos a child of `parent` may have: the ones it asked for when the
-// parent holds every one, else the parent's own when it asked for none.
-// Throws naming the first repo the parent does not hold.
+// The repos a child of `parent` may have: `repos`, the ones it asked for that
+// the parent holds (every one the parent holds when it asked for none), and
+// `withheld`, the ones it asked for that the parent does not hold. A withheld
+// repo reaches the child only through request_repo and the human's answer.
 export function childRepos(parent, asked) {
-  if (!atLocation(parent)) return asked;
+  if (!atLocation(parent)) return { repos: asked, withheld: [] };
   const held = parent.repos || [];
-  if (!asked.length) return [...held];
-  const missing = asked.find((r) => !holdsRepo(held, r));
-  if (missing) throw new Error(`${missing} is not one of the spawning session's repos (${held.join(', ') || 'none'}); a child may only work on those.`);
-  return asked;
+  if (!asked.length) return { repos: [...held], withheld: [] };
+  return { repos: asked.filter((r) => holdsRepo(held, r)), withheld: asked.filter((r) => !holdsRepo(held, r)) };
+}
+
+// The line a child's brief carries for the repos it asked for and was not given.
+export function withheldReposBrief(withheld) {
+  if (!withheld?.length) return '';
+  const one = withheld.length === 1;
+  return `You were also asked to work on ${withheld.join(', ')}, which the session that started you cannot reach, so you were not given ${one ? 'it' : 'them'}. If you need ${one ? 'it' : 'them'}, ask the human with the request_repo tool and carry on with what you can meanwhile.`;
 }
 
 // Where each repo is cloned at the location: `<cwd>/<name>`, or
@@ -78,6 +84,32 @@ export function reposBrief(cwd, repos, { branch, base } = {}) {
     `Work in ${repos.length === 1 ? 'this GitHub repository' : 'these GitHub repositories'}. Clone ${repos.length === 1 ? 'it' : 'each one'} from GitHub first:`,
     ...lines,
     branching,
+  ].join('\n');
+}
+
+// The repos in `added` a card holding `have` can take: each one not already held
+// (GitHub names are case-insensitive). Throws for one sharing a name with a held
+// repo, since repoDirs would then move the held repo's clone to `<owner>-<name>`.
+export function reposToAdd(have, added) {
+  const held = new Set((have || []).map((r) => r.toLowerCase()));
+  const out = normaliseRepos(added).filter((r) => !held.has(r.toLowerCase()));
+  for (const repo of out) {
+    const name = repo.split('/')[1].toLowerCase();
+    const same = (have || []).find((h) => h.split('/')[1].toLowerCase() === name);
+    if (same) throw new Error(`This session already has a repo named "${repo.split('/')[1]}" (${same}), so ${repo} can't be added alongside it.`);
+  }
+  return out;
+}
+
+// The mail telling a location session it can now reach `added`: where to clone
+// each one, and, on a card with a branch, that the branch is the only push.
+export function addedReposMail(cwd, repos, added, { branch, lead = 'The human added' } = {}) {
+  const one = added.length === 1;
+  const dirs = repoDirs(cwd, repos).filter((r) => added.includes(r.repo));
+  return [
+    `${lead} ${added.join(', ')} to this session, and you can reach ${one ? 'it' : 'them'} from where you run now. Clone ${one ? 'it' : 'each one'} when you need ${one ? 'it' : 'them'}:`,
+    ...dirs.map(({ repo, dir }) => `- ${repo}: git clone --filter=blob:none https://github.com/${repo}.git ${dir}`),
+    ...(branch ? [`To change one, create and check out \`${branch}\` in its clone (\`git switch -c ${branch}\`): it is the only branch you can push.`] : []),
   ].join('\n');
 }
 

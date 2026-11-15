@@ -482,6 +482,22 @@
     </div>
   </div>
 
+  <div id="repos-modal" class="hidden">
+    <div class="modal-card repos-card">
+      <h3>GitHub repos</h3>
+      <p class="fork-note">This session runs away from this machine and can clone only the repos listed here. Adding one lets it in at once, and the session is told where to clone it.</p>
+      <ul id="rp-have" class="repos-list"></ul>
+      <div id="rp-requests" class="repos-requests"></div>
+      <label for="rp-add">Add repos</label>
+      <input id="rp-add" placeholder="owner/name, owner/name" autocomplete="off" spellcheck="false" />
+      <div id="rp-msg" class="worktree-msg"></div>
+      <div class="modal-actions">
+        <button id="rp-cancel" class="ghost">Close</button>
+        <button id="rp-go" class="primary" disabled>Add</button>
+      </div>
+    </div>
+  </div>
+
   <div id="file-modal" class="hidden">
     <div class="file-card" id="file-card">
       <div class="file-head">

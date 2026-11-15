@@ -132,7 +132,9 @@ import { devcontainer } from './devcontainer.js';
 //                after the last refusal and before anything is created.
 //     open       (optional) async ({ ref, entry, phase }) → { cwd? } | void. Before every
 //                launch there ('dispatch', 'resume', 'fork'); `cwd` is the absolute
-//                location path the agent starts in, stored on the card.
+//                location path the agent starts in, stored on the card. Also with
+//                phase 'repos' when `entry.repos` grows on a running card, before
+//                the session is told; a throw there adds nothing.
 //     suspend    (optional) async ({ ref, entry }): stop the compute, keep its storage.
 //                Idle suspend, and a clean exit.
 //     resume     (optional) async ({ ref, entry }): start it again, before every resume
