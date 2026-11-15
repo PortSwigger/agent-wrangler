@@ -1,16 +1,9 @@
 import { preferredReviewAgent } from '../../../public/review.js';
-import { readFileSync } from 'node:fs';
+import { data, point, modelFront } from '../../agents/model-front.js';
 import { z } from 'zod';
 import { knownAgentIds, agentError } from '../../agents/index.js';
-import { frontOf, curveOf, onFront, resolvedPick, scoreOf, beatenBy } from '../../../public/model-front.js';
+import { frontOf, onFront, resolvedPick, scoreOf, beatenBy } from '../../../public/model-front.js';
 
-const data = JSON.parse(readFileSync(new URL('../../../public/model-front-data.json', import.meta.url), 'utf8'));
-const units = {
-  quality: 'Terminal-Bench 4.0 points',
-  usd: 'list-price dollars per task',
-  minutes: 'wall-clock minutes per task',
-};
-const point = ({ agent, model, effort, quality, usd, minutes }) => ({ agent, model, effort, quality, usd, minutes });
 const errorResult = (message) => ({ content: [{ type: 'text', text: message }], isError: true });
 
 export const getModelFrontTool = {
@@ -48,20 +41,13 @@ export const getModelFrontTool = {
       }
     }
 
-    const front = frontOf(agents, data);
-    const curve = curveOf(front);
     const structuredContent = {
       reviewAgent: preferredReviewAgent(sourceAgent, agents)?.id ?? null,
       providers: agents.map((a) => ({ id: a.id, label: a.label || a.id, reviewPriority: a.reviewPriority ?? null })),
-      read: data.read,
-      credit: data.credit,
-      units,
-      front: front.filter((p) => (args.agent === undefined || p.agent === args.agent)
-        && (args.maxUsd === undefined || p.usd <= args.maxUsd)
-        && (args.minQuality === undefined || p.quality >= args.minQuality))
-        .map((p) => ({ ...point(p), onCurve: onFront(curve, p) })),
+      ...modelFront(agents, args),
     };
     if (args.pick) {
+      const front = frontOf(agents, data);
       const resolved = resolvedPick(agents, args.pick);
       const measured = data.models[resolved.agent]?.[resolved.model];
       const score = Object.hasOwn(measured || {}, resolved.effort || '') ? scoreOf(resolved, data) : null;
