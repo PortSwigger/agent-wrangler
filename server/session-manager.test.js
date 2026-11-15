@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import {
   archivableExits, forkEntry, buildInnerCommand, SESSIONS_DIR, resolveWorktree, SessionManager, resumePlan,
   resumeEntry, resumeLaunchPlan, RESUME_NO_TRANSCRIPT_MSG, SUSPEND_MIN_SNOOZE_MS, suspendIdleMs, suspendEnabled, suspendableSessions, autoCompactTokensError,
-  shouldReloadWorkflowSkill, unreportedDeaths, paneStateOf, EARLY_EXIT_GRACE_MS,
+  shouldReloadWorkflowSkill, unreportedDeaths, paneStateOf, EARLY_EXIT_GRACE_MS, failedLaunch, LAUNCH_FAILURE_MS, paneTail,
 } from './session-manager.js';
 import { adapterFor } from './agents/index.js';
 import { registerRuntime, unregisterRuntimesFor } from './runtimes/index.js';
@@ -2663,6 +2663,56 @@ test('a blip does not forget a corpse already reported, so it is not re-logged',
   await captureWarn(() => sm.refreshAlive());          // reported here
   const { lines } = await captureWarn(async () => { await sm.refreshAlive(); await sm.refreshAlive(); });
   assert.deepEqual(lines, []);
+});
+
+test('failedLaunch: a non-zero exit soon after launch, never a clean one or a late one', () => {
+  const launchedAt = 1_000_000;
+  assert.equal(failedLaunch({ status: 127, launchedAt, diedAt: launchedAt }), true);
+  assert.equal(failedLaunch({ status: 127, launchedAt, diedAt: launchedAt - 900 }), true, 'pane_dead_time rounds down to the second');
+  assert.equal(failedLaunch({ status: 0, launchedAt, diedAt: launchedAt }), false);
+  assert.equal(failedLaunch({ status: null, launchedAt, diedAt: launchedAt }), false);
+  assert.equal(failedLaunch({ status: 1, launchedAt, diedAt: launchedAt + LAUNCH_FAILURE_MS }), false);
+  assert.equal(failedLaunch({ status: 1, launchedAt: undefined, diedAt: launchedAt }), false);
+});
+
+test('paneTail keeps the last non-blank lines on one line', () => {
+  assert.equal(paneTail('\nfirst\n\nsh: codex: command not found\n\n\n'), 'first | sh: codex: command not found');
+  assert.equal(paneTail('a\nb\nc\nd'), 'b | c | d');
+  assert.equal(paneTail(''), '');
+  assert.equal(paneTail('x'.repeat(500)).length, 401);
+});
+
+function smForLaunchDeath({ inFlight = false } = {}) {
+  const sm = new SessionManager();
+  sm.scanSockets = () => [''];
+  sm._save = () => {};
+  const now = Math.floor(Date.now() / 1000);
+  const scans = ['', `cc_new\x1f1\x1f127\x1f${now}`, `cc_new\x1f1\x1f127\x1f${now}`];
+  sm._tmux = async (_sock, args) => {
+    if (args[0] === 'capture-pane') return { stdout: 'sh: aw-missing-agent: command not found\n\nPane is dead (status 127, Sat Nov 14 12:00:00 2026)\n' };
+    return { stdout: scans.shift() ?? scans.at(-1) ?? '' };
+  };
+  if (inFlight) sm._launchesInFlight = 1;
+  return { sm, launchedAt: now * 1000 };
+}
+
+test('a pane that dies straight after launch is logged as a failed launch with its output', async () => {
+  const { sm, launchedAt } = smForLaunchDeath();
+  sm.map.set('card-1', { tmux: 'cc_new', createdAt: launchedAt });
+  await sm.refreshAlive();
+  const { lines } = await captureWarn(() => sm.refreshAlive());
+  assert.deepEqual(lines.map((l) => l.replace(/^\S+ /, '')), ['[session] launch failed card-1 (tmux cc_new) — exit 127: sh: aw-missing-agent: command not found']);
+});
+
+test('a pane that dies before its launch registers the card waits for the card instead of logging unmapped', async () => {
+  const { sm, launchedAt } = smForLaunchDeath({ inFlight: true });
+  await sm.refreshAlive();
+  const { lines: early } = await captureWarn(() => sm.refreshAlive());
+  assert.deepEqual(early, []);
+  sm.map.set('card-1', { tmux: 'cc_new', createdAt: launchedAt });
+  const { lines } = await captureWarn(() => sm.refreshAlive());
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /launch failed card-1 \(tmux cc_new\) — exit 127: sh: aw-missing-agent: command not found/);
 });
 
 // Liveness is read while a refresh is in flight (the 4s rebuild, an MCP tool, a

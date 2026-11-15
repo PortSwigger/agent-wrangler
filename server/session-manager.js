@@ -111,6 +111,23 @@ function exitedEarly({ launchedAt, diedAt }) {
   return elapsed > -1000 && elapsed < EARLY_EXIT_GRACE_MS;
 }
 
+// A pane that exited non-zero within LAUNCH_FAILURE_MS of its launch never got
+// going: the agent CLI is missing, or bailed at startup. pane_dead_time has
+// whole-second resolution, hence the second of slack before the launch stamp.
+export const LAUNCH_FAILURE_MS = 30 * 1000;
+export function failedLaunch({ status, launchedAt, diedAt }) {
+  if (typeof status !== 'number' || status === 0) return false;
+  if (typeof launchedAt !== 'number' || typeof diedAt !== 'number') return false;
+  const elapsed = diedAt - launchedAt;
+  return elapsed > -1000 && elapsed < LAUNCH_FAILURE_MS;
+}
+
+// The last few non-blank lines of a pane's output, on one line for the log.
+export function paneTail(text, lines = 3, max = 400) {
+  const tail = String(text ?? '').split('\n').map((l) => l.trim()).filter(Boolean).slice(-lines).join(' | ');
+  return tail.length > max ? `…${tail.slice(-max)}` : tail;
+}
+
 // Pure decision: which dead tmuxes haven't been logged yet, for the
 // one-line-per-death log. Keyed on what has already been REPORTED rather than on
 // an observed alive→dead edge, which was the first attempt and is subtly wrong:
@@ -1770,9 +1787,13 @@ export class SessionManager {
   // moved into a file the pane sources instead (see launch-script.js).
   async _newSession(tmux, dir, inner, socket) {
     const cmd = paneCommand(tmux, `cd ${shellQuote(dir)} && ${inner}`);
-    const created = await this._tmux(socket, ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', tmux, '-c', dir, cmd]);
+    // remain-on-exit rides in the same tmux invocation as new-session: tmux runs
+    // the whole command list before it reaps the pane, so a command that exits at
+    // once (an agent CLI that isn't installed) still leaves its output behind. Set
+    // by a second call, the pane was already gone, and on an otherwise empty server
+    // the server itself had exited with it.
+    const created = await this._tmux(socket, ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', tmux, '-c', dir, cmd, ';', 'set-option', '-t', tmux, 'remain-on-exit', 'on']);
     const paneId = String(created?.stdout ?? '').trim();
-    await this._tmux(socket, ['set-option', '-t', tmux, 'remain-on-exit', 'on']).catch(() => {});
     // Hide tmux's status bar: it's purely cosmetic here (nothing reads it) and
     // its row is better spent on Claude's TUI. Scoped per-session so it can't
     // blank the bar on the user's own sessions sharing this tmux server.
@@ -1842,21 +1863,32 @@ export class SessionManager {
     // so suspend/archive/resume never reach here and log their own line instead.
     // The FIRST scan only seeds: those panes died before this process started, so
     // it has nothing truthful to say about when or why.
-    const deaths = unreportedDeaths(this.dead, this._deathsReported);
-    if (this._deathsSeeded) {
-      for (const name of deaths) {
-        const status = this.deadStatus.has(name) ? this.deadStatus.get(name) : null;
-        logWarn(`[session] pane died ${this.tmuxOwner(name) || '<unmapped>'} (tmux ${name}) — exit ${status ?? 'unknown'}`);
-      }
-    }
+    // A launch registers its card only after its pane exists, so a pane that died
+    // mid-launch waits for the card rather than being logged as unmapped.
+    const unreported = unreportedDeaths(this.dead, this._deathsReported);
+    const held = new Set(unreported.filter((name) => !this.tmuxOwner(name) && this.hasLaunchInFlight()));
+    const seeded = this._deathsSeeded;
     this._deathsSeeded = true;
-    for (const name of this.dead) this._deathsReported.add(name);
+    for (const name of this.dead) if (!held.has(name)) this._deathsReported.add(name);
+    if (seeded) for (const name of unreported) if (!held.has(name)) await this._logDeath(name);
     // Forget reaped corpses so the set stays bounded and a REUSED tmux name can
     // report its own death later — but only after a scan that reached every
     // socket. A socket we couldn't read says nothing about whether its corpses are
     // gone, and dropping one there would re-log it the moment the socket came back.
     if (!scanFailed) for (const name of [...this._deathsReported]) if (!this.dead.has(name)) this._deathsReported.delete(name);
     return this.alive;
+  }
+
+  async _logDeath(name) {
+    const owner = this.tmuxOwner(name);
+    const status = this.deadStatus.has(name) ? this.deadStatus.get(name) : null;
+    const entry = owner ? this.map.get(owner) : null;
+    if (!failedLaunch({ status, launchedAt: entry?.relaunchedAt ?? entry?.createdAt, diedAt: this.deadTime.get(name) })) {
+      logWarn(`[session] pane died ${owner || '<unmapped>'} (tmux ${name}) — exit ${status ?? 'unknown'}`);
+      return;
+    }
+    const capture = await this._tmux(this.socketOf(name), ['capture-pane', '-t', name, '-p', '-J', '-S', '-40']).catch(() => null);
+    logWarn(`[session] launch failed ${owner} (tmux ${name}) — exit ${status}: ${paneTail(String(capture?.stdout ?? '').replace(/^Pane is dead \(.*$/m, '')) || '(no output)'}`);
   }
 
   // The socket a tmux name lives on: the last socket discovery saw it on, else the

@@ -151,3 +151,38 @@ test('real tmux: a running server stops handing install signals to new panes', {
   assert.deepEqual(leaked(dump('aw-own', 'after')), [], 'a new pane sees none of them');
   assert.deepEqual(leaked(dump('aw-other', 'after')), INSTALL_SCOPED_ENV, 'another socket is left alone');
 });
+
+// A pane command that exits at once must still leave a dead pane with its output,
+// on a server with no other sessions (which used to exit with the pane) and on
+// one that has some (where the pane used to be reaped before remain-on-exit).
+test('real tmux: a launch whose command exits at once keeps its dead pane and output', {
+  skip: !tmuxBin && 'tmux not installed',
+}, async (t) => {
+  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'awl-'));
+  const priorTmpdir = process.env.TMUX_TMPDIR;
+  process.env.TMUX_TMPDIR = tmpdir;
+  const tmux = (sock, ...args) => spawnSync(tmuxBin, ['-L', sock, ...args], { encoding: 'utf8' });
+  const socks = ['aw-empty', 'aw-busy'];
+  t.after(() => {
+    for (const sock of socks) tmux(sock, 'kill-server');
+    if (priorTmpdir === undefined) delete process.env.TMUX_TMPDIR;
+    else process.env.TMUX_TMPDIR = priorTmpdir;
+    fs.rmSync(tmpdir, { recursive: true, force: true });
+  });
+  assert.equal(tmux('aw-busy', '-f', '/dev/null', 'new-session', '-d', '-s', 'other', '/bin/sleep 60').status, 0);
+  for (const sock of socks) {
+    const sm = new SessionManager();
+    sm.tmuxBin = tmuxBin;
+    sm.socket = sock;
+    const paneId = await sm._newSession('cc_fail', tmpdir, 'aw-missing-agent-cli --start', sock);
+    assert.match(paneId, /^%\d+$/, sock);
+    let panes = '';
+    for (let i = 0; i < 50 && !panes.startsWith('1 127'); i++) {
+      panes = tmux(sock, 'list-panes', '-t', 'cc_fail', '-F', '#{pane_dead} #{pane_dead_status}').stdout.trim();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(panes, '1 127', `${sock}: the pane is kept, dead with the shell's exit status`);
+    assert.match(tmux(sock, 'capture-pane', '-p', '-S', '-40', '-t', 'cc_fail').stdout, /not found: aw-missing-agent-cli|aw-missing-agent-cli: (command )?not found/, sock);
+    assert.equal(tmux(sock, 'show-options', '-g', '-w', '-v', 'remain-on-exit').stdout.trim(), 'off', `${sock}: never set globally`);
+  }
+});
