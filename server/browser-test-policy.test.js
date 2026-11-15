@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { browserTestSkipReason } from './browser-test-policy.js';
 
 test('browser tests skip by default with a local opt-in command', () => {
-  for (const env of [{}, { CI: '' }, { AW_BROWSER_TESTS: 'true' }, { CODEX_SANDBOX: '', CODEX_SANDBOX_NETWORK_DISABLED: '' }]) {
+  for (const env of [{}, { CI: '' }, ...['false', 'FALSE', '0', 'no', 'yes'].map((CI) => ({ CI })), { AW_BROWSER_TESTS: 'true' }, { CODEX_SANDBOX: '', CODEX_SANDBOX_NETWORK_DISABLED: '' }]) {
     assert.match(browserTestSkipReason(env), /AW_BROWSER_TESTS=1 npm test/);
   }
 });
 
 test('CI runs browser tests unless explicitly disabled', () => {
-  for (const CI of ['true', '1', 'false']) {
+  for (const CI of ['true', 'TRUE', 'True', '1']) {
     assert.equal(browserTestSkipReason({ CI }), false);
     assert.match(browserTestSkipReason({ CI, AW_BROWSER_TESTS: '0' }), /AW_BROWSER_TESTS=0/);
     assert.equal(browserTestSkipReason({ CI, CODEX_SANDBOX: 'seatbelt', CODEX_SANDBOX_NETWORK_DISABLED: '1' }), false);

@@ -11,10 +11,11 @@ invoke `node --test` directly.
 
 Browser tests skip locally unless you explicitly opt in with
 `AW_BROWSER_TESTS=1 npm test`. They require Chrome or Chromium; set `CHROME_BIN` if
-its executable is outside the usual locations. A truthy `CI` environment variable
-also enables browser tests. `AW_BROWSER_TESTS=0` always disables them, including in
+its executable is outside the usual locations. `CI=true` (case-insensitive) or `CI=1`
+also enables browser tests; values such as `false`, `0` and `no` do not. `AW_BROWSER_TESTS=0` always disables them, including in
 CI and when Chrome is installed. Agents must keep `AW_BROWSER_TESTS=0` on every
 local test command.
 
-The CI Test job runs browser tests and sets `AW_REQUIRE_BROWSER=1` to fail if no
+The CI Test job runs browser tests and explicitly sets `AW_BROWSER_TESTS=1`
+and `AW_REQUIRE_BROWSER=1` to fail if no
 browser is available.
