@@ -131,3 +131,24 @@ A new install-scoped signal must be added to `INSTALL_SCOPED_ENV` in `server/ins
 - Point `AW_NODE` and `AW_INSTALL_ROOT` at upgrade-stable paths (`opt/`, never a versioned `Cellar/` path).
 - Restart the service straight after an upgrade repoints `AW_INSTALL_ROOT`, so the running server
   and its sessions' hook and skills don't stay on different versions (see [Session paths](#session-paths)).
+
+## Graceful restart barrier
+
+Board restarts and automatic update activation close admission and drain
+in-flight server requests and extension writes before exiting. Graceful
+`SIGTERM`/`SIGINT` shutdowns attempt the same drain for up to five seconds,
+then stop even if work remains. A second signal stops immediately. A signal
+received during an existing restart drain makes that drain a stop request too;
+shutdown cleanups run before the process exits. A manual restart client should send the deck action
+`admin.restart-server` (or the legacy `restart-server` control message) and wait
+for reconnection. A `restart-ack` acknowledges the request; `restart-status`
+reports `draining`, `restarting`, or `pending`, and `config.restartStatus` retains
+that state for a newly connected tab.
+
+Board and update draining is bounded to 30 seconds. A timeout leaves the process serving,
+reopens admission, and shows **Restart pending** in Settings › Updates so the
+restart can be retried. The instance lock stays held until the process exits.
+Running worker panes survive this restart; automatic activation waits for
+interactive turns as well as outstanding server work. Forced kills, including
+`SIGKILL` or a supervisor escalating a stop, cannot run the barrier. Avoid a
+forced service restart when a graceful request is possible.

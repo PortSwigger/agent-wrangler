@@ -1,3 +1,4 @@
+import { RestartPendingError } from '../restart-barrier.js';
 import { activeHandlers } from './handlers/index.js';
 import { runWithOrigin } from '../request-origin.js';
 import { buildActionRegistry, handleAction } from '../deck/actions.js';
@@ -62,6 +63,16 @@ export async function routeControlMessage(raw, ctx, { handlers = null, legacy = 
   }
   if (!msg || typeof msg !== 'object') return;
   const registry = handlers ? buildActionRegistry({ handlers, native: NATIVE_ACTIONS }) : deckActions();
-  if (msg.type === 'action') await handleAction(msg, ctx, { registry, invoke: invokeHandler });
-  else if (legacy) await routeLegacyMessage(msg, ctx, { registry, invoke: invokeHandler });
+  const invoke = async () => {
+    if (msg.type === 'action') await handleAction(msg, ctx, { registry, invoke: invokeHandler });
+    else if (legacy) await routeLegacyMessage(msg, ctx, { registry, invoke: invokeHandler });
+  };
+  try {
+    await (ctx.restartBarrier ? ctx.restartBarrier.run(invoke) : invoke());
+  } catch (err) {
+    if (!(err instanceof RestartPendingError)) throw err;
+    const error = { code: err.code, message: err.message, retryable: true };
+    if (msg.type === 'action') (ctx.send ?? ctx.reply)({ type: 'result', id: msg.id ?? null, ok: false, data: null, error });
+    else if (legacy) ctx.reply({ type: 'error', ...error });
+  }
 }

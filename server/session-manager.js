@@ -496,7 +496,8 @@ const LAUNCH_TRUST = {
 };
 
 export class SessionManager {
-  constructor() {
+  constructor({ runWork = (fn) => fn() } = {}) {
+    this._runWork = runWork;
     this.map = new Map(); // sessionId -> { short, tmux, cwd, intent, model, createdAt, worktree?, archivedAt? }
     this._snoozeGen = new Map(); // sessionId -> setSnooze count (see snoozeGeneration)
     this.alive = new Set(); // tmux session names with a live (non-dead) pane
@@ -1431,7 +1432,7 @@ export class SessionManager {
   resume(sessionId, cwd, opts = {}) {
     const existing = this._resuming.get(sessionId);
     if (existing) return existing;
-    const p = Promise.resolve(this._doResume(sessionId, cwd, opts))
+    const p = Promise.resolve(this._runWork(() => this._doResume(sessionId, cwd, opts)))
       .finally(() => this._resuming.delete(sessionId));
     this._resuming.set(sessionId, p);
     return p;
@@ -1455,7 +1456,7 @@ export class SessionManager {
   async _whileLaunching(launch) {
     this._launchesInFlight += 1;
     try {
-      return await launch();
+      return await this._runWork(launch);
     } finally {
       this._launchesInFlight -= 1;
     }

@@ -85,7 +85,7 @@ export function installDriftNotice({ drift, canRestart = false } = {}) {
   return { text, restart: Boolean(canRestart), hint: canRestart ? null : (drift.restartHint || null) };
 }
 
-export function restartPanelEl({ drift, canRestart = false, restarting = false, onRestart } = {}) {
+export function restartPanelEl({ drift, canRestart = false, restarting = false, restartStatus = null, onRestart } = {}) {
   const notice = installDriftNotice({ drift, canRestart });
   if (!notice && !canRestart) return null;
   const wrap = el('div', 'update-panel');
@@ -94,6 +94,7 @@ export function restartPanelEl({ drift, canRestart = false, restarting = false, 
   if (canRestart) head.append(button(restarting ? 'Restarting…' : 'Restart now', 'ext-btn ext-btn-warn', { disabled: restarting, onClick: onRestart }));
   wrap.append(head);
   wrap.append(el('div', notice ? 'update-summary' : 'setting-help', notice?.text || 'Restart the wrangler. Running sessions carry on.'));
+  if (restartStatus?.message) wrap.append(el('div', 'update-summary', restartStatus.message));
   if (notice?.hint) wrap.append(el('div', 'setting-help', notice.hint));
   return wrap;
 }

@@ -152,7 +152,7 @@ test('Updates disables Restart now when another restart path is already in progr
   for (const state of [{ updatePhase: 'restarting', extRestarting: false }, { updatePhase: 'idle', extRestarting: true }]) {
     const host = document.createElement('div');
     const ctx = {
-      ...state, host, restartPanelEl, installDrift: null, canRestartServer: true,
+      ...state, host, restartPanelEl, restartStatus: null, installDrift: null, canRestartServer: true,
       installDriftRestarting: false, updateStatus: null, updateError: '', updateUnavailable: null,
       updatePanelEl: () => null, extUpdatesEl: () => null, extBgUpdates: null, autoUpdate: 'off',
     };
@@ -180,11 +180,11 @@ test('reconnecting after a restart re-enables the Updates restart button', async
   const configBody = source.slice(source.indexOf('{', configStart) + 1, configEnd);
   const host = document.createElement('div');
   const ctx = {
-    host, restartPanelEl, extRestarting: true, installDriftRestarting: true,
+    host, restartPanelEl, restartStatus: null, extRestarting: true, installDriftRestarting: true,
     updatePhase: 'idle', installDrift: null, canRestartServer: true,
     updateStatus: null, updateError: '', updateUnavailable: null,
     updatePanelEl: () => null, extUpdatesEl: () => null, extBgUpdates: null, autoUpdate: 'off',
-    noteCodeVersion() {}, applyUpdateStatus() {}, applyExtUpdateStatus() {}, noteRolledBack() {},
+    noteRestartStatus() {}, noteCodeVersion() {}, applyUpdateStatus() {}, applyExtUpdateStatus() {}, noteRolledBack() {},
     remountExtensions() {}, extPendingRemoval: new Set(),
     msg: { type: 'config', canRestart: true },
   };
@@ -235,4 +235,28 @@ test('extUpdateStatusFor puts Check all over the background check, borrowing its
   assert.deepEqual(extUpdateStatusFor('behind', opts({ behind: { incompatible: 'needs ^2.0.0' } })),
     { behind: true, commits: 7, capped: false, branch: 'main', checkedAt: 1000 }, 'a bare incompatible patch falls back to the tick');
   assert.equal(extUpdateStatusFor('current', opts({ current: { id: 'current', updatable: true, error: 'offline' } })), null);
+});
+
+test('a pending restart remains visible and offers retry', async (t) => {
+  const { restartPanelEl } = await import('./update-panel.js');
+  restartTestDocument(t);
+  const panel = restartPanelEl({ canRestart: true, restartStatus: { phase: 'pending', message: 'Restart pending: writes are still running.' } });
+  assert.equal(panel.children[0].children[1].disabled, false);
+  assert.match(panel.children.at(-1).textContent, /Restart pending/);
+});
+
+test('a pending restart renders on reconnect without repeating its error toast', async () => {
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const source = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+  const start = source.indexOf('function noteRestartStatus(');
+  const fn = source.slice(start, source.indexOf('\n}\n', start) + 3);
+  const toasts = [];
+  const ctx = { restartStatus: null, toast: (...args) => toasts.push(args), remountUpdatePanel() {}, remountExtensions() {} };
+  vm.runInNewContext(`${fn}\nnoteRestartStatus({ phase: 'pending', message: 'Restart pending' }, { notify: false });`, ctx);
+  assert.equal(ctx.restartStatus.phase, 'pending');
+  assert.equal(ctx.updatePhase, 'error');
+  assert.equal(toasts.length, 0);
+  vm.runInNewContext("noteRestartStatus({ phase: 'pending', message: 'Restart pending' });", ctx);
+  assert.equal(toasts.length, 1);
 });

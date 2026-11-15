@@ -55,6 +55,7 @@ export function createUpdateService({
   support = { available: true, canApply: false, reason: NOT_STARTED_BY_SERVICE },
   mode = () => 'notify',
   isQuiet = () => true,
+  runWork = (fn) => fn(),
   rolledBack = null,
   onStatus = () => {},
   // The one way out for a restart, called at most once per process: with the
@@ -89,7 +90,7 @@ export function createUpdateService({
   async function exclusive(fn) {
     if (busy) throw new UpdateBusyError();
     busy = true;
-    try { return await fn(); } finally { busy = false; }
+    try { return await runWork(fn); } finally { busy = false; }
   }
 
   function publish(status) {
@@ -147,7 +148,7 @@ export function createUpdateService({
     if (!checkExtensions || checkingExtensions) return;
     checkingExtensions = true;
     try {
-      const { autoApplied = [], ...summary } = await checkExtensions();
+      const { autoApplied = [], ...summary } = await runWork(checkExtensions);
       for (const { id } of autoApplied) awaitingRestart.add(id);
       latestExtensions = { ...summary, checkedAt: Date.now() };
       onExtensions(latestExtensions);
