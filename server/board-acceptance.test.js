@@ -51,6 +51,8 @@ async function waitFor(fn, { tries = 80, every = 250 } = {}) {
 async function launchChrome(chromePath, profile) {
   const proc = spawn(chromePath, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+    // The isolated test home has no macOS keychain; never prompt for one.
+    '--use-mock-keychain',
     '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--window-size=1400,900',
     'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
