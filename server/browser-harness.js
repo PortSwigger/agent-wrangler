@@ -57,7 +57,8 @@ export async function startInstance(dataDir) {
 // for, WebSockets included.
 export async function openTab(chromePath, url) {
   const profile = mkdtempSync(join(tmpdir(), 'aw-chrome-'));
-  const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-sandbox', '--disable-gpu', '--window-size=1400,900', 'about:blank'], { stdio: 'ignore' });
+  // The isolated test home has no macOS keychain; never prompt for one.
+  const chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--use-mock-keychain', '--no-sandbox', '--disable-gpu', '--window-size=1400,900', 'about:blank'], { stdio: 'ignore' });
   const close = async (cdp) => {
     try { cdp?.close(); } catch {}
     try { chrome.kill(); } catch {}

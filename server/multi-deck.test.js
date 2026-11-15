@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
@@ -20,11 +20,11 @@ function seedSessions(dataDir, sessions) {
   )));
 }
 
-async function startDeckOnly(dataDir, origins, port = 0) {
+async function startDeckOnly(dataDir, origins, port = 0, env = {}) {
   let out = '';
   const proc = spawn(process.execPath, ['server/cli.js', '--deck-only', '--data-dir', dataDir, '--allowed-origins', origins], {
     cwd: REPO_ROOT,
-    env: { ...process.env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_DECK_PORT: String(port), AW_OPEN_BROWSER: '', AW_ALLOWED_ORIGINS: '' },
+    env: { ...process.env, ...env, AW_DEV: '1', AW_DEV_IDLE_SHUTDOWN_MIN: '0', AW_DECK_PORT: String(port), AW_OPEN_BROWSER: '', AW_ALLOWED_ORIGINS: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   proc.stdout.on('data', (c) => { out += c; });
@@ -228,9 +228,9 @@ const DIALOG = `JSON.stringify({
   runtimes: [...document.getElementById('m-runtime').options].map((o) => o.value),
   intent: document.getElementById('m-intent').value,
 })`;
-const LAUNCH_ON_PROBE = (intent) => `(() => {
+const LAUNCH_ON_PROBE = (intent, runtime = 'probe-shell') => `(() => {
   const rt = document.getElementById('m-runtime');
-  rt.value = 'probe-shell';
+  rt.value = ${JSON.stringify(runtime)};
   rt.dispatchEvent(new Event('change', { bubbles: true }));
   const box = document.getElementById('m-intent');
   if (${JSON.stringify(intent)}) box.value = ${JSON.stringify(intent)};
@@ -456,5 +456,154 @@ test('a new task or schedule lands on the deck picked, and an unreachable deck c
     await sleep(500);
     rmSync(dirA, { recursive: true, force: true });
     rmSync(dirB, { recursive: true, force: true });
+  }
+});
+
+// A deck-only instance whose agent command is not installed: each launch fails
+// at once. The first lands on a tmux server with no other sessions, the second
+// on one that still holds the first's corpse; both keep their dead pane, so the
+// board shows the card with the command's output, and the deck logs the failure.
+test('a launch whose agent command is missing shows its card with the command\'s output, and the deck logs it', { timeout: 180_000 }, async (t) => {
+  const chromePath = findChrome();
+  if (!chromePath) {
+    assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
+    return t.skip('no Chrome/Chromium found (set CHROME_BIN to enable)');
+  }
+  const dirA = mkdtempSync(join(tmpdir(), 'aw-failedlaunch-a-'));
+  const dirB = mkdtempSync(join(tmpdir(), 'aw-failedlaunch-b-'));
+  seedSessions(dirA, [['a-1', 'Login form']]);
+  writeFileSync(join(dirB, 'mappings.json'), '{}');
+  cpSync(join(REPO_ROOT, 'server', 'fixtures', 'deck-runtime-probe'), join(dirB, 'extensions', 'deck-runtime-probe'), { recursive: true });
+  let a, b, tab;
+  try {
+    a = await startInstance(dirA);
+    assert.ok(a.up, `deck A never started:\n${a.out()}`);
+    const board = `http://127.0.0.1:${a.port}`;
+    b = await startDeckOnly(dirB, `${board},http://localhost:${a.port}`);
+    const portB = b.port;
+    assert.ok(await waitFor(async () => (await (await fetch(`http://127.0.0.1:${portB}/deck`)).json()).runtimes.some((r) => r.id === 'probe-missing')), `deck B never offered its runtime:\n${b.out()}`);
+    const deckB = (await (await fetch(`http://127.0.0.1:${portB}/deck`)).json()).deckId;
+    const post = (body) => fetch(`${board}/api/decks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: board }, body: JSON.stringify(body) });
+    assert.equal((await post({ op: 'add', url: `http://127.0.0.1:${portB}`, name: 'Laptop B' })).status, 200);
+    tab = await openTab(chromePath, `${board}/`);
+    assert.ok(await waitFor(async () => JSON.parse(await tab.evaluate(CARDS) || '[]').length === 1), 'the board never drew its card');
+
+    for (const intent of ['Launch on an empty tmux server', 'Launch beside another session']) {
+      await tab.evaluate(`document.getElementById('new-session').click()`);
+      assert.ok(await waitFor(async () => tab.evaluate(`[...document.getElementById('m-deck').options].some((o) => o.value === ${JSON.stringify(deckB)} && !o.disabled)`)), 'deck B is offered');
+      await tab.evaluate(`(() => { const s = document.getElementById('m-deck'); s.value = ${JSON.stringify(deckB)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      await tab.evaluate(LAUNCH_ON_PROBE(intent, 'probe-missing'));
+      const failed = await waitFor(async () => {
+        const s = (await deckState(portB)).sessions.find((x) => x.intent === intent);
+        return s?.exitOutput && s;
+      }, { tries: 120 });
+      assert.ok(failed, `${intent}: deck B kept the dead pane's output:\n${b.out().slice(-2000)}`);
+      assert.match(failed.exitOutput, /aw-probe-missing-agent-cli/);
+      assert.match(failed.exitOutput, /not found/);
+      const logged = await waitFor(() => new RegExp(`launch failed ${failed.sessionId} \\(tmux \\S+\\) — exit 127: .*aw-probe-missing-agent-cli`).test(b.out()));
+      assert.ok(logged, `${intent}: deck B logged the failed launch:\n${b.out().slice(-2000)}`);
+
+      const card = `.session-card[data-card$="/${failed.sessionId}"]`;
+      assert.ok(await waitFor(async () => tab.evaluate(`Boolean(document.querySelector('${card}'))`)), `${intent}: the board shows the card`);
+      await tab.evaluate(`document.querySelector('${card}').click()`);
+      const shown = await waitFor(async () => tab.evaluate(`[...document.querySelectorAll('#term .term-exit, #chat-exit-notice:not([hidden])')].map((e) => e.textContent).join('\\n')`));
+      assert.match(shown || '', /aw-probe-missing-agent-cli/, `${intent}: the card's panel shows the command's output`);
+    }
+    assert.deepEqual(tab.errors, [], 'no console errors');
+  } finally {
+    await tab?.close();
+    try { b?.proc.kill(); } catch {}
+    try { a?.server.kill(); } catch {}
+    await sleep(500);
+    rmSync(dirA, { recursive: true, force: true });
+    rmSync(dirB, { recursive: true, force: true });
+  }
+});
+
+// A deck whose PATH holds tmux and git but no agent CLI: the board offers no
+// agent on it until one is installed there.
+const AGENTS = `JSON.stringify({
+  agents: [...new Set([...document.getElementById('m-model').options].map((o) => o.dataset.agent))],
+  noneShown: !document.getElementById('m-no-agents').classList.contains('hidden'),
+  pickerHidden: document.getElementById('m-model-picker').classList.contains('hidden'),
+  runtime: document.getElementById('m-runtime').value,
+  note: document.getElementById('m-no-agents').textContent,
+  goDisabled: document.getElementById('m-go').disabled,
+})`;
+
+test('the dialog offers only the agents a deck has installed, and says so when it has none', { timeout: 180_000 }, async (t) => {
+  const chromePath = findChrome();
+  if (!chromePath) {
+    assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
+    return t.skip('no Chrome/Chromium found (set CHROME_BIN to enable)');
+  }
+  const dirA = mkdtempSync(join(tmpdir(), 'aw-multiagents-a-'));
+  const dirB = mkdtempSync(join(tmpdir(), 'aw-multiagents-b-'));
+  const bin = mkdtempSync(join(tmpdir(), 'aw-multiagents-bin-'));
+  for (const tool of ['tmux', 'git']) {
+    const at = spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim();
+    if (at) symlinkSync(at, join(bin, tool));
+  }
+  seedTasks(dirB, [['t_00000001', 'Data pipeline']], {});
+  let a, b, tab;
+  try {
+    a = await startInstance(dirA);
+    assert.ok(a.up, `deck A never started:\n${a.out()}`);
+    const board = `http://127.0.0.1:${a.port}`;
+    b = await startDeckOnly(dirB, `${board},http://localhost:${a.port}`, 0, { PATH: `${bin}:/usr/bin:/bin` });
+    const portB = b.port;
+    const localAgents = async () => (await (await fetch(`http://127.0.0.1:${portB}/deck`)).json()).runtimes.find((r) => r.id === 'local')?.agents;
+    assert.deepEqual(await waitFor(localAgents), [], `deck B listed agents it cannot run:\n${b.out()}`);
+    const deckB = (await (await fetch(`http://127.0.0.1:${portB}/deck`)).json()).deckId;
+
+    tab = await openTab(chromePath, `${board}/`);
+    const post = (body) => fetch(`${board}/api/decks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: board }, body: JSON.stringify(body) });
+    assert.equal((await post({ op: 'add', url: `http://127.0.0.1:${portB}`, name: 'Laptop B' })).status, 200);
+    const pick = (value) => tab.evaluate(`(() => { const s = document.getElementById('m-deck'); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const agents = async () => JSON.parse(await tab.evaluate(AGENTS));
+    const pickable = `[...document.getElementById('m-deck').options].some((o) => o.value === ${JSON.stringify(deckB)} && !o.disabled)`;
+
+    assert.ok(await waitFor(async () => { await tab.evaluate(`document.getElementById('new-session').click()`); return tab.evaluate(pickable); }), 'deck B never became pickable');
+    await pick(deckB);
+    const none = await waitFor(async () => { const d = await agents(); return d.noneShown && d; });
+    assert.ok(none, `the dialog never said deck B has no agent: ${JSON.stringify(await agents())}`);
+    assert.deepEqual(none.agents, [], 'no agent offered');
+    assert.equal(none.pickerHidden, true);
+    assert.equal(none.runtime, 'local');
+    assert.equal(none.note, 'No agent is installed on this deck.');
+    assert.equal(none.goDisabled, true, 'Launch is disabled');
+    const runtime = (value) => tab.evaluate(`(() => { const s = document.getElementById('m-runtime'); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await runtime('devcontainer');
+    const inContainer = await agents();
+    assert.deepEqual(inContainer.agents, ['claude'], 'the devcontainer runtime still runs its own agent');
+    assert.equal(inContainer.noneShown, false);
+    await runtime('local');
+    assert.equal((await agents()).noneShown, true);
+    await pick('');
+    const own = await agents();
+    assert.equal(own.noneShown, false, 'the board\'s own deck still offers its agents');
+    assert.ok(own.agents.includes('claude'));
+    await tab.evaluate(`document.getElementById('m-cancel').click()`);
+
+    writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(bin, 'claude'), 0o755);
+    assert.deepEqual(await waitFor(async () => { const l = await localAgents(); return l?.length && l; }, { tries: 60, every: 500 }), ['claude'], 'deck B saw the CLI installed after it started');
+
+    await tab.evaluate(`document.getElementById('new-session').click()`);
+    await pick(deckB);
+    const claudeOnly = await waitFor(async () => { const d = await agents(); return !d.noneShown && d.agents.length && d; });
+    assert.ok(claudeOnly, `the dialog never offered deck B's agent: ${JSON.stringify(await agents())}`);
+    assert.deepEqual(claudeOnly.agents, ['claude'], 'only the agent deck B has installed');
+    assert.equal(claudeOnly.goDisabled, false, 'Launch is enabled');
+    await tab.evaluate(`document.getElementById('m-cancel').click()`);
+    assert.deepEqual(tab.errors, [], 'no console errors');
+  } finally {
+    await tab?.close();
+    try { b?.proc.kill(); } catch {}
+    try { a?.server.kill(); } catch {}
+    await sleep(500);
+    rmSync(dirA, { recursive: true, force: true });
+    rmSync(dirB, { recursive: true, force: true });
+    rmSync(bin, { recursive: true, force: true });
   }
 });

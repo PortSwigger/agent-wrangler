@@ -493,6 +493,7 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    sheet — every user declares its own line. A plain block wrapper: the fields
    inside lay out exactly as they did unwrapped. */
 .dispatch-field.hidden { display: none; }
+#m-model-picker.hidden { display: none; }
 /* The new-session dialog's deck picker, shown only with more than one deck. */
 #m-deck-row.hidden { display: none; }
 
@@ -1152,6 +1153,7 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
   background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
 }
 #m-session-fields.hidden, #m-task-fields.hidden, #m-dispatch-fields.hidden, #m-subagent.hidden, #m-go.hidden { display: none; }
+#m-go:disabled { opacity: .55; cursor: not-allowed; }
 
 /* Persistent server-wide alert bar (currently: fd-watchdog leak warning). Fixed
    at the very top so it can't be missed; body.system-banner-open pushes both
