@@ -143,6 +143,28 @@ test('store wrapper preserves synchronous results and tracks asynchronous method
   assert.equal(await restart, true);
 });
 
+test('store proxy binds methods to the underlying store and preserves non-function property identity', () => {
+  const { barrier } = fixture();
+  const bookkeeping = new WeakMap();
+  const raw = {
+    identity: {},
+    label: 'example',
+    count: 0,
+    optional: null,
+    remember(value) { bookkeeping.set(this.identity, value); return this; },
+  };
+  const store = barrier.wrapStore(raw);
+
+  assert.notStrictEqual(store, raw);
+  assert.strictEqual(store.remember('saved'), raw);
+  assert.strictEqual(store.identity, raw.identity);
+  assert.equal(bookkeeping.get(store.identity), 'saved');
+  assert.equal(store.label, 'example');
+  assert.equal(store.count, 0);
+  assert.equal(store.optional, null);
+  assert.equal(store.missing, undefined);
+});
+
 test('automatic quiet checks include interactive turns, requests and scheduled launches', async () => {
   const { restartIsQuiet } = await import('./restart-barrier.js');
   const { barrier } = fixture();
