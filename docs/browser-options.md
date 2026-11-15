@@ -3,7 +3,7 @@
 ## Recommendation
 
 Use a scratch-local Chrome Headless Shell for browser tests, launched **outside
-Codex's macOS workspace sandbox** through an approved, narrowly scoped command.
+Codex's macOS workspace sandbox** through an approved command.
 The existing `CHROME_BIN` override is sufficient; no test-harness rewrite is
 needed. Keep browser tests opt-in locally. Changing the browser download alone
 does not remove the sandbox restriction.
@@ -124,13 +124,16 @@ AW_BROWSER_TESTS=1 CHROME_BIN="<absolute scratch binary>" \
 
 A filesystem writable root is not enough to permit these macOS browser launches.
 There is no measured browser flag or ordinary workspace path allowance that fixes
-them. The exact successful escalation prefix requested for core tests was:
+them. The core-test call requested the following `prefix_rule`; this was a per-call
+suggestion, not proof that a persistent rule was installed or matched its
+environment-prefixed shell invocation:
 
 ```text
 ["npm", "test", "--", "server/board-acceptance.test.js"]
 ```
 
-The engine probes used a fixed scratch script with one engine argument. Each
+The engine probes likewise used inline `PLAYWRIGHT_BROWSERS_PATH` assignments;
+their suggested prefixes were not tested as persisted rules. Each
 outside-sandbox option kept a single command form, with requested prefixes:
 
 ```text
@@ -148,6 +151,77 @@ escalation. The Hive fixture/staging probe used
 These name temporary investigation scripts, not shipped repository commands or
 rules installed in a user's configuration. Any durable wrapper should be reviewed
 before granting its execution prefix; script contents can change.
+
+### Proposed persistent rule: a fixed wrapper
+
+Use a wrapper with no arguments instead of relying on a rule to match an
+environment-prefixed shell string. Save this **proposed** wrapper as
+`.scratch/browser-options/run-board.sh` at the worktree root and make it executable:
+
+```sh
+#!/bin/sh
+set -eu
+if [ "$#" -ne 0 ]; then
+  echo 'This wrapper takes no arguments.' >&2
+  exit 64
+fi
+cd -- "$(dirname -- "$0")/../.."
+export AW_BROWSER_TESTS=1
+export CHROME_BIN="$PWD/.scratch/browsers/chromium_headless_shell-1255/chrome-headless-shell-mac-arm64/chrome-headless-shell"
+exec npm test -- server/board-acceptance.test.js
+```
+
+A future human-approved installation could add this exact rule shape to an active
+Codex `.rules` file, replacing the example path with the wrapper's absolute path:
+
+```python
+prefix_rule(
+    pattern=["/absolute/worktree/.scratch/browser-options/run-board.sh"],
+    decision="allow",
+)
+```
+
+Invoke that absolute executable path alone, without leading environment
+assignments, `sh`, or extra shell commands. All environment settings are inside
+the wrapper. A rule for `npm test -- server/board-acceptance.test.js` is broader:
+extra test files/arguments can be appended, and npm executes the package script.
+The wrapper rejects appended arguments, but still trusts the wrapper, checkout,
+package script and dependencies; it is not a content-pinned execution boundary.
+
+The local checker verified a scratch-only copy of this rule using the real
+absolute wrapper path:
+
+```sh
+codex execpolicy check --pretty --rules .scratch/browser-options/proposed.rules \
+  /absolute/worktree/.scratch/browser-options/run-board.sh
+```
+
+It returned `decision: "allow"` and the expected matched prefix. Appending a test
+filename also matched the prefix, but executing the wrapper with that argument
+exited 64 before npm ran. `sh -n` passed. These checks establish rule matching,
+syntax and argument rejection; they do **not** establish prompt-free execution in
+a fresh session. The wrapper's underlying npm/browser command is the one tested
+above. No rule was installed and the wrapper was not used to relaunch the browser.
+A fresh session with an installed rule remains an adoption validation step.
+
+### What an ordinary worker would encounter
+
+Without the trial authorization or a persisted rule, an outside-sandbox launch in
+this session's `auto_review` mode would go to the automatic reviewer, which may
+approve or refuse it based on that worker's task authorization. That outcome was
+not measured without the trial authorization; there is no demonstrated silent
+pass for ordinary workers. With a human approval reviewer and an applicable
+on-request policy, escalation may instead show a human prompt. This report does
+not claim to have measured that configuration.
+
+The proposed `allow` rule is intended to permit the matching command outside the
+sandbox without a prompt, subject to stricter policy. This expectation comes from
+[Codex's rule documentation](https://developers.openai.com/codex/rules), not a
+fresh-session trial here. A future installation must load the approved rule in an
+active configuration layer, restart Codex, and verify its effective policy. This
+investigation supplies a tested browser path and a rule-matchable proposal; it
+has **not** established authorization-free, prompt-free browser startup for new
+workers.
 
 MCP file-output rejection is a separate server-side root check: “not within any
 of the configured workspace roots.” A Codex shell allow rule does not fix it.
@@ -201,9 +275,10 @@ const engine = { chromium, shell: chromium, firefox, webkit }[name];
 const browser = await engine.launch({
   headless: true, timeout: 12000,
   ...(name === 'chromium' ? { channel: 'chromium' } : {}),
+  args: ['chromium', 'shell'].includes(name) ? ['--use-mock-keychain'] : [],
 });
 try {
-  const page = await browser.newPage();
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
   await page.setContent(`<button onclick="this.textContent='Passed'">Run</button>`);
   await page.locator('button').click();
   if (await page.locator('button').textContent() !== 'Passed') throw Error('click');
@@ -220,13 +295,41 @@ outside-sandbox trial, and stop an option if it produces repeated crash dialogs.
 The equivalent probe omits timing instrumentation and the optional older-binary
 path used in the investigation.
 
+To repeat the Rodney attachment trial, use the installed CLI with this wrapper
+(saved as `.scratch/browser-options/rodney-trial.sh`, then made executable):
+
+```sh
+#!/bin/sh
+set -eu
+export RODNEY_HOME="$PWD/.scratch/rodney"
+export ROD_CHROME_BIN="$PWD/.scratch/browsers/chromium_headless_shell-1255/chrome-headless-shell-mac-arm64/chrome-headless-shell"
+exec rodney "$@"
+```
+
+From the worktree root, run the wrapper's `start` outside the sandbox. Inside it,
+run `open https://example.com`, `js 'document.body.innerHTML="<button>Run</button>"'`,
+`click button`, `screenshot .scratch/browser-options/rodney.png`, then `stop`.
+Use the installed CLI's absolute path in the wrapper if it is not on `PATH`.
+The measured trial additionally set an onclick handler and asserted the changed
+button text, as described in the results.
+
+For the Hive rendering trial, point a temporary HTTP server at an installed Hive
+source tree: serve `test/fixtures/ui-polish.html` at `/`, and files directly under
+`public/` at `/public/<filename>` with CSS/JavaScript content types. Bind to
+`127.0.0.1` on port 0, using the allocated port. Outside the sandbox, launch
+Playwright's default `chromium.launch({headless:true})` (headless shell), create a
+1400×900 page, and navigate to `/?theme=dark&view=cell` on that server. Wait for
+`.hive-ghost`, record page errors, and call `page.screenshot({path: ...})`. Copy
+the PNG to the session attachment inbox only with permission to write there;
+close the browser and temporary server. This uses fixture data, not a live board.
+
 ## Smallest adoption change
 
-For core browser tests, document the shell install, `CHROME_BIN` and a narrow
-approved test-command prefix. Keep `AW_BROWSER_TESTS=1` explicit. This needs no
-runtime dependency or source change to core and avoids touching managed Chrome.
-A future stable repository wrapper could encapsulate binary discovery and the
-selected test list so each worker does not invent a new approval command.
+For core browser tests, document the shell install and approve a fixed wrapper
+like the proposal above, with its matching absolute-path rule. This keeps
+`AW_BROWSER_TESTS=1` and `CHROME_BIN` inside the wrapper and adds no core runtime
+dependency. Install/restart and prompt-free execution remain to be validated by
+an authorized adopter; the trial did not complete that part of the bead goal.
 
 For interactive agents, document the existing MCP connection and correct its
 output-root configuration, or use a scratch-isolated browser started once through
