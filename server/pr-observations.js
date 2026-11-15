@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { readJsonOrLoud, writeJsonAtomic } from './atomic-json.js';
 import { fetchPrObservation, fetchUnresolvedThreadCount } from './pr-status.js';
 
@@ -13,9 +16,20 @@ function content({ fetchedAt, attemptedAt, ...rest }) {
   return JSON.stringify(rest);
 }
 
-export function createPrObservationStore({ file, events, onError = () => {} } = {}) {
-  const saved = file ? readJsonOrLoud(file, 'PR observations') : null;
-  const observations = new Map(Object.entries(saved?.observations || {}).map(([url, value]) => [url, freeze(value)]));
+export function createPrObservationStore({ directory, events, onError = () => {} } = {}) {
+  const observations = new Map();
+  const filenameFor = (url) => `${createHash('sha256').update(url).digest('hex')}.json`;
+  if (directory) {
+    try {
+      for (const name of fs.readdirSync(directory)) {
+        if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
+        const value = readJsonOrLoud(path.join(directory, name), 'PR observation');
+        if (typeof value?.url === 'string' && filenameFor(value.url) === name) observations.set(value.url, freeze(value));
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') onError('[pr-observations] loading failed', err);
+    }
+  }
   return {
     get: (url) => observations.get(url) ?? null,
     all: () => Object.freeze(Object.fromEntries(observations)),
@@ -28,15 +42,17 @@ export function createPrObservationStore({ file, events, onError = () => {} } = 
         ...(status ? { ...structuredClone(status), state: status.state.toLowerCase(), fetchedAt: at } : {}),
         attemptedAt: at, lastError: error,
       });
-      const snapshot = new Map(observations).set(url, next);
-      try {
-        if (file) writeJsonAtomic(file, { observations: Object.fromEntries(snapshot) });
-      } catch (err) {
-        onError('[pr-observations] saving failed', err);
-        return false;
+      const changed = !previous || content(previous) !== content(next);
+      if (changed) {
+        try {
+          if (directory) writeJsonAtomic(path.join(directory, filenameFor(url)), next);
+        } catch (err) {
+          onError('[pr-observations] saving failed', err);
+          return false;
+        }
       }
       observations.set(url, next);
-      if (!previous || content(previous) !== content(next)) events?.emit('pr:observation', next);
+      if (changed) events?.emit('pr:observation', next);
       return true;
     },
   };
@@ -49,7 +65,8 @@ export function createPrObservationPoller({ observations, fetchStatus = fetchPrO
     const pending = (async () => {
       const result = await fetchStatus(url);
       const fetchedAt = new Date().toISOString();
-      if (!observations.record(url, result, fetchedAt)) return { status: null };
+      const durable = observations.record(url, result, fetchedAt);
+      if (!durable && result.status?.state !== 'OPEN') return { status: null };
       const unresolvedCount = result.status?.state === 'OPEN' ? await fetchUnresolved(url) : null;
       return { status: result.status, fetchedAt, unresolvedCount };
     })().finally(() => inFlight.delete(url));

@@ -2229,6 +2229,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension hears nothing. `emit` publishes `ext:<id>:<name>` (forced), so an
   extension cannot forge a core event. Core event: `archive-review:completed
   { sid, taskId, markdown }` (the review is skipped when nobody listens).
+  Since 1.93.0, `pr:observation` publishes the full PR observation described
+  below; `events` alone grants these payloads without `links:read`.
   Since 1.59.0, `session-status:needs-you`, `session-status:idle-held`,
   `session-status:quiet` and `session-status:exited` publish
   `{ sid, kind, at, waitingFor, idleMs, quietMs, exitReason }` for every session,
@@ -2303,20 +2305,28 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   additional fields on the same `gh pr view`. Duplicate task/session links share
   one fetch per URL in each sweep; overlapping fetches of that URL share in-flight
   work. Only currently linked PRs are polled. Observations are stored atomically
-  in `pr-observations.json` under the data directory and retained without expiry
+  in separate URL-hashed JSON files under the data directory’s `pr-observations/`
+  directory and retained without expiry
   across link removal, merge/close, and server restarts. Retained observations can
   therefore be stale: consumers must assess `fetchedAt` and `lastError`.
   Reattaching a URL resumes observation. A different `nodeId` at the same URL
   replaces the previous PR record entirely; compare `nodeId` and `createdAt`
-  when detecting URL reuse.
+  when detecting URL reuse. Timestamp-only refreshes update memory without disk
+  writes; those timestamps persist with the next meaningful change for that URL.
+  After a restart, freshness timestamps therefore conservatively reflect the last
+  durable change rather than every successful poll. Each write touches only its
+  own URL file; retained history does not multiply sweep write costs.
 
-  With capability `events`, subscribe using
+  Capability `events` alone grants observation payloads, without `links:read`.
+  Subscribe using
   `host.events.on('pr:observation', observation => { /* ... */ })`.
   The payload is the full deeply frozen observation above. Core emits once on
   the first observation, any PR data change (including identity or head), and
   error changes/recovery. Changes only to `fetchedAt`/`attemptedAt` do not emit.
   Events follow the durable write and precede terminal link removal. A failed
-  write is logged and leaves the prior snapshot and links intact for retry.
+  write is logged and leaves the prior observation snapshot intact for retry.
+  Open PR link status updates and notifications continue; terminal links stay
+  attached until their terminal observation is durable.
   Events are in-process notifications with no replay on subscription or restart;
   subscribe and read the snapshot to establish a baseline. Normal event-bus
   subscriber isolation and extension deactivation rules apply. Consumers using

@@ -261,7 +261,7 @@ const hostApiFor = (id) => hostApis.get(id);
 // subscribes through `host.events`. A subscription belongs to its extension and
 // is dropped on deactivate, so a disabled extension hears nothing.
 const coreEvents = createEventBus({ onError: logError, isActive: (id) => hostApis.has(id) });
-const prObservations = createPrObservationStore({ file: path.join(DATA_DIR, 'pr-observations.json'), events: coreEvents, onError: logError });
+const prObservations = createPrObservationStore({ directory: path.join(DATA_DIR, 'pr-observations'), events: coreEvents, onError: logError });
 const observePrLinks = createPrObservationPoller({ observations: prObservations });
 // name -> the instance an extension's store factory returned. Filled by
 // activateExtension below (and emptied by deactivateExtension), never here: an
