@@ -592,7 +592,35 @@ import semver from 'semver';
 // status from those events instead of status files. `wrapLaunch` is handed
 // `statusHook: { script }` for such a launch. A manifest that needs it declares
 // `^1.83.0`.
-export const HOST_API_VERSION = '1.83.0';
+//
+// 1.84.0 adds a runtime's optional `location` (server/runtimes/index.js): its
+// sessions run somewhere core cannot see. Core calls `provision` at dispatch,
+// `open` before each launch, `suspend` on idle (per `suspendIdleHours`),
+// `resume` before a resume or fork, `unpushed` before archive and `delete` on
+// archive and forget, and reads `transcript`, `diff` and `codexId`, capping and
+// shape-checking each answer. A runtime without it is unchanged.
+//
+// 1.85.0 lets an extension dispatch on such a runtime: `sessions.spawn({
+// runtime, repos, branch, base })`. `sessions.archive` and `tasks.archive`
+// refuse a location card with unpushed commits, answering `{ unpushed }`,
+// unless called with `{ allowUnpushed: true }`, and a `sessions:read`
+// projection carries the card's `repos`. A manifest using any declares `^1.85.0`.
+//
+// 1.86.0 adds `location` to the client `api.runtimes()`: true for a runtime
+// whose sessions run at a location. A board half reading it declares `^1.86.0`.
+//
+// 1.87.0 adds the deck's runtime offer. The deck's `--runtimes <ids>` startup
+// option (env `AW_RUNTIMES`), read once at start, picks the runtimes it offers;
+// nothing changes it while the deck runs. A location runtime is offered only when
+// every runtime the deck offers is one, so such a deck starts nothing on its own
+// machine (no local launch, no plain terminal). The client `api.runtimes()` and
+// graph.runtimeOffer carry `unavailable`, the reason a runtime the deck has can't
+// be launched on, and the `/deck` descriptor carries `offeredRuntimes` (the
+// startup pick, null for every runtime); `sessions.spawn`, `sessions.wake` and
+// `api.openTerminal` refuse the same. A session at a location starts children on
+// its own runtime when none is named and is refused one on this machine. A
+// manifest or board half reading `unavailable` declares `^1.87.0`.
+export const HOST_API_VERSION = '1.87.0';
 
 // Does this server serve `range`? A null/absent range is "no constraint" and
 // passes — declaring the range is optional, getting it wrong is not.

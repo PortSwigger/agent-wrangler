@@ -29,7 +29,7 @@ test('update_schedule retains id, omitted fields and nextRunAt on name/action ed
   const edited = await update(deps, { id: original.id, message: 'Updated prompt' });
   assert.equal(edited.isError, undefined);
   const stored = deps.scheduleStore.snapshot().schedules[0];
-  assert.deepEqual(stored, { ...original, name: 'Renamed check', action: { ...original.action, message: 'Updated prompt' } });
+  assert.deepEqual(stored, { ...original, name: 'Renamed check', action: { ...original.action, message: 'Updated prompt' }, scheduledBy: 'different-card' });
   assert.equal(rebuilds(), 2);
 });
 

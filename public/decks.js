@@ -106,9 +106,33 @@ export function deckRuntimes(descriptor) {
   const out = [];
   for (const r of list) {
     if (typeof r?.id !== 'string' || !r.id || out.some((x) => x.id === r.id)) continue;
-    out.push({ id: r.id, label: typeof r.label === 'string' && r.label ? r.label : r.id, agents: Array.isArray(r.agents) ? r.agents.filter((a) => typeof a === 'string') : null });
+    out.push({
+      id: r.id,
+      label: typeof r.label === 'string' && r.label ? r.label : r.id,
+      agents: Array.isArray(r.agents) ? r.agents.filter((a) => typeof a === 'string') : null,
+      ...(r.location === true ? { location: true } : {}),
+      ...(typeof r.unavailable === 'string' && r.unavailable ? { unavailable: r.unavailable } : {}),
+    });
   }
   return out.length ? out : [{ id: 'local', label: 'Local (host)', agents: null }];
+}
+
+// What Settings › Decks shows of a deck's runtime offer, read-only: the startup
+// pick (`offeredRuntimes`, null for every runtime) and each runtime it offers,
+// with the reason one it offers can't be launched on. Null before a descriptor.
+export function deckOfferSummary(descriptor) {
+  if (!descriptor || typeof descriptor !== 'object') return null;
+  const listed = Array.isArray(descriptor.runtimes) ? deckRuntimes(descriptor) : [];
+  const picked = Array.isArray(descriptor.offeredRuntimes)
+    ? descriptor.offeredRuntimes.filter((id) => typeof id === 'string' && id)
+    : null;
+  const ids = picked || listed.filter((r) => !r.unavailable || r.location).map((r) => r.id);
+  const runtimes = ids.map((id) => {
+    const r = listed.find((x) => x.id === id);
+    if (!r) return { id, label: id, unavailable: 'Not registered on this deck (its extension is off or missing).' };
+    return { id, label: r.label, ...(r.location ? { location: true } : {}), ...(r.unavailable ? { unavailable: r.unavailable } : {}) };
+  });
+  return { fromOption: Boolean(picked), runtimes };
 }
 
 // Whether any of a deck's runtimes runs `agent`.

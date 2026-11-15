@@ -1,5 +1,16 @@
 import { sendText, capturePane, hasBackgroundShell } from '../../tmux-scraper.js';
 import { stopContainer } from '../../runtimes/devcontainer.js';
+import { findUnpushed } from '../../locations/repos.js';
+
+// What archiving `ids` would lose at their locations (findUnpushed): empty for
+// cards on this machine. `ctx.findUnpushed` replaces the check in tests.
+export function unpushedFor(ids, ctx) {
+  const check = ctx.findUnpushed || findUnpushed;
+  return check(ids, {
+    entryFor: (sid) => ctx.sessionManager.entryFor?.(sid),
+    labelFor: (sid) => ctx.sessionFromGraph?.(sid)?.label || null,
+  });
+}
 
 // Nudged into the pane before its terminal is torn down with a background job still
 // running — shared by archive (solo + cascade) and restart, since both kill the live
@@ -184,6 +195,13 @@ export const archiveHandler = {
       const sessions = ctx.graph?.()?.sessions || [];
       const descendants = descendantsOf(msg.sessionId, sessions);
       const ids = [...descendants.map((d) => d.sessionId), msg.sessionId];
+      if (!msg.allowUnpushed) {
+        const unpushed = await unpushedFor(ids, ctx);
+        if (unpushed.length) {
+          ctx.reply({ type: 'archive-unpushed', sessionId: msg.sessionId, request: { ...msg }, unpushed });
+          return;
+        }
+      }
       const { unclean } = await archiveCascade(ids, ctx);
       setTimeout(() => ctx.rebuild().catch(() => {}), 600);
       // Always reply for a cascade — unlike the solo path below (gated on
@@ -203,6 +221,17 @@ export const archiveHandler = {
     // stays resumable (archived; findable in Search). Archive even if the process
     // is already gone.
     const s = ctx.sessionFromGraph(msg.sessionId);
+    // A location card is checked for commits on no remote branch first; finding
+    // any sends the request back for the human to confirm, and the confirmed
+    // re-send carries allowUnpushed.
+    const checked = !msg.allowUnpushed && ctx.sessionManager.entryFor?.(msg.sessionId)?.location !== undefined;
+    if (checked) {
+      const unpushed = await unpushedFor([msg.sessionId], ctx);
+      if (unpushed.length) {
+        ctx.reply({ type: 'archive-unpushed', sessionId: msg.sessionId, request: { ...msg }, unpushed });
+        return;
+      }
+    }
     // "Kill jobs & archive" (the client's 3-way confirm when a background shell is
     // live): nudge the agent to stop it itself FIRST, then wait briefly before the
     // teardown below. If it doesn't clear in time we archive anyway rather than
@@ -230,6 +259,6 @@ export const archiveHandler = {
     // stale card renders), and on resume it returns to its original tile and slot.
     // Permanent `remove` is what unassigns.
     setTimeout(() => ctx.rebuild().catch(() => {}), 600);
-    if (msg.killJobsFirst) ctx.reply({ type: 'archived', sessionId: msg.sessionId, unclean });
+    if (msg.killJobsFirst || checked || msg.allowUnpushed) ctx.reply({ type: 'archived', sessionId: msg.sessionId, unclean, ...(msg.killJobsFirst ? {} : { plain: true }) });
   },
 };

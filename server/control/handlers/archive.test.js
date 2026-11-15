@@ -316,3 +316,28 @@ test('waitForBackgroundShellClear: gives up and returns false once the deadline 
     Date.now = realNow;
   }
 });
+
+test('archive: a location card with unpushed commits is sent back for confirmation; allowUnpushed archives it', async () => {
+  const unpushed = [{ sessionId: 'L', label: 'Loc', repos: [{ repo: 'acme/widgets', dir: '/w', commits: [{ sha: 'abc1234', subject: 'wip' }] }] }];
+  const c = ctx({ sessionId: 'L', label: 'Loc' });
+  c.sessionManager.entryFor = () => ({ runtime: 'r', location: { box: 1 } });
+  c.findUnpushed = async (ids) => (ids.includes('L') ? unpushed : []);
+  await archiveHandler.handler({ type: 'archive', sessionId: 'L' }, c);
+  assert.deepEqual(c.calls.archive, [], 'nothing archived');
+  assert.deepEqual(c.calls.kill, [], 'nothing killed');
+  assert.equal(c.calls.reply[0].type, 'archive-unpushed');
+  assert.deepEqual(c.calls.reply[0].unpushed, unpushed);
+  assert.deepEqual(c.calls.reply[0].request, { type: 'archive', sessionId: 'L' });
+  await archiveHandler.handler({ ...c.calls.reply[0].request, allowUnpushed: true }, c);
+  assert.equal(c.calls.archive.length, 1);
+  assert.equal(c.calls.reply[1].type, 'archived');
+});
+
+test('archive: a card on this machine is never checked for unpushed commits', async () => {
+  const c = ctx({ sessionId: 'H', label: 'Host' });
+  c.sessionManager.entryFor = () => ({ cwd: '/x' });
+  c.findUnpushed = async () => { throw new Error('must not be asked'); };
+  await archiveHandler.handler({ type: 'archive', sessionId: 'H' }, c);
+  assert.equal(c.calls.archive.length, 1);
+  assert.deepEqual(c.calls.reply, []);
+});

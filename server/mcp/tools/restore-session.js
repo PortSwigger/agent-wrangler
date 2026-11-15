@@ -13,7 +13,7 @@ export const restoreSessionTool = {
     target: z.string().min(1).describe('Session id (card id) to restore.'),
     recreate_dir: z.boolean().optional().describe('Recreate the session\'s launch directory if it was deleted. Default false.'),
   },
-  async handler({ deps }, args = {}) {
+  async handler({ deps, caller }, args = {}) {
     const target = (args.target ?? '').trim();
     if (!target) return errorResult('target is required.');
     if (!deps.sessionManager.entryFor(target)) {
@@ -24,7 +24,11 @@ export const restoreSessionTool = {
     }
     const replies = [];
     const ctx = { ...deps, reply: (m) => replies.push(m) };
-    await resumeSession(target, ctx, { recreateDir: args.recreate_dir === true });
+    try {
+      await resumeSession(target, ctx, { recreateDir: args.recreate_dir === true, caller });
+    } catch (err) {
+      return errorResult(err?.message || String(err));
+    }
     const needsDir = replies.find((m) => m.type === 'resume-needs-dir');
     if (needsDir) {
       return errorResult(`Launch directory ${needsDir.dir} no longer exists — retry with recreate_dir: true to recreate it.`);

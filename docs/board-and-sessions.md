@@ -73,7 +73,12 @@ Optional launch controls include:
 - **Auto-compaction threshold:** set the working-context budget.
 - **Runtime:** launch Claude locally, inside the project's devcontainer, or on a runtime an enabled extension adds. Codex currently runs on the
   host. **Settings → Sessions → Default runtime for new sessions** picks which one is pre-selected; a runtime that is
-  no longer offered or can't run the chosen agent falls back to Local.
+  no longer offered or can't run the chosen agent falls back to Local. The deck's
+  `--runtimes` startup option limits the list to the runtime ids it was started with (see
+  [Choosing a deck's runtimes](../README.md#choosing-a-decks-runtimes)); **Settings → Decks** shows each deck's. A
+  runtime that runs sessions at a location is offered only when every runtime the deck offers does: beside Local or
+  Devcontainer it shows as unavailable with the reason, and a deck of location runtimes starts nothing on its own
+  machine, not even a plain terminal.
 - **Codex sandbox and approvals:** for a Codex model only, pick the sandbox (read-only, workspace-write or
   danger-full-access), the approval policy (on-request, the default, which shows the card as needs-you while Codex
   waits for your answer; or never, which lets Codex carry on without asking), **Approve for me** (Codex's automatic review,
@@ -290,6 +295,10 @@ The board's own deck is always first: you can rename and recolour it, but not re
 shows its connection: **Connecting**, **Ready**, **Incompatible** (its deck API version is one this
 board does not speak, or the URL reaches a deck already on the board) or **Unreachable** (the board
 cannot reach `GET /deck` there, often because the deck does not allow this board's origin).
+Under each deck's name, its **Runtimes** line lists the runtimes it offers, read-only: those named by
+its `--runtimes` startup option, or every runtime it has. A runtime it offers but won't launch on (a
+location runtime beside one that runs on the deck's machine) is struck through, with the reason on
+hover.
 
 With more than one deck on the board, each card shows its deck's name and colour. A card whose deck
 is unreachable stays on the board, greyed out and disabled, until the deck is back.
