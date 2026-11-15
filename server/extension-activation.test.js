@@ -52,3 +52,9 @@ test('the core bag carries the four registry verbs plus the one seam every chang
   }
   assert.match(SRC, /invalidateHandlerMap\(\);/, 'the router\'s cached handler map is the one thing that does not re-read the registry');
 });
+
+test('generation cleanup follows boot activation and acquisition of the instance lock', () => {
+  const cleanup = SRC.indexOf('sweepGenerations(ext.list)');
+  assert.ok(cleanup > SRC.indexOf('activateExtension(e.id, { startSweeps: false })'));
+  assert.ok(cleanup > SRC.indexOf('instanceLock = await acquireInstanceLock('));
+});

@@ -10,7 +10,7 @@ import { isValidBranchName } from '../worktree.js';
 // only readers are the installer and the update check. Mixing them would put a
 // hand-edited file in the path of an atomic whole-file rewrite on every install.
 //
-// A record is `{ id, originUrl, sha, installedAt, requires, dependencies,
+// A record is `{ id, originUrl, sha, generation, installedAt, requires, dependencies,
 // autoUpdate, earlyAdopterBranch, earlyAdopter }`, and `requires`/`dependencies` are the whole point of persisting
 // anything: `requires` is the
 // CONSENTED capability set (a later version's `requires` is diffed against it to
@@ -48,10 +48,27 @@ export const externalDir = () => path.join(DATA_DIR, 'extensions');
 
 // Install staging: a download is unpacked, validated and `npm ci`'d here and only
 // then renamed into place, so a failed or malicious install never leaves a
-// half-populated `extensions/<id>/` for the boot loader to find. Dot-prefixed so
+// half-populated generation for the boot loader to find. Dot-prefixed so
 // it can live inside externalDir() (one filesystem, so the rename is atomic)
 // without the loader mistaking it for an extension — no id may start with `.`.
 export const tmpDir = () => path.join(externalDir(), '.tmp');
+
+export function generationRoot(id, root = externalDir()) {
+  if (!isValidExtensionId(id)) throw new Error(`Invalid extension id: ${id}`);
+  return path.resolve(root, '.generations', id);
+}
+
+export function generationDir(id, generation, root = externalDir()) {
+  if (typeof generation !== 'string' || !/^[0-9a-f]{16}$/.test(generation)) throw new Error('Invalid extension generation');
+  return path.join(generationRoot(id, root), generation);
+}
+
+export function installedDir(id, record, root = externalDir()) {
+  if (!isValidExtensionId(id)) throw new Error(`Invalid extension id: ${id}`);
+  return record && Object.hasOwn(record, 'generation')
+    ? generationDir(id, record.generation, root)
+    : path.resolve(root, id);
+}
 
 const provenanceFile = () => path.join(DATA_DIR, 'extensions.json');
 
@@ -93,6 +110,7 @@ export function putRecord(record) {
   // must fail the install loudly instead of writing a record that later resolves
   // somewhere unintended.
   if (!isValidExtensionId(id)) throw new Error(`Extension id must match ${ID_RE} (got ${JSON.stringify(id)})`);
+  if (Object.hasOwn(record, 'generation')) generationDir(id, record.generation);
   const all = readProvenance();
   all[id] = normalise(id, record);
   writeJsonAtomic(provenanceFile(), all, { trailingNewline: true });
@@ -154,6 +172,7 @@ function normalise(id, rec) {
     id,
     originUrl: typeof rec.originUrl === 'string' ? rec.originUrl : null,
     sha: typeof rec.sha === 'string' ? rec.sha : null,
+    ...(Object.hasOwn(rec, 'generation') ? { generation: typeof rec.generation === 'string' ? rec.generation : null } : {}),
     ...(typeof rec.ref === 'string' ? { ref: rec.ref } : {}),
     installedAt: typeof rec.installedAt === 'string' ? rec.installedAt : null,
     requires: strings(rec.requires),

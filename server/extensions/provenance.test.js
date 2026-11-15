@@ -7,6 +7,8 @@ import {
   ID_RE,
   isValidExtensionId,
   externalDir,
+  generationDir,
+  installedDir,
   tmpDir,
   readProvenance,
   recordFor,
@@ -178,5 +180,23 @@ test('setEarlyAdopter refuses a record with no origin or no declared branch; a b
   fs.writeFileSync(FILE, JSON.stringify({ demo: record({ earlyAdopterBranch: '--upload-pack=x', earlyAdopter: true }) }));
   assert.equal(recordFor('demo').earlyAdopterBranch, null);
   assert.equal(trackedBranch(recordFor('demo')), null);
+  clean();
+});
+
+test('generation pointers round-trip through settings writes and cannot escape the generation root', () => {
+  clean();
+  const generation = 'a'.repeat(16);
+  putRecord(record({ generation, earlyAdopterBranch: 'next' }));
+  setAutoUpdate('demo', true);
+  setEarlyAdopter('demo', true);
+  assert.equal(recordFor('demo').generation, generation);
+  assert.equal(installedDir('demo', recordFor('demo')), path.join(externalDir(), '.generations', 'demo', generation));
+  assert.equal(installedDir('demo', record()), path.join(externalDir(), 'demo'));
+  for (const bad of ['../escape', '', null, 'a/b', 'f'.repeat(40)]) {
+    assert.throws(() => generationDir('demo', bad), /Invalid extension generation/);
+    assert.throws(() => putRecord(record({ generation: bad })), /Invalid extension generation/);
+  }
+  assert.throws(() => generationDir('../escape', generation), /Invalid extension id/);
+  assert.equal(recordFor('demo').generation, generation);
   clean();
 });

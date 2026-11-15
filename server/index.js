@@ -87,7 +87,7 @@ import { collectPrepare } from './session-prepare.js';
 import { collectBeforeSpawn, notifySpawned } from './session-spawn.js';
 import { createLinkNormaliser } from './mcp/links.js';
 import { createExtDeliver } from './ext-deliver.js';
-import { sweepStaging } from './extensions/external.js';
+import { sweepStaging, sweepGenerations } from './extensions/external.js';
 import { log, logWarn, logError } from './log.js';
 import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
@@ -1543,6 +1543,7 @@ async function main() {
   // in-memory. After the lock, so a duplicate instance never sweeps the running
   // one's in-flight staging dir out from under it.
   sweepStaging();
+  sweepGenerations(ext.list);
   // A package-managed install never runs Git, even to read a version: its
   // identity is the package version it was built from.
   const install = INSTALL_ENV.installManager ? { checkout: false, codeVersion: VERSION } : await readInstall();

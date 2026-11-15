@@ -659,24 +659,32 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `{ installedSha, runningSha, restartPending }`. The returned object is a copy,
   the installed receipt is read afresh on every call, and no extension-id
   argument is accepted. Declare `engines.wranglerApi: '^1.90.0'` when using it.
-- **Installed extensions live in `<DATA_DIR>/extensions/<id>/`; their provenance is
-  `<DATA_DIR>/extensions.json`, deliberately NOT config.json.** config.json keeps the
-  `extensions.<id>` enable flags and is untouched by this feature. A record is
-  `{ id, originUrl, sha, installedAt, requires, dependencies }`, and the last two are
-  the only reason it exists: `requires` is the **CONSENTED** set and `dependencies`
-  the flattened lockfile list, and the installed tree is always whatever the new
-  version ships — so without the record an update has nothing to diff against.
-  DATA_DIR-relative on purpose: a `run-dev` instance starts with no installed
-  extensions the same way it starts with no sessions, and `test-setup.js`'s
-  `AW_DATA_DIR` redirect gives the tests that isolation for free. An extension with
-  **no record** (a hand-dropped directory — a legitimate dev workflow) still loads,
-  is not updatable, and is **not** capability-gated: placing it there by hand is its
-  own consent. For an external extension the manifest `id` MUST equal its directory
-  name, or the provenance record, the `/ext/<id>/` asset route and the uninstall path
-  silently disagree about what is installed. Every computed path is resolved and
-  asserted to stay directly under `<DATA_DIR>/extensions/` before any write or
-  delete — the id comes from third-party data, and one missed check on a delete path
-  is a wipe of an arbitrary directory.
+- **Installed extensions live in `<DATA_DIR>/extensions/.generations/<id>/<token>/`;
+  `<DATA_DIR>/extensions.json` selects the installed generation.** Each install
+  gets a unique directory, including reinstalls of the same commit. The running
+  registry keeps its original directory until restart: HTTP assets (including
+  nested imports and styles), skills and lazy server imports keep reading that
+  generation even after an update is installed. Startup selects the installed
+  generation and removes superseded files after activation and the instance lock.
+  Quarantined or missing selected generations retain prior files for recovery.
+  A missing or unreadable provenance record also preserves generation files;
+  restore the record (or its `.corrupt` backup) to make that install discoverable.
+  Uninstall removes all generations for the extension.
+
+  Provenance is separate from config.json, which keeps the `extensions.<id>`
+  enable flags. A record includes `{ id, originUrl, sha, generation, installedAt,
+  requires, dependencies }`: `requires` is the **CONSENTED** set and `dependencies`
+  the flattened lockfile list used to disclose update differences. Publishing
+  the record is atomic; a failed publication leaves the prior install selected.
+  All paths stay under DATA_DIR, so isolated instances and tests have their own
+  installed extensions.
+
+  Legacy installs and hand-placed extensions at `extensions/<id>/` still load.
+  A hand-placed extension with **no record** is not updatable or capability-gated:
+  placing it there is its own consent. Its first update preserves that directory
+  until startup selects the new generation. The manifest id must match its
+  installation id. Ids and generation tokens are validated before constructing
+  paths for writes or deletion.
 - **An UPDATE *is* `ext-install` against the recorded `originUrl` — same clone, same
   consent modal, same handler — and RE-CONSENT is required only when `requires`
   WIDENS.** Unchanged or narrowed proceeds on the recorded consent, because nothing
