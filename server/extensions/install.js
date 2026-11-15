@@ -103,8 +103,12 @@ async function gitRemote(git, url, args, opts) {
 // `branch` is an opted-in early-adopter branch (provenance.js trackedBranch):
 // cloned instead of the default branch while the remote has it, and the default
 // branch otherwise, so a deleted EA branch degrades to a normal install.
-export async function cloneTo(url, destDir, { git = defaultGit, branch = null } = {}) {
+export async function cloneTo(url, destDir, { git = defaultGit, branch = null, ref = undefined } = {}) {
   assertAllowedUrl(url);
+  if (ref !== undefined) {
+    assertExactRef(ref);
+    return cloneExact(url, destDir, ref, git);
+  }
   const track = branch != null && await remoteHasBranch(url, branch, { git });
   await gitRemote(git, url, [
     '-c', 'protocol.ext.allow=never',
@@ -114,6 +118,54 @@ export async function cloneTo(url, destDir, { git = defaultGit, branch = null } 
     '--', url, destDir,
   ]);
   return destDir;
+}
+
+export function assertExactRef(ref) {
+  if (typeof ref !== 'string' || !ref || ref !== ref.trim()) throw new Error('An exact ref must be a full 40-hex SHA or a tag');
+  if (/^[0-9a-f]{40}$/i.test(ref)) return ref;
+  if (!isValidBranchName(ref) || ref.startsWith('refs/') || /^[0-9a-f]{4,39}$/i.test(ref) || /^(HEAD|FETCH_HEAD|ORIG_HEAD|MERGE_HEAD|AUTO_MERGE)$/.test(ref)) {
+    throw new Error('Ref must be a full 40-hex SHA or a plain tag, not a revision expression');
+  }
+  return ref;
+}
+
+const SAFE_TRANSPORTS = ['-c', 'protocol.ext.allow=never', '-c', 'protocol.file.allow=never'];
+
+async function cloneExact(url, destDir, ref, git) {
+  let sha = ref.toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    const tag = `refs/tags/${ref}`;
+    const { stdout } = await gitRemote(git, url, [...SAFE_TRANSPORTS, 'ls-remote', '--', url, tag, `${tag}^{}`, `refs/heads/${ref}`]);
+    const tagged = refLine(stdout, `${tag}^{}`) || refLine(stdout, tag);
+    if (!tagged || !/^[0-9a-f]{40}$/.test(tagged)) throw new Error(`Exact tag ref ${JSON.stringify(ref)} was not found`);
+    if (refLine(stdout, `refs/heads/${ref}`)) throw new Error(`Ambiguous ref ${JSON.stringify(ref)} names both a tag and a branch`);
+    sha = tagged;
+  }
+  await git(['init', '--', destDir]);
+  await git(['remote', 'add', 'origin', url], { cwd: destDir });
+  await gitRemote(git, url, [...SAFE_TRANSPORTS, 'fetch', '--depth', '1', '--no-tags', '--no-recurse-submodules', 'origin', sha], { cwd: destDir });
+  await git(['checkout', '--detach', sha], { cwd: destDir });
+  if (await readHead(destDir, { git }) !== sha) throw new Error('The checked out commit does not match the exact ref');
+  return destDir;
+}
+
+export async function commitRelation(dir, priorSha, { git = defaultGit } = {}) {
+  if (!/^[0-9a-f]{40}$/i.test(priorSha || '')) return 'unknown';
+  try {
+    const { stdout } = await git(['rev-parse', '--is-shallow-repository'], { cwd: dir });
+    await git([...SAFE_TRANSPORTS, 'fetch', '--quiet', '--no-recurse-submodules', ...(stdout.trim() === 'true' ? ['--unshallow'] : []), 'origin', priorSha], { cwd: dir });
+    try {
+      await git(['merge-base', '--is-ancestor', priorSha, 'HEAD'], { cwd: dir });
+      return 'upgrade';
+    } catch (err) { if (err.code !== 1) throw err; }
+    try {
+      await git(['merge-base', '--is-ancestor', 'HEAD', priorSha], { cwd: dir });
+      return 'downgrade';
+    } catch (err) { if (err.code !== 1) throw err; }
+    return 'diverged';
+  } catch {
+    return 'unknown';
+  }
 }
 
 // Whether the remote has `refs/heads/<branch>`. The name is re-checked here,

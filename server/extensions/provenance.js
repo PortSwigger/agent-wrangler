@@ -99,6 +99,10 @@ export function putRecord(record) {
   return all[id];
 }
 
+export function pinnedUpdateReason(record) {
+  return record?.ref ? `Pinned to ${record.ref}. Install without an exact ref to resume automatic updates.` : null;
+}
+
 export function removeRecord(id) {
   if (!isValidExtensionId(id)) return false;
   const all = readProvenance();
@@ -150,6 +154,7 @@ function normalise(id, rec) {
     id,
     originUrl: typeof rec.originUrl === 'string' ? rec.originUrl : null,
     sha: typeof rec.sha === 'string' ? rec.sha : null,
+    ...(typeof rec.ref === 'string' ? { ref: rec.ref } : {}),
     installedAt: typeof rec.installedAt === 'string' ? rec.installedAt : null,
     requires: strings(rec.requires),
     dependencies: strings(rec.dependencies),

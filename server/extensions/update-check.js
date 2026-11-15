@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { readProvenance, trackedBranch } from './provenance.js';
+import { readProvenance, trackedBranch, pinnedUpdateReason } from './provenance.js';
 import { lsRemoteHead, countCommitsBehind } from './install.js';
 
 // The background half of "Check all": run by the core update service's
@@ -61,12 +61,12 @@ export function createExtensionUpdateCheck({
       const record = records[entry.id];
       if (!record?.originUrl || !record.sha) continue;
       const branch = trackedBranch(record);
-      const base = { id: entry.id, label: entry.label || entry.id, updatable: true, originUrl: record.originUrl, sha: record.sha, branch };
+      const base = { id: entry.id, label: entry.label || entry.id, updatable: true, originUrl: record.originUrl, sha: record.sha, branch, pinnedRef: record.ref || null, autoUpdateBlocked: pinnedUpdateReason(record) };
       try {
         const remoteSha = await lsRemote(record.originUrl, { branch });
         const behind = remoteSha !== record.sha;
         const status = { ...base, remoteSha, behind, ...(behind ? await countOnce(entry, record, remoteSha, branch) : {}) };
-        if (behind && record.autoUpdate && autoUpdate) {
+        if (behind && record.autoUpdate && !record.ref && autoUpdate) {
           const result = await autoUpdate(entry.id);
           if (result.applied) {
             autoApplied.push({ id: entry.id, sha: result.sha });

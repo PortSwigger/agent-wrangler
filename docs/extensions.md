@@ -613,6 +613,47 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension with a reason about server core modules it never imported. Matching
   by name costs nothing and claims nothing: a static import hidden in `x.test.js`
   is no more caught than the `await import()` the whole rule concedes.
+- **An install can select an exact commit or tag.** In **Git URL**, enter an optional
+  tag or full 40-hex commit SHA. The equivalent control frame is
+  `{ type: 'ext-install', url, ref }`; omit `ref` to follow the default branch or
+  the installed extension's opted-in early-adopter branch. An explicit empty,
+  invalid, missing or ambiguous ref is refused. Branch names, abbreviated SHAs
+  and revision expressions are not accepted as exact refs. Tags consisting only
+  of 4–39 hexadecimal characters (such as `2024` or `deadbeef`) are refused
+  because they resemble abbreviated SHAs. A name shared by a
+  branch and a tag is ambiguous. Annotated tags resolve to their commit; the
+  disclosed `sha` is the commit fetched and checked out, with no fallback to HEAD.
+  The requested `ref` is recorded alongside `sha` and blocks automatic updates
+  until an install without a ref clears the pin. The auto-update and branch
+  opt-ins are preserved. `graph.extensions[]` and update-check results expose
+  `pinnedRef` and an `autoUpdateBlocked` reason; the panel shows that reason
+  even before a remote check. A manual update without a ref clears the pin.
+  A remote's ability to serve a SHA does not prove that its owner authored or
+  published it: GitHub can serve commits that exist only in a fork in the same
+  repository network. Verify the exact commit and its provenance before consent.
+- **Replacing a newer commit needs explicit downgrade confirmation.** The
+  disclosure includes `previousSha`, `relation` (`same`, `upgrade`, `downgrade`,
+  `diverged` or `unknown`), `downgrade` and `requiresDowngradeConfirmation`.
+  A target that is an ancestor of the installed commit is a downgrade. Diverged
+  or unavailable history also requires confirmation because a forward update
+  cannot be established. Consent is
+  `{ type: 'ext-consent', tempId, approve: true, allowDowngrade: true }` when
+  `requiresDowngradeConfirmation` is true; `approve` alone is refused before npm
+  or replacement. The board labels its confirmation as a downgrade and shows
+  both commits. Auto-update leaves these installs for human confirmation.
+- **Installed and running commits are separate receipts.** `graph.extensions[]`
+  exposes `installedSha` (the current on-disk record), `runningSha` (the loaded
+  module's provenance), the backward-compatible `sha` alias for `runningSha`,
+  and `restartPending` when the commits differ. The Source panel shows both full
+  SHAs and keeps the restart notice across reloads. `ext-install-done` also
+  returns `installedSha`, `runningSha` and `restartPending`. Fresh installs load
+  immediately; updates retain their running commit until server restart.
+  Empty strings mean no recorded commit, as with builtins and hand-placed code.
+  On server host API **1.90.0**, every extension can call
+  `host.extension.receipt()` without a capability grant to read its **own**
+  `{ installedSha, runningSha, restartPending }`. The returned object is a copy,
+  the installed receipt is read afresh on every call, and no extension-id
+  argument is accepted. Declare `engines.wranglerApi: '^1.90.0'` when using it.
 - **Installed extensions live in `<DATA_DIR>/extensions/<id>/`; their provenance is
   `<DATA_DIR>/extensions.json`, deliberately NOT config.json.** config.json keeps the
   `extensions.<id>` enable flags and is untouched by this feature. A record is
@@ -2145,8 +2186,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
   `hasBackgroundShell` from the latest board graph. Without a graph node, status
   and waitingReason are `null`, and the booleans are `false`. Conversation ids
-  (`liveSessionId` and `priorLiveSessionIds`) remain omitted. `waitingReason` on a
-  needs-you card is 'api-error' (a transient API error that the same prompt can
+  (`liveSessionId` and `priorLiveSessionIds`) remain omitted. `lastActivity` (1.89.0) uses
+  the latest graph's transcript activity, falling back to the stored mapping
+  value, then `null`. `createdAt` and `relaunchedAt` come from the mapping and
+  are `null` when absent. These timestamps are Unix milliseconds. `waitingReason`
+  on a needs-you card is 'api-error' (a transient API error that the same prompt can
   retry), 'api-error-blocking' (any other API error), and, from 1.61.0 for Claude,
   'permission' (a prompt) or 'auto-block'. 'auto-block' is Claude Code's timed
   auto-mode safety check, which denies itself when its countdown runs out, and
@@ -2406,9 +2450,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (capability `agents:headless`, 1.67.0) runs one tool-less one-shot and resolves a
   frozen `{ text, liveSessionId, agent, model, error }`. `prompt` goes in argv and
   `stdin` (a string, default empty) is piped in; every tool is off, and the user's own
-  settings and MCP servers are not loaded. Claude runs `claude -p` with its tools
-  disallowed; Codex runs `codex exec` in a read-only sandbox with its tool features
-  disabled and the user's `config.toml` ignored. With no `model` the run uses the
+  settings and MCP servers are not loaded. Claude runs `claude -p --tools ''`; Codex
+  runs `codex exec` in a read-only sandbox with its tool features disabled, a
+  one-model catalog that turns none of the model's tools on, and the user's
+  `config.toml` ignored, and fails the run when the model is missing from Codex's
+  catalog. With no `model` the run uses the
   **Background model** (Settings › Automation, Claude Haiku by default); an `agent`
   alone runs the Background model when it is that agent, otherwise that agent's own
   headless default. `timeoutMs` defaults to two minutes and is capped at ten. A failed

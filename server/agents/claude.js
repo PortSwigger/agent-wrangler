@@ -132,18 +132,12 @@ export function cleanClaudeEnv(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([k]) => !strip.has(k)));
 }
 
-// Every tool a headless one-shot is denied: it classifies or summarises what it
-// is handed on stdin and must never act on the machine.
-export const HEADLESS_DISALLOWED_TOOLS = [
-  'Bash', 'Read', 'Write', 'Edit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch',
-  'WebSearch', 'Task', 'Agent', 'TodoWrite', 'BashOutput', 'KillShell', 'Skill',
-  'SlashCommand',
-];
-
 // The adapter's `headless` capability (server/headless.js runs it): a tool-less
-// `claude -p` with the payload on stdin. The conversation id is a fresh uuid
-// passed as `--session-id`, not `--no-session-persistence`, so the transcript
-// survives and the usage scan bills it to whichever card it is recorded on.
+// `claude -p` (`--tools ''` turns off every built-in tool, `--strict-mcp-config`
+// with no config loads no MCP server) with the payload on stdin: it classifies
+// or summarises what it is handed and must never act on the machine. The
+// conversation id is a fresh uuid passed as `--session-id`, not
+// `--no-session-persistence`, so the transcript survives and the usage scan bills it to whichever card it is recorded on.
 // `--bare` is NOT an option: verified against the real binary, it reads only
 // ANTHROPIC_API_KEY and fails with api_error under OAuth/keychain auth.
 const claudeHeadless = {
@@ -157,7 +151,7 @@ const claudeHeadless = {
     args.push(
       '--strict-mcp-config',
       '--setting-sources', '',
-      '--disallowed-tools', HEADLESS_DISALLOWED_TOOLS.join(' '),
+      '--tools', '',
       '--session-id', liveSessionId,
       '--output-format', 'json',
       prompt,

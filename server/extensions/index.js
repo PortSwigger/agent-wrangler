@@ -1,5 +1,6 @@
 import path from 'node:path';
 import semver from 'semver';
+import { pinnedUpdateReason } from './provenance.js';
 import { readConfig, extensionEnabled, extensionSettings } from '../config-store.js';
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
@@ -560,12 +561,15 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // the board needs on every tick.
     origin: provenance?.originUrl || '',
     sha: provenance?.sha || '',
+    runningSha: provenance?.sha || '',
     // What is on disk NOW, from the live record, against `sha` above, which is
     // what this process loaded. They differ after an in-place update, whose code
     // only loads on a restart; `restartPending` is the board's persistent
     // "restart to load it" flag, surviving a reload that drops the install
     // reply's one-shot notice.
     installedSha: installed[id]?.sha || '',
+    pinnedRef: installed[id]?.ref || null,
+    autoUpdateBlocked: pinnedUpdateReason(installed[id]),
     restartPending: Boolean(external && provenance?.sha && installed[id]?.sha && installed[id].sha !== provenance.sha),
     // The auto-update opt-in, for the detail pane's switch. False for a
     // builtin or hand-placed entry, which has no record to carry it.
