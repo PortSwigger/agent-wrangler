@@ -12,7 +12,8 @@ import openModule from 'open';
 import { buildGraph, createWatcher, sessionLabel } from './state-reader.js';
 import { analyze, resolveResumeDir } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
-import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, knownRuntimes, findRuntime, takesStatusEvents } from './runtimes/index.js';
+import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, findRuntime, takesStatusEvents } from './runtimes/index.js';
+import { runtimeOffer, startupRuntimes } from './runtimes/offer.js';
 import { createStatusEventStore, createStatusEventHandler } from './status-events.js';
 import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
@@ -60,7 +61,7 @@ import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
 import { TerminalRegistry } from './terminal-registry.js';
 import { createShellSession, tmuxSessionAlive } from './shell-session.js';
 import { createExtTerminalOpener } from './ext-terminals.js';
-import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
+import { archiveCascade, descendantsOf, unpushedFor } from './control/handlers/archive.js';
 import { archiveTaskCascade } from './control/handlers/tasks.js';
 import { createTargets } from './control/targets.js';
 import { routeControlMessage, invalidateHandlerMap, deckActions } from './control/router.js';
@@ -379,15 +380,20 @@ const extWiring = {
   // memo the Usage panel reads, so an extension pricing cards never walks disk
   // on its own — see host-api/v1.js usageRead.
   scanUsage: scanAllDaily,
-  archiveSession: async (sessionId, { cascade = true } = {}) => {
+  archiveSession: async (sessionId, { cascade = true, allowUnpushed = false } = {}) => {
     const sessions = lastGraph?.sessions || [];
     const ids = [...(cascade ? descendantsOf(sessionId, sessions).map((d) => d.sessionId) : []), sessionId];
+    if (!allowUnpushed) {
+      const unpushed = await unpushedFor(ids, archiveCascadeCtx);
+      if (unpushed.length) return { archived: [], unclean: false, unpushed };
+    }
     const result = await archiveCascade(ids, archiveCascadeCtx);
     await rebuild();
     return { archived: ids, ...result };
   },
-  archiveTask: async (taskId) => {
-    const result = await archiveTaskCascade(taskId, archiveCascadeCtx);
+  archiveTask: async (taskId, { allowUnpushed = false } = {}) => {
+    const result = await archiveTaskCascade(taskId, archiveCascadeCtx, { allowUnpushed });
+    if (result?.unpushed) return { archived: false, sessionIds: [], unclean: false, unpushed: result.unpushed };
     await rebuild();
     return result ? { archived: true, sessionIds: result.sessionIds, unclean: result.unclean } : { archived: false, sessionIds: [], unclean: false };
   },
@@ -536,6 +542,22 @@ function activateExtension(id, { startSweeps = true } = {}) {
         cost: bind(rt.cost, () => null),
         launchStatus: bind(rt.launchStatus, () => null),
         validateModel: bind(rt.validateModel, () => `The "${rt.label}" runtime needs the "${id}" extension, which is not active.`),
+        ...(rt.location ? {
+          location: {
+            provision: bind(rt.location.provision, notActive),
+            open: bind(rt.location.open, notActive),
+            suspend: bind(rt.location.suspend, () => undefined),
+            resume: bind(rt.location.resume, notActive),
+            delete: bind(rt.location.delete, () => undefined),
+            unpushed: bind(rt.location.unpushed, notActive),
+            transcript: bind(rt.location.transcript, () => null),
+            diff: bind(rt.location.diff, notActive),
+            codexId: bind(rt.location.codexId, () => null),
+            ...(typeof rt.location.suspendIdleHours === 'function'
+              ? { suspendIdleHours: bind(rt.location.suspendIdleHours, () => undefined) }
+              : rt.location.suspendIdleHours === undefined ? {} : { suspendIdleHours: rt.location.suspendIdleHours }),
+          },
+        } : {}),
       }, id);
     }
     // Lifecycle: where a store's watcher or an event subscription is started.
@@ -870,7 +892,7 @@ function performScheduleAction(action, now, scheduledBy) {
   if (!action || action.kind === 'dispatch') {
     return runDispatch(action?.dispatch || {}, { sessionManager, taskStore, launchSource: 'schedule', scheduledBy }, now);
   }
-  return runSessionAction(action, { sessionManager, tmuxFor, socketFor });
+  return runSessionAction(action, { sessionManager, tmuxFor, socketFor, scheduledBy });
 }
 
 // Fire one schedule (shared by the ~30s tick and schedule-run-now): perform its
@@ -1002,6 +1024,7 @@ async function prAttachHandler(req, res, caller) {
     try { link = normalisePr({ url }); } catch { res.writeHead(400).end('bad url'); return; }
     const existing = sessionManager.getLinks(caller);
     if (existing.some((l) => linkMatches(l, link))) { res.writeHead(200).end('ok'); return; }
+    if (sessionManager.prLinkRefusal(caller, [link])) { res.writeHead(403).end('not one of this session\'s repos'); return; }
     sessionManager.setLinks(caller, [...existing, link]);
     res.writeHead(200).end('ok');
     pollPrStatuses({ scope: 'session', ownerId: caller }).catch(() => {}); // immediate status
@@ -1099,7 +1122,8 @@ function deckHandler(req, res) {
       deckId,
       name: os.hostname(),
       actions: deckActions().keys(),
-      runtimes: knownRuntimes().map((rt) => (rt.id === 'local' && localAgents ? { ...rt, agents: localAgents } : rt)),
+      runtimes: runtimeOffer().map((rt) => (rt.id === 'local' && localAgents ? { ...rt, agents: localAgents } : rt)),
+      offeredRuntimes: startupRuntimes(),
       extensions: ext.list,
       boardApi: HOST_API_VERSION,
     });
@@ -1289,6 +1313,7 @@ async function rebuildOnce() {
   graph.prModelFooter = prModelFooterEnabled();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();
+  graph.runtimeOffer = runtimeOffer().map(({ id, location, unavailable }) => ({ id, location, ...(unavailable ? { unavailable } : {}) }));
   // Settings › Background model, resolved: never null, a stored pair that can
   // no longer run reads back as the default it falls back to.
   graph.backgroundModel = backgroundModel();

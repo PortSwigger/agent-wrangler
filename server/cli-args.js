@@ -30,6 +30,10 @@ Options:
                      Board origins allowed to use the deck, comma-separated
                      (env AW_ALLOWED_ORIGINS, or config.json allowedOrigins),
                      e.g. http://localhost:7878
+  --runtimes <ids>   The runtimes this deck offers, comma-separated ids (env
+                     AW_RUNTIMES), read once at start; default every runtime.
+                     A deck offering only runtimes that run at a location
+                     starts nothing on its own machine.
   -h, --help         Show this help
   -v, --version      Show the version
 
@@ -47,6 +51,7 @@ const OPTIONS = {
   host: { type: 'string' },
   'deck-only': { type: 'boolean' },
   'allowed-origins': { type: 'string' },
+  runtimes: { type: 'string' },
 };
 
 // Returns { action: 'help' | 'version' | 'run', env } or { action: 'error', error }.
@@ -85,6 +90,12 @@ export function parseCliArgs(argv) {
       .find((o) => { try { return new URL(o).origin !== o.replace(/\/+$/, ''); } catch { return true; } });
     if (bad) return { action: 'error', error: `--allowed-origins takes origins like http://localhost:7878 (got '${bad}')` };
     env.AW_ALLOWED_ORIGINS = values['allowed-origins'];
+  }
+  if (values.runtimes !== undefined) {
+    const ids = values.runtimes.split(',').map((v) => v.trim()).filter(Boolean);
+    const bad = ids.find((id) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id));
+    if (!ids.length || bad) return { action: 'error', error: `--runtimes takes runtime ids separated by commas, like local,devcontainer (got '${bad ?? values.runtimes}')` };
+    env.AW_RUNTIMES = ids.join(',');
   }
   return { action: 'run', env };
 }

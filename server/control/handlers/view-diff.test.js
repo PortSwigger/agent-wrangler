@@ -230,3 +230,19 @@ test('view-diff: omits cwd on the reply when no drift was needed (backward compa
   await viewDiffHandler.handler({ type: 'view-diff', sessionId: 'S1' }, c);
   assert.equal('cwd' in JSON.parse(JSON.stringify(c.sent[0])), false);
 });
+
+test('view-diff: a location card\'s diff comes from its runtime hook, capped, and never from a folder here', async () => {
+  const asked = [];
+  const rt = { id: 'loc', label: 'Loc', location: { diff: async ({ ref, mode }) => { asked.push([ref, mode]); return { diff: 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n', dir: '/work/widgets' }; } } };
+  const c = ctx({ entry: { runtime: 'loc', location: { box: 1 }, cwd: tempRepo() } });
+  c.findRuntime = () => rt;
+  await viewDiffHandler.handler({ sessionId: 's', mode: 'branch', reqId: 4 }, c);
+  assert.deepEqual(asked, [[{ box: 1 }, 'branch']]);
+  assert.equal(c.sent[0].state, 'ok');
+  assert.equal(c.sent[0].files[0].path, 'x');
+  assert.deepEqual(c.sent[0].location, { dir: '/work/widgets' });
+  assert.equal(c.sent[0].reqId, 4);
+  rt.location.diff = async () => ({ files: [] });
+  await viewDiffHandler.handler({ sessionId: 's' }, c);
+  assert.deepEqual(c.sent[1], { type: 'diff', sessionId: 's', reqId: undefined, mode: 'working-tree', state: 'error', error: 'The runtime answered with a malformed diff.' });
+});

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDeckClient } from './deck-client.js';
 import { deckIdOf, stampDeck } from './card-key.js';
-import { createDeckList, createRemoteDecks, deckLabel, deckPickerOptions, deckRunsAgent, deckRuntimes, extensionDecks, mergeDeckGraphs, originOfUrl, remoteTaskView, routeDeck, scheduleActionForDeck, scopeCall, scopeReply, sessionsOnDeck } from './decks.js';
+import { createDeckList, createRemoteDecks, deckLabel, deckOfferSummary, deckPickerOptions, deckRunsAgent, deckRuntimes, extensionDecks, mergeDeckGraphs, originOfUrl, remoteTaskView, routeDeck, scheduleActionForDeck, scopeCall, scopeReply, sessionsOnDeck } from './decks.js';
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -317,4 +317,21 @@ test('a schedule for another deck names its task by that deck’s own id', () =>
   assert.equal(scheduleActionForDeck(unassigned, tasks), unassigned);
   const session = { kind: 'session', sessionId: 's1', message: '' };
   assert.equal(scheduleActionForDeck(session, tasks), session);
+});
+
+test('deckOfferSummary: the startup pick, else every runtime, each with why it cannot launch', () => {
+  assert.equal(deckOfferSummary(null), null);
+  const mixed = deckOfferSummary({ offeredRuntimes: null, runtimes: [
+    { id: 'local', label: 'Local (host)', agents: null },
+    { id: 'box', label: 'Box', agents: null, location: true, unavailable: 'Mixed deck.' },
+  ] });
+  assert.deepEqual(mixed, { fromOption: false, runtimes: [{ id: 'local', label: 'Local (host)' }, { id: 'box', label: 'Box', location: true, unavailable: 'Mixed deck.' }] });
+  const picked = deckOfferSummary({ offeredRuntimes: ['box', 'gone'], runtimes: [
+    { id: 'local', label: 'Local (host)', agents: null, unavailable: 'Not offered.' },
+    { id: 'box', label: 'Box', agents: null, location: true },
+  ] });
+  assert.equal(picked.fromOption, true);
+  assert.deepEqual(picked.runtimes[0], { id: 'box', label: 'Box', location: true });
+  assert.equal(picked.runtimes[1].id, 'gone');
+  assert.match(picked.runtimes[1].unavailable, /Not registered/);
 });

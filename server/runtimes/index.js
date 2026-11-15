@@ -121,6 +121,35 @@ import { devcontainer } from './devcontainer.js';
 //                whose agent runs elsewhere to install (as devcontainer installs
 //                the PR hook). Ignored for a buildLaunch runtime and for an agent
 //                without status hooks (see takesStatusEvents).
+//   location     (optional) the session runs at a location core cannot see (another
+//                machine, a cloud VM). Core never reads, writes or runs anything there:
+//                the runtime's wrapLaunch gets the agent there (copying what it needs
+//                and pointing the agent's loopback URLs at this deck), status comes
+//                from readLive/analyze, and every other fact comes back from a hook
+//                below, size-capped and shape-checked by server/locations/index.js.
+//     provision  async ({ sessionId, cwd, agent, ext, repos, branch, base }) → a JSON-able
+//                ref (at most 16 KiB), stored as `entry.location`. Once per dispatch,
+//                after the last refusal and before anything is created.
+//     open       (optional) async ({ ref, entry, phase }) → { cwd? } | void. Before every
+//                launch there ('dispatch', 'resume', 'fork'); `cwd` is the absolute
+//                location path the agent starts in, stored on the card.
+//     suspend    (optional) async ({ ref, entry }): stop the compute, keep its storage.
+//                Idle suspend, and a clean exit.
+//     resume     (optional) async ({ ref, entry }): start it again, before every resume
+//                or fork there; a quick no-op when it is already running.
+//     delete     (optional) async ({ ref, entry }): delete compute and storage. Archive
+//                (after the unpushed check), forget, and a dispatch that fails.
+//                suspend and delete are withheld while another card still holds the
+//                same ref (a fork shares its parent's).
+//     unpushed   (optional) async ({ ref, entry }) → [{ repo, dir, commits: [{ sha, subject }], error? }]:
+//                what archive would lose. Absent ⇒ nothing to check.
+//     suspendIdleHours (optional) number, or ({ ref, entry }) → number|undefined. 0 is off.
+//     transcript (optional) async ({ ref, entry, liveSid }) → a Claude transcript's JSONL
+//                text, for cost and activity when the runtime has no `analyze`.
+//     diff       (optional) async ({ ref, entry, mode }) → { diff, baseRef?, dir? } | null:
+//                the unified diff the diff panel shows ('working-tree' or 'branch').
+//     codexId    (optional) async ({ ref, entry, since, excludeIds }) → the Codex
+//                conversation id the card's agent minted, or null.
 //
 // Per-runtime POLICY (comms severing, teardown timing) is deliberately NOT in the
 // contract yet: no current runtime needs it, so adding it now would be dead code.
@@ -183,8 +212,8 @@ export function findRuntime(id) {
 // for local); `extId` only on an extension's.
 export function knownRuntimes() {
   return [
-    ...ALL.map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt) })),
-    ...[...registered.values()].map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt), extId: rt.extId })),
+    ...ALL.map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt), location: Boolean(rt.location) })),
+    ...[...registered.values()].map((rt) => ({ id: rt.id, label: rt.label, agents: runtimeAgents(rt), extId: rt.extId, location: Boolean(rt.location) })),
   ];
 }
 

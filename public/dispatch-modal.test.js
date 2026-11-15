@@ -1,4 +1,5 @@
 import { createAdditionalFolders } from './additional-folders.js';
+import { runtimeHasLocation } from './dispatch-repos.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -183,19 +184,50 @@ function runtimeHarness(agent = 'claude') {
   const add = { addEventListener() {} };
   const additionalFolders = createAdditionalFolders({ list: {}, add, send() {} });
   const note = { hidden: true, classList: { toggle: (_name, hidden) => { note.hidden = hidden; } } };
+  const toggled = (hidden) => { const el = { hidden, classList: { toggle: (_name, h) => { el.hidden = h; } } }; return el; };
+  const folderRow = toggled(false);
+  const reposRow = toggled(true);
+  const worktree = { checked: false };
+  const runtimeNote = { textContent: '', hidden: true, classList: { toggle: (_name, h) => { runtimeNote.hidden = h; } } };
   const document = {
-    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': note })[id],
+    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': note, 'm-folder-row': folderRow, 'm-repos-row': reposRow, 'm-worktree': worktree, 'm-runtime-note': runtimeNote })[id],
     createElement: () => stubOption(),
   };
   const app = loadApp(
-    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function syncExtRuntimeOptions() {'],
-    ['syncExtRuntimeOptions', 'syncRuntimeToggle', 'setExtensions'],
-    'let latestExtensions = []; let dispatchDeck = null; const setExtensions = (v) => { latestExtensions = v; };',
-    { document, additionalFolders },
+    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function selectedRuntimeHasLocation() {', 'function syncCodexPolicyRow(agent) {', 'function syncExtRuntimeOptions() {', 'function applyRuntimeOffer() {', 'function firstOpenRuntime() {', 'function listDispatchRuntimes() {', 'function runtimeOwnLaunch(extId, runtimeId) {', 'function runtimeOwnsModel(extId, runtimeId) {', 'function runtimeIdHasLocation(runtimeId) {'],
+    ['syncExtRuntimeOptions', 'syncRuntimeToggle', 'setExtensions', 'setOffer', 'firstOpenRuntime', 'listDispatchRuntimes'],
+    'const availableAgents = [{ id: \'claude\' }]; let latestExtensions = []; let dispatchDeck = null; let ownRuntimeOffer = []; const remoteDecks = { entryFor: () => null }; const deckRuntimes = () => []; const setExtensions = (v) => { latestExtensions = v; }; const setOffer = (v) => { ownRuntimeOffer = v; };',
+    { document, additionalFolders, runtimeHasLocation },
   );
-  return { rt, add, note, ...app };
+  return { rt, add, note, runtimeNote, folderRow, reposRow, worktree, ...app };
 }
 const ext = (over = {}) => ({ id: 'sbx', enabled: true, quarantine: null, runtimes: [{ id: 'sandbox', label: 'Sandbox <b>' }], ...over });
+
+test('a location runtime the deck cannot launch on is disabled with its reason, and one it does not offer is hidden', () => {
+  const { rt, runtimeNote, syncExtRuntimeOptions, syncRuntimeToggle, setExtensions, setOffer, listDispatchRuntimes } = runtimeHarness();
+  setExtensions([ext({ runtimes: [{ id: 'sandbox', label: 'Sandbox', location: true }] })]);
+  setOffer([{ id: 'local', location: false }, { id: 'devcontainer', location: false }, { id: 'sandbox', location: true, unavailable: 'Mixed deck: pick runtimes.' }]);
+  syncExtRuntimeOptions();
+  syncRuntimeToggle();
+  const box = rt.options.find((o) => o.value === 'sandbox');
+  assert.equal(box.disabled, true);
+  assert.equal(box.hidden, false);
+  assert.equal(box.textContent, 'Sandbox — unavailable');
+  assert.equal(box.dataset.unavailable, 'Mixed deck: pick runtimes.');
+  assert.equal(runtimeNote.textContent, 'Mixed deck: pick runtimes.');
+  assert.equal(runtimeNote.hidden, false);
+  assert.deepEqual(listDispatchRuntimes().map((r) => [r.id, r.label, r.location, r.unavailable]), [
+    ['local', '', false, null], ['devcontainer', '', false, null], ['sandbox', 'Sandbox', true, 'Mixed deck: pick runtimes.'],
+  ], 'api.runtimes() says why');
+
+  setOffer([{ id: 'local', location: false, unavailable: 'Not offered.' }, { id: 'devcontainer', location: false, unavailable: 'Not offered.' }, { id: 'sandbox', location: true }]);
+  syncExtRuntimeOptions();
+  syncRuntimeToggle();
+  assert.deepEqual(rt.options.map((o) => [o.value, Boolean(o.hidden), o.disabled]), [['local', true, true], ['devcontainer', true, true], ['sandbox', false, false]]);
+  assert.equal(box.textContent, 'Sandbox');
+  assert.equal(rt.value, 'sandbox', 'a hidden runtime is never left selected');
+  assert.equal(runtimeNote.hidden, true);
+});
 
 test('an enabled, unquarantined extension\'s runtimes are appended to #m-runtime, tagged data-ext', () => {
   const { rt, syncExtRuntimeOptions, setExtensions } = runtimeHarness();
@@ -263,7 +295,7 @@ test('openModal adds the extension runtimes BEFORE restoring a saved runtime, an
   const restore = open.indexOf('rtSel.value = wantRuntime;');
   assert.ok(sync >= 0 && restore > sync, 'the picked deck\'s runtimes must be in place before the runtime prefill');
   assert.match(appDecl('function syncDispatchRuntimes() {'), /syncExtRuntimeOptions\(\)/, 'the board\'s own deck adds its extension runtimes');
-  assert.match(open.slice(restore), /if \(rtSel\.value !== wantRuntime\) rtSel\.value = 'local';/);
+  assert.match(open.slice(restore), /if \(rtSel\.value !== wantRuntime \|\| rtSel\.options\[rtSel\.selectedIndex\]\?\.disabled\) rtSel\.value = firstOpenRuntime\(\);/);
   assert.match(appDecl('function syncClientExtensions() {'), /syncExtRuntimeOptions\(\);/);
 });
 
@@ -276,9 +308,9 @@ function prefillRuntime({ agent = 'claude', exts = [], defaultRuntime, schedule 
   h.syncExtRuntimeOptions();
   const open = appDecl('function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {');
   const from = open.indexOf("  const rtSel = document.getElementById('m-runtime');");
-  const to = open.indexOf("rtSel.value = 'local';", from) + "rtSel.value = 'local';".length;
+  const to = open.indexOf('rtSel.value = firstOpenRuntime();', from) + 'rtSel.value = firstOpenRuntime();'.length;
   const document = { getElementById: (id) => ({ 'm-runtime': h.rt })[id] };
-  new Function('document', 'defaultRuntime', 'schedule', 'd', open.slice(from, to))(document, defaultRuntime, schedule, d);
+  new Function('document', 'defaultRuntime', 'schedule', 'd', 'firstOpenRuntime', open.slice(from, to))(document, defaultRuntime, schedule, d, h.firstOpenRuntime);
   h.syncRuntimeToggle();
   return h.rt.value;
 }
@@ -441,6 +473,26 @@ test('extension runtimes disable additional folder grants until Local is selecte
   assert.equal(note.hidden, true);
 });
 
+test('a runtime with a location swaps the folder and worktree for the GitHub repos field', () => {
+  const { rt, folderRow, reposRow, worktree, syncRuntimeToggle, syncExtRuntimeOptions, setExtensions } = runtimeHarness();
+  setExtensions([ext({ runtimes: [{ id: 'sandbox', label: 'Sandbox', location: true }, { id: 'box', label: 'Box' }] })]);
+  syncExtRuntimeOptions();
+  worktree.checked = true;
+  rt.value = 'sandbox';
+  syncRuntimeToggle();
+  assert.equal(folderRow.hidden, true);
+  assert.equal(reposRow.hidden, false);
+  assert.equal(worktree.checked, false);
+  rt.value = 'box';
+  syncRuntimeToggle();
+  assert.equal(folderRow.hidden, false);
+  assert.equal(reposRow.hidden, true);
+  rt.value = 'local';
+  syncRuntimeToggle();
+  assert.equal(folderRow.hidden, false);
+  assert.equal(reposRow.hidden, true);
+});
+
 // The provider metadata the browser gets, built from the real adapters.
 const codexPolicyMetadata = (id) => providerMetadata(adapterFor(id));
 
@@ -457,18 +509,18 @@ test('Codex quick launch restores retained grants when switching from a non-loca
         'm-runtime': rt, 'm-model': model,
         'm-add-dirs-note': { classList: { toggle() {} } },
         'm-codex-policy-row': { classList: { toggle() {} } },
-      })[id] || { value: '', checked: false },
+      })[id] || { value: '', checked: false, classList: { toggle() {} } },
     };
     const additionalFolders = createAdditionalFolders({ list: element(), add: element(), document, send() {} });
     additionalFolders.reset(['/extra']);
     const app = loadApp(
-      ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
+      ['function quickLaunch(value) {', 'function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function selectedRuntimeHasLocation() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {', 'function firstOpenRuntime() {'],
       ['quickLaunch', 'syncRuntimeToggle', 'dispatched'],
       `let modelEdited = false; const dispatchMode = 'standard'; const reviewMode = false; const dispatchDeck = null;
        const autoCompactTokens = undefined; const parentSessionId = null;
        let codexPolicyDraftWasCodex = false; const codexPolicyDefaults = {};
        const dispatched = []; const submitDispatch = () => dispatched.push(readCoreDispatchFields());`,
-      { document, additionalFolders, modal: { classList: { contains: () => false } },
+      { document, additionalFolders, runtimeHasLocation, latestExtensions: [], modal: { classList: { contains: () => false } },
         scheduleMode: () => false, cwdField: () => '/repo', populateEffortSelect() {}, rememberDispatchPick() {},
         providerMetadataFor: codexPolicyMetadata,
         fillCodexPolicyControls() {}, readCodexPolicyControls: () => ({ sandbox: 'workspace-write', approval: 'never', approveForMe: false, bypass: false }) },
@@ -505,15 +557,15 @@ async function codexPolicyHarness() {
     querySelector: (sel) => ctl[sel.slice(1)],
   };
   const document = {
-    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': { classList: { toggle() {} } }, 'm-codex-policy-row': row })[id] || { value: '', checked: false },
+    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': { classList: { toggle() {} } }, 'm-codex-policy-row': row })[id] || { value: '', checked: false, classList: { toggle() {} } },
   };
   const app = loadApp(
-    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
+    ['function runtimeAllowsAgent(opt, agent) {', 'function syncRuntimeToggle() {', 'function selectedRuntimeHasLocation() {', 'function syncCodexPolicyRow(agent) {', 'function takesCodexPolicy(agent) {', 'function readCoreDispatchFields() {'],
     ['syncRuntimeToggle', 'readCoreDispatchFields', 'setDefaults'],
     `const dispatchMode = 'standard'; const reviewMode = false; const autoCompactTokens = undefined; const parentSessionId = null;
      let codexPolicyDraftWasCodex = false; let codexPolicyDefaults = {};
      const setDefaults = (v) => { codexPolicyDefaults = v; };`,
-    { document, additionalFolders: { setEnabled() {}, values: () => [] }, cwdField: () => '/repo', providerMetadataFor: codexPolicyMetadata, ...field },
+    { document, additionalFolders: { setEnabled() {}, values: () => [] }, runtimeHasLocation, latestExtensions: [], cwdField: () => '/repo', providerMetadataFor: codexPolicyMetadata, ...field },
   );
   return { ...app, model, ctl, rowHidden: () => hidden.has('row') };
 }
@@ -1184,21 +1236,21 @@ test('api.openDispatch without cwd or images leaves the task default and adopts 
 });
 
 
-test('the client runtime list exposes ownLaunch for extension runtimes and false for built-ins', () => {
+test('the client runtime list exposes ownLaunch and location for extension runtimes and false for built-ins', () => {
   const runtime = stubSelect(['local', 'devcontainer']);
   for (const id of ['own', 'wrapped']) {
     const option = runtime.appendChild(stubOption(id));
     option.dataset.ext = 'toy';
   }
-  const heads = ['function listDispatchRuntimes() {', 'function runtimeOwnsModel(extId, runtimeId) {', 'function runtimeAllowsAgent(opt, agent) {', 'function runtimeOwnLaunch(extId, runtimeId) {'];
+  const heads = ['function listDispatchRuntimes() {', 'function runtimeOwnsModel(extId, runtimeId) {', 'function runtimeAllowsAgent(opt, agent) {', 'function runtimeOwnLaunch(extId, runtimeId) {', 'function runtimeIdHasLocation(runtimeId) {'];
   const app = loadApp(heads, ['listDispatchRuntimes'], `
     const dispatchDeck = null;
     const availableAgents = [{ id: 'claude' }, { id: 'codex' }];
-    const latestExtensions = [{ id: 'toy', runtimes: [{ id: 'own', ownLaunch: true, agents: ['claude', 'codex'] }, { id: 'wrapped', ownLaunch: false }] }];
+    const latestExtensions = [{ id: 'toy', runtimes: [{ id: 'own', ownLaunch: true, location: true, agents: ['claude', 'codex'] }, { id: 'wrapped', ownLaunch: false }] }];
   `, { document: { getElementById: () => runtime } });
-  assert.deepEqual(app.listDispatchRuntimes().map(({ id, ownLaunch }) => ({ id, ownLaunch })), [
-    { id: 'local', ownLaunch: false }, { id: 'devcontainer', ownLaunch: false },
-    { id: 'own', ownLaunch: true }, { id: 'wrapped', ownLaunch: false },
+  assert.deepEqual(app.listDispatchRuntimes().map(({ id, ownLaunch, location }) => ({ id, ownLaunch, location })), [
+    { id: 'local', ownLaunch: false, location: false }, { id: 'devcontainer', ownLaunch: false, location: false },
+    { id: 'own', ownLaunch: true, location: true }, { id: 'wrapped', ownLaunch: false, location: false },
   ]);
 });
 

@@ -1,3 +1,5 @@
+import { deckOfferSummary } from './decks.js';
+
 // Settings › Decks: the board's deck list (public/decks.js), with each deck's
 // connection status. Names and colours save as they change; every browser on
 // the board sees the change through the board server's deck list stream.
@@ -40,6 +42,21 @@ function statusChip(d) {
   return el('span', { className: `deck-status ${d.duplicate ? 'incompatible' : d.status}`, textContent: deckStatusText(d), title: deckStatusTitle(d) });
 }
 
+function offerLine(d) {
+  const offer = deckOfferSummary(d.descriptor);
+  if (!offer) return null;
+  const line = el('div', { className: 'deck-runtimes' },
+    el('span', { className: 'deck-runtimes-label', textContent: offer.fromOption ? 'Runtimes (set with --runtimes):' : 'Runtimes (every runtime it has):' }));
+  for (const r of offer.runtimes) {
+    line.append(el('span', {
+      className: `deck-runtime${r.unavailable ? ' unavailable' : ''}`,
+      textContent: `${r.label}${r.location ? ' · location' : ''}${r.unavailable ? ' · unavailable' : ''}`,
+      title: r.unavailable || '',
+    }));
+  }
+  return line;
+}
+
 function deckRow(d, bridge) {
   const save = (patch) => bridge.change({ op: 'update', id: d.id, ...patch }).catch((err) => bridge.toast(err.message, true));
   const colour = el('input', { type: 'color', value: d.entry.colour || '#7a8699', title: 'Deck colour', ariaLabel: `Colour for ${d.name}` });
@@ -54,6 +71,8 @@ function deckRow(d, bridge) {
     remove.addEventListener('click', () => bridge.change({ op: 'remove', id: d.id }).catch((err) => bridge.toast(err.message, true)));
     row.append(remove);
   }
+  const offer = offerLine(d);
+  if (offer) row.append(offer);
   return row;
 }
 

@@ -254,3 +254,18 @@ test('SDK boundary exposes Codex approval_policy and rejects invalid values befo
     await server.close();
   }
 });
+
+test('a session at a location is offered exactly the tools any other session is', async () => {
+  const entries = { LOC: { runtime: 'testloc', location: { box: 1 }, repos: ['acme/widgets'], cwd: '/w' }, HOST: { cwd: '/a' } };
+  const deps = { ...fakeDeps(), sessionManager: { entryFor: (id) => entries[id] ?? null } };
+  const tools = activeTools({ ext: NO_EXT });
+  const names = async (caller) => {
+    const { client, server } = await connect(deps, caller, { tools });
+    const list = (await client.listTools()).tools.map((t) => t.name).sort();
+    await server.close();
+    return list;
+  };
+  const atLocation = await names('LOC');
+  assert.deepEqual(atLocation, await names('HOST'));
+  assert.equal(atLocation.length, tools.length);
+});

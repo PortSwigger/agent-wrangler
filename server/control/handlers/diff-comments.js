@@ -1,6 +1,5 @@
 import { adapterFor } from '../../agents/index.js';
-import fs from 'node:fs';
-import os from 'node:os';
+import { wakeDir } from '../../wake-dir.js';
 import { sendText as defaultSendText } from '../../tmux-scraper.js';
 import { waitForPaneReady } from './resume.js';
 import { linkedPrForUrl } from './pr-links.js';
@@ -93,10 +92,7 @@ export const diffCommentsHandler = {
         // Resume from the launch dir (bucketed under the LIVE id, per the resume
         // rules), recreating a cleaned-up worktree dir so the relaunch isn't
         // stranded in ~. NO intent — see the note above.
-        let dir = await adapterFor(entry.agent).history.resolveResumeDir(entry.liveSessionId || sessionId, { entryCwd: entry.cwd });
-        if (!dir || !fs.existsSync(dir)) {
-          try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
-        }
+        const dir = await wakeDir(entry, sessionId, (id, opts) => adapterFor(entry.agent).history.resolveResumeDir(id, opts));
         await ctx.sessionManager.resume(sessionId, dir, { reason: 'diff-comment' });
         await ctx.rebuild?.();
         target = ctx.tmuxFor(sessionId);
