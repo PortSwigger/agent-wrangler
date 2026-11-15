@@ -2,12 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createBoardServer } from '../../http-handler.js';
 import {
   extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler,
   extSetAutoUpdateHandler, extSetEarlyAdopterHandler, autoUpdateExtension,
   _resetInstallLockForTests, _setInstallRunnersForTests, _agePendingConsentForTests,
 } from './extensions-install.js';
-import { externalDir, tmpDir, readProvenance, putRecord } from '../../extensions/provenance.js';
+import { externalDir, installedDir, generationRoot, tmpDir, readProvenance, putRecord } from '../../extensions/provenance.js';
 import { loadExtensions, registerExtension, unregisterExtension } from '../../extensions/index.js';
 import { discoverExternal } from '../../extensions/external.js';
 import { setExtensionInstallsOffForTest, INSTALLS_OFF_MESSAGE } from '../../extensions/installs.js';
@@ -146,7 +148,7 @@ test('ext-install discloses and installs NOTHING; ext-consent completes it', asy
   assert.deepEqual(c.loaded.list.map((e) => e.id), ['notes']);
   assert.deepEqual(c.calls.activated, ['notes']);
   assert.equal(c.calls.changed, 1, 'the router map and the client announcement both ride this');
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')));
   const record = readProvenance().notes;
   assert.equal(record.originUrl, URL_NOTES);
   assert.deepEqual(record.dependencies, ['deep@2.0.0', 'left@1.0.0']);
@@ -264,7 +266,7 @@ test('a requires widened in place on disk after consent quarantines at the next 
   // earlier test already discovered would serve the OLD module. Real discovery
   // runs once per process, so this is a test artefact rather than a product one.
   await install(ctx(), { id: 'widener', requires: ['tasks:read'] });
-  const file = path.join(externalDir(), 'widener', 'index.js');
+  const file = path.join(installedDir('widener', readProvenance().widener), 'index.js');
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('["tasks:read"]', "['tasks:read','sessions:kill']"));
   const found = await discoverExternal();
   assert.match(found[0].quarantine, /widened-and-unconsented requires \(sessions:kill\)/);
@@ -274,10 +276,13 @@ test('a requires widened in place on disk after consent quarantines at the next 
 test('ext-uninstall removes the directory and the record, keeps store data, and refuses a builtin', async () => {
   reset();
   await install(ctx());
+  const installed = installedDir('notes', readProvenance().notes);
   const c = ctx([{ id: 'notes', external: true }, { id: 'shipped', external: false }]);
   await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c);
   assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
   assert.equal(readProvenance().notes, undefined);
+  assert.equal(fs.existsSync(installed), false);
+  assert.equal(fs.existsSync(generationRoot('notes')), false);
   assert.equal(reply(c, 'ext-uninstall-done').restartRequired, true, 'the module Node already cached is what the restart reclaims');
   // Deregistered immediately, whatever the module cache still holds.
   assert.deepEqual(c.loaded.list.map((e) => e.id), ['shipped']);
@@ -406,7 +411,7 @@ test('installing over an id that already has a row is an update: restart, not li
   assert.equal(c.calls.broadcasts.at(-1).restartRequired, true, 'the progress line says so too');
   assert.deepEqual(c.calls.activated, [], 'the new module is never brought up beside the old one');
   assert.equal(c.calls.changed, 0);
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')), 'the files still land');
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')), 'the files still land');
   reset();
 });
 
@@ -481,7 +486,7 @@ test('an update needing a newer host API is refused before consent, and the inst
   assert.equal(c.calls.broadcasts.at(-1).phase, 'failed', 'the failed phase releases the lock and moves Update all on');
   assert.deepEqual(fs.readdirSync(tmpDir()), [], 'the staging clone is discarded');
   assert.equal(readProvenance().notes.sha, installedSha);
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')));
   // The lock was released, so the next install proceeds.
   assert.ok(await disclose(ctx()));
   reset();
@@ -515,7 +520,7 @@ test('a range only the manifest declares is still enforced at consent, before th
   assert.equal(reply(c, 'ext-install-done'), undefined);
   assert.match(reply(c, 'ext-install-incompatible').message, /requires a newer Agent Wrangler/);
   assert.equal(readProvenance().notes.sha, installedSha);
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')));
   assert.deepEqual(fs.readdirSync(tmpDir()), []);
   assert.equal(c.calls.rebuild, 0);
   reset();
@@ -861,7 +866,7 @@ test('installs off: install, update and uninstall are refused and nothing is clo
   assert.deepEqual(await autoUpdateExtension('notes', (putRecord({ ...before, autoUpdate: true }), c)), { applied: false, reason: INSTALLS_OFF_MESSAGE });
 
   assert.equal(cloned, 0);
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')), 'the installed extension is left in place');
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')), 'the installed extension is left in place');
   assert.equal(readProvenance().notes.sha, before.sha);
   assert.deepEqual(c.calls.replies, []);
   assert.deepEqual(c.calls.deactivated, []);
@@ -908,11 +913,110 @@ test('without the option a deck still installs, updates and uninstalls', async (
   reset();
   setExtensionInstallsOffForTest(null);
   await install(ctx());
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')));
   const c = ctx([{ id: 'notes', external: true }]);
   await install(c, { sha: 'd'.repeat(40) });
   assert.equal(readProvenance().notes.sha, 'd'.repeat(40));
   await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c);
   assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
   reset();
+});
+for (const legacy of [false, true]) {
+  test(`updates preserve same-URL assets and lazy imports (${legacy ? 'legacy' : 'generation'} install)`, async () => {
+    reset();
+    const id = legacy ? 'legacy-notes' : 'generation-notes';
+    const cloneVersion = (version) => async (url, dest) => {
+      await fakeClone({ id, deps: false, lock: false })(url, dest);
+      fs.writeFileSync(path.join(dest, 'index.js'), `export default {
+        id: '${id}', label: 'Notes', defaultEnabled: true, client: 'public/index.js',
+        load: () => import('./lazy.js'),
+      };`);
+      fs.writeFileSync(path.join(dest, 'lazy.js'), `export const version = '${version}';`);
+      fs.mkdirSync(path.join(dest, 'public'), { recursive: true });
+      for (const file of ['index.js', 'nested.js', 'style.css']) {
+        fs.writeFileSync(path.join(dest, 'public', file), version);
+      }
+    };
+    const stage = async (c, version) => {
+      c.calls.replies.length = 0;
+      _setInstallRunnersForTests({ clone: cloneVersion(version), head: async () => version.repeat(40), npm: async () => {}, relation: async () => 'upgrade', commits: async () => ({ commits: [], truncated: false }) });
+      await extInstallHandler.handler({ url: URL_NOTES }, c);
+      await extConsentHandler.handler({ tempId: reply(c, 'ext-install-disclosure').tempId, approve: true }, c);
+    };
+    let c;
+    if (legacy) {
+      const dir = path.join(externalDir(), id);
+      await cloneVersion('a')(URL_NOTES, dir);
+      putRecord({ id, originUrl: URL_NOTES, sha: 'a'.repeat(40), requires: [] });
+      c = ctx(await discoverExternal());
+    } else {
+      c = ctx();
+      await stage(c, 'a');
+    }
+    const runningDir = c.loaded.dirs[id];
+    const running = (await import(pathToFileURL(path.join(runningDir, 'index.js')).href)).default;
+    const server = createBoardServer({ extensionAssets: (name) => c.loaded.dirs[name] || null });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const base = `http://127.0.0.1:${server.address().port}/ext/${id}`;
+      const asset = async (file) => {
+        const res = await fetch(`${base}/${file}?v=running-a`);
+        assert.equal(res.status, 200);
+        return res.text();
+      };
+      assert.equal(await asset('index.js'), 'a');
+      await stage(c, 'b');
+      assert.equal(await asset('index.js'), 'a', 'the same versioned URL must keep the same bytes');
+      await stage(c, 'c');
+      assert.equal(await asset('nested.js'), 'a', 'a first fetch of a nested module uses the running generation');
+      assert.equal(await asset('style.css'), 'a');
+      assert.equal((await running.load()).version, 'a', 'a first lazy import uses the running generation');
+      assert.equal(c.loaded.dirs[id], runningDir);
+      assert.equal(c.loaded.list[0].provenance.sha, 'a'.repeat(40));
+      assert.equal(readProvenance()[id].sha, 'c'.repeat(40));
+      const next = await discoverExternal();
+      assert.equal(next.length, 1);
+      assert.notEqual(next[0].dir, runningDir);
+      assert.equal(fs.readFileSync(path.join(next[0].dir, 'public/index.js'), 'utf8'), 'c');
+      assert.equal((await next[0].load()).version, 'c');
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      reset();
+    }
+  });
+}
+
+test('reinstalling the same commit uses a new path and leaves the running generation intact', async () => {
+  reset();
+  const c = ctx();
+  await install(c);
+  const original = installedDir('notes', readProvenance().notes);
+  c.calls.replies.length = 0;
+  await install(c);
+  const selected = installedDir('notes', readProvenance().notes);
+  assert.notEqual(selected, original);
+  assert.equal(c.loaded.dirs.notes, original);
+  assert.ok(fs.existsSync(path.join(original, 'index.js')));
+  assert.ok(fs.existsSync(path.join(selected, 'index.js')));
+  reset();
+});
+
+test('a failed receipt publication preserves the prior install and removes the unpublished generation', async () => {
+  reset();
+  const c = ctx();
+  await install(c);
+  const before = readProvenance().notes;
+  c.calls.replies.length = 0;
+  const disclosure = await disclose(c, { sha: 'd'.repeat(40) });
+  const blocked = path.join(DATA_DIR, 'extensions.json.tmp');
+  fs.mkdirSync(blocked);
+  try {
+    await assert.rejects(() => extConsentHandler.handler({ tempId: disclosure.tempId, approve: true }, c), /EISDIR/);
+    assert.deepEqual(readProvenance().notes, before);
+    assert.equal(c.loaded.dirs.notes, installedDir('notes', before));
+    assert.ok(fs.existsSync(path.join(c.loaded.dirs.notes, 'index.js')));
+    assert.deepEqual(fs.readdirSync(generationRoot('notes')), [before.generation]);
+    assert.deepEqual(fs.readdirSync(tmpDir()), []);
+  } finally { fs.rmSync(blocked, { recursive: true, force: true }); reset(); }
 });

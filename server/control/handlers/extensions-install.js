@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import semver from 'semver';
 import { validateManifest } from '../../extensions/index.js';
-import { externalDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord, setAutoUpdate, setEarlyAdopter, trackedBranch, pinnedUpdateReason } from '../../extensions/provenance.js';
+import { externalDir, generationRoot, generationDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord, setAutoUpdate, setEarlyAdopter, trackedBranch, pinnedUpdateReason } from '../../extensions/provenance.js';
 import { unconsentedCapabilities, admitExternal, importViolation } from '../../extensions/external.js';
 import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, assertExactRef, commitRelation, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
 import { HOST_API_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
@@ -422,35 +422,38 @@ export const extConsentHandler = {
         refuseIncompatible(ctx, { id: declared.id, label: declared.label, range, reason: mismatch });
         return;
       }
-      const dest = safeExtPath(manifest.id);
+      const generation = msg.tempId;
+      const dest = generationDir(manifest.id, generation);
       // Anything with a row already — an update, a reinstall over a live
       // install, or a fix-by-reinstall of a QUARANTINED one — takes the restart
       // path. Read BEFORE the rename, though nothing here can change it.
       const registered = ctx.ext.list.some((e) => e.id === manifest.id);
-      // Replacing an existing install (an update) is a remove-then-rename
-      // rather than a merge: a stale file from the previous version left in
-      // place is a version nobody shipped. On the update path the live code
-      // keeps running from the process's module cache until restart regardless.
-      rmQuiet(dest);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.renameSync(dir, dest);
-      putRecord({
-        id: manifest.id,
-        originUrl: url,
-        sha,
-        ...(ref === undefined ? {} : { ref }),
-        installedAt: new Date().toISOString(),
-        // The CONSENTED set — the DISCLOSED list, not the manifest's, because
-        // that is what the human saw and approved. The two are asserted equal
-        // or narrower above, and external.js re-checks the on-disk manifest
-        // against this record at every boot.
-        requires: [...declared.requires],
-        dependencies: deps.all,
-        // An update keeps the human's auto-update and early-adopter opt-ins; a
-        // fresh install (no record yet) starts with both off.
-        autoUpdate: recordFor(manifest.id)?.autoUpdate === true,
-        earlyAdopterBranch: declared.earlyAdopterBranch,
-        earlyAdopter: recordFor(manifest.id)?.earlyAdopter === true,
-      });
+      try {
+        putRecord({
+          id: manifest.id,
+          originUrl: url,
+          sha,
+          generation,
+          ...(ref === undefined ? {} : { ref }),
+          installedAt: new Date().toISOString(),
+          // The CONSENTED set — the DISCLOSED list, not the manifest's, because
+          // that is what the human saw and approved. The two are asserted equal
+          // or narrower above, and external.js re-checks the on-disk manifest
+          // against this record at every boot.
+          requires: [...declared.requires],
+          dependencies: deps.all,
+          // An update keeps the human's auto-update and early-adopter opt-ins; a
+          // fresh install (no record yet) starts with both off.
+          autoUpdate: recordFor(manifest.id)?.autoUpdate === true,
+          earlyAdopterBranch: declared.earlyAdopterBranch,
+          earlyAdopter: recordFor(manifest.id)?.earlyAdopter === true,
+        });
+      } catch (err) {
+        rmQuiet(dest);
+        throw err;
+      }
       log(`[agent-wrangler] extension ${manifest.id} installed from ${url}${branch ? ` (early-adopter branch ${branch} if present)` : ''} at ${sha.slice(0, 8)}`);
       if (registered) {
         const runningSha = ctx.ext.list.find((e) => e.id === manifest.id)?.provenance?.sha || '';
@@ -495,6 +498,7 @@ export const extUninstallHandler = {
     ctx.ext.deactivate(id);
     ctx.ext.unregister(id, { remove: true });
     rmQuiet(dest);
+    rmQuiet(generationRoot(id));
     removeRecord(id);
     ctx.ext.changed();
     // Whatever the extension persisted under DATA_DIR stays — not as retention,

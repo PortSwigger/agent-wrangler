@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { externalDir, readProvenance, tmpDir } from './provenance.js';
+import { externalDir, generationRoot, installedDir, isValidExtensionId, readProvenance, tmpDir } from './provenance.js';
 
-// Discovery of INSTALLED ("external") extensions: one immediate subdirectory of
-// <DATA_DIR>/extensions/ per extension, each with an index.js default-exporting
-// a manifest. DATA_DIR-relative on purpose — a run-dev isolated instance (fresh
+// Discovery of installed extensions: provenance selects immutable generations;
+// hand-placed extensions live directly under <DATA_DIR>/extensions/<id>/.
+// Each has an index.js default-exporting a manifest. DATA_DIR-relative: a fresh
 // AW_DATA_DIR) starts with no installed extensions the same way it starts with
 // no sessions, and server/test-setup.js redirects AW_DATA_DIR so the tests
 // inherit that isolation for free.
@@ -195,15 +195,20 @@ export async function discoverExternal({ dir = externalDir(), provenance = readP
       .map((e) => e.name)
       .sort();
   } catch {
-    return []; // no extensions dir yet — the ordinary state of a fresh install
+    names = [];
   }
+  names = [...new Set([...names, ...Object.keys(provenance).filter((id) => isValidExtensionId(id) && Object.hasOwn(provenance[id], 'generation'))])].sort();
   const out = [];
   for (const name of names) {
-    const extDir = path.join(dir, name);
-    // Keyed on the DIRECTORY name, not the manifest's id: a manifest that
-    // cannot be read still has to produce a row, and the directory is the only
-    // name available then. `provenance: null` is what marks an entry as
-    // not-updatable (there is no originUrl to re-clone).
+    let extDir;
+    try {
+      extDir = installedDir(name, provenance[name], dir);
+    } catch (err) {
+      out.push({ id: name, external: true, provenance: provenance[name], quarantine: err.message });
+      continue;
+    }
+    // The installation id stays authoritative even when the manifest cannot
+    // load. No provenance means a hand-placed, non-updatable extension.
     const base = { id: name, dir: extDir, external: true, provenance: provenance?.[name] ?? null };
     const folded = foldedIntoCore(name);
     if (folded) { out.push({ ...base, quarantine: folded }); continue; }
@@ -211,9 +216,6 @@ export async function discoverExternal({ dir = externalDir(), provenance = readP
     if (violation) { out.push({ ...base, quarantine: violation }); continue; }
     let manifest;
     try {
-      // Cache-busted by nothing: this runs once per boot, against modules this
-      // process has not seen. The INSTALL path does bust its import — a same-id
-      // reinstall in one process would otherwise get the old module back.
       const mod = await importer(pathToFileURL(path.join(extDir, 'index.js')).href);
       manifest = mod?.default;
     } catch (err) {
@@ -225,4 +227,42 @@ export async function discoverExternal({ dir = externalDir(), provenance = readP
     out.push(admitted.entry);
   }
   return out;
+}
+
+// Run only at startup, after activation and the instance lock: a second process
+// must not reclaim files still used by the server holding that lock.
+export function sweepGenerations(entries, { dir = externalDir(), provenance = readProvenance() } = {}) {
+  const loaded = entries.filter((e) => e.external);
+  const keep = new Set(loaded.map((e) => e.dir).filter(Boolean).map((p) => path.resolve(p)));
+  const retain = new Set();
+  for (const [id, record] of Object.entries(provenance)) {
+    if (!isValidExtensionId(id)) continue;
+    try {
+      const selected = installedDir(id, record, dir);
+      keep.add(selected);
+      if (!fs.statSync(path.join(selected, 'index.js')).isFile()) retain.add(id);
+    } catch { retain.add(id); }
+  }
+  for (const entry of loaded) if (entry.quarantine) retain.add(entry.id);
+  const remove = (target) => {
+    try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* retry at next startup */ }
+  };
+  let ids;
+  try { ids = fs.readdirSync(path.join(dir, '.generations'), { withFileTypes: true }); } catch { return; }
+  for (const id of ids) {
+    if (!id.isDirectory() || !isValidExtensionId(id.name) || retain.has(id.name)) continue;
+    const root = generationRoot(id.name, dir);
+    let generations;
+    try { generations = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
+    for (const generation of generations) {
+      const target = path.join(root, generation.name);
+      if (generation.isDirectory() && !keep.has(target)) remove(target);
+    }
+  }
+  for (const entry of loaded) {
+    if (retain.has(entry.id) || !provenance[entry.id]?.generation) continue;
+    if (entry.dir !== installedDir(entry.id, provenance[entry.id], dir)) continue;
+    const legacy = installedDir(entry.id, null, dir);
+    if (!keep.has(legacy)) remove(legacy);
+  }
 }
