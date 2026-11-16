@@ -121,9 +121,9 @@ test('headless collection preserves the interactive directory grants and never c
 test('helpers tolerate a launch that carries no context at all', () => {
   assert.deepEqual(launchEnvOf(undefined), {});
   assert.deepEqual(launchAddDirsOf(null), []);
-  assert.equal(launchEnvPrefix(undefined, shellQuote), '');
+  assert.ok(launchEnvPrefix(undefined, shellQuote));
   assert.deepEqual(launchAddDirArgs({}), []);
-  assert.equal(launchEnvPrefix({ env: { AW_A: "it's", AW_B: 'b' } }, shellQuote), `AW_A='it'\\''s' AW_B='b' `);
+  assert.ok(launchEnvPrefix({ env: { AW_A: "it's", AW_B: 'b' } }, shellQuote).startsWith(`AW_A='it'\\''s' AW_B='b' `));
   assert.deepEqual(launchAddDirArgs({ addDirs: ['/a', '/b'] }), ['--add-dir', '/a', '--add-dir', '/b']);
 });
 
@@ -519,4 +519,19 @@ test('claudeHooks: in a devcontainer, a hook under a granted dir is rewritten to
   assert.ok(script.includes(`docker cp -L '/ext/secrets' "$CID":'/tmp/aw-MX/launch-dirs/0'`));
   assert.ok(script.includes('/tmp/aw-MX/launch-dirs/0/mask-bash.mjs'));
   assert.ok(!script.slice(script.indexOf('sh -lc')).includes('/ext/secrets/mask-bash.mjs'));
+});
+
+test('agent launch environment prevents Git prompts and preserves custom SSH commands', () => {
+  for (const [env, context, expected] of [
+    [{}, undefined, '"ssh" -o BatchMode=yes'],
+    [{ GIT_SSH_COMMAND: 'ssh -i "custom key" -p 2222' }, undefined, 'ssh -i "custom key" -p 2222 -o BatchMode=yes'],
+    [{ GIT_SSH: '/custom/ssh' }, undefined, '"/custom/ssh" -o BatchMode=yes'],
+    [{ GIT_SSH: '/custom path/ssh' }, undefined, '"/custom path/ssh" -o BatchMode=yes'],
+    [{ GIT_SSH_COMMAND: 'ssh -p 2222' }, { env: { GIT_SSH_COMMAND: 'ssh -i "context key"' } }, 'ssh -i "context key" -o BatchMode=yes'],
+  ]) {
+    const cmd = launchEnvPrefix(context, shellQuote) + `/bin/sh -c 'printf "%s\\n" "$GIT_TERMINAL_PROMPT" "$GIT_SSH_COMMAND"'`;
+    const result = spawnSync('/bin/sh', ['-c', cmd], { env: { PATH: process.env.PATH, GIT_TERMINAL_PROMPT: '1', ...env }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.stdout.trim().split('\n'), ['0', expected]);
+  }
 });

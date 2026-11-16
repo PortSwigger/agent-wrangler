@@ -6,7 +6,7 @@ export function createNotificationBlocks({ entryFor, mailStore, events, isPendin
   const episodes = new Map();
   return {
     deferred(id, reason, now = Date.now()) {
-      if (!reason?.startsWith(COMPOSER_BLOCKED_REASON)) { episodes.delete(id); return; }
+      if (!reason?.startsWith(COMPOSER_BLOCKED_REASON)) return;
       if (!episodes.has(id)) episodes.set(id, { since: now, reported: false, mailed: new Set() });
     },
     resolved(id) { episodes.delete(id); },
@@ -29,7 +29,7 @@ export function createNotificationBlocks({ entryFor, mailStore, events, isPendin
           if (!supervisor || supervisor.archivedAt) continue;
           try {
             mailStore.append(to, { from: id, fromLabel: 'Agent Wrangler',
-              body: `Automated notifications for [this session](#session=${id}) have been blocked by unsent text in its prompt box for at least five minutes. Review the draft in that session and submit or remove it when appropriate. Agent Wrangler has left the text untouched.` }, now);
+              body: `Automated notifications for [this session](#session=${id}) have been blocked by unsent text in its prompt box for at least five minutes. Review the draft in that session and submit or remove it when appropriate. Agent Wrangler has left the text untouched. Replies to this message go to the blocked session and may remain unread until its prompt box is clear.` }, now);
             ep.mailed.add(to);
           } catch (error) { log(`[notification-blocked] could not notify ${to}: ${error?.message || error}`); }
         }

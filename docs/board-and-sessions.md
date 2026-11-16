@@ -292,6 +292,15 @@ available to retry.
 Automated terminal notifications (mail and PR/check nudges) wait while the composer holds an unsent
 draft, including multiline text. Once it is clear, Wrangler submits the notification automatically.
 Claude mail delivered through its messaging socket does not touch the terminal composer.
+Newly launched terminal agents get up to 15 seconds to connect to MCP before notifications can
+proceed through the composer and dialog checks. After five minutes of waiting behind unsent text,
+the card shows a blocked-notification warning, the spawning and parent sessions receive mail,
+and extensions receive a `session-notification:blocked` event. The draft stays untouched.
+
+Agent terminals set `GIT_TERMINAL_PROMPT=0` and append `-o BatchMode=yes` to the configured
+SSH command. Background Git fetches, including plugin marketplace refreshes, fail when
+credentials are unavailable instead of placing a password or key-passphrase prompt on the agent's
+terminal. Existing SSH command options are retained.
 
 **Open terminal** creates an independent shell; it does not replace or interrupt the agent terminal.
 

@@ -60,20 +60,21 @@ test('busy, missing and archived sessions do not escalate; supervisor duplicates
   assert.equal(events.length, 1);
 });
 
-test('canceled work clears a flag and a changed blocker resets its timer', (t) => {
+test('other blocker groups preserve the draft episode and canceled work clears it', (t) => {
   const { entries, mailStore, events } = fixture(t);
   let pending = true;
   const blocks = createNotificationBlocks({ entryFor: (id) => entries[id], mailStore,
     events: { emit: (...args) => events.push(args) }, isPending: () => pending });
   blocks.deferred('child', 'composer not confirmed empty', 0);
   blocks.deferred('child', 'board status working', BLOCKED_AFTER_MS - 1);
+  blocks.deferred('child', 'pane capture empty', BLOCKED_AFTER_MS - 1);
   blocks.sweep(BLOCKED_AFTER_MS);
-  assert.equal(events.length, 0);
+  assert.equal(events.length, 1);
   blocks.deferred('child', 'composer not confirmed empty', BLOCKED_AFTER_MS);
   pending = false;
   blocks.sweep(2 * BLOCKED_AFTER_MS);
   assert.equal(blocks.blocked('child', 2 * BLOCKED_AFTER_MS), false);
-  assert.equal(events.length, 0);
+  assert.equal(events.length, 1);
 });
 
 test('a full supervisor mailbox retries without repeating the host event or other supervisor mail', (t) => {

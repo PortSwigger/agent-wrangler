@@ -271,10 +271,15 @@ export function launchAddDirsOf(launchContext) {
 }
 
 // `K='v' K2='v2' ` — the env assignments a launch command line is prefixed with
-// (trailing space included, empty string when there are none). `quote` is the
-// adapter's own shellQuote, passed in so this module does not import the agents.
+// Includes non-interactive Git authentication defaults for the agent terminal.
+// `quote` is passed in so this module does not import the agents.
 export function launchEnvPrefix(launchContext, quote) {
-  return Object.entries(launchEnvOf(launchContext)).map(([k, v]) => `${k}=${quote(v)} `).join('');
+  const env = launchEnvOf(launchContext);
+  const ssh = env.GIT_SSH_COMMAND != null ? quote(env.GIT_SSH_COMMAND)
+    : env.GIT_SSH != null ? quote(quote(env.GIT_SSH))
+    : '"${GIT_SSH_COMMAND:-\\"${GIT_SSH:-ssh}\\"}"';
+  return Object.entries(env).map(([k, v]) => `${k}=${quote(v)} `).join('')
+    + `GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=${ssh}" -o BatchMode=yes" `;
 }
 
 // `/bin/sh -c '<check>' && ` — the pane-side refusal for `refuseIfSet`, run

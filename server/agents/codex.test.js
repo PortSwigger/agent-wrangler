@@ -19,7 +19,7 @@ const base = { sessionId: 'BID', model: 'gpt-5.5-codex', ...memory };
 
 test('codex buildLaunch: sandbox, network, memory, env, prompt', () => {
   const cmd = codex.buildLaunch({ ...base, intent: 'fix the bug', addDirs: [] });
-  assert.match(cmd, /^AW_TASK_MEMORY='\/memory\/tasks\/T1\/memory.md' AW_SESSION_ID='BID'/);
+  assert.match(cmd, /^AW_TASK_MEMORY='\/memory\/tasks\/T1\/memory.md' .*AW_SESSION_ID='BID'/);
   assert.match(cmd, /AW_TASK_MEMORY='\/memory\/tasks\/T1\/memory.md'/);
   assert.match(cmd, /(^|\s)codex /);
   assert.match(cmd, /'-m' 'gpt-5\.5-codex'/);
