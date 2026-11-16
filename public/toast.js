@@ -22,7 +22,7 @@ export const MAX_TOASTS = 3;
 export const SEVERITY_MS = { success: 3000, info: 5000, warning: 8000, error: Infinity };
 
 const FOOTERS = '.modal-actions, dialog footer';
-const HEADERS = `header, [role="banner"], [role="toolbar"], #panel, #system-banner, .search-head, .diff-head, .file-head, .usage-head, .terminal-dialog-head, .modal-card > h3, dialog > :first-child:has(> :is(h1, h2, h3)), dialog > :first-child > :first-child:has(:is(h1, h2, h3)), ${FOOTERS}`;
+const HEADERS = `header, [role="banner"], [role="toolbar"], #panel, #system-banner, .task-head, .search-head, .diff-head, .file-head, .usage-head, .terminal-dialog-head, .modal-card > h3, dialog > :first-child:has(> :is(h1, h2, h3)), dialog > :first-child > :first-child:has(:is(h1, h2, h3)), ${FOOTERS}`;
 
 function severityOf(isErr, opts) {
   if (typeof isErr === 'string' && isErr in SEVERITY_MS) return isErr;

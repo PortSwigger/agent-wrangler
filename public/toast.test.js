@@ -9,6 +9,36 @@ const shown = (doc) => (stackOf(doc)?.children || []).filter((c) => c.classList.
 const part = (el, cls) => el.children.find((c) => c.className.split(' ').includes(cls));
 const actionsOf = (el) => part(el, 'toast-actions').children;
 
+test('notices use theme surface and text with severity only on the left stripe and timer', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+  const rule = (selector) => css.slice(css.indexOf(`${selector} {`)).match(/^[^{]+\{([^}]*)\}/)[1];
+  const toast = rule('.toast');
+  assert.match(toast, /background: var\(--surface\);/);
+  assert.match(toast, /color: var\(--fg\);/);
+  assert.match(toast, /border-left: 4px solid var\(--toast-accent\);/);
+  assert.match(toast, /--toast-accent: var\(--accent\);/);
+  for (const [severity, token] of [['success', 'green'], ['warning', 'warn'], ['error', 'red']]) {
+    assert.equal(rule(`.toast-${severity}`).trim(), `--toast-accent: var(--${token});`);
+  }
+  assert.match(rule('.toast-progress'), /background: var\(--toast-accent\);/);
+  for (const selector of ['.toast-action', '.toast-close']) assert.match(rule(selector), /color: inherit;/);
+  assert.doesNotMatch(css, /--toast-(?:bg|fg)/);
+});
+
+test('board column header controls reserve space at both toast positions', () => {
+  for (const position of ['top-right', 'bottom-right']) {
+    const { doc, clock } = fakeWorld();
+    doc.defaultView = { innerWidth: 1400, innerHeight: 800 };
+    const header = doc.createElement('div');
+    header.getBoundingClientRect = () => ({ left: 1050, right: 1384, top: 92, bottom: 132, width: 334, height: 40 });
+    doc.querySelectorAll = (selector) => selector.split(', ').includes('.task-head') ? [header] : [];
+    const toasts = createToasts({ document: doc, position, ...clock });
+    toasts.show('Visible');
+    toasts.showPersistent('request', { title: 'Action needed', actions: [], onDismiss() {} });
+    assert.equal(stackOf(doc).style['--toast-top'], '140px');
+  }
+});
+
 test('two toasts fired 0.3 s apart both stay up, newest last', () => {
   const { doc, clock, toasts } = fakeWorld();
   toasts.show('Session needs you', false);

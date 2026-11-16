@@ -226,6 +226,8 @@ Newest messages sit nearest the chosen edge, with **Clear all** beside that edge
 more messages, **Clear all** dismisses the whole stack
 without running actions, answering requests or marking anything read. Persistent notifications
 stay until acted on or dismissed and are never evicted to make room for another message.
+All messages use the theme’s default surface and text colours. A coloured stripe on the left,
+away from the screen edge, shows severity; action toasts have a matching countdown bar.
 
 Up to three transient toasts appear at once. How long one stays depends on its kind: a success
 3 seconds, information 5, a warning 8, and an error until you close it with **×**. Hovering over

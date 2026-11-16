@@ -1245,15 +1245,15 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
 #toast[data-position="bottom-right"] .toast-clear { top: auto; bottom: 0; }
 #toast button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 .toast {
-  --toast-bg: var(--accent); --toast-fg: var(--accent-fg);
+  --toast-accent: var(--accent);
   position: relative; box-sizing: border-box; max-width: 100%; min-width: min(200px, 100%); flex-shrink: 0;
   display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px;
-  padding: 9px 34px 9px 16px; border-radius: 8px; overflow: hidden;
-  background: var(--toast-bg); color: var(--toast-fg); box-shadow: 0 4px 16px var(--shadow);
+  padding: 9px 34px 9px 12px; border-left: 4px solid var(--toast-accent); border-radius: 8px; overflow: hidden;
+  background: var(--surface); color: var(--fg); box-shadow: 0 4px 16px var(--shadow);
 }
-.toast-success { --toast-bg: var(--green); --toast-fg: #fff; }
-.toast-warning { --toast-bg: var(--warn); --toast-fg: #1b1b1b; }
-.toast-error { --toast-bg: var(--red); --toast-fg: #fff; }
+.toast-success { --toast-accent: var(--green); }
+.toast-warning { --toast-accent: var(--warn); }
+.toast-error { --toast-accent: var(--red); }
 /* About three lines; Details lifts the clamp. */
 .toast-text {
   flex: 1 1 auto; min-width: 0; white-space: pre-line; overflow-wrap: anywhere;
@@ -1289,7 +1289,7 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
    duration and start, and it pauses with the timers while the stack is hovered. */
 .toast-progress {
   position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
-  background: currentColor; opacity: 0.5; transform-origin: left;
+  background: var(--toast-accent); transform-origin: left;
   animation-name: toast-deplete; animation-timing-function: linear; animation-fill-mode: forwards;
 }
 #toast:hover .toast-progress, #toast:has(:focus-visible) .toast-progress { animation-play-state: paused; }
