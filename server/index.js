@@ -912,8 +912,8 @@ function performScheduleAction(action, now, scheduledBy) {
 }
 
 // Fire one schedule (shared by the ~30s tick and schedule-run-now): perform its
-// action, record the fire, and broadcast the outcome. Never throws — a failure
-// still advances the tick path so a broken schedule can't hot-loop every tick.
+// action after consuming the automatic slot, then record and broadcast the outcome.
+// A failed action is reported once without retrying the slot on every tick.
 // `manual` (run-now) records the run but skips the advance, so a run-now never
 // disturbs nextRunAt (a recurring schedule keeps its slot; a one-off stays
 // enabled). Does NOT rebuild — the tick batches one rebuild for the whole due set;
@@ -924,8 +924,9 @@ async function fireSchedule(id, { manual = false } = {}) {
   const now = Date.now();
   const at = new Date(now).toISOString();
   try {
+    if (!manual) scheduleStore.markFired(id, { at, sessionId: null }, now);
     const { sessionId } = await performScheduleAction(snap.action, now, snap.scheduledBy);
-    scheduleStore.markFired(id, { at, sessionId }, now, { advance: !manual });
+    scheduleStore.markFired(id, { at, sessionId }, now, { advance: false });
     // A one-off that fired cleanly has nothing left to show; delete it so agents'
     // self-scheduled wake-ups don't pile up as dead rows. A failed one stays (below).
     if (!manual && snap.when.kind === 'once') scheduleStore.delete(id);
@@ -936,7 +937,7 @@ async function fireSchedule(id, { manual = false } = {}) {
     } catch {}
     broadcast({ type: 'schedule-fired', id, name: snap.name, sessionId, label, focus: snap.action.kind === 'session' && snap.action.focus === true });
   } catch (err) {
-    scheduleStore.markFired(id, { at, sessionId: null }, now, { advance: !manual });
+    if (manual) scheduleStore.markFired(id, { at, sessionId: null }, now, { advance: false });
     broadcast({ type: 'schedule-error', id, name: snap.name, message: String(err?.message || err) });
   }
 }
@@ -953,21 +954,28 @@ async function runScheduleNow(id, opts) {
 // than STALE_MS) is marked missed, not fired — a long-down server must not run a
 // stale one-off; a recurring slot never backlogs because markFired advances
 // strictly past now. One batched rebuild if anything happened.
+let schedulesTickInFlight = false;
 async function fireDueSchedules() {
-  const now = Date.now();
-  let any = false;
-  for (const s of scheduleStore.due(now)) {
-    if (s.when.kind === 'once' && now - Date.parse(s.when.runAt) > STALE_MS) {
-      // Missed one-offs are deleted too: the schedule-missed toast is the only record wanted.
-      scheduleStore.delete(s.id);
-      broadcast({ type: 'schedule-missed', id: s.id, name: s.name });
+  if (schedulesTickInFlight) return;
+  schedulesTickInFlight = true;
+  try {
+    const now = Date.now();
+    let any = false;
+    for (const s of scheduleStore.due(now)) {
+      if (s.when.kind === 'once' && now - Date.parse(s.when.runAt) > STALE_MS) {
+        // Missed one-offs are deleted too: the schedule-missed toast is the only record wanted.
+        scheduleStore.delete(s.id);
+        broadcast({ type: 'schedule-missed', id: s.id, name: s.name });
+        any = true;
+        continue;
+      }
+      await fireSchedule(s.id);
       any = true;
-      continue;
     }
-    await fireSchedule(s.id);
-    any = true;
+    if (any) await rebuild();
+  } finally {
+    schedulesTickInFlight = false;
   }
-  if (any) await rebuild();
 }
 
 // Snooze auto-wake tick: wake every elapsed snooze that carries a comment, deliver
