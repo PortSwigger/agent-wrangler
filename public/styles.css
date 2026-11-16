@@ -1240,6 +1240,7 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto;
   padding: 12px 12px 24px; margin: -12px -12px -24px; overscroll-behavior: contain;
 }
+.toast-list[data-overflow="true"] { margin-top: 0; margin-bottom: 0; }
 .toast-clear {
   z-index: 1; align-self: flex-end; flex-shrink: 0; pointer-events: auto;
   padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;

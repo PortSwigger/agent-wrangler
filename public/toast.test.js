@@ -78,6 +78,58 @@ test('Clear all has a separate fixed row outside the scrolling card list', () =>
   }
 });
 
+test('overflowing lists contain their shadow gutters inside the allocated rows', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+  const rule = css.match(/\.toast-list\[data-overflow="true"\] \{([^}]*)\}/)?.[1];
+  assert.ok(rule, 'overflow needs a bounded scrollport');
+  assert.match(rule, /margin-top: 0;/);
+  assert.match(rule, /margin-bottom: 0;/);
+  for (const position of ['top-right', 'bottom-right']) {
+    const { doc, toasts } = fakeWorld({ position });
+    toasts.showPersistent('first', { title: 'First', actions: [] });
+    const list = listOf(doc);
+    Object.defineProperty(list, 'clientHeight', { get: () => 300 });
+    Object.defineProperty(list, 'scrollHeight', { get: () => toasts.count() * 60 });
+    for (let i = 1; i < 16; i++) toasts.showPersistent(String(i), { title: `Card ${i}`, actions: [] });
+    assert.equal(list.attrs['data-overflow'], 'true', position);
+    for (let i = 1; i < 16; i++) toasts.dismissPersistent(String(i));
+    assert.equal(list.attrs['data-overflow'], 'false', 'short stacks recover their full shadow gutters');
+  }
+});
+
+test('core modal control rows reserve space for overflowing stacks', () => {
+  for (const position of ['top-right', 'bottom-right']) {
+    for (const kind of ['settings', 'modal-card', 'file-viewer', 'terminal']) {
+      const { doc, clock } = fakeWorld();
+      doc.documentElement = {};
+      doc.defaultView = { innerWidth: 1120, innerHeight: 640, MutationObserver: class { observe() {} } };
+      const native = kind === 'terminal';
+      const modal = doc.createElement(native ? 'dialog' : 'div');
+      modal.open = native;
+      doc.body.append(modal);
+      const row = doc.createElement('div');
+      const footer = kind === 'settings' || kind === 'modal-card';
+      row.closest = (selector) => selector === 'dialog' ? (native ? modal : null) : modal;
+      row.matches = (selector) => footer && selector.includes('.modal-actions');
+      row.getBoundingClientRect = () => footer
+        ? { left: 100, right: 1020, top: 513, bottom: 539, width: 920, height: 26 }
+        : { left: 100, right: 1020, top: 80, bottom: 112, width: 920, height: 32 };
+      const rowSelector = footer ? '.modal-actions' : native ? '.terminal-dialog-head' : '.file-head';
+      doc.querySelectorAll = (selector) => selector === 'dialog:modal'
+        ? (native ? [modal] : []) : selector.includes(rowSelector) ? [row] : [];
+      const toasts = createToasts({ document: doc, position, ...clock });
+      toasts.showPersistent('first', { title: 'First', actions: [] });
+      const stack = native ? modal.children[0] : stackOf(doc);
+      const list = part(stack, 'toast-list');
+      list.clientHeight = 300;
+      Object.defineProperty(list, 'scrollHeight', { get: () => toasts.count() * 60 });
+      for (let i = 1; i < 16; i++) toasts.showPersistent(String(i), { title: `Card ${i}`, actions: [] });
+      assert.equal(stack.style[footer ? '--toast-bottom' : '--toast-top'], footer ? '135px' : '120px', kind);
+      assert.equal(list.attrs['data-overflow'], 'true', `${kind}: scrollport must stay within the reserved area`);
+    }
+  }
+});
+
 test('closing the host dialog restores corner offsets in both positions', () => {
   for (const position of ['top-right', 'bottom-right']) {
     const { doc, clock } = fakeWorld();

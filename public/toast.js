@@ -153,6 +153,8 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     }
     stack.style.setProperty('--toast-top', `${top}px`);
     stack.style.setProperty('--toast-bottom', `${bottom}px`);
+    list.setAttribute('data-overflow', 'false');
+    list.setAttribute('data-overflow', String(list.scrollHeight > list.clientHeight));
     if (scrollAfterLayout) { scrollAfterLayout = false; scrollToNewest(); }
   }
 
