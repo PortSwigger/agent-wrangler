@@ -145,9 +145,12 @@ for reconnection. A `restart-ack` acknowledges the request; `restart-status`
 reports `draining`, `restarting`, or `pending`, and `config.restartStatus` retains
 that state for a newly connected tab.
 
-Board and update draining is bounded to 30 seconds. A timeout leaves the process serving,
-reopens admission, and shows **Restart pending** in Settings › Updates so the
-restart can be retried. The instance lock stays held until the process exits.
+Board and update draining is bounded to 30 seconds. On a timeout the log names
+each operation still running with its age, and `restart-status` lists them in
+its message and in `running` (`[{ label, ageMs }]`). A manual restart then exits
+anyway (`Forcing restart; still running: …`). An automatic update restart leaves
+the process serving, reopens admission, and shows **Restart pending: …** in
+Settings › Updates so the restart can be retried. The instance lock stays held until the process exits.
 Running worker panes survive this restart; automatic activation waits for
 interactive turns as well as outstanding server work. Forced kills, including
 `SIGKILL` or a supervisor escalating a stop, cannot run the barrier. Avoid a

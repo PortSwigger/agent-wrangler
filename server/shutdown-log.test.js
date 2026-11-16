@@ -13,7 +13,7 @@ test('supervisor signals drain in-flight writes before cleanup and exit', async 
   shutdown.onShutdown(() => cleanups.push('released'));
   const barrier = createRestartBarrier({ timeoutMs: 1000, settleMs: 0 });
   let restarting;
-  shutdown.onSignal((signal, finish) => (restarting = barrier.request(signal, finish)));
+  shutdown.onSignal((signal, finish) => (restarting = barrier.request(signal, { afterDrain: finish })));
   let release;
   const write = barrier.run(() => new Promise((r) => { release = r; }));
   lifecycle.emit('SIGTERM');
@@ -36,7 +36,7 @@ test('a timed out signal stops without reopening admission', { timeout: 1000 }, 
   shutdown.onShutdown(() => cleanups.push('released'));
   const barrier = createRestartBarrier({ timeoutMs: 1000, settleMs: 0 });
   let restarting;
-  shutdown.onSignal((signal, finish) => (restarting = barrier.request(signal, finish)));
+  shutdown.onSignal((signal, finish) => (restarting = barrier.request(signal, { afterDrain: finish })));
   let release;
   const write = barrier.run(() => new Promise((r) => { release = r; }));
   lifecycle.emit('SIGTERM');
@@ -58,7 +58,7 @@ test('a second signal stops immediately even with an in-flight write', async () 
   shutdown.onShutdown(() => cleanups.push('released'));
   const barrier = createRestartBarrier({ timeoutMs: 1000, settleMs: 0 });
   let restarting;
-  shutdown.onSignal((signal, finish) => (restarting = barrier.request(signal, finish)));
+  shutdown.onSignal((signal, finish) => (restarting = barrier.request(signal, { afterDrain: finish })));
   let release;
   const write = barrier.run(() => new Promise((r) => { release = r; }));
   lifecycle.emit('SIGTERM');
@@ -80,7 +80,7 @@ for (const drain of ['success', 'timeout']) {
     shutdown.onShutdown(() => cleanups.push('released'));
     const automatic = [];
     const barrier = createRestartBarrier({ timeoutMs: 10, settleMs: 0, exit: () => automatic.push('exit') });
-    shutdown.onSignal((signal, finish) => barrier.request(signal, finish));
+    shutdown.onSignal((signal, finish) => barrier.request(signal, { afterDrain: finish }));
     let release;
     const write = barrier.run(() => new Promise((r) => { release = r; }));
     const restart = barrier.request('board');

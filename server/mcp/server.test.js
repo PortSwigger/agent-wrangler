@@ -284,6 +284,7 @@ test('restart waits for an MCP mutation and its response, then refuses fresh cal
   await withServer(deps, async (port) => {
     const pending = rpc(port, 'tools/call', { name: 'spawn_session', arguments: { intent: 'work' } }, 100, { Authorization: 'Bearer tok-CARD1' });
     await started;
+    assert.deepEqual(barrier.outstanding().map((o) => o.label).sort(), ['http:/mcp', 'mcp:spawn_session']);
     const restarting = barrier.request('update');
     assert.deepEqual(exits, []);
     const refused = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { Authorization: 'Bearer tok-CARD1' }, body: '{}' });

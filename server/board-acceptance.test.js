@@ -248,6 +248,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     };
     await ack('Runtime.enable');
     await ack('Page.enable');
+    await ack('Page.addScriptToEvaluateOnNewDocument', { source: `window.__cspViolations = []; document.addEventListener('securitypolicyviolation', (e) => window.__cspViolations.push(e.effectiveDirective + ' ' + (e.blockedURI || 'inline') + ' ' + e.sourceFile + ':' + e.lineNumber));` });
     const navigated = await ack('Page.navigate', { url });
     assert.ok(!navigated.result?.errorText,
       `Page.navigate failed: ${navigated.result?.errorText} — the tab may still show the page /json/new opened`);
@@ -603,6 +604,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     assert.equal(fallback.effort, '');
 
     assert.deepEqual(errors, [], `browser reported console errors:\n${errors.join('\n')}`);
+    assert.deepEqual(await evaluateChecked('window.__cspViolations'), [], 'the board breaks its own CSP');
   } finally {
     try { ws?.close(); } catch {}
     try { chrome?.kill(); } catch {}
