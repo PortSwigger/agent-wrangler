@@ -923,11 +923,12 @@ async function fireSchedule(id, { manual = false } = {}) {
   if (!snap) return;
   const now = Date.now();
   const at = new Date(now).toISOString();
+  const launchTimeoutMinutes = 10;
   let launchTimer;
   try {
     if (!manual) scheduleStore.markFired(id, { at, sessionId: null }, now);
     const deadline = new Promise((_, reject) => {
-      launchTimer = setTimeout(() => reject(new Error('Scheduled launch timed out after 10 minutes; its outcome is unknown.')), 600000);
+      launchTimer = setTimeout(() => reject(new Error(`Scheduled launch timed out after ${launchTimeoutMinutes} minutes; its outcome is unknown.`)), launchTimeoutMinutes * 60000);
     });
     const { sessionId } = await Promise.race([performScheduleAction(snap.action, now, snap.scheduledBy), deadline]);
     scheduleStore.markFired(id, { at, sessionId }, now, { advance: false });
