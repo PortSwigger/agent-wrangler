@@ -927,7 +927,7 @@ async function fireSchedule(id, { manual = false } = {}) {
   try {
     if (!manual) scheduleStore.markFired(id, { at, sessionId: null }, now);
     const deadline = new Promise((_, reject) => {
-      launchTimer = setTimeout(() => reject(new Error('Scheduled launch timed out after 120 seconds; its outcome is unknown.')), 120000);
+      launchTimer = setTimeout(() => reject(new Error('Scheduled launch timed out after 10 minutes; its outcome is unknown.')), 600000);
     });
     const { sessionId } = await Promise.race([performScheduleAction(snap.action, now, snap.scheduledBy), deadline]);
     scheduleStore.markFired(id, { at, sessionId }, now, { advance: false });

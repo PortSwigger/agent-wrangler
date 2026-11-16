@@ -121,7 +121,7 @@ for (const kind of ['cron', 'once']) {
     const sweep = h.fireDueSchedules();
     let settled = false;
     sweep.then(() => { settled = true; });
-    t.mock.timers.tick(120000);
+    t.mock.timers.tick(600000);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(settled, true, 'a hung launch must not hold the sweep forever');
     await sweep;
@@ -149,7 +149,7 @@ test('manual launch timeout preserves its automatic slot and ignores late reject
   const h = harness(t, () => new Promise((_resolve, reject) => { rejectLaunch = reject; }));
   const s = h.create();
   const firing = h.fireSchedule(s.id, { manual: true });
-  t.mock.timers.tick(120000);
+  t.mock.timers.tick(600000);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.messages.length, 1);
   assert.equal(h.messages[0].type, 'schedule-error');
@@ -159,4 +159,19 @@ test('manual launch timeout preserves its automatic slot and ignores late reject
   rejectLaunch(new Error('Late launch failure'));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.messages.length, 1);
+});
+
+test('a four-minute launch still records success before the deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let finish;
+  const h = harness(t, () => new Promise((resolve) => { finish = resolve; }));
+  const s = h.create();
+  const sweep = h.fireDueSchedules();
+  t.mock.timers.tick(240000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(h.messages, []);
+  finish({ sessionId: 'SLOW' });
+  await sweep;
+  assert.equal(h.messages[0].type, 'schedule-fired');
+  assert.equal(h.store.snapshot().schedules.find((x) => x.id === s.id).lastSessionId, 'SLOW');
 });
