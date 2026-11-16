@@ -39,6 +39,9 @@ const CAPTURE_LINES = 60;
 export function createPaneDeferral({
   tmuxFor, socketFor, agentFor = () => 'claude',
   statusFor = () => null,
+  readyFor = () => true,
+  onBlocked = () => {},
+  onReady = () => {},
   sendText = defaultSendText,
   capture = defaultCapture,
   classify = defaultClassify,
@@ -62,6 +65,7 @@ export function createPaneDeferral({
   // reason is for a log line only; every non-null answer defers.
   async function blocker(id, tmux, socket, deferWhileWorking = false, allowWhileWorking = false) {
     try {
+      if (!readyFor(id)) return 'agent still starting';
       const agent = agentFor(id);
       // PR notices can reach an active turn. Mail retains its agent-specific
       // timing policy, but both routes require clear input and no dialog.
@@ -92,9 +96,22 @@ export function createPaneDeferral({
   // was held back. Returns 'sent' | 'deferred'.
   // `allowWhileWorking` lets Codex mail through the notification gate during a
   // turn, while still checking for dialogs and a confirmed-empty composer.
-  async function deliverOrDefer({ id, text, tmux, socket, deferWhileWorking = false, allowWhileWorking = false, queueOnDefer = true, beforeSend, onDefer, canDeliver = () => true }) {
+  async function deliverOrDefer(options) {
+    const { id } = options;
+    if (inFlight.has(id)) {
+      if (options.queueOnDefer !== false) enqueue(id, { deferWhileWorking: false, allowWhileWorking: false, canDeliver: () => true, ...options });
+      options.onDefer?.('notification delivery in progress');
+      return 'deferred';
+    }
+    inFlight.add(id);
+    try { return await deliver(options); }
+    finally { inFlight.delete(id); }
+  }
+
+  async function deliver({ id, text, tmux, socket, deferWhileWorking = false, allowWhileWorking = false, queueOnDefer = true, beforeSend, onDefer, canDeliver = () => true }) {
     const defer = (reason) => {
       if (queueOnDefer) enqueue(id, { text, deferWhileWorking, allowWhileWorking, beforeSend, canDeliver });
+      try { onBlocked(id, reason); } catch {}
       try { onDefer?.(reason); } catch { /* a reporting hook must never change delivery */ }
       return 'deferred';
     };
@@ -122,6 +139,7 @@ export function createPaneDeferral({
       // its mailbox; other callers keep the notification in this queue.
       return defer(`paste failed: ${err?.message || err}`);
     }
+    onReady(id);
     return 'sent';
   }
 
@@ -159,7 +177,8 @@ export function createPaneDeferral({
         let needsRecheck = false;
         for (const group of groups.values()) {
           const { deferWhileWorking, allowWhileWorking } = group[0];
-          if (await blocker(id, name, sock, deferWhileWorking, allowWhileWorking)) continue;
+          const reason = await blocker(id, name, sock, deferWhileWorking, allowWhileWorking);
+          if (reason) { onBlocked(id, reason); continue; }
           for (const line of group) {
             try {
               needsRecheck ||= Boolean(line.beforeSend);
@@ -170,8 +189,10 @@ export function createPaneDeferral({
         if (needsRecheck) {
           for (const group of groups.values()) {
             const { deferWhileWorking, allowWhileWorking } = group[0];
-            if (group.some((line) => ready.has(line))
-              && await blocker(id, name, sock, deferWhileWorking, allowWhileWorking)) {
+            if (group.some((line) => ready.has(line))) {
+              const reason = await blocker(id, name, sock, deferWhileWorking, allowWhileWorking);
+              if (!reason) continue;
+              onBlocked(id, reason);
               for (const line of group) ready.delete(line);
             }
           }
@@ -186,6 +207,7 @@ export function createPaneDeferral({
         const rest = pending.get(id).filter((line) => !sending.includes(line));
         if (rest.length) pending.set(id, rest);
         else pending.delete(id);
+        onReady(id);
         delivered.push(id);
       } catch {
         // Keep the queue; the next drain retries.

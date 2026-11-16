@@ -246,10 +246,12 @@ export function mailBadgeHtml(s) {
 // Shown when the notification for unread mail has sat behind an unsent draft in
 // the prompt box for a couple of minutes (mail-runner.js draftBlocked): only the
 // human can clear it, and the badge alone reads as "mail is on its way".
-export function mailBlockedHtml(s) {
-  if (!s.mail?.unread || !s.mail.draftBlocked) return '';
-  const text = 'Mail waiting: an unsent draft in the prompt box is blocking it';
-  return `<span class="card-tag mail-blocked" title="${esc(text)}">${text}</span>`;
+export function mailBlockedHtml(s, compact = false) {
+  if (!s.notificationBlocked && (!s.mail?.unread || !s.mail.draftBlocked)) return '';
+  const text = s.notificationBlocked
+    ? 'Notifications blocked: unsent text in the prompt box needs attention'
+    : 'Mail waiting: an unsent draft in the prompt box is blocking it';
+  return `<span class="card-tag mail-blocked" title="${esc(text)}">${compact ? 'Notifications blocked' : text}</span>`;
 }
 
 function statusNoticeBlockedHtml(s) {
@@ -530,7 +532,7 @@ export function workerRowHtml(s, ctx, spine) {
   return `<div class="worker-row ${state}${doneQuiet}${dormant}${selected}${wf ? ' wf-child' : ''}${s.deckUnreachable ? ' deck-unreachable' : ''}${spineClass(spine)}" data-sid="${esc(s.sessionId)}" data-card="${esc(s.cardKey)}"${childDragAttrs(s, spine)} title="${esc(s.label)}" role="button" tabindex="0"${spineStyle(spine, throbDelayStyle(state))}>${spineGuidesHtml(spine)}
     ${wfIco}<span class="worker-dot" title="${esc(workerStatusWord(s, ctx))}"></span>
     <span class="worker-name">${esc(s.label)}</span>
-    ${mailBadge}
+    ${mailBadge}${mailBlockedHtml(s, true)}
     <span class="worker-meta">${costEl}${metaLinks}</span>
     <span class="worker-ring" aria-hidden="true"></span>
   </div>`;
