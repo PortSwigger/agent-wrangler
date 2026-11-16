@@ -19,12 +19,17 @@ export function stateToGraph(frame, { restore = null } = {}) {
   const { type: _t, rev: _r, settings, status, ext, compat, ...rest } = frame;
   const graph = { ...rest, ...(settings || {}), ...(status || {}) };
   for (const v of Object.values(ext || {})) if (v && typeof v === 'object') Object.assign(graph, v);
-  const fields = compat?.sessionFields;
-  if (restore && fields && typeof fields === 'object') {
-    const put = (r) => (r && Object.hasOwn(fields, r.sessionId) ? restore(r, fields[r.sessionId]) : r);
-    if (Array.isArray(graph.sessions)) graph.sessions = graph.sessions.map(put);
-    if (Array.isArray(graph.nodes)) graph.nodes = graph.nodes.map((n) => (n?.type === 'session' ? put(n) : n));
-  }
+  return restore ? restoreCompat(graph, compat?.sessionFields, restore) : graph;
+}
+
+// Puts compat fields back onto the session records `mine` accepts, in place.
+// It runs on the graph extensions are handed, after any copying, because a
+// copy reads each field and so uses its adapter with no extension acting.
+export function restoreCompat(graph, fields, restore, mine = () => true) {
+  if (!fields || typeof fields !== 'object') return graph;
+  const put = (r) => (r && Object.hasOwn(fields, r.sessionId) && mine(r) ? restore(r, fields[r.sessionId]) : r);
+  if (Array.isArray(graph.sessions)) graph.sessions = graph.sessions.map(put);
+  if (Array.isArray(graph.nodes)) graph.nodes = graph.nodes.map((n) => (n?.type === 'session' ? put(n) : n));
   return graph;
 }
 

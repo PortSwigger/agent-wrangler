@@ -1,4 +1,4 @@
-export const DECK_API_VERSION = '1.0';
+export const DECK_API_VERSION = '1.1';
 
 // GET /deck. A board needs the same major `api` and ignores any field or action
 // it does not know; minor versions only add.

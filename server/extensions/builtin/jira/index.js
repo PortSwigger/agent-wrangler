@@ -48,7 +48,7 @@ export default {
   dir,
   defaultEnabled: true,
   requires: [],
-  engines: { wranglerApi: '^1.18.0' },
+  engines: { wranglerApi: '^2.0.0' },
   settings: [{
     key: 'baseUrl',
     type: 'text',
@@ -57,6 +57,6 @@ export default {
     placeholder: 'https://yourcompany.atlassian.net/browse/',
   }],
   hooks: { 'links.normalise': normalise },
-  boardApi: '^1.74.0',
+  boardApi: '^2.0.0',
   board: { client: 'public/index.js' },
 };

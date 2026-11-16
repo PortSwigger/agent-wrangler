@@ -14,7 +14,7 @@ test('the descriptor carries the id, api 1.0, sorted actions and enabled extensi
   assert.deepEqual(d, {
     deckId: 'd1',
     name: 'laptop',
-    api: '1.0',
+    api: '1.1',
     runtimes: [{ id: 'local', label: 'Local', agents: null }],
     offeredRuntimes: null,
     actions: ['deck.search', 'task.create'],

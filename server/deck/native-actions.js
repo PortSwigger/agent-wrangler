@@ -1,4 +1,6 @@
 import { DeckError } from './actions.js';
+import { reportLegacy } from './legacy.js';
+import { BOARD_SURFACES, EXTENSION_ID_RE } from './surfaces.js';
 
 const STATUS_CODE = { 400: 'invalid', 403: 'forbidden', 404: 'not-found', 413: 'invalid', 415: 'invalid' };
 const REASON_CODE = {
@@ -11,7 +13,9 @@ const REASON_CODE = {
   'changed': 'conflict',
 };
 
-// Actions with no control handler behind them: the board's file reads. Both
+// Actions with no control handler behind them: the board's file reads, and
+// deck.deprecation, through which the board reports an extension's use of one
+// of its own adapters (public/legacy-surface.js). The file reads
 // take their file reader from ctx, which server/index.js fills. An error keeps
 // the reader's own `status` or `reason` for the GET /file and GET /ext-file
 // adapters (deck/legacy.js), which answer with them as those routes always did.
@@ -34,6 +38,15 @@ export const NATIVE_ACTIONS = [
         throw Object.assign(new DeckError(REASON_CODE[reason] || 'failed', reason), { reason });
       }
       return r;
+    },
+  },
+  {
+    action: 'deck.deprecation',
+    async run({ surface, ext = null } = {}) {
+      if (!BOARD_SURFACES.includes(surface)) throw new DeckError('invalid', `surface must be one of ${BOARD_SURFACES.join(', ')}`);
+      if (ext != null && (typeof ext !== 'string' || !EXTENSION_ID_RE.test(ext))) throw new DeckError('invalid', 'ext must be an extension id or null');
+      reportLegacy(surface, ext);
+      return null;
     },
   },
 ];

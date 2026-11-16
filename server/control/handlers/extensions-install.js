@@ -7,7 +7,7 @@ import { validateManifest } from '../../extensions/index.js';
 import { externalDir, generationRoot, generationDir, tmpDir, ensureDirs, isValidExtensionId, readProvenance, recordFor, putRecord, removeRecord, setAutoUpdate, setEarlyAdopter, trackedBranch, pinnedUpdateReason } from '../../extensions/provenance.js';
 import { unconsentedCapabilities, admitExternal, importViolation } from '../../extensions/external.js';
 import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteHead, commitsSince, readDeclaration, assertExactRef, commitRelation, MissingLockfileError, MissingDeclarationError } from '../../extensions/install.js';
-import { HOST_API_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
+import { HOST_API_VERSION, V1_SHIM_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
 import { log } from '../../log.js';
 import { assertExtensionInstallsOn, extensionInstallsOff, INSTALLS_OFF_MESSAGE } from '../../extensions/installs.js';
 
@@ -202,7 +202,7 @@ function updateDiff(record, declared, deps) {
 function engineMismatch(range) {
   if (servesRange(range)) return null;
   if (!isValidRange(range)) return `declares engines.wranglerApi ${JSON.stringify(range)}, which is not a valid semver range`;
-  if (semver.gtr(HOST_API_VERSION, range)) return `was written for an older Agent Wrangler (needs host API ${range}, this is ${HOST_API_VERSION})`;
+  if (semver.gtr(HOST_API_VERSION, range) && semver.gtr(V1_SHIM_VERSION, range)) return `was written for an older Agent Wrangler (needs host API ${range}, this is ${HOST_API_VERSION})`;
   return `requires a newer Agent Wrangler (needs host API ${range}, this is ${HOST_API_VERSION})`;
 }
 

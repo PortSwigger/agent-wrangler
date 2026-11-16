@@ -51,7 +51,7 @@ export default {
   dir,
   defaultEnabled: true,
   requires: [],
-  engines: { wranglerApi: '^1.16.0' },
+  engines: { wranglerApi: '^2.0.0' },
   skills: ['adversarial-pr-review'],
   settings: [{
     key: 'process',

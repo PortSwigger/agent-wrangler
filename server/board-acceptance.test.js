@@ -532,6 +532,7 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
     await ack('Page.reload');
     const renderedOrder = `(${probeTaskOrder})()`;
     assert.ok(await waitFor(() => evaluate(renderedOrder).then((order) => order === JSON.stringify(firstOrder))), 'the moved order must survive reload');
+    assert.ok(await waitFor(() => evaluate(`!!window.__probeApi`)), 'the probe extension never registered after reload');
     await dragTask('layout-2', 'layout-1', true);
     const secondOrder = ['layout-1', 'layout-2', 'layout-0', 'layout-3', 'layout-4', 'layout-5', 'adhoc'];
     assert.ok(await waitFor(() => JSON.stringify(JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8')).order) === JSON.stringify(secondOrder)), 'moving after must persist the shifted order');

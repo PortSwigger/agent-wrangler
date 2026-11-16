@@ -2496,3 +2496,30 @@ test('a contribution reading an extension\'s state off the graph still gets it, 
     console.warn = orig;
   }
 });
+
+test('a contribution\'s adapter reads are reported once each under its own extension, a session field included', async () => {
+  const { resetLegacyWarnings, setLegacyReporter, withCompatFields } = await import('./legacy-surface.js');
+  const { stateToGraph } = await import('./deck-client.js');
+  resetLegacyWarnings();
+  const reports = [];
+  setLegacyReporter(async (use, ext) => { reports.push([use, ext]); return true; });
+  const orig = console.warn;
+  console.warn = () => {};
+  try {
+    const { document, slots } = harness();
+    slots.register('view', 'old-ext', { id: 'main', label: 'Old', mount() {}, update(_el, _ctx, graph) { void graph.todos; void graph.sessions[0].pid; } });
+    slots.setExtState({ todos: { todos: { a: 1 } } });
+    const graph = { ...stateToGraph({ sessions: [{ sessionId: 's1' }], ext: { todos: { todos: { a: 1 } } }, compat: { sessionFields: { s1: { pid: 4 } } } }, { restore: withCompatFields }) };
+    const host = document.make();
+    slots.syncHosts('view', [{ host, only: { extId: 'old-ext', id: 'main' } }], {}, graph);
+    slots.syncHosts('view', [{ host, only: { extId: 'old-ext', id: 'main' } }], {}, graph);
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(reports, [['board.graph-key', 'old-ext'], ['board.session-field', 'old-ext']]);
+    void graph.sessions[0].pid;
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(reports.at(-1), ['board.session-field', null], 'a read outside any contribution names no extension');
+  } finally {
+    console.warn = orig;
+    resetLegacyWarnings();
+  }
+});

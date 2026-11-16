@@ -63,6 +63,7 @@ function setup({ clock = { t: new Date(2026, 10, 11, 10, 0, 0).getTime() }, turn
     classify: async (req) => { classifyCalls.push(req); return classify ? classify(req) : { text: null, error: 'off' }; },
     repoFor: async (d) => (d === '/no-git' ? null : repo),
     spawnerIds: () => ['jobs', 'task-memory'],
+    builtinIds: () => ['todos', 'task-memory'],
     jobsEnabled: () => true,
     platform: 'darwin',
     ...(dailyCap == null ? {} : { dailyCap }),
@@ -89,7 +90,7 @@ test('the core catalogue normalises and matches the collector allowlist field fo
     assert.deepEqual(Object.keys(catalogue[name].fields).sort(), [...fields].sort(), name);
     assert.equal(catalogue[name].v, 1);
   }
-  assert.deepEqual(Object.keys(catalogue).sort(), [...Object.keys(COLLECTOR_FIELDS), 'interrupt'].sort());
+  assert.deepEqual(Object.keys(catalogue).sort(), [...Object.keys(COLLECTOR_FIELDS), 'interrupt', 'deprecated'].sort());
   assert.ok(!JSON.stringify(cat).includes('team'));
 });
 
@@ -410,4 +411,37 @@ test('a Codex interrupt is read from its turn_aborted event', async () => {
   const tail = createTranscriptTail({ findFiles: async () => [file], scannerFor: () => createNativeChatScanner('codex') });
   const { turns } = await tail.read('s', { agent: 'codex' }, null);
   assert.deepEqual(turns, [{ kind: 'interrupt', duringTool: false, ts: Date.parse('2026-11-11T10:00:00.000Z') }]);
+});
+
+test('a deprecated adapter use sends one core.deprecated per surface per extension per day', async () => {
+  const { core, sent, clock, telemetry } = setup();
+  assert.equal(core.deprecated('board.session-field', 'my-ext'), true);
+  assert.equal(core.deprecated('board.session-field', 'my-ext'), false, 'the same use again the same day');
+  assert.equal(core.deprecated('board.graph-key', 'my-ext'), true, 'another surface');
+  assert.equal(core.deprecated('board.session-field', 'todos'), true, 'another extension');
+  assert.equal(core.deprecated('ws.legacy', null), true);
+  assert.equal(core.deprecated('ws.legacy'), false);
+  assert.equal(core.deprecated('not-a-surface', 'my-ext'), false);
+  const events = await sent();
+  assert.deepEqual(events.map((e) => [e.type, e.surface, e.extension, e.extensionRef]), [
+    ['core.deprecated', 'board.session-field', 'installed', telemetry.ref('extension', 'my-ext')],
+    ['core.deprecated', 'board.graph-key', 'installed', telemetry.ref('extension', 'my-ext')],
+    ['core.deprecated', 'board.session-field', 'todos', null],
+    ['core.deprecated', 'ws.legacy', 'unknown', null],
+  ]);
+  assert.ok(!JSON.stringify(events).includes('my-ext'), 'an installed extension\'s id never leaves the machine');
+
+  clock.t += 24 * 60 * 60 * 1000;
+  assert.equal(core.deprecated('board.session-field', 'my-ext'), true, 'a new day sends again');
+  assert.equal((await sent()).length, 1);
+});
+
+test('the day\'s sent deprecations survive a restart', async () => {
+  const { core, dir, clock, telemetry } = setup();
+  core.deprecated('route.file', null);
+  core.stop();
+  const again = createCoreTelemetry({ telemetry, file: path.join(dir, 'telemetry-core.json'), now: () => clock.t, timers: noTimers });
+  again.register();
+  assert.equal(again.deprecated('route.file', null), false);
+  assert.equal(again.deprecated('route.ext-file', null), true);
 });
