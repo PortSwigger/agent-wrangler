@@ -421,10 +421,12 @@ A deck started with `--deck-only` has no board server: it serves only the deck A
 and 404s board pages, and its allowlist is only the origins configured for it. See
 [Running a second deck](../README.md#running-a-second-deck).
 
-Board pages are sent with `Content-Security-Policy-Report-Only: script-src 'self'; object-src 'none';
-base-uri 'self'`. Nothing is blocked yet: an inline `onclick` or `<script>` in a board half still
-runs, and the browser reports it as a violation in the console. Load board code as modules from your
-`public/` directory so it keeps working once the policy is enforced.
+Board pages are sent with `Content-Security-Policy: script-src 'self'; object-src 'none'; base-uri
+'self'`. The browser blocks any script that is not a file served by the board: inline `<script>`
+blocks, inline event handlers (`onclick="…"`, including in HTML you assign to `innerHTML`),
+`javascript:` URLs, `eval` and `new Function`, and scripts from other origins. Load board code as
+modules from your `public/` directory and attach handlers with `addEventListener` or by assigning
+`el.onclick = () => …`. Styles are not restricted.
 
 Routes that board code reached on its own origin before the split are forwarded by the board server
 to the deck unchanged: `GET /file`, `GET /ext-file`, `GET /deck`, `POST /mcp`, `/pr-attach` and
