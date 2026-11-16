@@ -31,11 +31,37 @@ test('board column header controls reserve space at both toast positions', () =>
     doc.defaultView = { innerWidth: 1400, innerHeight: 800 };
     const header = doc.createElement('div');
     header.getBoundingClientRect = () => ({ left: 1050, right: 1384, top: 92, bottom: 132, width: 334, height: 40 });
-    doc.querySelectorAll = (selector) => selector.split(', ').includes('.task-head') ? [header] : [];
+    const pageHeader = doc.createElement('header');
+    pageHeader.getBoundingClientRect = () => ({ left: 0, right: 1400, top: 0, bottom: 84, width: 1400, height: 84 });
+    doc.querySelectorAll = (selector) => selector.split(', ').includes('.task-head') ? [header, pageHeader] : [];
     const toasts = createToasts({ document: doc, position, ...clock });
     toasts.show('Visible');
     toasts.showPersistent('request', { title: 'Action needed', actions: [], onDismiss() {} });
     assert.equal(stackOf(doc).style['--toast-top'], '140px');
+  }
+});
+
+test('only contiguous top header bands reserve space on a multi-row board at either position', () => {
+  for (const position of ['top-right', 'bottom-right']) {
+    const { doc, clock } = fakeWorld();
+    doc.defaultView = { innerWidth: 1400, innerHeight: 900 };
+    let offset = 0;
+    const heads = [628, 346, 64, 0].map((top) => {
+      const head = doc.createElement('header');
+      head.getBoundingClientRect = () => {
+        const y = top > 64 ? top - offset : top;
+        const height = top === 0 ? 56 : 34;
+        return { left: 1050, right: 1384, top: y, bottom: y + height, width: 334, height };
+      };
+      return head;
+    });
+    doc.querySelectorAll = (selector) => selector === 'dialog:modal' ? [] : heads;
+    const toasts = createToasts({ document: doc, position, ...clock });
+    toasts.show('Visible');
+    assert.equal(stackOf(doc).style['--toast-top'], '106px');
+    offset = 100;
+    toasts.setPosition(position);
+    assert.equal(stackOf(doc).style['--toast-top'], '106px', 'scrolling lower rows across the viewport midpoint does not move the stack');
   }
 });
 

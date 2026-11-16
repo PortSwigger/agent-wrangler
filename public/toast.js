@@ -110,6 +110,7 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     const right = bounds?.width ? bounds.right : viewport - 16;
     const left = bounds?.width ? bounds.left : right - Math.min(560, viewport - 32);
     const headers = new Set(document.querySelectorAll?.(HEADERS) ?? []);
+    const topBands = [];
     let top = 16;
     let bottom = 18;
     for (const el of headers) {
@@ -117,9 +118,13 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
       if (r?.width > 0 && r.height > 0 && r.right > left && r.left < right && r.bottom > 0 && r.top < height) {
         if (el.matches?.(FOOTERS)) {
           if (r.top >= height / 2) bottom = Math.max(bottom, Math.ceil(height - r.top) + 8);
-        } else if (r.top <= height / 2) top = Math.max(top, Math.ceil(r.bottom) + 8);
+        } else if (r.top <= height / 2) topBands.push(r);
       }
       if (!observedHeaders.has(el)) headerObserver?.observe(el);
+    }
+    for (const r of topBands.sort((a, b) => a.top - b.top)) {
+      if (r.top > top + 8) break;
+      top = Math.max(top, Math.ceil(r.bottom) + 8);
     }
     for (const el of observedHeaders) if (!headers.has(el)) headerObserver?.unobserve(el);
     observedHeaders.clear();
