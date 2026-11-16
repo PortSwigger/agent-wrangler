@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
-  assertAllowedUrl, authHint, cloneTo, readHead, lsRemoteHead, commitsSince, countCommitsBehind, lockDependencies, npmCi, readDeclaration,
+  assertAllowedUrl, authHint, cloneTo, commitRelation, readHead, lsRemoteHead, commitsSince, countCommitsBehind, lockDependencies, npmCi, readDeclaration,
   MissingLockfileError, MissingDeclarationError,
 } from './install.js';
 
@@ -394,4 +395,82 @@ test('readDeclaration carries earlyAdopter.branch and refuses a malformed one', 
     write(bad);
     assert.throws(() => readDeclaration(dir), /earlyAdopter must be \{ branch \}/);
   }
+});
+
+
+test('pinned SHA installs fetch and detach exactly that commit', async () => {
+  const sha = 'a'.repeat(40);
+  const git = fakeRunner(sha + '\n');
+  await cloneTo('https://example.com/ext.git', '/dest', { git: git.run, ref: sha });
+  assert.ok(git.calls.some(({ args }) => args.includes('fetch') && args.at(-1) === sha));
+  assert.ok(git.calls.some(({ args }) => args[0] === 'checkout' && args.includes('--detach') && args.at(-1) === sha));
+  assert.equal(git.calls.some(({ args }) => args.includes('clone')), false);
+});
+
+test('exact tags resolve lightweight and annotated tags, never branches or missing refs', async () => {
+  const sha = 'b'.repeat(40);
+  for (const annotated of [false, true]) {
+    const git = fakeRunner(annotated ? `${'a'.repeat(40)}\trefs/tags/v1\n${sha}\trefs/tags/v1^{}\n` : `${sha}\trefs/tags/v1\n`);
+    await cloneTo('https://example.com/ext.git', '/dest', { git: async (args, opts) => {
+      if (args[0] === 'rev-parse') return { stdout: sha };
+      return git.run(args, opts);
+    }, ref: 'v1' });
+    assert.ok(git.calls.some(({ args }) => args.includes('fetch') && args.at(-1) === sha));
+  }
+  for (const stdout of ['', `${sha}\trefs/heads/v1\n`, `${sha}\trefs/heads/v1\n${sha}\trefs/tags/v1\n`]) {
+    const git = fakeRunner(stdout);
+    await assert.rejects(cloneTo('https://example.com/ext.git', '/dest', { git: git.run, ref: 'v1' }), /ref|tag|ambiguous/i);
+    assert.equal(git.calls.some(({ args }) => args.includes('fetch')), false);
+  }
+});
+
+test('invalid pinned refs are refused before git, including empty and revision expressions', async () => {
+  for (const ref of ['', null, 42, 'abc1234', 'HEAD', 'HEAD~1', '--upload-pack=x', 'a b', 'v1^{}', 'refs/heads/main']) {
+    const git = fakeRunner();
+    await assert.rejects(cloneTo('https://example.com/ext.git', '/dest', { git: git.run, ref }), /ref|tag|SHA/i);
+    assert.equal(git.calls.length, 0);
+  }
+});
+
+
+test('real git installs an older SHA, lightweight tag and annotated tag, and detects a downgrade', async () => {
+  const root = tmpdir();
+  const remote = path.join(root, 'remote');
+  fs.mkdirSync(remote);
+  const run = (args, cwd = remote) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  run(['init']);
+  run(['config', 'user.name', 'Test']);
+  run(['config', 'user.email', 'test@example.com']);
+  fs.writeFileSync(path.join(remote, 'version'), 'old');
+  run(['add', '.']);
+  run(['commit', '-m', 'First']);
+  const old = run(['rev-parse', 'HEAD']);
+  run(['tag', 'v1']);
+  run(['tag', '-a', 'v1-annotated', '-m', 'First release']);
+  fs.writeFileSync(path.join(remote, 'version'), 'new');
+  run(['commit', '-am', 'Second']);
+  const current = run(['rev-parse', 'HEAD']);
+  const git = async (args, opts = {}) => {
+    try {
+      return { stdout: run(args.map((arg) => arg === 'https://example.com/ext.git' ? remote : arg === 'protocol.file.allow=never' ? 'protocol.file.allow=always' : arg), opts.cwd || root) };
+    } catch (err) { err.code = err.status; throw err; }
+  };
+  for (const [i, ref] of [old, 'v1', 'v1-annotated'].entries()) {
+    const dest = path.join(root, `install-${i}`);
+    await cloneTo('https://example.com/ext.git', dest, { ref, git });
+    assert.equal(run(['rev-parse', 'HEAD'], dest), old);
+    assert.equal(fs.readFileSync(path.join(dest, 'version'), 'utf8'), 'old');
+    assert.equal(await commitRelation(dest, current, { git }), 'downgrade');
+  }
+  const dest = path.join(root, 'latest');
+  await cloneTo('https://example.com/ext.git', dest, { ref: current, git });
+  assert.equal(await commitRelation(dest, old, { git }), 'upgrade');
+  await assert.rejects(cloneTo('https://example.com/ext.git', path.join(root, 'missing'), { ref: 'f'.repeat(40), git }));
+  run(['branch', 'v1']);
+  await assert.rejects(cloneTo('https://example.com/ext.git', path.join(root, 'ambiguous'), { ref: 'v1', git }), /ambiguous/i);
+});
+
+test('unavailable ancestry is unknown, rather than permission to downgrade silently', async () => {
+  const git = async () => { throw new Error('fetch unavailable'); };
+  assert.equal(await commitRelation('/dest', 'a'.repeat(40), { git }), 'unknown');
 });

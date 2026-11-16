@@ -863,3 +863,14 @@ test('a held status notice is visible without unread mail', () => {
   assert.match(html, /Status notice waiting/);
   assert.doesNotMatch(sessionCardHtml(sess({ statusNoticeBlocked: false }), ctx(), { expanded: true }), /Status notice waiting/);
 });
+
+test('a blocked automated notification is visible without unread mail', () => {
+  assert.match(mailBlockedHtml(sess({ notificationBlocked: true, mail: null })), /Notifications blocked: unsent text/);
+  assert.equal(mailBlockedHtml(sess({ notificationBlocked: false, mail: null })), '');
+});
+
+test('compact child rows expose blocked delivery without requiring the full card', () => {
+  const html = workerRowHtml(sess({ notificationBlocked: true, mail: null }), ctx());
+  assert.match(html, /Notifications blocked/);
+  assert.match(html, /unsent text in the prompt box needs attention/);
+});

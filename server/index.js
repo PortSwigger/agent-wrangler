@@ -12,7 +12,9 @@ import openModule from 'open';
 import { buildGraph, createWatcher, sessionLabel } from './state-reader.js';
 import { analyze, resolveResumeDir } from './transcript-reader.js';
 import { SessionManager, SESSIONS_DIR } from './session-manager.js';
-import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, knownRuntimes } from './runtimes/index.js';
+import { BUILTIN_RUNTIME_IDS, registerRuntime, unregisterRuntimesFor, findRuntime, takesStatusEvents } from './runtimes/index.js';
+import { runtimeOffer, startupRuntimes } from './runtimes/offer.js';
+import { createStatusEventStore, createStatusEventHandler } from './status-events.js';
 import { worktreeStatus } from './worktree.js';
 import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
@@ -28,6 +30,9 @@ import { deliverNotice } from './mailbox-delivery.js';
 import { createStatusWatcher } from './status-notices.js';
 import { createStatusNoticeRunner } from './status-notice-runner.js';
 import { createMailSettleSweeper, createDeferralTracker } from './mail-runner.js';
+import { createNotificationBlocks } from './notification-blocks.js';
+import { createNotificationReadiness } from './notification-readiness.js';
+import { mcpSeenAt } from './mcp-activity.js';
 import { runDispatch } from './dispatch-runner.js';
 import { runSessionAction } from './session-action-runner.js';
 import { deliverPrNudge } from './pr-nudge-runner.js';
@@ -37,7 +42,8 @@ import { createRebuildCoalescer } from './rebuild-coalescer.js';
 import { diffNeedsYou, notifyLabel, diffCheckStatus, planCheckTransition, prPaneNudge, diffDirty, planDirtyTransition, prDirtyPaneNudge, prPaneLine, diffUnresolvedComments, planUnresolvedTransition, prUnresolvedPaneNudge, prNudgeEnabled } from './notifier.js';
 import { setTmuxBin, sendText, sendKeys } from './tmux-scraper.js';
 import { createPaneDeferral } from './pane-deferral.js';
-import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount } from './pr-status.js';
+import { mergePr } from './pr-status.js';
+import { createPrObservationStore, createPrObservationPoller } from './pr-observations.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
@@ -59,7 +65,7 @@ import { attachPtyChannel, ensurePtyHelperExecutable } from './pty-channel.js';
 import { TerminalRegistry } from './terminal-registry.js';
 import { createShellSession, tmuxSessionAlive } from './shell-session.js';
 import { createExtTerminalOpener } from './ext-terminals.js';
-import { archiveCascade, descendantsOf } from './control/handlers/archive.js';
+import { archiveCascade, descendantsOf, unpushedFor } from './control/handlers/archive.js';
 import { archiveTaskCascade } from './control/handlers/tasks.js';
 import { createTargets } from './control/targets.js';
 import { routeControlMessage, invalidateHandlerMap, deckActions } from './control/router.js';
@@ -84,8 +90,9 @@ import { collectPrepare } from './session-prepare.js';
 import { collectBeforeSpawn, notifySpawned } from './session-spawn.js';
 import { createLinkNormaliser } from './mcp/links.js';
 import { createExtDeliver } from './ext-deliver.js';
-import { sweepStaging } from './extensions/external.js';
+import { sweepStaging, sweepGenerations } from './extensions/external.js';
 import { log, logWarn, logError } from './log.js';
+import { createRestartBarrier, restartIsQuiet } from './restart-barrier.js';
 import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange, knownModelId } from './price-catalog.js';
@@ -98,6 +105,7 @@ import { readInstall, clearRollbackMarker, readRolledBack } from './self-update.
 import { createUpdateService, updateSupport, installDriftStatus } from './update-service.js';
 import { createExtensionUpdateCheck, currentExtensionUpdates } from './extensions/update-check.js';
 import { autoUpdateExtension } from './control/handlers/extensions-install.js';
+import { extensionInstallsOff } from './extensions/installs.js';
 import { createInstallDriftWatch } from './install-root.js';
 import { nextSessionToRefresh } from './session-refresh.js';
 import { headlessRunsInFlight, backgroundModel, runHeadless } from './headless.js';
@@ -127,7 +135,18 @@ process.on('uncaughtException', (err) => logError('[uncaughtException]', err));
 process.on('unhandledRejection', (err) => logError('[unhandledRejection]', err));
 
 // Registered before anything can exit, so even a failed boot says why it went.
+let publishRestartStatus = () => {};
+const restartBarrier = createRestartBarrier({
+  log,
+  isIdle: () => headlessRunsInFlight() === 0,
+  onStatus: (status) => {
+    log(`[agent-wrangler] ${status.message}`);
+    publishRestartStatus(status);
+  },
+  exit: (reason) => { shutdownLog.noteReason(reason); process.exit(0); },
+});
 const shutdownLog = installShutdownLog();
+shutdownLog.onSignal((signal, finish) => restartBarrier.request(`signal ${signal}`, { afterDrain: finish }));
 
 ensurePtyHelperExecutable();
 
@@ -188,7 +207,7 @@ function quarantineFor(id, err) {
   const entry = ext.list.find((e) => e.id === id);
   log(`[agent-wrangler] extension ${id} quarantined (${entry?.external ? 'installed' : 'builtin'}): ${reason}`);
 }
-const sessionManager = new SessionManager();
+const sessionManager = new SessionManager({ runWork: restartBarrier.run });
 const taskStore = new TaskStore();
 // Core telemetry (server/telemetry.js): one queue for core and every extension
 // declaring `telemetry:emit`, sent to the built-in collector (or the URL
@@ -217,7 +236,7 @@ const coreTelemetry = createCoreTelemetry({
   // Tool-less, on Settings › Background model, billed to the card whose
   // prompts it typed.
   classify: async ({ prompt, stdin, sessionId }) => {
-    const r = await runHeadless({ prompt, stdin, timeoutMs: 60000 });
+    const r = await restartBarrier.run(() => runHeadless({ prompt, stdin, timeoutMs: 60000 }), 'headless:classify');
     if (r.liveSessionId && sessionManager.entryFor(sessionId)) sessionManager.recordPriorLiveSessionId(sessionId, r.liveSessionId, r.agent);
     return r;
   },
@@ -261,7 +280,9 @@ const hostApiFor = (id) => hostApis.get(id);
 // The core event bus (server/events.js): core announces on it, an extension
 // subscribes through `host.events`. A subscription belongs to its extension and
 // is dropped on deactivate, so a disabled extension hears nothing.
-const coreEvents = createEventBus({ onError: logError, isActive: (id) => hostApis.has(id) });
+const coreEvents = createEventBus({ onError: logError, isActive: (id) => hostApis.has(id) && restartBarrier.accepting(), runWork: restartBarrier.run });
+const prObservations = createPrObservationStore({ directory: path.join(DATA_DIR, 'pr-observations'), events: coreEvents, onError: logError });
+const observePrLinks = createPrObservationPoller({ observations: prObservations });
 // name -> the instance an extension's store factory returned. Filled by
 // activateExtension below (and emptied by deactivateExtension), never here: an
 // extension can be activated at boot, at an install, or at a settings flip, and
@@ -340,7 +361,20 @@ const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, (
 // itself into their draft and the Enter submits the pair fused together — the
 // gate holds the line until the composer reads empty. Deliberately NOT used by
 // deliverMessage (a human pressing send chose this moment) — see pane-deferral.js.
+const notificationBlocks = createNotificationBlocks({
+  entryFor: (id) => sessionManager.entryFor(id), mailStore, events: coreEvents,
+  isPending: (id) => paneDeferral.pending(id).length > 0,
+  hasPane: (id) => Boolean(tmuxFor(id)),
+  log: logError,
+});
+const notificationReady = createNotificationReadiness({
+  entryFor: (id) => sessionManager.entryFor(id),
+  isResuming: (id) => sessionManager.isResuming(id), mcpSeenAt,
+});
 const paneDeferral = createPaneDeferral({
+  readyFor: notificationReady,
+  onBlocked: (id, reason) => notificationBlocks.deferred(id, reason),
+  onReady: (id) => notificationBlocks.resolved(id),
   tmuxFor,
   socketFor,
   agentFor: (id) => sessionManager.entryFor(id)?.agent ?? 'claude',
@@ -363,6 +397,7 @@ const paneDeferral = createPaneDeferral({
 const extFiles = createExtFiles();
 const extWiring = {
   core: extCore,
+  prObservations,
   extFiles,
   events: coreEvents,
   telemetry,
@@ -382,15 +417,20 @@ const extWiring = {
   // memo the Usage panel reads, so an extension pricing cards never walks disk
   // on its own — see host-api/v1.js usageRead.
   scanUsage: scanAllDaily,
-  archiveSession: async (sessionId, { cascade = true } = {}) => {
+  archiveSession: async (sessionId, { cascade = true, allowUnpushed = false } = {}) => {
     const sessions = lastGraph?.sessions || [];
     const ids = [...(cascade ? descendantsOf(sessionId, sessions).map((d) => d.sessionId) : []), sessionId];
+    if (!allowUnpushed) {
+      const unpushed = await unpushedFor(ids, archiveCascadeCtx);
+      if (unpushed.length) return { archived: [], unclean: false, unpushed };
+    }
     const result = await archiveCascade(ids, archiveCascadeCtx);
     await rebuild();
     return { archived: ids, ...result };
   },
-  archiveTask: async (taskId) => {
-    const result = await archiveTaskCascade(taskId, archiveCascadeCtx);
+  archiveTask: async (taskId, { allowUnpushed = false } = {}) => {
+    const result = await archiveTaskCascade(taskId, archiveCascadeCtx, { allowUnpushed });
+    if (result?.unpushed) return { archived: false, sessionIds: [], unclean: false, unpushed: result.unpushed };
     await rebuild();
     return result ? { archived: true, sessionIds: result.sessionIds, unclean: result.unclean } : { archived: false, sessionIds: [], unclean: false };
   },
@@ -452,12 +492,12 @@ function activateExtension(id, { startSweeps = true } = {}) {
     // place a file under a per-extension path needs the latter, and renaming
     // `id` would break every store that already reads it.
     for (const name of e.storeNames) {
-      extStores[name] = ext.stores[name]({
+      extStores[name] = restartBarrier.wrapStore(ext.stores[name]({
         id: name,
         extId: id,
         settings: buildExtSettings({ id, settingDefs: e.settings, readSettings: (extId) => extensionSettings(extId) }),
         log,
-      });
+      }), `ext-store:${name === id ? id : `${id}:${name}`}`);
     }
     // buildHostApi still THROWS as its contract (an unsatisfiable
     // engines.wranglerApi, an unknown capability) — what changed is that the
@@ -476,6 +516,11 @@ function activateExtension(id, { startSweeps = true } = {}) {
       // code, never from rebuildOnce.
       settingDefs: e.settings,
       readSettings: (extId) => extensionSettings(extId),
+      readExtensionReceipt: () => {
+        const installedSha = readProvenance()[id]?.sha || '';
+        const runningSha = e.provenance?.sha || '';
+        return { installedSha, runningSha, restartPending: Boolean(installedSha && installedSha !== runningSha) };
+      },
       log: logError,
       // Per-EXTENSION now, so the resume log line names which extension woke a
       // card (`ext:<id>`) rather than a shared 'extension' — see ext-deliver.js.
@@ -529,6 +574,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
         ...(rt.resumable === undefined ? {} : { resumable: rt.resumable }),
         skipsHostResumeGuard: Boolean(rt.skipsHostResumeGuard),
         liveByTmux: Boolean(rt.liveByTmux),
+        statusEvents: Boolean(rt.statusEvents),
         preflight: bind(rt.preflight, () => `The "${rt.label}" runtime needs the "${id}" extension, which is not active.`),
         wrapLaunch: bind(rt.wrapLaunch, notActive),
         buildLaunch: bind(rt.buildLaunch, notActive),
@@ -538,6 +584,22 @@ function activateExtension(id, { startSweeps = true } = {}) {
         cost: bind(rt.cost, () => null),
         launchStatus: bind(rt.launchStatus, () => null),
         validateModel: bind(rt.validateModel, () => `The "${rt.label}" runtime needs the "${id}" extension, which is not active.`),
+        ...(rt.location ? {
+          location: {
+            provision: bind(rt.location.provision, notActive),
+            open: bind(rt.location.open, notActive),
+            suspend: bind(rt.location.suspend, () => undefined),
+            resume: bind(rt.location.resume, notActive),
+            delete: bind(rt.location.delete, () => undefined),
+            unpushed: bind(rt.location.unpushed, notActive),
+            transcript: bind(rt.location.transcript, () => null),
+            diff: bind(rt.location.diff, notActive),
+            codexId: bind(rt.location.codexId, () => null),
+            ...(typeof rt.location.suspendIdleHours === 'function'
+              ? { suspendIdleHours: bind(rt.location.suspendIdleHours, () => undefined) }
+              : rt.location.suspendIdleHours === undefined ? {} : { suspendIdleHours: rt.location.suspendIdleHours }),
+          },
+        } : {}),
       }, id);
     }
     // Lifecycle: where a store's watcher or an event subscription is started.
@@ -565,7 +627,8 @@ function startSweepsFor(id) {
   for (const sweep of ext.sweeps) {
     if (sweep.extId !== id) continue;
     const t = setInterval(() => {
-      Promise.resolve(sweep.run({ host: hostApiFor(id) })).catch((err) => logError(`[ext:${id}:${sweep.id}]`, err));
+      if (restartBarrier.draining()) return;
+      Promise.resolve().then(() => restartBarrier.run(() => sweep.run({ host: hostApiFor(id) }), `sweep:${id}:${sweep.id}`)).catch((err) => logError(`[ext:${id}:${sweep.id}]`, err));
     }, sweep.everyMs);
     t.unref();
     handles.push(t);
@@ -692,7 +755,7 @@ let lastControlActivity = Date.now();
 // could interleave diffCheckStatus's last-notified state and re-fire a transition into a
 // duplicate wake/resume. A targeted poll (`only` set) is never guarded — it must not be
 // starved by a long full sweep and never runs the transition diff below.
-const pollPrStatuses = createFullSweepGuard(runPrStatusSweep);
+const pollPrStatuses = createFullSweepGuard((only) => backgroundWork('pr-status-sweep', () => runPrStatusSweep(only)));
 
 // Broadcast a PR event once its pane nudge has been delivered. `nudged` is true
 // only when the session actually has the line: pasted into a live pane, or
@@ -717,8 +780,7 @@ async function runPrStatusSweep(only) {
   // merged/closed line here, plus all three transition loops), so one tick can't
   // gate two of them on different defaults.
   const fixPrDefault = autoFixPrChecksDefault();
-  for (const { scope, ownerId, url, number, unresolvedCount: prevUnresolvedCount } of links) {
-    const res = await fetchPrStatus(url);
+  for await (const { scope, ownerId, url, number, unresolvedCount, previousUnresolvedCount, status: res, fetchedAt } of observePrLinks(links)) {
     if (res == null) continue;
     const store = scope === 'task' ? taskStore : sessionManager;
     // A merged/closed PR is dead: drop its link automatically (any pr link,
@@ -741,13 +803,8 @@ async function runPrStatusSweep(only) {
       }
       continue;
     }
-    // A second gh call, sequenced right after the first (still a handful of PRs
-    // per sweep). On failure fall back to the link's existing stored count
-    // rather than clobbering it with null — a transient gh hiccup must not look
-    // like every thread just got resolved.
-    const unresolvedCount = (await fetchUnresolvedThreadCount(url)) ?? prevUnresolvedCount;
-    const at = new Date().toISOString();
-    if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, at, unresolvedCount, res.headSha)) changed = true;
+    if (store.updateLinkStatus(ownerId, url, res.checkStatus, res.dirty, fetchedAt,
+      unresolvedCount ?? previousUnresolvedCount, res.headSha)) changed = true;
   }
   // Detect check-status transitions only on the full sweep (the on-attach fast
   // path skips other links, so its baseline would be incomplete and re-fire).
@@ -872,12 +929,12 @@ function performScheduleAction(action, now, scheduledBy) {
   if (!action || action.kind === 'dispatch') {
     return runDispatch(action?.dispatch || {}, { sessionManager, taskStore, launchSource: 'schedule', scheduledBy }, now);
   }
-  return runSessionAction(action, { sessionManager, tmuxFor, socketFor });
+  return runSessionAction(action, { sessionManager, tmuxFor, socketFor, scheduledBy });
 }
 
 // Fire one schedule (shared by the ~30s tick and schedule-run-now): perform its
-// action, record the fire, and broadcast the outcome. Never throws — a failure
-// still advances the tick path so a broken schedule can't hot-loop every tick.
+// action after consuming the automatic slot, then record and broadcast the outcome.
+// A failed action is reported once without retrying the slot on every tick.
 // `manual` (run-now) records the run but skips the advance, so a run-now never
 // disturbs nextRunAt (a recurring schedule keeps its slot; a one-off stays
 // enabled). Does NOT rebuild — the tick batches one rebuild for the whole due set;
@@ -887,9 +944,15 @@ async function fireSchedule(id, { manual = false } = {}) {
   if (!snap) return;
   const now = Date.now();
   const at = new Date(now).toISOString();
+  const launchTimeoutMinutes = 10;
+  let launchTimer;
   try {
-    const { sessionId } = await performScheduleAction(snap.action, now, snap.scheduledBy);
-    scheduleStore.markFired(id, { at, sessionId }, now, { advance: !manual });
+    if (!manual) scheduleStore.markFired(id, { at, sessionId: null }, now);
+    const deadline = new Promise((_, reject) => {
+      launchTimer = setTimeout(() => reject(new Error(`Scheduled launch timed out after ${launchTimeoutMinutes} minutes; its outcome is unknown.`)), launchTimeoutMinutes * 60000);
+    });
+    const { sessionId } = await Promise.race([performScheduleAction(snap.action, now, snap.scheduledBy), deadline]);
+    scheduleStore.markFired(id, { at, sessionId }, now, { advance: false });
     // A one-off that fired cleanly has nothing left to show; delete it so agents'
     // self-scheduled wake-ups don't pile up as dead rows. A failed one stays (below).
     if (!manual && snap.when.kind === 'once') scheduleStore.delete(id);
@@ -900,8 +963,10 @@ async function fireSchedule(id, { manual = false } = {}) {
     } catch {}
     broadcast({ type: 'schedule-fired', id, name: snap.name, sessionId, label, focus: snap.action.kind === 'session' && snap.action.focus === true });
   } catch (err) {
-    scheduleStore.markFired(id, { at, sessionId: null }, now, { advance: !manual });
+    if (manual) scheduleStore.markFired(id, { at, sessionId: null }, now, { advance: false });
     broadcast({ type: 'schedule-error', id, name: snap.name, message: String(err?.message || err) });
+  } finally {
+    clearTimeout(launchTimer);
   }
 }
 
@@ -917,21 +982,28 @@ async function runScheduleNow(id, opts) {
 // than STALE_MS) is marked missed, not fired — a long-down server must not run a
 // stale one-off; a recurring slot never backlogs because markFired advances
 // strictly past now. One batched rebuild if anything happened.
+let schedulesTickInFlight = false;
 async function fireDueSchedules() {
-  const now = Date.now();
-  let any = false;
-  for (const s of scheduleStore.due(now)) {
-    if (s.when.kind === 'once' && now - Date.parse(s.when.runAt) > STALE_MS) {
-      // Missed one-offs are deleted too: the schedule-missed toast is the only record wanted.
-      scheduleStore.delete(s.id);
-      broadcast({ type: 'schedule-missed', id: s.id, name: s.name });
+  if (schedulesTickInFlight) return;
+  schedulesTickInFlight = true;
+  try {
+    const now = Date.now();
+    let any = false;
+    for (const s of scheduleStore.due(now)) {
+      if (s.when.kind === 'once' && now - Date.parse(s.when.runAt) > STALE_MS) {
+        // Missed one-offs are deleted too: the schedule-missed toast is the only record wanted.
+        scheduleStore.delete(s.id);
+        broadcast({ type: 'schedule-missed', id: s.id, name: s.name });
+        any = true;
+        continue;
+      }
+      await fireSchedule(s.id);
       any = true;
-      continue;
     }
-    await fireSchedule(s.id);
-    any = true;
+    if (any) await rebuild();
+  } finally {
+    schedulesTickInFlight = false;
   }
-  if (any) await rebuild();
 }
 
 // Snooze auto-wake tick: wake every elapsed snooze that carries a comment, deliver
@@ -1004,6 +1076,7 @@ async function prAttachHandler(req, res, caller) {
     try { link = normalisePr({ url }); } catch { res.writeHead(400).end('bad url'); return; }
     const existing = sessionManager.getLinks(caller);
     if (existing.some((l) => linkMatches(l, link))) { res.writeHead(200).end('ok'); return; }
+    if (sessionManager.prLinkRefusal(caller, [link])) { res.writeHead(403).end('not one of this session\'s repos'); return; }
     sessionManager.setLinks(caller, [...existing, link]);
     res.writeHead(200).end('ok');
     pollPrStatuses({ scope: 'session', ownerId: caller }).catch(() => {}); // immediate status
@@ -1051,6 +1124,7 @@ const legacyFileRoutes = createLegacyFileRoutes({
 // dispatch (mints the card id, collects the launch context pre-launch) → assign →
 // rebuild.
 const mcpRequestHandler = createMcpRequestHandler({
+  restartBarrier,
   agents: dispatchAgents,
   taskStore,
   graph: () => lastGraph,
@@ -1101,8 +1175,10 @@ function deckHandler(req, res) {
       deckId,
       name: os.hostname(),
       actions: deckActions().keys(),
-      runtimes: knownRuntimes().map((rt) => (rt.id === 'local' && localAgents ? { ...rt, agents: localAgents } : rt)),
+      runtimes: runtimeOffer().map((rt) => (rt.id === 'local' && localAgents ? { ...rt, agents: localAgents } : rt)),
+      offeredRuntimes: startupRuntimes(),
       extensions: ext.list,
+      extensionInstalls: !extensionInstallsOff(),
       boardApi: HOST_API_VERSION,
     });
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -1114,6 +1190,19 @@ function deckHandler(req, res) {
 // the per-card token check, on a port of its own. The deck keeps the same routes
 // as an adapter onto it (same check, one deprecation warning) for sessions
 // launched before it had its own port, whose URLs name the board's port.
+// Status events (server/status-events.js): the last event per card, for cards on
+// a runtime with `statusEvents: true`. A card the board has not recorded yet is
+// accepted, since a hook can fire before its launch is recorded.
+const statusEvents = createStatusEventStore({ file: path.join(DATA_DIR, 'session-status.json'), onError: logError });
+const statusEventHandler = createStatusEventHandler({
+  store: statusEvents,
+  accepts: (id) => {
+    const entry = sessionManager.entryFor(id);
+    return !entry || takesStatusEvents(findRuntime(entry.runtime), entry.agent ?? 'claude');
+  },
+  onEvent: () => { rebuild().catch(() => {}); },
+});
+
 const sessionApi = createSessionApi({
   dataDir: DATA_DIR,
   cardState: (id) => {
@@ -1122,11 +1211,12 @@ const sessionApi = createSessionApi({
     if (entry.archivedAt) return 'archived';
     return entry.tmux && sessionManager.alive.has(entry.tmux) ? 'running' : 'stopped';
   },
-  handlers: { '/mcp': mcpRequestHandler, '/pr-attach': prAttachHandler, '/pr-model': prModelHandler },
+  handlers: { '/mcp': mcpRequestHandler, '/pr-attach': restartBarrier.http(prAttachHandler, 'http:/pr-attach'), '/pr-model': prModelHandler, '/status-event': restartBarrier.http(statusEventHandler, 'http:/status-event') },
   log, logWarn, logError,
 });
-sessionManager._issueSessionToken = (id) => sessionApi.tokens.issue(id);
-sessionManager._revokeSessionToken = (id) => sessionApi.tokens.revoke(id);
+// Every launch starts a fresh status lifecycle with its fresh token.
+sessionManager._issueSessionToken = (id) => { statusEvents.forget(id); return sessionApi.tokens.issue(id); };
+sessionManager._revokeSessionToken = (id) => { statusEvents.forget(id); sessionApi.tokens.revoke(id); };
 
 const deckServer = createDeckServer({
   boardPort: boardOriginPort, deckHandler,
@@ -1265,7 +1355,7 @@ async function rebuildOnce() {
     task: taskStore.taskFor(sid),
     label: lastGraph?.sessions?.find((s) => s.sessionId === sid)?.label,
   }));
-  const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore, mailDraftBlocked: (sid, now) => mailDeferrals.draftBlocked(sid, now) });
+  const graph = await buildGraph(sessionManager, (sid, opts) => analyze(sid, undefined, opts), { mailStore, mailDraftBlocked: (sid, now) => mailDeferrals.draftBlocked(sid, now), statusEvents });
   graph.tasks = taskStore.snapshot();
   graph.schedules = scheduleStore.snapshot(); // drives the Schedules panel off the live rebuild
   graph.legacyBoardSettings = legacyBoardSettings();
@@ -1277,6 +1367,7 @@ async function rebuildOnce() {
   graph.prModelFooter = prModelFooterEnabled();
   graph.defaultSessionCwd = defaultSessionCwd();
   graph.defaultRuntime = defaultRuntime();
+  graph.runtimeOffer = runtimeOffer().map(({ id, location, unavailable }) => ({ id, location, ...(unavailable ? { unavailable } : {}) }));
   // Settings › Background model, resolved: never null, a stored pair that can
   // no longer run reads back as the default it falls back to.
   graph.backgroundModel = backgroundModel();
@@ -1317,7 +1408,11 @@ async function rebuildOnce() {
     broadcast({ type: 'notify', session: { sessionId: s.sessionId, label: notifyLabel(s.label), waitingFor: s.waitingFor } });
   }
   statusNotices.run(graph).catch((error) => logError('[status-notice]', error));
-  for (const session of graph.sessions) session.statusNoticeBlocked = statusNotices.blocked(session.sessionId);
+  notificationBlocks.sweep();
+  for (const session of graph.sessions) {
+    session.statusNoticeBlocked = statusNotices.blocked(session.sessionId);
+    session.notificationBlocked = notificationBlocks.blocked(session.sessionId);
+  }
   // The state stream leaves history off a frame while it is unchanged, and skips
   // the frame when nothing but generatedAt moved (see deck/state.js).
   stateStream.observe(graph, extState);
@@ -1326,7 +1421,7 @@ async function rebuildOnce() {
   return graph;
 }
 
-const rebuild = createRebuildCoalescer(rebuildOnce);
+const rebuild = createRebuildCoalescer(() => backgroundWork('rebuild', rebuildOnce));
 let codeVersion = null;
 // codeVersion as a log shows it: a checkout's short commit, a package's whole
 // version (slicing "10.10.10" to seven characters would name another release).
@@ -1336,15 +1431,26 @@ const UPDATE_CHECK_MS = (Number(process.env.AW_UPDATE_CHECK_MINUTES) || 60) * 60
 const ROLLBACK_CLEAR_AFTER_MS = 30000;
 const QUIET_SCHEDULE_WINDOW_MS = 2 * 60 * 1000;
 
-function exitForRestart(reason) {
-  shutdownLog.noteReason(reason);
-  setTimeout(() => process.exit(0), 250).unref();
+publishRestartStatus = (status) => broadcast({ type: 'restart-status', ...status });
+
+async function backgroundWork(label, fn) {
+  if (!restartBarrier.accepting()) return;
+  return restartBarrier.run(fn, label);
+}
+
+// `force` only for a restart a human asked for; see request() in restart-barrier.js.
+function exitForRestart(reason, { force = false } = {}) {
+  restartBarrier.request(reason, { force }).catch((err) => logError('[restart]', err));
 }
 
 function wranglerIsQuiet() {
-  return headlessRunsInFlight() === 0
-    && !sessionManager.hasLaunchInFlight()
-    && scheduleStore.due(Date.now() + QUIET_SCHEDULE_WINDOW_MS).length === 0;
+  return restartIsQuiet({
+    barrier: restartBarrier,
+    headless: headlessRunsInFlight(),
+    launching: sessionManager.hasLaunchInFlight(),
+    due: scheduleStore.due(Date.now() + QUIET_SCHEDULE_WINDOW_MS),
+    sessions: lastGraph?.sessions || [],
+  });
 }
 
 let refreshInFlight = false;
@@ -1400,7 +1506,7 @@ controlWss.on('connection', (ws) => {
   if (ws.legacy) warnLegacy('A /ws connection without ?api=', 'GET /deck and /ws?api=1 (action frames)', { use: 'ws.legacy' });
   const wire = (obj) => JSON.stringify(ws.legacy ? legacyReply(deckEvent(obj)) : deckEvent(obj));
   const send = (obj) => ws.send(wire(obj));
-  send({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice() });
+  send({ type: 'config', sessionsDir: SESSIONS_DIR, homeDir: os.homedir(), canRestart: restartSupported(), codeVersion, update: updates?.latest() || null, extensionUpdates: currentExtensionUpdates(updates?.extensions()), updateUnavailable: updates?.unavailable() || null, updateRolledBack: updates?.rolledBack() || null, installDrift: installDriftNotice(), restartStatus: restartBarrier.status() });
   // Which enabled extensions ship a client module (served under /ext/<id>/),
   // each with the control types its browser half may send (slots.js binds its
   // `send` to them and fails closed until it has heard this or a graph), plus
@@ -1447,7 +1553,8 @@ controlWss.on('connection', (ws) => {
     // the shutdown log, and a self-inflicted exit must record WHY or its line
     // reads exactly like the hard kill a missing reason is supposed to mean. The
     // small delay lets the ack reach the browser before the socket dies with us.
-    restart: () => exitForRestart('restart requested from the board'),
+    restartBarrier,
+    restart: () => exitForRestart('restart requested from the board', { force: true }),
     canRestart: restartSupported(),
     updates,
     staleGuiSession: () => staleGuiSession,
@@ -1501,6 +1608,7 @@ async function main() {
   // in-memory. After the lock, so a duplicate instance never sweeps the running
   // one's in-flight staging dir out from under it.
   sweepStaging();
+  sweepGenerations(ext.list);
   // A package-managed install never runs Git, even to read a version: its
   // identity is the package version it was built from.
   const install = INSTALL_ENV.installManager ? { checkout: false, codeVersion: VERSION } : await readInstall();
@@ -1517,11 +1625,14 @@ async function main() {
     }),
     mode: () => autoUpdateMode(),
     isQuiet: wranglerIsQuiet,
+    runWork: restartBarrier.run,
     rolledBack: readRolledBack(),
     onStatus: (status) => broadcast({ type: 'update-status', ...status }),
     onApplied: (result) => {
       if (result.extensions) {
         broadcast({ type: 'update-applied', extensions: result.extensions });
+        // Unforced: an unattended restart gives up and reopens rather than cut
+        // short work nobody chose to interrupt.
         exitForRestart(`auto-updated ${result.extensions.join(', ')}`);
         return;
       }
@@ -1561,7 +1672,8 @@ async function main() {
   // Suspend reconcile on a slower cadence than rebuild — teardown is rare and the
   // 4h idle threshold gives ample hysteresis. Rebuild only when it actually acts.
   setInterval(() => {
-    sessionManager.reconcileSuspend(lastGraph?.sessions || [], readConfig())
+    if (restartBarrier.draining()) return;
+    restartBarrier.run(() => sessionManager.reconcileSuspend(lastGraph?.sessions || [], readConfig()), 'reconcile-suspend')
       .then((ids) => { if (ids.length) return rebuild(); })
       .catch(() => {});
   }, 60000);
@@ -1683,11 +1795,11 @@ async function main() {
   });
 
   if (!process.env.AW_DEV) {
-    setTimeout(() => updates.tick(), 60 * 1000).unref();
-    setInterval(() => updates.tick(), UPDATE_CHECK_MS).unref();
+    setTimeout(() => { if (!restartBarrier.draining()) updates.tick(); }, 60 * 1000).unref();
+    setInterval(() => { if (!restartBarrier.draining()) updates.tick(); }, UPDATE_CHECK_MS).unref();
   }
   setInterval(() => installDrift.poll(), 60 * 1000).unref();
-  setInterval(() => refreshOneStaleSession().catch((err) => logError('[agent-wrangler] session refresh failed:', err?.message || err)), 60 * 1000).unref();
+  setInterval(() => backgroundWork('refresh-stale-session', refreshOneStaleSession).catch((err) => logError('[agent-wrangler] session refresh failed:', err?.message || err)), 60 * 1000).unref();
 
   // Background PR check-status poll. setInterval fires on a fixed cadence regardless
   // of whether the prior async tick has settled, so a slow sweep CAN overlap the next
@@ -1703,8 +1815,8 @@ async function main() {
   // process alive. The single-instance-per-DATA_DIR lock makes this the sole
   // scheduler owner, so a schedule can never double-fire across instances.
   const schedulePoll = setInterval(() => {
-    fireDueSchedules().catch(() => {});
-    fireDueSnoozeWakesTick().catch(() => {});
+    backgroundWork('schedules', fireDueSchedules).catch(() => {});
+    backgroundWork('snooze-wakes', fireDueSnoozeWakesTick).catch(() => {});
   }, 30000);
   schedulePoll.unref();
 
@@ -1714,9 +1826,9 @@ async function main() {
   // passed while the server was down fires on this first sweep rather than
   // waiting up to 2s more — and, more importantly, so it's not lost entirely if
   // the process is killed again before the interval's first tick.
-  fireMailSettlesTick().catch(() => {});
+  backgroundWork('mail-settles', fireMailSettlesTick).catch(() => {});
   const mailPoll = setInterval(() => {
-    fireMailSettlesTick().catch(() => {});
+    backgroundWork('mail-settles', fireMailSettlesTick).catch(() => {});
   }, 2000);
   mailPoll.unref();
 
@@ -1727,7 +1839,7 @@ async function main() {
   // tick captures no panes and runs no tmux at all. No logging here for the same
   // reason as the sweeps above: at 2s a line would be tens of thousands a day.
   const paneDrainPoll = setInterval(() => {
-    paneDeferral.drain().catch(() => {});
+    backgroundWork('pane-deferral', () => paneDeferral.drain()).catch(() => {});
   }, 2000);
   paneDrainPoll.unref();
 

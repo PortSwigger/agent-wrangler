@@ -587,6 +587,62 @@ import semver from 'semver';
 // by its board id (`<deckId>/<id>`): the dialog opens on that deck, in that task,
 // and the session starts there. A board half that does declares `^1.82.0`.
 //
+// 1.83.0 adds a runtime's `statusEvents: true`: its Claude and Codex sessions post
+// their status to the session API's POST /status-event, and their cards take
+// status from those events instead of status files. `wrapLaunch` is handed
+// `statusHook: { script }` for such a launch. A manifest that needs it declares
+// `^1.83.0`.
+//
+// 1.84.0 adds a runtime's optional `location` (server/runtimes/index.js): its
+// sessions run somewhere core cannot see. Core calls `provision` at dispatch,
+// `open` before each launch, `suspend` on idle (per `suspendIdleHours`),
+// `resume` before a resume or fork, `unpushed` before archive and `delete` on
+// archive and forget, and reads `transcript`, `diff` and `codexId`, capping and
+// shape-checking each answer. A runtime without it is unchanged.
+//
+// 1.85.0 lets an extension dispatch on such a runtime: `sessions.spawn({
+// runtime, repos, branch, base })`. `sessions.archive` and `tasks.archive`
+// refuse a location card with unpushed commits, answering `{ unpushed }`,
+// unless called with `{ allowUnpushed: true }`, and a `sessions:read`
+// projection carries the card's `repos`. A manifest using any declares `^1.85.0`.
+//
+// 1.86.0 adds `location` to the client `api.runtimes()`: true for a runtime
+// whose sessions run at a location. A board half reading it declares `^1.86.0`.
+//
+// 1.87.0 adds the deck's runtime offer. The deck's `--runtimes <ids>` startup
+// option (env `AW_RUNTIMES`), read once at start, picks the runtimes it offers;
+// nothing changes it while the deck runs. A location runtime is offered only when
+// every runtime the deck offers is one, so such a deck starts nothing on its own
+// machine (no local launch, no plain terminal). The client `api.runtimes()` and
+// graph.runtimeOffer carry `unavailable`, the reason a runtime the deck has can't
+// be launched on, and the `/deck` descriptor carries `offeredRuntimes` (the
+// startup pick, null for every runtime); `sessions.spawn`, `sessions.wake` and
+// `api.openTerminal` refuse the same. A session at a location starts children on
+// its own runtime when none is named and is refused one on this machine. A
+// manifest or board half reading `unavailable` declares `^1.87.0`.
+//
+// 1.88.0 lets a location card gain GitHub repos after dispatch: the human adds
+// them from the card, or allows a session's `request_repo`. Core appends them to
+// `entry.repos` on the card and every card sharing its ref, then calls the
+// runtime's `open({ ref, entry, phase: 'repos' })` before the session is told,
+// so a runtime limiting what a card reaches lets the new repos through there; a
+// throw adds nothing. A suspended card's runtime hears at its next `resume`
+// open. A session spawned by a location session gets only the named repos its
+// spawner holds; the rest are withheld (`withheldRepos` on the dispatch result)
+// until the human allows a request. A runtime that reads `phase: 'repos'`
+// declares `^1.88.0`.
+//
+// 1.89.0 session projections expose `relaunchedAt` and take `lastActivity`
+// from live graph activity. Extensions relying on these declare `^1.89.0`.
+//
+// 1.90.0 adds own-only host.extension.receipt() and graph.extensions[].runningSha.
+//
+// 1.91.0 exposes provider-neutral lastTurn outcomes on session projections.
+// 1.92.0 adds host.agents.front() under agents:read.
+// 1.93.0 adds durable URL-keyed PR observations and pr:observation events.
+// 1.94.0 adds pre-front agents and excludeModels restrictions to host.agents.front().
+// 1.95.0 distinguishes manual archived restores in launchContext and onResume reasons.
+//
 // 2.0.0 is the major the deck API makes. The 2.x contract is what the deck
 // API offers: a board half beside `boardApi` in a split manifest, its state
 // through `api.state()`, the session view without the fields it drops, files
@@ -602,7 +658,7 @@ import semver from 'semver';
 export const HOST_API_VERSION = '2.0.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
-export const V1_SHIM_VERSION = '1.82.0';
+export const V1_SHIM_VERSION = '1.96.0';
 
 // The version this server serves `range` as: HOST_API_VERSION, the v1 shim, or
 // null for neither. A null/absent range is "no constraint" and gets the

@@ -86,13 +86,24 @@ test('HOST_API_VERSION is a real semver version', () => {
 // 1.80.0 Codex approvalPolicy in sessions.spawn
 // 1.81.0 the board half's per-deck `decks`, `state({ deck })`, `act`'s and `send`'s `deck`, `fromDeck` and `decks: true` task contributions,
 // 1.82.0 `openDispatch` on another deck's task,
+// 1.83.0 a runtime's `statusEvents`,
+// 1.84.0 the runtime `location` hooks,
+// 1.85.0 `sessions.spawn({ runtime, repos, branch, base })`, `allowUnpushed` and projection `repos`,
+// 1.86.0 `location` in the client `api.runtimes()`,
+// 1.87.0 the deck's runtime offer and `unavailable`,
+// 1.89.0 live session activity and relaunch timestamps,
+// 1.90.0 own-only installed and running extension receipts,
+// 1.91.0 provider-neutral lastTurn outcomes,
 // and a manifest declaring any of those
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders. 2.0.0 is
-// the deck API major: every 1.x range is still served, on the v1 shim (1.82.0).
+// the deck API major: every 1.x range is still served, on the v1 shim (1.96.0).
 test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can honour passes', () => {
   assert.equal(HOST_API_VERSION, '2.0.0');
-  assert.equal(V1_SHIM_VERSION, '1.82.0');
+  assert.equal(V1_SHIM_VERSION, '1.96.0');
+  assert.equal(servesRange('^1.96.0'), true);
+  assert.equal(servesRange('^1.95.0'), true);
+  assert.equal(servesRange('^1.94.0'), true);
   assert.equal(servesRange('^1.47.0'), true);
   assert.equal(servesRange('^1.48.0'), true);
   assert.equal(servesRange('^1.49.0'), true);
@@ -129,7 +140,18 @@ test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can 
   assert.equal(servesRange('^1.80.0'), true);
   assert.equal(servesRange('^1.81.0'), true);
   assert.equal(servesRange('^1.82.0'), true);
-  assert.equal(servesRange('^1.83.0'), false);
+  assert.equal(servesRange('^1.83.0'), true);
+  assert.equal(servesRange('^1.84.0'), true);
+  assert.equal(servesRange('^1.85.0'), true);
+  assert.equal(servesRange('^1.86.0'), true);
+  assert.equal(servesRange('^1.87.0'), true);
+  assert.equal(servesRange('^1.88.0'), true);
+  assert.equal(servesRange('^1.89.0'), true);
+  assert.equal(servesRange('^1.90.0'), true);
+  assert.equal(servesRange('^1.91.0'), true);
+  assert.equal(servesRange('^1.92.0'), true);
+  assert.equal(servesRange('^1.93.0'), true);
+  assert.equal(servesRange('^1.97.0'), false);
   assert.equal(servesRange('^1.46.0'), true);
   assert.equal(servesRange('^1.45.0'), true);
   assert.equal(servesRange('^1.44.0'), true);
@@ -187,11 +209,11 @@ test('a ^1 range is served as the v1 shim, a ^2 range as the current version', (
   assert.equal(servedVersion('^1.15.0'), V1_SHIM_VERSION);
   assert.equal(servedVersion('^1.74.0'), V1_SHIM_VERSION);
   assert.equal(servedVersion('^1.75.0'), V1_SHIM_VERSION);
-  assert.equal(servedVersion('^1.82.0'), V1_SHIM_VERSION);
+  assert.equal(servedVersion('^1.96.0'), V1_SHIM_VERSION);
   assert.equal(servedVersion('>=1.0.0'), HOST_API_VERSION, 'a range the current version meets gets it');
   assert.equal(servedVersion('^2.0.0'), HOST_API_VERSION);
   assert.equal(servedVersion(null), HOST_API_VERSION);
-  assert.equal(servedVersion('^1.83.0'), null);
+  assert.equal(servedVersion('^1.97.0'), null);
   assert.equal(servedVersion('not a range'), null);
 });
 

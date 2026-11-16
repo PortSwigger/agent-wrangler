@@ -34,6 +34,11 @@ Select an extension to see its **Enabled** switch, **Uninstall…** (installed
 only), its **Auto-update** switch (installed from a git URL only), its **Source** (type, repository and
 commit) and its **Settings**.
 
+On a deck started with `--extension-installs-off` (env `AW_EXTENSION_INSTALLS_OFF=1`), the tab says
+extension installs are off on this deck, and installing, updating, uninstalling and the
+**Auto-update** switch are disabled; the deck refuses them from any board or API, and auto-update
+applies nothing. The **Enabled** switch and **Settings** still work.
+
 When a Claude or Codex session resumes, Wrangler compares the enabled extension tools with the
 schemas recorded at its last launch. If they differ, it adds a reminder to re-run ToolSearch and
 disregard earlier schema results. For Claude, the reminder precedes an existing resume prompt, or
@@ -253,6 +258,26 @@ name and a strip of its accent, green and red. The button handles no clicks itse
 For development, place it under `<AW_DATA_DIR>/extensions/<id>/` and restart. Hand-placed extensions
 have no provenance or panel updates; use an isolated `AW_DATA_DIR`.
 
+## Store identity
+
+`host.stores.<name>` is a restart-barrier `Proxy` around the store returned by its factory.
+Methods run with `this` bound to the underlying store, so `this !== host.stores.<name>`.
+Do not compare those objects by identity or use one as a `Map`/`WeakMap` key and look it up
+with the other. Non-function properties pass through unchanged, including object identity.
+When shared bookkeeping needs an identity key, expose a dedicated object property:
+
+```js
+const bookkeeping = new WeakMap();
+class ExampleStore {
+  identity = {};
+  remember(value) { bookkeeping.set(this.identity, value); }
+}
+
+// In a handler with access to host:
+host.stores.example.remember('saved');
+bookkeeping.get(host.stores.example.identity); // 'saved'
+```
+
 ## Deck and board halves
 
 Agent Wrangler is two parts: the deck, which runs sessions, tasks and schedules, and the board, the
@@ -385,9 +410,9 @@ board half that reads `api.state()` and the session view, files through the `ses
 method changed shape, so moving to 2.0 is the migration below plus raising your ranges to `^2.0.0`.
 
 A manifest declaring a `^1` range (`engines.wranglerApi` or `boardApi`) still boots, on the **v1
-shim**: its `host.version` reads `1.82.0`, the last 1.x, and every surface 1.x offered keeps working,
+shim**: its `host.version` reads `1.96.0`, the last 1.x, and every surface 1.x offered keeps working,
 the older ones through the adapters listed under
-[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.82.0` is
+[Migrating an unsplit manifest](#migrating-an-unsplit-manifest). A `^1` range newer than `1.96.0` is
 refused, as before. The adapters stay until 3.0, which removes them once their use has gone quiet:
 each use is reported as the [`core.deprecated`](#core-events) telemetry event, so the maintainers can
 see which surfaces are still in use.
@@ -412,10 +437,12 @@ A deck started with `--deck-only` has no board server: it serves only the deck A
 and 404s board pages, and its allowlist is only the origins configured for it. See
 [Running a second deck](../README.md#running-a-second-deck).
 
-Board pages are sent with `Content-Security-Policy-Report-Only: script-src 'self'; object-src 'none';
-base-uri 'self'`. Nothing is blocked yet: an inline `onclick` or `<script>` in a board half still
-runs, and the browser reports it as a violation in the console. Load board code as modules from your
-`public/` directory so it keeps working once the policy is enforced.
+Board pages are sent with `Content-Security-Policy: script-src 'self'; object-src 'none'; base-uri
+'self'`. The browser blocks any script that is not a file served by the board: inline `<script>`
+blocks, inline event handlers (`onclick="…"`, including in HTML you assign to `innerHTML`),
+`javascript:` URLs, `eval` and `new Function`, and scripts from other origins. Load board code as
+modules from your `public/` directory and attach handlers with `addEventListener` or by assigning
+`el.onclick = () => …`. Styles are not restricted.
 
 Routes that board code reached on its own origin before the split are forwarded by the board server
 to the deck unchanged: `GET /file`, `GET /ext-file`, `GET /deck`, `POST /mcp`, `/pr-attach` and
@@ -632,24 +659,90 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   extension with a reason about server core modules it never imported. Matching
   by name costs nothing and claims nothing: a static import hidden in `x.test.js`
   is no more caught than the `await import()` the whole rule concedes.
-- **Installed extensions live in `<DATA_DIR>/extensions/<id>/`; their provenance is
-  `<DATA_DIR>/extensions.json`, deliberately NOT config.json.** config.json keeps the
-  `extensions.<id>` enable flags and is untouched by this feature. A record is
-  `{ id, originUrl, sha, installedAt, requires, dependencies }`, and the last two are
-  the only reason it exists: `requires` is the **CONSENTED** set and `dependencies`
-  the flattened lockfile list, and the installed tree is always whatever the new
-  version ships — so without the record an update has nothing to diff against.
-  DATA_DIR-relative on purpose: a `run-dev` instance starts with no installed
-  extensions the same way it starts with no sessions, and `test-setup.js`'s
-  `AW_DATA_DIR` redirect gives the tests that isolation for free. An extension with
-  **no record** (a hand-dropped directory — a legitimate dev workflow) still loads,
-  is not updatable, and is **not** capability-gated: placing it there by hand is its
-  own consent. For an external extension the manifest `id` MUST equal its directory
-  name, or the provenance record, the `/ext/<id>/` asset route and the uninstall path
-  silently disagree about what is installed. Every computed path is resolved and
-  asserted to stay directly under `<DATA_DIR>/extensions/` before any write or
-  delete — the id comes from third-party data, and one missed check on a delete path
-  is a wipe of an arbitrary directory.
+- **An install can select an exact commit or tag.** In **Git URL**, enter an optional
+  tag or full 40-hex commit SHA. The equivalent control frame is
+  `{ type: 'ext-install', url, ref }`; omit `ref` to follow the default branch or
+  the installed extension's opted-in early-adopter branch. An explicit empty,
+  invalid, missing or ambiguous ref is refused. Branch names, abbreviated SHAs
+  and revision expressions are not accepted as exact refs. Tags consisting only
+  of 4–39 hexadecimal characters (such as `2024` or `deadbeef`) are refused
+  because they resemble abbreviated SHAs. A name shared by a
+  branch and a tag is ambiguous. Annotated tags resolve to their commit; the
+  disclosed `sha` is the commit fetched and checked out, with no fallback to HEAD.
+  The requested `ref` is recorded alongside `sha` and blocks automatic updates
+  until an install without a ref clears the pin. The auto-update and branch
+  opt-ins are preserved. `graph.extensions[]` and update-check results expose
+  `pinnedRef` and an `autoUpdateBlocked` reason; the panel shows that reason
+  even before a remote check. A manual update without a ref clears the pin.
+  A remote's ability to serve a SHA does not prove that its owner authored or
+  published it: GitHub can serve commits that exist only in a fork in the same
+  repository network. Verify the exact commit and its provenance before consent.
+- **Replacing a newer commit needs explicit downgrade confirmation.** The
+  disclosure includes `previousSha`, `relation` (`same`, `upgrade`, `downgrade`,
+  `diverged` or `unknown`), `downgrade` and `requiresDowngradeConfirmation`.
+  A target that is an ancestor of the installed commit is a downgrade. Diverged
+  or unavailable history also requires confirmation because a forward update
+  cannot be established. Consent is
+  `{ type: 'ext-consent', tempId, approve: true, allowDowngrade: true }` when
+  `requiresDowngradeConfirmation` is true; `approve` alone is refused before npm
+  or replacement. The board labels its confirmation as a downgrade and shows
+  both commits. Auto-update leaves these installs for human confirmation.
+- **Installed and running commits are separate receipts.** `graph.extensions[]`
+  exposes `installedSha` (the current on-disk record), `runningSha` (the loaded
+  module's provenance), the backward-compatible `sha` alias for `runningSha`,
+  and `restartPending` when the commits differ. The Source panel shows both full
+  SHAs and keeps the restart notice across reloads. `ext-install-done` also
+  returns `installedSha`, `runningSha` and `restartPending`. Fresh installs load
+  immediately; updates retain their running commit until server restart.
+  Empty strings mean no recorded commit, as with builtins and hand-placed code.
+  On server host API **1.90.0**, every extension can call
+  `host.extension.receipt()` without a capability grant to read its **own**
+  `{ installedSha, runningSha, restartPending }`. The returned object is a copy,
+  the installed receipt is read afresh on every call, and no extension-id
+  argument is accepted. Declare `engines.wranglerApi: '^1.90.0'` when using it.
+- **Restart draining.** Core stops accepting new MCP calls,
+  control actions and launches before a restart. It waits up to 30 seconds for
+  admitted requests, responses, extension sweeps, event subscribers and
+  store-method promises to finish. Nested work belonging to an admitted
+  operation may finish. New calls receive a retryable
+  `restarting` error (HTTP 503 with `Retry-After: 1` for session API requests).
+  If work does not finish, an automatic restart is cancelled: core reopens
+  admission and shows **Restart pending** in Settings › Updates, naming each
+  operation still running and its age; the installed update still awaits a
+  restart. A restart a human asked for (**Restart** or **Restart now**) exits
+  anyway after the 30 seconds and names what it cut short. Automatic activation also waits for interactive working turns,
+  headless runs, launches and schedules due within two minutes. Manual restarts
+  drain server work while worker panes carry on.
+
+  Tools, handlers, sweeps, event subscribers and store methods must return their
+  complete write promise so core can drain it. Detached writes through raw
+  references or an extension's own untracked timers are outside this barrier.
+- **Installed extensions live in `<DATA_DIR>/extensions/.generations/<id>/<token>/`;
+  `<DATA_DIR>/extensions.json` selects the installed generation.** Each install
+  gets a unique directory, including reinstalls of the same commit. The running
+  registry keeps its original directory until restart: HTTP assets (including
+  nested imports and styles), skills and lazy server imports keep reading that
+  generation even after an update is installed. Startup selects the installed
+  generation and removes superseded files after activation and the instance lock.
+  Quarantined or missing selected generations retain prior files for recovery.
+  A missing or unreadable provenance record also preserves generation files;
+  restore the record (or its `.corrupt` backup) to make that install discoverable.
+  Uninstall removes all generations for the extension.
+
+  Provenance is separate from config.json, which keeps the `extensions.<id>`
+  enable flags. A record includes `{ id, originUrl, sha, generation, installedAt,
+  requires, dependencies }`: `requires` is the **CONSENTED** set and `dependencies`
+  the flattened lockfile list used to disclose update differences. Publishing
+  the record is atomic; a failed publication leaves the prior install selected.
+  All paths stay under DATA_DIR, so isolated instances and tests have their own
+  installed extensions.
+
+  Legacy installs and hand-placed extensions at `extensions/<id>/` still load.
+  A hand-placed extension with **no record** is not updatable or capability-gated:
+  placing it there is its own consent. Its first update preserves that directory
+  until startup selects the new generation. The manifest id must match its
+  installation id. Ids and generation tokens are validated before constructing
+  paths for writes or deletion.
 - **An UPDATE *is* `ext-install` against the recorded `originUrl` — same clone, same
   consent modal, same handler — and RE-CONSENT is required only when `requires`
   WIDENS.** Unchanged or narrowed proceeds on the recorded consent, because nothing
@@ -773,7 +866,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   instance started from a pane doesn't inherit the button either; see
   [Install signals](install-signals.md). The handler (`control/handlers/restart.js`) acks BEFORE the exit is armed
   (the socket dies with the process) and the exit itself lives in `index.js`'s
-  `ctx.restart`, which calls `shutdownLog.noteReason` first — a self-inflicted exit
+  `ctx.restart`, which drains admitted work and records the reason before exiting — a self-inflicted exit
   with no reason logs exactly like the hard kill an absent reason is supposed to
   mean. The board's own pending notes (an uninstalled row, a finished install) are
   cleared by the next `config` frame, which is the first frame of every reconnect
@@ -1052,7 +1145,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`host-api/version.js`) is what the server serves and a breaking reshape adds
   `v2.js` keeping `v1.js` as the shim, selected by the declared range — never
   edit builders in place. 2.0.0 reshaped no builder, so both majors still build
-  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.82.0) and its
+  from `V1_BUILDERS`; a `^1` range is served as `V1_SHIM_VERSION` (1.96.0) and its
   older surfaces through the adapters (see [Host API 2.0 and the v1
   shim](#host-api-20-and-the-v1-shim)). `semver` is a real dependency, so
   `scripts/sync-deps.sh` means the SERVICE needs a restart for it to land
@@ -1575,12 +1668,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   const presets = api.modelFront.programmesOf(agents, front, MY_PROGRAMMES);
   ```
 - **`api.runtimes()`** (1.33.0) returns the dispatch dialog's Runtime options,
-  `[{ id, label, ownsModel, ownLaunch, agents }]` (`local` and the built-ins first, then enabled
+  `[{ id, label, ownsModel, ownLaunch, agents, location }]` (`local` and the built-ins first, then enabled
   extensions' runtimes), as a fresh copy per call. `ownsModel` marks a runtime
   that defines `validateModel`, whose model `api.dispatch.submit` sends as
   `ext.<extId>.model`. `agents` (1.37.0) lists the agent ids the runtime takes
   (`null` for `local`, which takes every agent). `ownLaunch` (1.47.0) marks a
   runtime that builds its own command; it is `false` for `local` and `devcontainer`.
+  `location` (1.86.0) marks a runtime whose sessions run at a location (see
+  [Runtimes](#runtimes)); it is `false` for `local` and `devcontainer`.
+  `unavailable` (1.87.0) is the reason the deck won't launch on a runtime it
+  has, or null: one left out of the deck's `--runtimes` startup option (hidden
+  from the dialog), or a location runtime on a deck that also offers one on its own
+  machine (shown disabled with this reason). See [the deck's runtime offer](#runtimes).
 - **`api.keys.bind({ combo, scope, when?, run, description })`** (1.26.0)
   adds a keyboard shortcut through the board's keybinding registry
   (`public/keybindings.js`) and returns an unbind function. The manifest must
@@ -2033,8 +2132,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   answers nonsense. Dispatch, resume and fork await it before building the
   command; the Claude and Codex adapters and the devcontainer runtime (which
   copies each granted dir into the container) read the result through the same
-  helpers. `reason` is one of `dispatch | resume | fork | message | snooze-wake |
-  spawn | assign | adopt | headless`; `assign` (a running session moved to another task) and
+  helpers. `reason` is one of `dispatch | resume | restore | fork | message | snooze-wake |
+  spawn | assign | adopt | headless`. `restore` (1.95.0) identifies a manual restore of an
+  archived session through the board, `restore_session`, or task restoration.
+  Scheduled session actions use `resume`; message and snooze wakes keep
+  `message` and `snooze-wake`. Interactive resumes or restarts of sessions that
+  are not archived use `resume`. A hook can return `{ refuse: 'reason' }` for
+  `resume` while allowing `restore`. Neither path calls `session.beforeSpawn`
+  or `session.spawned`. After a successful relaunch, `session.onResume` receives
+  `{ sessionId, entry, reason }`; its reason is `restore` for archived manual
+  restores and otherwise retains the caller's reason (for example `manual`,
+  `schedule`, `message`, or `snooze-wake`). Concurrent resumes of one session
+  share the first caller's relaunch and reason. `assign` (a running session moved to another task) and
   `adopt` (server boot) are not launches: the hook still runs and the result is
   discarded. Turning an extension on or off applies to new launches; running
   sessions keep their env until relaunched. `parentId` (1.47.0) is the parent
@@ -2161,8 +2270,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `list()` and `forTask(taskId)` include `status`, `dormant`, `waitingReason` and
   `hasBackgroundShell` from the latest board graph. Without a graph node, status
   and waitingReason are `null`, and the booleans are `false`. Conversation ids
-  (`liveSessionId` and `priorLiveSessionIds`) remain omitted. `waitingReason` on a
-  needs-you card is 'api-error' (a transient API error that the same prompt can
+  (`liveSessionId` and `priorLiveSessionIds`) remain omitted. `lastActivity` (1.89.0) uses
+  the latest graph's transcript activity, falling back to the stored mapping
+  value, then `null`. `createdAt` and `relaunchedAt` come from the mapping and
+  are `null` when absent. These timestamps are Unix milliseconds. `waitingReason`
+  on a needs-you card is 'api-error' (a transient API error that the same prompt can
   retry), 'api-error-blocking' (any other API error), and, from 1.61.0 for Claude,
   'permission' (a prompt) or 'auto-block'. 'auto-block' is Claude Code's timed
   auto-mode safety check, which denies itself when its countdown runs out, and
@@ -2170,12 +2282,49 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   pane (`null` otherwise). The board still shows it as needs-you. From 1.63.0 a
   Codex session at its command or patch approval prompt is needs-you with
   waitingReason 'permission' and waitingFor 'Codex is asking for approval'.
+- **Last turn outcome** (`sessions:read`, 1.91.0): `host.sessions.get(id)`,
+  `list()` and `forTask(taskId)` include `lastTurn`, either `null` when unknown or
+  `{ outcome: 'ok' | 'error' | 'aborted', errorKind?, at }`. `at` is the provider
+  record's timestamp in Unix milliseconds. `errorKind` is optional, appears only
+  for `error`, and contains a provider machine code, never error text. Codes are
+  provider-specific and are not an exhaustive enum; consumers must handle absence
+  and unfamiliar codes. The object is copied and frozen like the session projection.
+  A working session, a later turn starting, or a relaunch newer than the terminal
+  record clears the projected outcome to `null`; a later terminal record replaces it.
+  Without a graph node the outcome is `null`; it is not persisted in the mapping.
+  Codex uses rollout `task_complete`, `turn_aborted` and explicit `error` events;
+  a recorded fatal `error` survives trailing `task_complete` events until the next
+  `task_started`. Otherwise `user_message` and `agent_message` clear the previous result.
+  Some Codex versions omit errors from rollouts; without that evidence a trailing
+  `task_complete` reports `ok`, or the outcome remains unknown without a terminal mark.
+  An error more than about 64 KiB before a trailing `task_complete` can fall outside
+  the read window and report `ok`. Codex cards on remote runtimes currently report `null`.
+  Claude uses assistant `stop_reason: 'end_turn'`, `isApiErrorMessage`, and the
+  explicit `[Request interrupted by user]` (including `for tool use`) user marker.
+  Later message progress clears the outcome. Sidechain and inherited fork history
+  do not set it. Claude transcripts without these terminal markers, abrupt process
+  death, and provider failures absent from the transcript remain unknown. Idle status
+  alone never implies success. Codex reads are bounded to the latest rollout's last
+  8 MiB, so terminal records outside that window can also be unknown. Extensions
+  using this field declare `^1.91.0`.
 - **`host.events`** (capability `events`, 1.17.0): `on(name, fn)` and `emit(name, payload)`.
   Subscriber errors are caught and logged per handler, `emit` does not wait, and
   an extension's subscriptions are dropped when it deactivates, so a disabled
   extension hears nothing. `emit` publishes `ext:<id>:<name>` (forced), so an
   extension cannot forge a core event. Core event: `archive-review:completed
   { sid, taskId, markdown }` (the review is skipped when nobody listens).
+  Since 1.93.0, `pr:observation` publishes the full PR observation described
+  below; `events` alone grants these payloads without `links:read`.
+  `session-notification:blocked` (1.96.0) publishes
+  `{ sid, reason: 'composer-not-empty', since, at }` once per episode when an
+  automated terminal notification has waited behind an unconfirmed-empty
+  composer for five minutes. Times are milliseconds. The event contains no
+  composer text. The board flags the session, and its spawning and parent
+  sessions receive mail when available. Notifications remain queued; the host
+  never clears or overwrites the draft. The episode clears on delivery, when
+  pending work disappears, or when the session is archived or snoozed. Episode
+  timers restart with the server. The `events` capability grants this payload
+  without requiring `sessions:read`; consumers that require it declare `^1.96.0`.
   Since 1.59.0, `session-status:needs-you`, `session-status:idle-held`,
   `session-status:quiet` and `session-status:exited` publish
   `{ sid, kind, at, waitingFor, idleMs, quietMs, exitReason }` for every session,
@@ -2205,7 +2354,77 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `remove_links` matches non-`pr` links generically (key, case-insensitive, or url).
 - **`host.links.get(sessionId)`** (capability `links:read`, 1.70.0) returns a
   copy of the card's session links, including PR links, or `[]` for an unknown
-  card. This capability exposes only `get`; it does not expose `attach`.
+  card. It also exposes the PR observation readers below; it does not expose `attach`.
+- **PR observations** (capability `links:read`, 1.93.0):
+  `host.links.prObservation(url)` synchronously returns the latest observation
+  for that exact stored PR URL, or `null` when core has never attempted it.
+  `host.links.prObservations()` returns an object keyed by URL containing all
+  retained observations. Both readers also accompany `links:write`. Reads are
+  local and perform no GitHub requests. Returned objects, including nested check
+  data, are deeply frozen snapshots.
+
+  Each observation has this shape (all keys are present):
+
+  ```js
+  {
+    url,                 // exact PR URL used by the sweep
+    nodeId,              // GitHub GraphQL PR node id
+    createdAt,           // GitHub PR creation timestamp
+    state,               // "open", "merged", or "closed"
+    title, number, isDraft,
+    headSha,             // GitHub headRefOid
+    mergeStateStatus,    // GitHub enum, e.g. "CLEAN", "BLOCKED", "DIRTY"
+    statusCheckRollup,    // raw gh pr view array, including CheckRun/StatusContext fields
+    reviewDecision,      // "", "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"
+    checkStatus,         // derived readiness: passing, failing, pending, none,
+                         // awaiting-review, or changes-requested
+    dirty,               // mergeStateStatus === "DIRTY"
+    fetchedAt,           // ISO timestamp of the last successful PR status fetch
+    attemptedAt,         // ISO timestamp of the last PR status fetch attempt
+    lastError,           // null on success, diagnostic string on failure
+  }
+  ```
+
+  Before the first successful fetch, all PR data fields and `fetchedAt` are
+  `null`; `url`, `attemptedAt` and `lastError` identify the failed attempt.
+  Later failures preserve the last successful PR data and `fetchedAt`, update
+  `attemptedAt` and `lastError`, and a successful fetch clears `lastError`.
+  Error reporting covers the PR status fetch, not the separate unresolved-thread
+  count query. `statusCheckRollup` describes checks already attached to the head;
+  it does not enumerate absent required checks. `checkStatus: "passing"` means
+  mergeable according to core's readiness rules, not simply all reported CI green.
+  An unknown future review decision normalises to `""`.
+
+  The existing PR sweep supplies observations using its existing requests, with
+  additional fields on the same `gh pr view`. Duplicate task/session links share
+  one fetch per URL in each sweep; overlapping fetches of that URL share in-flight
+  work. Only currently linked PRs are polled. Observations are stored atomically
+  in separate URL-hashed JSON files under the data directory’s `pr-observations/`
+  directory and retained without expiry
+  across link removal, merge/close, and server restarts. Retained observations can
+  therefore be stale: consumers must assess `fetchedAt` and `lastError`.
+  Reattaching a URL resumes observation. A different `nodeId` at the same URL
+  replaces the previous PR record entirely; compare `nodeId` and `createdAt`
+  when detecting URL reuse. Timestamp-only refreshes update memory without disk
+  writes; those timestamps persist with the next meaningful change for that URL.
+  After a restart, freshness timestamps therefore conservatively reflect the last
+  durable change rather than every successful poll. Each write touches only its
+  own URL file; retained history does not multiply sweep write costs.
+
+  Capability `events` alone grants observation payloads, without `links:read`.
+  Subscribe using
+  `host.events.on('pr:observation', observation => { /* ... */ })`.
+  The payload is the full deeply frozen observation above. Core emits once on
+  the first observation, any PR data change (including identity or head), and
+  error changes/recovery. Changes only to `fetchedAt`/`attemptedAt` do not emit.
+  Events follow the durable write and precede terminal link removal. A failed
+  write is logged and leaves the prior observation snapshot intact for retry.
+  Open PR link status updates and notifications continue; terminal links stay
+  attached until their terminal observation is durable.
+  Events are in-process notifications with no replay on subscription or restart;
+  subscribe and read the snapshot to establish a baseline. Normal event-bus
+  subscriber isolation and extension deactivation rules apply. Consumers using
+  this contract declare host API `^1.93.0`.
 - **`host.links`** (capability `links:write`, 1.19.0) lets server code put a link
   on a card when no agent will call `set_links` for it, e.g. a sweep that learns a
   URL after launch. `get(sid)` returns a copy of the card's session links (`[]` for
@@ -2370,7 +2589,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   task as its tile's Archive does: the task and every live session assigned to it.
   Resolves `{ archived, sessionIds, unclean }`; `archived` is false for an unknown or
   already-archived task. It is separate from `tasks:write` so a consent to rename
-  and assign never grows into one that stops sessions.
+  and assign never grows into one that stops sessions. Since 1.85.0 a task holding a
+  location session with commits on no remote branch is left alone and resolves
+  `{ archived: false, unpushed }` unless called as `archive(taskId, { allowUnpushed: true })`;
+  `host.sessions.archive(sid, { allowUnpushed })` works the same way, resolving
+  `{ archived: [], unpushed }`. `unpushed` is `[{ sessionId, label, repos: [{ repo, dir,
+  commits: [{ sha, subject }], error? }] }]`.
+- **`host.sessions.spawn({ runtime, repos, branch, base })`** (1.85.0) dispatches on a
+  runtime by id (an unknown id is refused by name). A runtime with a `location` takes
+  GitHub `repos` (`owner/name` or a GitHub URL, at most 20) instead of a folder; `branch`
+  (with `base`, its starting remote branch) is the branch the session creates in each
+  clone and pushes to. The agent is briefed to clone each repo; a projection's `repos`
+  lists a location card's repos (including any added after dispatch, 1.88.0) and is null
+  for a card on this machine.
 - **`host.usage.byCard()`** (capability `usage:read`, 1.6.0) resolves every card's
   spend recomputed from transcripts, through the same cached scan as the Usage
   panel: one frozen row per card, `{ cardId, usd, estimatedUsd, days }`. A card's
@@ -2406,13 +2637,54 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
   A manifest using it declares `^1.66.0` (`^1.67.0` to read `headless` or `background`).
 
+- **`host.agents.front({ agents?, excludeModels?, agent?, maxUsd?, minQuality? } = {})`** (capability
+  `agents:read`, 1.92.0) resolves a deeply frozen
+  `{ read, credit, units, front }`, using the same benchmark data, Pareto maths and
+  projection as `get_model_front`. The server reads installed agents and their
+  launchable models and efforts afresh each call. Each `front` row is
+  `{ agent, model, effort, quality, usd, minutes, onCurve }`; `agent` is the provider
+  id accepted by session spawning. Rows are ordered by ascending `usd`, breaking
+  ties by descending `quality`. An empty installed or measured set returns `[]`.
+  The front contains settings nothing beats on quality, cost and time together.
+  `onCurve` identifies membership of the quality/cost curve (ignoring time).
+  `agents` and `excludeModels` (1.94.0) restrict candidates **before** computing
+  the front and curve. `agents` is an optional array of installed provider ids;
+  omitting it uses all installed agents, while `[]` returns an empty front.
+  Unknown or unavailable ids reject the promise. `excludeModels` is an optional
+  array of model values from `host.agents.list()`, matched exactly across all
+  selected providers and all efforts. Unknown model values are harmless, so an
+  exclusion list can span different installations. An empty exclusion list
+  excludes nothing; duplicate entries in either array have no extra effect.
+  Both options require arrays of non-empty strings. Excluding candidates can
+  promote settings dominated in the global front and change `onCurve`.
+
+  The output filters `agent`, `maxUsd` and `minQuality` apply after computing the
+  candidate front and curve; they never promote settings or change `onCurve`.
+  `agent` is validated against all installed providers, so an installed provider
+  outside `agents` returns an empty front.
+
+  `agent` restricts output to one installed provider id; an unknown or unavailable
+  id rejects the promise. `maxUsd` is a positive finite number and `minQuality` a
+  finite number from 0 to 100, both inclusive output thresholds; invalid values
+  reject the promise. `read` is the benchmark snapshot date (`YYYY-MM-DD`), `credit`
+  its source attribution, and `units` is
+  `{ quality: 'Terminal-Bench 4.0 points', usd: 'list-price dollars per task',
+  minutes: 'wall-clock minutes per task' }`. These are coding-task measurements,
+  not review-specific scores. Unmeasured settings are omitted. A manifest using
+  this method declares `^1.92.0`, or `^1.94.0` when using candidate restrictions.
+  For example, `host.agents.front({ agents: ['claude'], excludeModels: ['opus'] })`
+  computes the front over Claude's launchable models other than Opus.
+  These options do not affect `get_model_front` or the board's model picker.
+
 - **`host.agents.headless({ prompt, stdin?, agent?, model?, effort?, timeoutMs? })`**
   (capability `agents:headless`, 1.67.0) runs one tool-less one-shot and resolves a
   frozen `{ text, liveSessionId, agent, model, error }`. `prompt` goes in argv and
   `stdin` (a string, default empty) is piped in; every tool is off, and the user's own
-  settings and MCP servers are not loaded. Claude runs `claude -p` with its tools
-  disallowed; Codex runs `codex exec` in a read-only sandbox with its tool features
-  disabled and the user's `config.toml` ignored. With no `model` the run uses the
+  settings and MCP servers are not loaded. Claude runs `claude -p --tools ''`; Codex
+  runs `codex exec` in a read-only sandbox with its tool features disabled, a
+  one-model catalog that turns none of the model's tools on, and the user's
+  `config.toml` ignored, and fails the run when the model is missing from Codex's
+  catalog. With no `model` the run uses the
   **Background model** (Settings › Automation, Claude Haiku by default); an `agent`
   alone runs the Background model when it is that agent, otherwise that agent's own
   headless default. `timeoutMs` defaults to two minutes and is capped at ten. A failed
@@ -2677,7 +2949,8 @@ define it and the runtime owns its sessions' model vocabulary: `spawn_session` s
 per-agent check, asks this instead, and passes the accepted model as `ext.<yourId>.model`;
 `coreModelError(agent, model)` is core's own check, to reuse),
 `resumable` (default `true`), `skipsHostResumeGuard` and `liveByTmux` (1.34.0, default
-`false`; see below), and `agents` (1.37.0; the agent ids it runs, default `['claude']`:
+`false`; see below), `statusEvents` (1.83.0, default `false`; see below), and `agents`
+(1.37.0; the agent ids it runs, default `['claude']`:
 dispatch and `spawn_session` refuse any other agent, and the dialog disables the option
 for one). Every function is also handed
 `host` (the extension's façade) and `settings` (its own setting values), and `ext` is
@@ -2743,6 +3016,22 @@ Maintainer notes:
   while it runs and offers a Resume. Discovery and costing are otherwise unchanged, so
   the agent's transcript must still land on the host. An older server ignores the key,
   so a manifest that needs it declares `^1.34.0`.
+- **`statusEvents: true` (1.83.0) takes card status as events instead of status files.**
+  The Claude and Codex sessions it launches carry status hooks in their command, and
+  each hook posts the session's state to the session API's `POST /status-event`
+  (docs/session-api.md, "Status events") with the session's own token. The card's
+  status, and for needs-you what it waits for, then comes from the last event alone:
+  the graph tick reads none of that card's status files, never calls the runtime's
+  `readLive`, and never reads a Codex rollout for status. Before the first event the
+  card shows `unknown`. Chat, cost and the transcript are read as before. The hooks
+  run one self-contained script with Node; `wrapLaunch` is also handed `statusHook:
+  { script }`, its host path, so a runtime whose agent runs somewhere else copies that
+  one file to the same path (or rewrites the path in `inner`, as devcontainer does for
+  the PR hook), and must let the agent reach the session API's URL in
+  `AW_STATUS_EVENT_URL`. `launchContext.statusEvents` is `true` on such a launch. A
+  `buildLaunch` runtime and an agent with no status hooks (Gemini) are not affected,
+  and every runtime without the flag keeps file-based status. An older server ignores
+  the key, so a manifest that needs it declares `^1.83.0`.
 - **`deliver` sits on send_message's legacy push path**, before the tmux check, and gets
   the BEGIN/END-fenced text, because the target is a raw prompt stream. The footer drops
   the "reply with send_message" line, since that agent has no wrangler MCP. A card whose
@@ -2758,6 +3047,90 @@ Maintainer notes:
   `list_sessions` adds `launch` to each row whose runtime answers. An off-shape answer
   or a throw reads as no answer, and the bound copy returns null while inactive. Keep
   it cheap: it runs once per row on every `list_sessions`.
+- **`location` (1.84.0) runs a runtime's sessions somewhere core cannot see.** Core
+  never reads, writes or runs anything there: the runtime's `wrapLaunch` (handed the
+  card's ref as `location`) gets the agent there, copies what it needs and points the
+  agent's `http://127.0.0.1:<port>` URLs at this deck; status comes from `readLive` and
+  `analyze`; everything else comes back from these hooks, each called with `{ ref, entry }`:
+
+  | Hook | When | Answer |
+  | --- | --- | --- |
+  | `provision({ sessionId, cwd, agent, ext, repos, branch, base })` (required) | dispatch, after the last refusal | a JSON-able ref of at most 16 KiB, stored as `entry.location` |
+  | `open({ ref, entry, phase })` | before each launch (`dispatch`, `resume`, `fork`), and with `repos` when a running card's `entry.repos` grows (1.88.0) | `{ cwd? }`, the absolute path there the agent starts in; dispatch needs one or a `cwd` |
+  | `suspend` | idle suspend after the pane is killed, and a clean exit | — |
+  | `resume` | before every resume or fork; a quick no-op when running | — |
+  | `delete` | archive (after the unpushed check), forget, a failed dispatch | — |
+  | `unpushed` | before archive | `[{ repo, dir, commits: [{ sha, subject }], error? }]` |
+  | `transcript({ ref, entry, liveSid })` | every graph tick, when there is no `analyze`, and every Chat poll of a Claude card | a Claude transcript's JSONL text |
+  | `diff({ ref, entry, mode })` | the diff panel (`working-tree` or `branch`) | `{ diff, baseRef?, dir? }`, or null for no repo |
+  | `codexId({ ref, entry, since, excludeIds })` | a Codex launch, and a resume that has no id | the conversation id, or null |
+
+  A Claude card's Chat reads only from `transcript`, never from this machine's disk:
+  answer the whole text each time, appending to it or dropping whole lines from its
+  front (Chat then redraws from a fresh window). No answer shows "can't read the
+  conversation right now" until one comes back. A card of any other agent at a location
+  has no Chat.
+  `suspendIdleHours` (a number, or a function of `{ ref, entry }`) sets this location's
+  idle-suspend threshold in place of the install's; `0` turns the timer off.
+  Every answer is checked: an off-shape ref or `cwd` fails the launch, a transcript over
+  64 Mi characters or not a string is ignored, a diff over 8 Mi characters is cut at a
+  line and its dropped lines counted in `truncated`, a `codexId` that is not
+  `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` or already belongs to another card is ignored, and
+  `unpushed` keeps 50 repos of 20 commits each. A hook that throws or answers off-shape
+  in `unpushed` blocks the archive as an error rather than passing it as clean; one
+  without `unpushed` has nothing to check. `suspend` and `delete` are withheld while
+  another card holds the same ref (a fork shares its parent's), and a location deleted on
+  archive refuses a later resume. While suspended a card shows the cost, activity, title
+  and summary read when it was suspended. Location cards are kept live by tmux liveness,
+  like `liveByTmux`; a location card refuses `addDirs` and `worktree`, links only pull
+  requests in its own `repos` (others are refused and never polled), and an unattended
+  wake resumes it in its stored `cwd` without creating anything on this machine.
+  `name_branch` records the new branch name and tells
+  the agent the `git branch -m` to run in its clones. Validation quarantines a `location`
+  that is not an object, sits beside `buildLaunch`, lacks `provision`, has a non-function
+  hook or an unknown key, or an off-shape `suspendIdleHours`. While the extension is
+  inactive the bound copy throws from `provision`, `open`, `resume`, `unpushed` and
+  `diff`, and reads nothing.
+- **A location card's repos (1.88.0).** A session spawned by a location session gets
+  only the repos it names that its spawner holds (all of them when it names none). A
+  repo it names that the spawner does not hold is withheld: the runtime's `provision`
+  never sees it, the dispatch result and `spawn_session` carry it as `withheldRepos`,
+  and the child is briefed to ask for it with `request_repo`. Only the human widens
+  what a card reaches, by adding repos from the card's **GitHub repos…** dialog or by
+  allowing a session's `request_repo` (a toast with Allow and Decline, and the same
+  dialog); a request alone adds nothing. Either way core appends the repos to
+  `entry.repos` on the card and every card sharing its ref, then calls
+  `open({ ref, entry, phase: 'repos' })` before the session is mailed where to clone
+  them, so a runtime that limits what a card reaches (a credential proxy, say) reads
+  `entry.repos` there as well as in `provision`. A throw from that `open` adds nothing
+  and is shown to the human, and an allowed request it refused stays waiting. A
+  suspended card takes the repos without an `open`; its runtime sees them in the
+  `resume` open. A repo whose name matches one the card holds is refused, since its
+  clone dir would move. Every session on a deck is offered `request_repo`; a card on
+  this machine is refused it, since it already reaches the human's checkouts.
+- **The deck's runtime offer (1.87.0).** The deck's `--runtimes <ids>` startup
+  option (env `AW_RUNTIMES`, comma-separated runtime ids) picks the runtimes it
+  offers. It is read once at start: no setting, control message, deck action or
+  host API call changes it while the deck runs. Without it the deck offers every
+  runtime it has. The `/deck` descriptor reports the pick as `offeredRuntimes`
+  (null for every runtime), and Settings › Decks shows it per deck. A location
+  runtime is offered only when every runtime the deck offers is one, so a deck that
+  runs location sessions starts nothing on its own machine. On a deck that also
+  offers a runtime on its own machine (`local`, `devcontainer`, or an extension's
+  without `location`), a location runtime is shown disabled with the reason
+  (`unavailable` on `api.runtimes()`, graph `runtimeOffer` and the `/deck`
+  descriptor's `runtimes`), dispatch to it is refused, and its existing cards are
+  neither resumed, woken nor forked. On a deck of location runtimes only, every
+  launch on a runtime it doesn't offer is refused (a dispatch naming no runtime
+  means `local`), and so are plain terminals (`create_terminal`, the board's Open
+  terminal, `api.openTerminal`). A pick whose extensions are all off offers
+  nothing, rather than falling back to `local`. Every path that launches checks
+  this in core: the dispatch dialog, `spawn_session`, `spawn_workflow`, schedules,
+  `sessions.spawn`, `sessions.wake`, restore, resume, fork, and mail, message, PR
+  and snooze wakes. A session at a location starts children on its own runtime
+  when it names none and is refused a runtime on this machine, on every path that
+  starts or wakes a session for it (`spawn_session`, `spawn_workflow`,
+  `schedule_session`, `restore_session`, `restore_task`).
 - **Follow-up extraction.** Devcontainer is still special-cased outside the contract:
   the archive stop-container offer and its cascade (`control/handlers/archive.js`,
   `public/archive-cascade.js`), `archive-session`'s `stop_container`, the add-dirs resync in

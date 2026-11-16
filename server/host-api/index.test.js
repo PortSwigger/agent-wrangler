@@ -7,6 +7,7 @@ import { adapterFor } from '../agents/index.js';
 import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
 import { buildHostApi, buildExtSettings } from './index.js';
 import { V1_BUILDERS, usdByCard } from './v1.js';
+import { getModelFrontTool } from '../mcp/tools/get-model-front.js';
 import { HOST_API_VERSION } from './version.js';
 import { MailboxStore } from '../mailbox-store.js';
 import { _resetUsageCache } from '../usage-scan-memo.js';
@@ -14,7 +15,7 @@ import { createEventBus } from '../events.js';
 import { createExtFiles } from '../ext-files.js';
 import { runWithOrigin } from '../request-origin.js';
 
-const ALWAYS = ['id', 'version', 'stores', 'settings', 'log'];
+const ALWAYS = ['id', 'version', 'stores', 'settings', 'log', 'extension'];
 
 function wiring(overrides = {}) {
   return {
@@ -245,12 +246,12 @@ test('links:write get returns a copy of the card\'s links, [] for an unknown car
   assert.deepEqual(host.links.get('gone'), []);
 });
 
-test('links:read exposes only get and returns independent link copies', () => {
+test('links:read exposes observations and returns independent link copies', () => {
   const { host, stored } = linksWiring({
     requires: ['links:read'],
     links: [{ type: 'pr', url: 'https://github.com/o/r/pull/1' }],
   });
-  assert.deepEqual(Object.keys(host.links), ['get']);
+  assert.deepEqual(Object.keys(host.links), ['get', 'prObservation', 'prObservations']);
   const got = host.links.get('c1');
   assert.deepEqual(got, stored.c1);
   got[0].url = 'mutated';
@@ -484,6 +485,11 @@ test('sessions:read joins the latest graph for get, list and forTask', () => {
   }) });
   assert.equal(host.sessions.get('c1').dormant, true);
   assert.equal(host.sessions.get('c2').status, null);
+  const lastTurn = { outcome: 'error', errorKind: 'server_error', at: 123 };
+  nodes[0].lastTurn = lastTurn;
+  assert.deepEqual(host.sessions.get('c1').lastTurn, lastTurn);
+  assert.deepEqual(host.sessions.list().map((r) => r.lastTurn), [lastTurn, null]);
+  assert.deepEqual(host.sessions.forTask('t1').map((r) => r.lastTurn), [lastTurn, null]);
   graphReads = 0;
   assert.deepEqual(host.sessions.list().map((r) => r.status), ['idle', null]);
   assert.equal(graphReads, 1);
@@ -668,13 +674,91 @@ test('agents.list() marks the Background model, Claude Haiku by default', async 
   assert.deepEqual(marked, [['claude', 'haiku']]);
 });
 
+test('agents.front() projects the installed-agent MCP front and freezes fresh results', async () => {
+  let agents = [
+    { id: 'claude', available: true, efforts: [{ value: 'low' }, { value: 'high' }], models: [{ value: 'opus', efforts: ['low', 'high'] }] },
+    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-sol', efforts: ['low', 'xhigh'] }, { value: 'gpt-6-luna', efforts: ['low'] }] },
+    { id: 'unavailable', available: false, efforts: [], models: [] },
+  ];
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => agents }) });
+  for (const options of [undefined, { agent: 'claude' }, { maxUsd: 1 }, { minQuality: 60 }, { agent: 'claude', maxUsd: 1 }]) {
+    const installed = agents.filter((a) => a.available);
+    const { structuredContent: { reviewAgent, providers, ...expected } } = await getModelFrontTool.handler({ deps: { agents: async () => installed } }, options);
+    const result = await host.agents.front(options);
+    assert.deepEqual(result, expected);
+    assert.ok(Object.isFrozen(result.front));
+    assert.ok(Object.isFrozen(result.units));
+    if (result.front.length) assert.throws(() => { result.front[0].quality = 0; }, TypeError);
+  }
+  assert.equal((await host.agents.front({ agent: 'claude' })).front.find((p) => p.effort === 'low').onCurve, false);
+  agents = [agents[0]];
+  assert.equal((await host.agents.front()).front.find((p) => p.effort === 'low').onCurve, true);
+  agents = [];
+  assert.deepEqual((await host.agents.front()).front, []);
+});
+
+test('agents.front() restricts candidates before dominance and curve calculation', async () => {
+  const agents = [
+    { id: 'claude', available: true, efforts: [{ value: 'low' }, { value: 'high' }], models: [{ value: 'opus' }, { value: 'sonnet' }] },
+    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-sol' }, { value: 'gpt-6-luna' }] },
+    { id: 'offline', available: false, efforts: [], models: [] },
+  ];
+  const before = structuredClone(agents);
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => agents }) });
+  const all = await host.agents.front();
+  assert.equal(all.front.some((p) => p.model === 'sonnet'), false);
+  const claude = await host.agents.front({ agents: ['claude'] });
+  assert.ok(claude.front.some((p) => p.model === 'sonnet'), 'removing Codex promotes Sonnet');
+  assert.ok(claude.front.every((p) => p.agent === 'claude'));
+  assert.equal(claude.front.find((p) => p.model === 'opus' && p.effort === 'low').onCurve, true);
+  assert.equal((await host.agents.front({ agent: 'claude' })).front.find((p) => p.model === 'opus' && p.effort === 'low').onCurve, false);
+  const excluded = await host.agents.front({ excludeModels: ['gpt-6.1-sol', 'gpt-6-luna'] });
+  assert.deepEqual(excluded, claude);
+  const onlySonnet = await host.agents.front({ agents: ['claude'], excludeModels: ['opus'] });
+  assert.ok(onlySonnet.front.length > 0);
+  assert.ok(onlySonnet.front.every((p) => p.model === 'sonnet'));
+  assert.ok(Object.isFrozen(onlySonnet.front[0]));
+  assert.deepEqual((await host.agents.front({ agents: [] })).front, []);
+  assert.deepEqual((await host.agents.front({ agents: ['claude'], agent: 'codex' })).front, []);
+  assert.deepEqual(await host.agents.front({ agents: ['claude', 'codex', 'claude'], excludeModels: ['unknown'] }), all);
+  assert.deepEqual(await host.agents.front(), all, 'restrictions do not persist');
+  assert.deepEqual(agents, before, 'the catalog is not mutated');
+  const filtered = await host.agents.front({ agents: ['claude'], maxUsd: 2, minQuality: 30 });
+  assert.deepEqual(filtered.front, claude.front.filter((p) => p.usd <= 2 && p.quality >= 30));
+});
+
+test('agents.front() validates candidate restrictions', async () => {
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => [
+    { id: 'claude', available: true, models: [], efforts: [] },
+    { id: 'offline', available: false, models: [], efforts: [] },
+  ] }) });
+  for (const agents of [null, 'claude', {}, [null], [1], ['']]) {
+    await assert.rejects(host.agents.front({ agents }), /agents must be an array of non-empty strings/);
+  }
+  for (const agents of [['missing'], ['offline']]) {
+    await assert.rejects(host.agents.front({ agents }), /Unknown or unavailable agent/);
+  }
+  for (const excludeModels of [null, 'opus', {}, [null], [1], ['']]) {
+    await assert.rejects(host.agents.front({ excludeModels }), /excludeModels must be an array of non-empty strings/);
+  }
+});
+
+test('agents.front() requires agents:read and rejects unavailable agents and invalid filters', async () => {
+  const headless = buildHostApi({ id: 'x', requires: ['agents:headless'], ...wiring() });
+  assert.equal('front' in headless.agents, false);
+  const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => [] }) });
+  await assert.rejects(host.agents.front({ agent: 'missing' }), /Unknown or unavailable agent/);
+  for (const maxUsd of [0, -1, NaN, Infinity, '1']) await assert.rejects(host.agents.front({ maxUsd }), /maxUsd/);
+  for (const minQuality of [-1, 101, NaN, '1']) await assert.rejects(host.agents.front({ minQuality }), /minQuality/);
+});
+
 // ---- agents:headless -----------------------------------------------------
 test('agents.headless is ABSENT without agents:headless, and agents:read alone does not bring it', () => {
   assert.equal('agents' in buildHostApi({ id: 'x', requires: ['sessions:read'], ...wiring() }), false);
   const reader = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
-  assert.deepEqual(Object.keys(reader.agents), ['list']);
+  assert.deepEqual(Object.keys(reader.agents), ['list', 'front']);
   const both = buildHostApi({ id: 'x', requires: ['agents:read', 'agents:headless'], ...wiring() });
-  assert.deepEqual(Object.keys(both.agents).sort(), ['headless', 'list']);
+  assert.deepEqual(Object.keys(both.agents).sort(), ['front', 'headless', 'list']);
 });
 
 test('agents.headless passes only the documented options through and returns a frozen result with an error message', async () => {
@@ -726,7 +810,7 @@ test('CLIENT_CAPABILITIES is disjoint from CAPABILITIES and builds no façade ke
   for (const c of CLIENT_CAPABILITIES) assert.equal(CAPABILITIES.has(c), false, c);
   const host = buildHostApi({ id: 'demo', requires: ['cards:hideChips'] });
   assert.equal('cards' in host, false);
-  assert.deepEqual(Object.keys(host).sort(), ['id', 'log', 'settings', 'stores', 'version']);
+  assert.deepEqual(Object.keys(host).sort(), [...ALWAYS].sort());
 });
 
 test('tasks:read serves the Unassigned id, equal to the core ADHOC constant', async () => {
@@ -1032,11 +1116,11 @@ test('without core telemetry wired, host.telemetry is inert', () => {
 });
 
 test('a ^1 manifest boots on the v1 shim and its host.version says so; a ^2 one gets 2.0.0', () => {
-  assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0' }).version, '1.82.0');
-  assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0', boardApi: '^1.74.0' }).version, '1.82.0');
+  assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0' }).version, '1.96.0');
+  assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0', boardApi: '^1.74.0' }).version, '1.96.0');
   assert.equal(buildHostApi({ id: 'new-ext', range: '^2.0.0', boardApi: '^2.0.0' }).version, '2.0.0');
   assert.equal(buildHostApi({ id: 'any-ext' }).version, '2.0.0');
-  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.83.0' }), /needs host API \^1\.83\.0, this server serves 2\.0\.0/);
+  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.97.0' }), /needs host API \^1\.97\.0, this server serves 2\.0\.0/);
 });
 
 test('spawn validates Codex approvalPolicy and forwards only the approval selection', async () => {
@@ -1069,4 +1153,19 @@ test('mail:read lists sender and time metadata without exposing message text', (
   assert.equal('excerpt' in listed[0], false);
   assert.deepEqual(Object.keys(host.mail).sort(), ['list', 'unread']);
   assert.equal(mailStore.drain('recipient')[0].body, 'private message');
+});
+
+
+test('an extension can read only its own live install receipt', () => {
+  let installedSha = 'b'.repeat(40);
+  const runningSha = 'a'.repeat(40);
+  const asked = [];
+  const host = buildHostApi({ id: 'x', ...wiring(), readExtensionReceipt: (id) => { asked.push(id); return { installedSha, runningSha, restartPending: installedSha !== runningSha }; } });
+  assert.deepEqual(host.extension.receipt('other'), { installedSha, runningSha, restartPending: true });
+  installedSha = runningSha;
+  assert.equal(host.extension.receipt().restartPending, false);
+  assert.deepEqual(asked, ['x', 'x']);
+  const receipt = host.extension.receipt();
+  receipt.runningSha = 'changed';
+  assert.equal(host.extension.receipt().runningSha, runningSha);
 });

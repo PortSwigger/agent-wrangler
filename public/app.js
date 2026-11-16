@@ -12,6 +12,7 @@ import {
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
 import { taskContentHeight, watchTaskScrollEdges } from './task-scroll.js';
 import { createAdditionalFolders } from './additional-folders.js';
+import { parseRepoInput, runtimeHasLocation } from './dispatch-repos.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import { focusReturnTarget } from './terminal-dialog.js';
 import {
@@ -56,7 +57,7 @@ import {
 import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
-import { toast } from './toast.js';
+import { toast, dismissToast } from './toast.js';
 import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
@@ -69,6 +70,7 @@ import { createInputGates } from './input-gate.js';
 import { prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
+import { createRepoAccess } from './repo-access.js';
 import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
 import { createExtFileViewer } from './ext-file-viewer.js';
@@ -81,7 +83,9 @@ import { openDiffPanel, toggleDiffPanel, closeDiffPanel, isDiffPanelOpen, diffPa
 import { openUsagePanel, onUsage } from './usage.js';
 import { initSearchView, onEnterSearchView, onSearchResults, onSearchStatus, onAdopted, onAdoptFailed, clearSearch, refreshSearchTaskFilter } from './search.js';
 import { CODEX_POLICY_FALLBACK, syncCodexPolicyControls, fillCodexPolicyControls, readCodexPolicyControls } from './codex-policy-field.js';
-import { initSettings, flashSettingsSaved, getSetting, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows } from './settings.js';
+import { initSettings, flashSettingsSaved, getSetting, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows, refreshDeckSettings, OWN_DECK } from './settings.js';
+import { CODEX_DEFAULT_SETTINGS, deckSettingValue, deckSettingFrame, settingsDeckChoices, startupChoices } from './deck-settings.js';
+import { createDeckSettingsPanels } from './deck-settings-panels.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -204,6 +208,7 @@ let suppressNudgedPrToasts = true;
 let prModelFooter = true;
 let defaultSessionCwd = ''; // server config value, carried on every graph push
 let defaultRuntime = 'local'; // server config value; openModal falls back to local when it isn't offered
+let ownRuntimeOffer = []; // graph.runtimeOffer: [{ id, location, unavailable? }]
 // Settings › Background model (server config, resolved, every graph push).
 let backgroundModel = null;
 // Settings › Sessions' Codex sandbox/approval defaults (server config, every
@@ -277,6 +282,7 @@ function noteExtClientFacts(list) {
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
 // slots.apiFor, which is the only place the extension id is known.
 const notifications = createNotifications({ document });
+const repoAccess = createRepoAccess({ document, send: (m) => send(m), toast, dismissToast });
 // Back api.targets / api.front and api.rail (slots binds the extension id).
 const boardTargets = createBoardTargets({
   doc: document,
@@ -1012,6 +1018,7 @@ function barWord(s) {
 
 function applyGraph(graph) {
   latestSessions = graph.sessions || [];
+  repoAccess.onGraph(latestSessions);
   // history is the one key the server may leave OUT: it's the archive of every
   // session ever set aside and it changes a handful of times a day against a ~2s
   // broadcast, so it rides only the ticks that change it (server/deck/state.js).
@@ -1030,6 +1037,7 @@ function applyGraph(graph) {
   prModelFooter = graph.prModelFooter !== false;
   defaultSessionCwd = typeof graph.defaultSessionCwd === 'string' ? graph.defaultSessionCwd : '';
   defaultRuntime = typeof graph.defaultRuntime === 'string' && graph.defaultRuntime ? graph.defaultRuntime : 'local';
+  ownRuntimeOffer = Array.isArray(graph.runtimeOffer) ? graph.runtimeOffer : [];
   backgroundModel = graph.backgroundModel && typeof graph.backgroundModel === 'object' ? graph.backgroundModel : null;
   codexPolicyDefaults = graph.codexPolicyDefaults && typeof graph.codexPolicyDefaults === 'object' ? { ...CODEX_POLICY_FALLBACK, ...graph.codexPolicyDefaults } : { ...CODEX_POLICY_FALLBACK };
   const prevAutoUpdate = autoUpdate;
@@ -1094,7 +1102,7 @@ function applyGraph(graph) {
   extGraphSeen = true;
   syncClientExtensions();
   // After the sync above, so the Settings row offers exactly what #m-runtime does.
-  setRuntimeOptions([...document.getElementById('m-runtime').options].map((o) => ({ value: o.value, label: o.textContent })));
+  setRuntimeOptions([...document.getElementById('m-runtime').options].filter((o) => !o.dataset.unavailable).map((o) => ({ value: o.value, label: o.dataset.label || o.textContent })));
   // Every `view` contribution gets this graph. AFTER syncClientExtensions, so a
   // view that has only just registered is updated in the same tick it appears
   // rather than staying blank until the next one — and unconditionally, because
@@ -3089,6 +3097,7 @@ function openCardMenu(card, x, y) {
     ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', run: () => peerReviewSession(sessionId) }] : []),
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => openDiffPanel(card) },
     { label: 'Copy reference', icon: COPY_ICON, run: () => copySessionReference(s) },
+    ...reposMenuItems(s),
     ...(s.exitOutput ? [{ label: 'Show last output', icon: ROBOT_ICON, run: () => selectSession(card) }] : []),
     { sep: true },
     ...(snoozed ? [
@@ -3122,6 +3131,13 @@ function openCardMenu(card, x, y) {
   mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
 }
 
+// A location card's repos dialog, named for what is waiting in it.
+function reposMenuItems(s) {
+  if (!Array.isArray(s.repos)) return [];
+  const waiting = s.repoRequests?.length || 0;
+  return [{ label: waiting ? `GitHub repos (${waiting} waiting)…` : 'GitHub repos…', icon: GITHUB_ICON, run: () => repoAccess.open(s.sessionId) }];
+}
+
 // A line to paste into another agent's chat: the id is what read_session_transcript
 // takes, and naming the tool saves the reader a list_sessions lookup.
 function copySessionReference(s) {
@@ -3146,6 +3162,7 @@ function openActionsMenu(card, x, y) {
     { label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
     // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => { openDiffPanel(card); if (sessionEmbed.active()) renderPanel(card); } },
+    ...reposMenuItems(s),
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
@@ -4036,6 +4053,23 @@ function selectAfterArchive(card) {
 // to be archived in the SAME operation (a cascade's target + descendants),
 // computed off the same descendant list the dialog used rather than a
 // network round-trip — see worktreeStillInUse.
+function runtimeIdHasLocation(runtimeId) {
+  return Boolean(runtimeId) && latestExtensions.some((e) => e.runtimes?.some((r) => r?.id === runtimeId && r.location));
+}
+
+// The commits archiving would lose, as the confirm dialog's body.
+function unpushedBody(unpushed) {
+  const blocks = unpushed.map((f) => [
+    unpushed.length > 1 ? `${f.label}:` : null,
+    ...f.repos.map((r) => r.error
+      ? `${r.repo || r.dir || 'Session'}: ${r.error}`
+      : [`${r.repo || r.dir} (${r.commits.length}${r.commits.length >= 20 ? '+' : ''} commit${r.commits.length === 1 ? '' : 's'})`,
+        ...r.commits.slice(0, 5).map((c) => `  ${c.sha}  ${c.subject}`),
+        ...(r.commits.length > 5 ? ['  …'] : [])].join('\n')),
+  ].filter(Boolean).join('\n'));
+  return `These commits are on no remote branch, so archiving would lose them:\n\n${blocks.join('\n\n')}\n\nPush them first, or archive anyway?`;
+}
+
 function worktreeCleanupAction(sessionId, worktree, archivedIds = [sessionId]) {
   if (!worktree) return null;
   if (worktreeStillInUse(worktree.path, latestSessions, archivedIds)) return null;
@@ -4063,6 +4097,11 @@ function worktreeCleanupAction(sessionId, worktree, archivedIds = [sessionId]) {
 async function archiveSession(sessionId) {
   const s = latestSessions.find((x) => x.sessionId === sessionId);
   const { count, descendants } = s ? cascadeSummary(s, latestSessions) : { count: 0 };
+  // A card at a remote location is checked for unpushed commits server-side
+  // first, so its toast waits for the 'archived' (or 'archive-unpushed') reply.
+  const showArchived = s && runtimeIdHasLocation(s.runtime)
+    ? () => toast('Checking for unpushed commits…')
+    : archivedToast;
 
   if (count > 0) {
     const result = await confirmDialog({
@@ -4076,7 +4115,7 @@ async function archiveSession(sessionId) {
     if (result === 'ok') {
       const archivedIds = [sessionId, ...descendants.map((d) => d.sessionId)];
       send({ type: 'archive', sessionId, cascade: true, killJobsFirst: true });
-      archivedToast(sessionId, 'Archiving connected sessions…', s.worktree, archivedIds);
+      showArchived(sessionId, 'Archiving connected sessions…', s.worktree, archivedIds);
       return;
     }
     // "Archive only this one" (no further prompt — the user already confirmed
@@ -4085,10 +4124,10 @@ async function archiveSession(sessionId) {
     // every descendant running unchanged.
     if (s.hasBackgroundShell) {
       send({ type: 'archive', sessionId, killJobsFirst: true });
-      archivedToast(sessionId, 'Stopping background jobs, then archiving…', s.worktree);
+      showArchived(sessionId, 'Stopping background jobs, then archiving…', s.worktree);
     } else {
       send({ type: 'archive', sessionId });
-      archivedToast(sessionId, 'Session archived', s.worktree);
+      showArchived(sessionId, 'Session archived', s.worktree);
     }
     return;
   }
@@ -4105,13 +4144,13 @@ async function archiveSession(sessionId) {
     if (result === 'cancel') return;
     if (result === 'ok') {
       send({ type: 'archive', sessionId, killJobsFirst: true });
-      archivedToast(sessionId, 'Stopping background jobs, then archiving…', s.worktree);
+      showArchived(sessionId, 'Stopping background jobs, then archiving…', s.worktree);
       return;
     }
     // result === 'extra': archive immediately, same as the no-background-shell path.
   }
   send({ type: 'archive', sessionId });
-  archivedToast(sessionId, 'Session archived', s?.worktree);
+  showArchived(sessionId, 'Session archived', s?.worktree);
 }
 
 // Restart a live session: kill its tmux and relaunch with --resume, so the fresh
@@ -6159,7 +6198,40 @@ function syncDispatchRuntimes() {
     for (const o of OWN_RUNTIME_OPTIONS) add(o.value, o.label);
     syncExtRuntimeOptions();
   }
-  rt.value = [...rt.options].some((o) => o.value === was) ? was : (rt.options[0]?.value || 'local');
+  applyRuntimeOffer();
+  rt.value = [...rt.options].some((o) => o.value === was && !o.disabled) ? was : firstOpenRuntime();
+}
+
+// The deck's own word on each runtime (graph.runtimeOffer, or another deck's
+// descriptor): one it doesn't offer is hidden, and one it offers but can't launch
+// on (a location runtime beside one on its own machine) is disabled with the
+// reason shown under the select. The server refuses both either way.
+function applyRuntimeOffer() {
+  const rt = document.getElementById('m-runtime');
+  const offer = dispatchDeck ? deckRuntimes(remoteDecks.entryFor(dispatchDeck)?.descriptor) : ownRuntimeOffer;
+  const reasons = [];
+  for (const opt of rt.options) {
+    const found = offer.find((r) => r.id === opt.value);
+    const reason = found?.unavailable || '';
+    const base = opt.dataset.label || opt.textContent.replace(/ — unavailable$/, '');
+    opt.dataset.label = base;
+    const notOffered = Boolean(reason) && !found?.location;
+    opt.hidden = notOffered;
+    if (reason) opt.dataset.unavailable = reason; else delete opt.dataset.unavailable;
+    opt.title = reason;
+    opt.textContent = reason && !notOffered ? `${base} — unavailable` : base;
+    if (reason && !notOffered) reasons.push(reason);
+  }
+  const note = document.getElementById('m-runtime-note');
+  if (note) {
+    note.textContent = reasons.join(' ');
+    note.classList.toggle('hidden', !reasons.length);
+  }
+}
+
+function firstOpenRuntime() {
+  const rt = document.getElementById('m-runtime');
+  return [...rt.options].find((o) => !o.disabled && !o.dataset.unavailable)?.value || '';
 }
 
 // Moves the open dialog onto another deck (or back to the board's own): its
@@ -6387,13 +6459,34 @@ function syncRuntimeToggle() {
   const sel = document.getElementById('m-model');
   const agent = sel.options[sel.selectedIndex]?.dataset.agent ?? 'claude';
   const rt = document.getElementById('m-runtime');
-  for (const opt of rt.options) opt.disabled = !runtimeAllowsAgent(opt, agent);
+  for (const opt of rt.options) opt.disabled = Boolean(opt.dataset.unavailable) || !runtimeAllowsAgent(opt, agent);
   const cur = rt.options[rt.selectedIndex];
-  if (cur && cur.disabled) rt.value = 'local';
+  if (cur && cur.disabled) rt.value = firstOpenRuntime();
   const foldersEnabled = rt.value === 'local';
   additionalFolders.setEnabled(foldersEnabled);
   document.getElementById('m-add-dirs-note').classList.toggle('hidden', foldersEnabled);
+  const remote = selectedRuntimeHasLocation();
+  document.getElementById('m-folder-row').classList.toggle('hidden', remote);
+  document.getElementById('m-repos-row').classList.toggle('hidden', !remote);
+  if (remote) document.getElementById('m-worktree').checked = false;
   syncCodexPolicyRow(agent);
+}
+
+// Whether the picked runtime runs its sessions elsewhere, so the dialog asks for
+// GitHub repos instead of a folder.
+function selectedRuntimeHasLocation() {
+  const rt = document.getElementById('m-runtime');
+  const opt = rt?.options[rt.selectedIndex];
+  return Boolean(opt) && runtimeHasLocation(latestExtensions, opt.dataset.ext, opt.value);
+}
+
+function renderReposState() {
+  const el = document.getElementById('m-repos-msg');
+  const { error } = parseRepoInput(document.getElementById('m-repos').value);
+  el.textContent = error || 'The session clones these from GitHub and branches off each default branch.';
+  el.className = error ? 'worktree-msg error' : 'worktree-msg';
+  document.getElementById('m-repos').classList.toggle('input-error', Boolean(error));
+  return error;
 }
 
 // Whether this provider takes the Codex sandbox/approval policy (its adapter's
@@ -6438,7 +6531,7 @@ function syncExtRuntimeOptions() {
     if (!opt.dataset.ext) continue;
     const w = want.get(opt.value);
     if (w && w.extId === opt.dataset.ext) {
-      if (opt.textContent !== w.label) opt.textContent = w.label;
+      if (opt.dataset.label !== w.label) { opt.textContent = w.label; opt.dataset.label = w.label; }
       want.delete(opt.value);
     } else { opt.remove(); changed = true; }
   }
@@ -6449,11 +6542,13 @@ function syncExtRuntimeOptions() {
     opt.value = id;
     opt.dataset.ext = extId;
     opt.textContent = label; // third-party string: text, never markup
+    opt.dataset.label = label;
     rt.appendChild(opt);
     changed = true;
   }
+  applyRuntimeOffer();
   if (!changed) return;
-  rt.value = [...rt.options].some((o) => o.value === selected) ? selected : 'local';
+  rt.value = [...rt.options].some((o) => o.value === selected) ? selected : firstOpenRuntime();
   // A freshly appended option starts enabled; re-gate it for a non-Claude agent.
   syncRuntimeToggle();
 }
@@ -6597,9 +6692,11 @@ function readCoreDispatchFields() {
   // regardless of a stale selection (see syncRuntimeToggle) — a dispatch safety net.
   const rtSel = document.getElementById('m-runtime');
   const runtime = runtimeAllowsAgent(rtSel.options[rtSel.selectedIndex], agent) ? rtSel.value : 'local';
+  const remote = runtime !== 'local' && selectedRuntimeHasLocation();
   return {
-    cwd: cwdField() || proposedCwd,
-    addDirs: additionalFolders.values(),
+    cwd: remote ? undefined : cwdField() || proposedCwd,
+    addDirs: remote ? [] : additionalFolders.values(),
+    repos: remote ? parseRepoInput(document.getElementById('m-repos').value).repos : undefined,
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
@@ -6608,7 +6705,7 @@ function readCoreDispatchFields() {
     taskId: document.getElementById('m-task').value || undefined,
     workflow: wfOn || undefined,
     autoMergeOnPass: wfOn && document.getElementById('m-wf-auto-merge').checked || undefined,
-    worktree: (wfOn || wtOn) || undefined,
+    worktree: (wfOn || (wtOn && !remote)) || undefined,
     worktreeBranch: wtOn ? document.getElementById('m-wt-branch').value.trim() : undefined,
     worktreeFolderName: wtOn && wtFolderEdited ? document.getElementById('m-wt-folder').value.trim() : undefined,
     // Standard mode never auto-bumps on collision — the classify-and-warn/block
@@ -6745,6 +6842,8 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   setDispatchCwdDefaults();
   if (schedule) document.getElementById('m-cwd').value = d.cwd || '';
   additionalFolders.reset(d.addDirs || []);
+  document.getElementById('m-repos').value = Array.isArray(d.repos) ? d.repos.join(', ') : '';
+  renderReposState();
   document.getElementById('m-intent').value = d.intent || '';
   // Images an openDispatch is about to adopt keep their previews through the reset.
   intentImages.reset({ keep: keepImages });
@@ -6762,7 +6861,7 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   const rtSel = document.getElementById('m-runtime');
   const wantRuntime = (schedule ? d.runtime : defaultRuntime) || 'local';
   rtSel.value = wantRuntime;
-  if (rtSel.value !== wantRuntime) rtSel.value = 'local';
+  if (rtSel.value !== wantRuntime || rtSel.options[rtSel.selectedIndex]?.disabled) rtSel.value = firstOpenRuntime();
   if (dispatchDeck) populateModelSelect();
   document.getElementById('m-wf-auto-merge').checked = Boolean(d.autoMergeOnPass);
   // A saved schedule restores its Codex pick; a new draft starts from Settings.
@@ -6931,7 +7030,9 @@ function submitDispatch(over) {
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
-  if (cwdBlocked()) { renderCwdState(); return false; }
+  if (fields.repos) {
+    if (renderReposState()) return false;
+  } else if (cwdBlocked()) { renderCwdState(); return false; }
   if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return false; }
   if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return false; }
   if (intentImages.busy()) { toast('Still attaching images — launch again in a moment.'); return false; }
@@ -7016,10 +7117,12 @@ function listDispatchRuntimes() {
   const agentIds = availableAgents.map((a) => a.id);
   return [...document.getElementById('m-runtime').options].map((o) => ({
     id: o.value,
-    label: o.textContent,
+    label: o.dataset.label || o.textContent,
     ownsModel: Boolean(o.dataset.ext) && runtimeOwnsModel(o.dataset.ext, o.value),
     ownLaunch: Boolean(o.dataset.ext) && runtimeOwnLaunch(o.dataset.ext, o.value),
     agents: o.value === 'local' ? null : agentIds.filter((a) => runtimeAllowsAgent(o, a)),
+    location: Boolean(o.dataset.ext) && runtimeIdHasLocation(o.value),
+    unavailable: o.dataset.unavailable || null,
   }));
 }
 
@@ -7202,6 +7305,7 @@ let updateUnavailable = null;
 // connect config and `install-drift`; null when the install matches.
 let installDrift = null;
 let installDriftRestarting = false;
+let restartStatus = null;
 const UPDATE_IN_FLIGHT = new Set(['checking', 'applying', 'restarting']);
 
 function mountUpdatePanel(host) {
@@ -7214,8 +7318,9 @@ function mountUpdatePanel(host) {
   host.parentElement?.querySelector('.setting-row[data-id="autoUpdate"]')?.classList.toggle('hidden', Boolean(updateUnavailable));
   const restart = restartPanelEl({
     drift: installDrift,
+    restartStatus,
     canRestart: canRestartServer,
-    restarting: installDriftRestarting || updatePhase === 'restarting' || extRestarting,
+    restarting: restartStatus?.phase === 'draining' || restartStatus?.phase === 'restarting' || installDriftRestarting || updatePhase === 'restarting' || extRestarting,
     onRestart: () => { installDriftRestarting = true; send({ type: 'restart-server' }); remountUpdatePanel(); },
   });
   if (restart) host.append(restart);
@@ -7338,6 +7443,19 @@ function noteCodeVersion(version) {
   if (UPDATE_IN_FLIGHT.has(updatePhase)) { updatePhase = 'idle'; updateStatus = null; remountUpdatePanel(); }
 }
 
+function noteRestartStatus(status, { notify = true } = {}) {
+  restartStatus = status || null;
+  if (status?.phase === 'pending') {
+    installDriftRestarting = false;
+    extRestarting = false;
+    updatePhase = 'error';
+    updateError = status.message;
+    if (notify) toast(status.message, true);
+  }
+  remountUpdatePanel();
+  remountExtensions();
+}
+
 function noteConfigUpdate(msg) {
   updateUnavailable = msg.updateUnavailable || null;
   installDrift = msg.installDrift || null;
@@ -7346,6 +7464,7 @@ function noteConfigUpdate(msg) {
   applyUpdateStatus(msg.update);
   applyExtUpdateStatus(msg.extensionUpdates);
   noteRolledBack(msg.updateRolledBack);
+  noteRestartStatus(msg.restartStatus, { notify: false });
   // applyUpdateStatus skips a null status, and a restart that cleared the drift
   // must still take its notice and the Settings dot away.
   remountUpdatePanel();
@@ -7482,6 +7601,7 @@ function mountExtensionsPanel(host) {
     checking: extChecking,
     progress: extInstallProgress,
     busy: extInstallBusy,
+    installsOff: deck.descriptor()?.extensionInstalls === false,
     pendingRemoval: [...extPendingRemoval],
     pendingInstall: extPendingInstall,
     canRestart: canRestartServer,
@@ -7502,7 +7622,7 @@ function mountExtensionsPanel(host) {
     },
     onAdd: () => { extAdding = true; if (!extBrowse) searchExtBrowse(); remountExtensions(); },
     onBrowse: () => { searchExtBrowse(); remountExtensions(); },
-    onInstall: (url) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url }); remountExtensions(); },
+    onInstall: (url, ref) => { extInstallBusy = true; extInstallPhase = 'cloning'; extInstallProgress = progressText('cloning'); send({ type: 'ext-install', url, ...(ref ? { ref } : {}) }); remountExtensions(); },
     // An update IS an install against the recorded origin — same frame, same
     // consent modal, same handler. There is deliberately no separate path.
     onUpdate: (entry) => { extUpdateQueue = []; extRestartAfterUpdates = false; startExtUpdate(entry); },
@@ -7565,7 +7685,7 @@ function openExtConsent(payload) {
     modal.removeEventListener('keydown', onKey);
     modal.removeEventListener('mousedown', onBackdrop);
     extRestartOnDone = restart;
-    send({ type: 'ext-consent', tempId: payload.tempId, approve });
+    send({ type: 'ext-consent', tempId: payload.tempId, approve, ...(approve && (payload.downgrade || payload.requiresDowngradeConfirmation) ? { allowDowngrade: true } : {}) });
   };
   const onOk = () => done(true, Boolean(labels.later));
   const onLater = () => done(true);
@@ -7581,12 +7701,48 @@ function openExtConsent(payload) {
   modal.addEventListener('mousedown', onBackdrop);
 }
 
-// Settings row id -> its field of graph.codexPolicyDefaults.
-const CODEX_DEFAULT_SETTINGS = { codexDefaultSandbox: 'sandbox', codexDefaultApproval: 'approval', codexDefaultApproveForMe: 'approveForMe', codexDefaultBypass: 'bypass' };
+// Settings' deck picker names a deck by its deck list entry id; any deck but
+// the board's own is read off its own graph and written over its deck API. A
+// value just written shows until that deck sends its next state.
+const remoteSettingOverlay = new Map();
+const remoteSettingsDeck = (key) => (key && key !== OWN_DECK ? boardDecks().find((d) => d.id === key && !d.own && d.deckId) || null : null);
+function remoteSettingGet(d, id) {
+  const overlay = remoteSettingOverlay.get(d.id);
+  if (overlay?.graph === d.graph && Object.hasOwn(overlay.values, id)) return overlay.values[id];
+  return deckSettingValue(d.graph, id);
+}
+function remoteSettingSet(d, id, value) {
+  const frame = deckSettingFrame(id, value);
+  if (!frame) return;
+  const overlay = remoteSettingOverlay.get(d.id);
+  remoteSettingOverlay.set(d.id, { graph: d.graph, values: { ...(overlay?.graph === d.graph ? overlay.values : {}), [id]: value } });
+  send({ ...frame, deck: d.deckId });
+}
+const deckSettingsPanels = createDeckSettingsPanels({
+  deckOf: (deckId) => boardDecks().find((d) => d.deckId === deckId && !d.own) || null,
+  sendTo: (deckId, frame) => send({ ...frame, deck: deckId }),
+  get: (id, deckId) => { const d = boardDecks().find((x) => x.deckId === deckId && !x.own); return d ? remoteSettingGet(d, id) : undefined; },
+  set: (id, value, deckId) => { const d = boardDecks().find((x) => x.deckId === deckId && !x.own); if (d) remoteSettingSet(d, id, value); },
+});
+function releaseExtensionsPanel() {
+  if (extSettingsPanelHost) {
+    slots.unmountHost('settings.panel', extSettingsPanelHost);
+    extSettingsPanelHost = null;
+    pruneSampleHosts();
+  }
+  extPanelHost = null;
+}
 
 initSettings({
   server: {
-    get: (id) => {
+    options: (id, key) => {
+      const d = remoteSettingsDeck(key);
+      if (!d || id !== 'defaultRuntime') return null;
+      return deckRuntimes(d.descriptor).map((r) => ({ value: r.id, label: r.label }));
+    },
+    get: (id, key) => {
+      const remote = remoteSettingsDeck(key);
+      if (remote) return remoteSettingGet(remote, id);
       if (id === 'trustCodexLaunchCwd') return trustCodexLaunchCwd;
       if (id === 'trustClaudeLaunchCwd') return trustClaudeLaunchCwd;
       if (id === 'autoFixPrChecksDefault') return autoFixPrChecksDefault;
@@ -7608,7 +7764,9 @@ initSettings({
       }
       return undefined;
     },
-    set: (id, value) => {
+    set: (id, value, key) => {
+      const remote = remoteSettingsDeck(key);
+      if (remote) { remoteSettingSet(remote, id, value); return; }
       if (id === 'trustCodexLaunchCwd') {
         trustCodexLaunchCwd = Boolean(value);
         send({ type: 'set-trust-codex-launch-cwd', enabled: trustCodexLaunchCwd });
@@ -7675,9 +7833,27 @@ initSettings({
     onFontSize: setTermFontSize,
     onChatFontSize: setChatFontSize,
   },
-  extensions: { mount: openExtensionsPanel },
-  updates: { mount: mountUpdatePanel },
+  extensions: {
+    mount: (host, key) => {
+      const remote = remoteSettingsDeck(key);
+      if (!remote) { deckSettingsPanels.mountExtensions(null, null); openExtensionsPanel(host); return; }
+      releaseExtensionsPanel();
+      deckSettingsPanels.mountExtensions(host, remote.deckId);
+    },
+  },
+  updates: {
+    mount: (host, key) => {
+      const remote = remoteSettingsDeck(key);
+      if (!remote) { deckSettingsPanels.mountUpdates(null, null); mountUpdatePanel(host); return; }
+      updatePanelHost = null;
+      deckSettingsPanels.mountUpdates(host, remote.deckId);
+    },
+  },
   decks: { mount: (el) => mountDecksPanel(el, decksPanelBridge) },
+  deckScope: {
+    decks: () => settingsDeckChoices(boardDecks()),
+    startup: (key) => startupChoices(boardDecks().find((d) => d.id === key)?.descriptor),
+  },
 });
 document.getElementById('m-cancel').addEventListener('click', cancelModal);
 document.getElementById('m-go').addEventListener('click', () => submitDispatch());
@@ -7732,6 +7908,7 @@ document.getElementById('m-runtime').addEventListener('change', () => {
   renderWorktreeState();
 });
 document.getElementById('m-runtime').addEventListener('change', syncRuntimeToggle);
+document.getElementById('m-repos').addEventListener('input', renderReposState);
 document.getElementById('m-runtime').addEventListener('change', syncDispatchExtFields);
 for (const id of ['m-codex-approve-for-me', 'm-codex-bypass']) {
   document.getElementById(id).addEventListener('change', () => syncCodexPolicyControls(document.getElementById('m-codex-policy-row')));
@@ -8006,13 +8183,15 @@ const ownDeckEntry = () => deckEntries.find((e) => e.own) || { id: OWN_ENTRY, ow
 function boardDecks() {
   const own = ownDeckEntry();
   return [
-    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, descriptor: deck.descriptor(), ext: ownExt, name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
+    { id: own.id, entry: own, own: true, deckId: boardDeckId, status: deckStatus, live: Boolean(ownGraph), descriptor: deck.descriptor(), ext: ownExt, name: deckLabel(own, deck.descriptor()), colour: deckColour(own.colour), duplicate: null },
     ...remoteDecks.list(),
   ];
 }
 const deckNameOf = (deckId) => boardDecks().find((d) => d.deckId === deckId)?.name || 'That deck';
 function applyDecks() {
   syncExtDecks();
+  refreshDeckSettings();
+  deckSettingsPanels.refresh();
   if (!ownGraph) return;
   const [own, ...remotes] = boardDecks();
   const multi = deckEntries.length > 1;
@@ -8093,7 +8272,7 @@ export function send(obj, extId = null) {
   }
   const remote = deckId && deckId !== boardDeckId ? deckId : null;
   client.act(call.action, call).then((r) => withDeckContext(deckId, () => {
-    if (r.ok) { if (r.data && typeof r.data.type === 'string') onDeckMessage(scopeReply(r.data, remote)); }
+    if (r.ok) { if (r.data && typeof r.data.type === 'string' && !deckSettingsPanels.note(remote, r.data)) onDeckMessage(scopeReply(r.data, remote)); }
     else onDeckMessage({ type: 'error', message: r.error?.message || 'The action failed' });
   }));
   return true;
@@ -8113,12 +8292,13 @@ export function deckAct(action, { card = null, ...opts } = {}) {
 // settings, extensions and updates are its own and stay off this board.
 const REMOTE_DECK_MESSAGES = new Set([
   'notify', 'diff', 'diff-comments-result', 'pr-checks', 'pr-merge', 'pr-dirty', 'pr-unresolved',
-  'auto-archived', 'archived', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
+  'auto-archived', 'archived', 'archive-unpushed', 'repos-added', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
   'forked', 'resume-needs-dir', 'open-terminal', 'subagent-detail', 'chat', 'message-result',
   'paste-image-result', 'interrupt-restore', 'model-set', 'error',
   'schedule-fired', 'schedule-error', 'schedule-missed',
 ]);
 function onRemoteDeckMessage(deckId, msg) {
+  if (deckSettingsPanels.note(deckId, msg)) return;
   if (!msg || (!REMOTE_DECK_MESSAGES.has(msg.type) && !String(msg.type).startsWith('ext:'))) return;
   withDeckContext(deckId, () => onDeckMessage(msg));
 }
@@ -8249,6 +8429,7 @@ function onDeckMessage(msg) {
   else if (msg.type === 'update-error') { updatePhase = 'error'; updateError = msg.message || ''; remountUpdatePanel(); }
   // The board is about to lose this socket; ws.onclose already retries every
   // 1.5s, so the panel only has to keep saying "Restarting…" until it is back.
+  else if (msg.type === 'restart-status') noteRestartStatus(msg);
   else if (msg.type === 'restart-ack') { extRestarting = true; remountExtensions(); remountUpdatePanel(); }
   else if (msg.type === 'model-set') { if (!msg.ok) toast(msg.reason || 'Could not switch model.'); }
   else if (msg.type === 'agents') { setProviderMetadata(msg.providers || msg.agents); if (Array.isArray(msg.agents) && msg.agents.length) { availableAgents = msg.agents; slots.agentsChanged(availableAgents); setBackgroundModelOptions(availableAgents); } populateModelSelect(); }
@@ -8278,8 +8459,23 @@ function onDeckMessage(msg) {
     }
   }
   else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);
+  else if (msg.type === 'repos-added') repoAccess.onAdded(msg);
   // The "Kill jobs & archive" outcome — the immediate toast in archiveSession()
   // already fired; this replaces it once the nudge/wait/teardown actually finish.
+  else if (msg.type === 'archive-unpushed') {
+    confirmDialog({
+      title: 'Unpushed commits',
+      body: unpushedBody(msg.unpushed || []),
+      okLabel: 'Archive anyway',
+      danger: true,
+    }).then((result) => {
+      if (result === 'ok') send({ ...msg.request, allowUnpushed: true });
+      else toast('Archive cancelled — nothing was changed.');
+    });
+  }
+  else if (msg.type === 'archived' && msg.plain) {
+    archivedToast(msg.sessionId, 'Session archived', latestSessions.find((x) => x.sessionId === msg.sessionId)?.worktree || null);
+  }
   else if (msg.type === 'archived') {
     const worktree = latestSessions.find((x) => x.sessionId === msg.sessionId)?.worktree || null;
     const archivedIds = [msg.sessionId, ...(msg.childIds || [])];

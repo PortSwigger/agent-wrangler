@@ -1,4 +1,4 @@
-export const ERROR_CODES = ['unsupported', 'not-found', 'invalid', 'forbidden', 'conflict', 'failed'];
+export const ERROR_CODES = ['unsupported', 'not-found', 'invalid', 'forbidden', 'conflict', 'failed', 'restarting'];
 
 export class DeckError extends Error {
   constructor(code, message) {
@@ -21,6 +21,8 @@ export const CORE_ACTIONS = {
   'branch-delete': 'session.branch-delete',
   'remove': 'session.remove',
   'rename': 'session.rename',
+  'add-repos': 'session.add-repos',
+  'repo-request': 'session.repo-request',
   'detach': 'session.detach',
   'attach': 'session.attach',
   'snooze-set': 'session.snooze-set',

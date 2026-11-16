@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { discoverExternal, unconsentedCapabilities, admitExternal, FORBIDDEN_IMPORTS } from './external.js';
+import * as external from './external.js';
 import { loadExtensions } from './index.js';
+import { DATA_DIR } from '../data-dir.js';
 
 function tempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aw-ext-discover-'));
@@ -193,4 +195,88 @@ test('an installed aw-codex-policy is quarantined without being imported, and ad
   const admitted = admitExternal({ id: 'aw-codex-policy', requires: [] }, { id: 'aw-codex-policy', dir: root, external: true, provenance: null });
   assert.equal(admitted.ok, false);
   assert.match(admitted.quarantine, /uninstall this extension/);
+});
+
+function writeGeneration(root, id, token) {
+  const dir = path.join(root, '.generations', id, token);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'index.js'), `export default { id: '${id}', label: 'Notes' };`);
+  return dir;
+}
+
+test('startup cleanup preserves the selected and loaded generations, then reclaims superseded files', async () => {
+  const root = tempRoot();
+  try {
+    const old = writeGeneration(root, 'notes', 'a'.repeat(16));
+    const latest = writeGeneration(root, 'notes', 'b'.repeat(16));
+    const abandoned = writeGeneration(root, 'notes', 'c'.repeat(16));
+    const legacy = writeExt(root, 'notes');
+    const handPlaced = writeExt(root, 'local');
+    const orphan = writeGeneration(root, 'removed', 'd'.repeat(16));
+    const provenance = { notes: { generation: 'b'.repeat(16) } };
+    assert.equal(typeof external.sweepGenerations, 'function');
+    external.sweepGenerations([{ id: 'notes', dir: old, external: true }], { dir: root, provenance });
+    for (const dir of [old, latest, legacy, handPlaced]) assert.ok(fs.existsSync(dir));
+    assert.equal(fs.existsSync(abandoned), false);
+    assert.ok(fs.existsSync(orphan), 'an unrecorded generation is retained for recovery');
+    const next = await discoverExternal({ dir: root, provenance });
+    external.sweepGenerations(next, { dir: root, provenance });
+    assert.ok(fs.existsSync(latest));
+    assert.ok(fs.existsSync(handPlaced));
+    assert.equal(fs.existsSync(old), false);
+    assert.equal(fs.existsSync(legacy), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('startup cleanup retains prior files when the selected generation is missing or quarantined', async () => {
+  const root = tempRoot();
+  try {
+    const old = writeGeneration(root, 'notes', 'a'.repeat(16));
+    const legacy = writeExt(root, 'notes');
+    const provenance = { notes: { generation: 'b'.repeat(16) } };
+    const entries = await discoverExternal({ dir: root, provenance });
+    assert.match(entries[0].quarantine, /could not load/);
+    assert.equal(typeof external.sweepGenerations, 'function');
+    external.sweepGenerations(entries, { dir: root, provenance });
+    assert.ok(fs.existsSync(old));
+    assert.ok(fs.existsSync(legacy));
+    const bad = writeGeneration(root, 'notes', 'b'.repeat(16));
+    external.sweepGenerations([{ id: 'notes', dir: bad, external: true, quarantine: 'activation failed' }], { dir: root, provenance });
+    assert.ok(fs.existsSync(old));
+    assert.ok(fs.existsSync(legacy));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('malformed or missing generation pointers quarantine instead of falling back to legacy code', async () => {
+  const root = tempRoot();
+  try {
+    writeExt(root, 'notes');
+    for (const generation of ['../escape', null, 'f'.repeat(16)]) {
+      const entries = await discoverExternal({ dir: root, provenance: { notes: { generation } } });
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].id, 'notes');
+      assert.match(entries[0].quarantine, /Invalid extension generation|could not load/);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('missing or corrupt provenance never deletes generation files needed for recovery', async () => {
+  const root = tempRoot();
+  const file = path.join(DATA_DIR, 'extensions.json');
+  try {
+    const first = writeGeneration(root, 'notes', 'a'.repeat(16));
+    const second = writeGeneration(root, 'notes', 'b'.repeat(16));
+    for (const body of [null, '{broken', '[]', '{"notes":null}']) {
+      fs.rmSync(file, { force: true });
+      if (body !== null) fs.writeFileSync(file, body);
+      const entries = await discoverExternal({ dir: root });
+      external.sweepGenerations(entries, { dir: root });
+      assert.ok(fs.existsSync(first), `the prior generation survives ${body}`);
+      assert.ok(fs.existsSync(second), `the selected generation survives ${body}`);
+    }
+  } finally {
+    fs.rmSync(file, { force: true });
+    fs.rmSync(`${file}.corrupt`, { force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

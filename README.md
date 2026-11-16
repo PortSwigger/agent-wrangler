@@ -139,6 +139,10 @@ bin/agent-wrangler --port 7999 --data-dir ~/aw-scratch --open
 - `--deck-only` — same as `AW_DECK_ONLY=1`: serve only the deck API, with no board (see
   [Running a second deck](#running-a-second-deck)); `--port` is then the deck's port
 - `--allowed-origins <list>` — same as `AW_ALLOWED_ORIGINS`
+- `--runtimes <ids>` — same as `AW_RUNTIMES`: the runtimes this deck offers (see
+  [Choosing a deck's runtimes](#choosing-a-decks-runtimes))
+- `--extension-installs-off` — same as `AW_EXTENSION_INSTALLS_OFF=1`: the deck refuses extension
+  installs, updates and uninstalls (see [Fixing a deck's extensions](#fixing-a-decks-extensions))
 - `-v`/`--version`, `-h`/`--help`
 
 A flag overrides its environment variable. Running the launcher directly never auto-installs
@@ -163,6 +167,8 @@ Environment variables:
 - `AW_ALLOWED_ORIGINS` — comma-separated extra board origins the deck accepts, beside the board's
   own loopback origins. `allowedOrigins` in the data dir's `config.json` (a list) adds more
 - `AW_DECK_ONLY=1` — start the deck alone, with no board server (see below)
+- `AW_RUNTIMES` — comma-separated runtime ids this deck offers, read once at start (default every runtime it has; see below)
+- `AW_EXTENSION_INSTALLS_OFF=1` — refuse extension installs, updates and uninstalls on this deck, read once at start (see below)
 - `AW_DATA_DIR` — state directory (default `~/.agent-wrangler`); set it with a distinct `AW_PORT` to run an isolated instance
 - `AW_OPEN_BROWSER=1` — auto-open the board in a browser on startup (default: off; the legacy `AW_NO_OPEN=1` still suppresses)
 - `AW_DEFAULT_MODEL` — model pre-selected in the dispatch dialog, by value (e.g. `fable`, `opus`, `opusplan`, `sonnet`, `sonnet[1m]`, `haiku`); unset or unrecognised leaves the built-in default (`opus`)
@@ -212,6 +218,32 @@ always let in, as on any deck. `curl http://127.0.0.1:7890/deck` shows its descr
 
 To show its sessions on your board, add it under **Settings › Decks** (see
 [Add a deck to the board](docs/board-and-sessions.md#add-a-deck-to-the-board)).
+
+### Choosing a deck's runtimes
+
+`--runtimes <ids>` (or `AW_RUNTIMES`) starts a deck offering only the runtimes you name, by id and
+comma-separated, for example `--runtimes local,devcontainer`. It is read once at start; nothing
+changes it while the deck runs. Without it the deck offers every runtime it has. A runtime that runs
+sessions at a location (one an extension adds) is offered only on a deck whose runtimes all do, so a
+deck that runs location sessions starts nothing on its own machine: no local sessions and no plain
+terminals. To run one, start a deck with only that runtime:
+
+```bash
+bin/agent-wrangler --deck-only --data-dir ~/aw-remote --port 7892 --runtimes cloud-box \
+  --allowed-origins http://localhost:7878,http://127.0.0.1:7878
+```
+
+`GET /deck` reports the pick as `offeredRuntimes` (null for every runtime), and **Settings › Decks**
+shows each deck's runtimes, with the reason any it offers can't launch.
+
+### Fixing a deck's extensions
+
+`--extension-installs-off` (or `AW_EXTENSION_INSTALLS_OFF=1`) starts a deck whose extensions are fixed
+when it starts, for a deck built with the extensions it should run. It refuses to install, update or
+uninstall an extension, from any board or deck API client, and says installs are off on this deck;
+auto-update applies nothing. Turning an installed extension on or off and changing its settings still
+work. `GET /deck` reports it as `extensionInstalls: false`, and the board's Extensions tab then
+disables install, update, uninstall and auto-update for that deck. It is read once at start.
 
 ### Run as a background service
 
@@ -518,6 +550,14 @@ it through a manifest-gated asset route (raw files are never exposed). All UI co
 flow through these variables, so both built-in and custom styles re-theme the whole app live.
 
 ![The Appearance section's theme picker, showing the built-in and extension themes](docs/images/theme-picker.png)
+
+## Testing
+
+Run `AW_BROWSER_TESTS=0 npm test` for the suite without launching Chrome. Browser tests
+skip by default locally. To opt in, run `AW_BROWSER_TESTS=1 npm test` with Chrome or
+Chromium installed (or set `CHROME_BIN` to its executable). CI runs browser tests
+automatically. `CI=true` (case-insensitive) or `CI=1` also enables them;
+`AW_BROWSER_TESTS=0` overrides CI too. See [Contributing](CONTRIBUTING.md).
 
 ## License
 

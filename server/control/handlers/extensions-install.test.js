@@ -2,14 +2,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createBoardServer } from '../../http-handler.js';
 import {
   extInstallHandler, extConsentHandler, extUninstallHandler, extCheckUpdatesHandler,
   extSetAutoUpdateHandler, extSetEarlyAdopterHandler, autoUpdateExtension,
   _resetInstallLockForTests, _setInstallRunnersForTests, _agePendingConsentForTests,
 } from './extensions-install.js';
-import { externalDir, tmpDir, readProvenance, putRecord } from '../../extensions/provenance.js';
+import { externalDir, installedDir, generationRoot, tmpDir, readProvenance, putRecord } from '../../extensions/provenance.js';
 import { loadExtensions, registerExtension, unregisterExtension } from '../../extensions/index.js';
 import { discoverExternal } from '../../extensions/external.js';
+import { setExtensionInstallsOffForTest, INSTALLS_OFF_MESSAGE } from '../../extensions/installs.js';
+import { extensionEnabledHandler } from './extension-enabled.js';
+import { extSettingSetHandler } from './ext-setting-set.js';
+import { routeControlMessage } from '../router.js';
+import { readConfig } from '../../config-store.js';
 import { DATA_DIR } from '../../data-dir.js';
 import { HOST_API_VERSION } from '../../host-api/version.js';
 import { createExtensionUpdateCheck } from '../../extensions/update-check.js';
@@ -104,7 +111,7 @@ function fakeClone({
 }
 
 function useFakes(opts = {}) {
-  _setInstallRunnersForTests({ clone: fakeClone(opts), head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, commits: opts.commits || (async () => ({ commits: [], truncated: false })) });
+  _setInstallRunnersForTests({ clone: fakeClone(opts), head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, relation: async () => 'upgrade', commits: opts.commits || (async () => ({ commits: [], truncated: false })) });
 }
 
 const URL_NOTES = 'https://example.invalid/notes.git';
@@ -141,7 +148,7 @@ test('ext-install discloses and installs NOTHING; ext-consent completes it', asy
   assert.deepEqual(c.loaded.list.map((e) => e.id), ['notes']);
   assert.deepEqual(c.calls.activated, ['notes']);
   assert.equal(c.calls.changed, 1, 'the router map and the client announcement both ride this');
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')));
   const record = readProvenance().notes;
   assert.equal(record.originUrl, URL_NOTES);
   assert.deepEqual(record.dependencies, ['deep@2.0.0', 'left@1.0.0']);
@@ -259,7 +266,7 @@ test('a requires widened in place on disk after consent quarantines at the next 
   // earlier test already discovered would serve the OLD module. Real discovery
   // runs once per process, so this is a test artefact rather than a product one.
   await install(ctx(), { id: 'widener', requires: ['tasks:read'] });
-  const file = path.join(externalDir(), 'widener', 'index.js');
+  const file = path.join(installedDir('widener', readProvenance().widener), 'index.js');
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('["tasks:read"]', "['tasks:read','sessions:kill']"));
   const found = await discoverExternal();
   assert.match(found[0].quarantine, /widened-and-unconsented requires \(sessions:kill\)/);
@@ -269,10 +276,13 @@ test('a requires widened in place on disk after consent quarantines at the next 
 test('ext-uninstall removes the directory and the record, keeps store data, and refuses a builtin', async () => {
   reset();
   await install(ctx());
+  const installed = installedDir('notes', readProvenance().notes);
   const c = ctx([{ id: 'notes', external: true }, { id: 'shipped', external: false }]);
   await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c);
   assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
   assert.equal(readProvenance().notes, undefined);
+  assert.equal(fs.existsSync(installed), false);
+  assert.equal(fs.existsSync(generationRoot('notes')), false);
   assert.equal(reply(c, 'ext-uninstall-done').restartRequired, true, 'the module Node already cached is what the restart reclaims');
   // Deregistered immediately, whatever the module cache still holds.
   assert.deepEqual(c.loaded.list.map((e) => e.id), ['shipped']);
@@ -401,7 +411,7 @@ test('installing over an id that already has a row is an update: restart, not li
   assert.equal(c.calls.broadcasts.at(-1).restartRequired, true, 'the progress line says so too');
   assert.deepEqual(c.calls.activated, [], 'the new module is never brought up beside the old one');
   assert.equal(c.calls.changed, 0);
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')), 'the files still land');
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')), 'the files still land');
   reset();
 });
 
@@ -476,7 +486,7 @@ test('an update needing a newer host API is refused before consent, and the inst
   assert.equal(c.calls.broadcasts.at(-1).phase, 'failed', 'the failed phase releases the lock and moves Update all on');
   assert.deepEqual(fs.readdirSync(tmpDir()), [], 'the staging clone is discarded');
   assert.equal(readProvenance().notes.sha, installedSha);
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')));
   // The lock was released, so the next install proceeds.
   assert.ok(await disclose(ctx()));
   reset();
@@ -510,7 +520,7 @@ test('a range only the manifest declares is still enforced at consent, before th
   assert.equal(reply(c, 'ext-install-done'), undefined);
   assert.match(reply(c, 'ext-install-incompatible').message, /requires a newer Agent Wrangler/);
   assert.equal(readProvenance().notes.sha, installedSha);
-  assert.ok(fs.existsSync(path.join(externalDir(), 'notes', 'index.js')));
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')));
   assert.deepEqual(fs.readdirSync(tmpDir()), []);
   assert.equal(c.calls.rebuild, 0);
   reset();
@@ -666,7 +676,7 @@ function useCloneSpy(opts = {}) {
   const clone = fakeClone(opts);
   _setInstallRunnersForTests({
     clone: async (url, dest, o = {}) => { clones.push({ url, branch: o.branch ?? null }); return clone(url, dest); },
-    head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, commits: async () => ({ commits: [], truncated: false }),
+    head: async () => opts.sha || 'c'.repeat(40), npm: async () => {}, relation: async () => 'upgrade', commits: async () => ({ commits: [], truncated: false }),
   });
   return clones;
 }
@@ -745,4 +755,268 @@ test('ext-set-early-adopter replies a refusal on its reqId, and refuses builtin 
   await assert.rejects(extSetEarlyAdopterHandler.handler({ id: 'core', on: true }, c), /ships with the wrangler/);
   assert.equal(c.calls.rebuild, 0);
   reset();
+});
+
+
+test('pinned install passes the exact ref and returns installed and running receipts', async () => {
+  reset();
+  const sha = 'd'.repeat(40);
+  const c = ctx();
+  let options;
+  const clone = fakeClone();
+  _setInstallRunnersForTests({ clone: async (url, dir, opts) => { options = opts; await clone(url, dir); }, head: async () => sha, npm: async () => {} });
+  await extInstallHandler.handler({ url: URL_NOTES, ref: sha }, c);
+  assert.equal(options.ref, sha);
+  const disclosure = reply(c, 'ext-install-disclosure');
+  assert.equal(disclosure.ref, sha);
+  await extConsentHandler.handler({ tempId: disclosure.tempId, approve: true }, c);
+  const done = reply(c, 'ext-install-done');
+  assert.equal(done.installedSha, sha);
+  assert.equal(done.runningSha, sha);
+  assert.equal(done.restartPending, false);
+  assert.equal(readProvenance().notes.ref, sha);
+  reset();
+});
+
+test('a downgrade requires a distinct acknowledgement and leaves the old install intact on refusal', async () => {
+  for (const allowDowngrade of [undefined, false, 'true', true]) {
+    reset();
+    putRecord({ id: 'notes', originUrl: URL_NOTES, sha: 'e'.repeat(40), requires: [], dependencies: [] });
+    const c = ctx([{ id: 'notes', label: 'Notes', external: true, provenance: { sha: 'e'.repeat(40) } }]);
+    useFakes();
+    _setInstallRunnersForTests({ clone: fakeClone(), head: async () => 'c'.repeat(40), npm: async () => {}, commits: async () => null, relation: async () => 'downgrade' });
+    await extInstallHandler.handler({ url: URL_NOTES, ref: 'v1' }, c);
+    const disclosure = reply(c, 'ext-install-disclosure');
+    assert.equal(disclosure.downgrade, true);
+    const consent = extConsentHandler.handler({ tempId: disclosure.tempId, approve: true, allowDowngrade }, c);
+    if (allowDowngrade === true) {
+      await consent;
+      assert.equal(readProvenance().notes.sha, 'c'.repeat(40));
+      assert.equal(reply(c, 'ext-install-done').runningSha, 'e'.repeat(40));
+      assert.equal(reply(c, 'ext-install-done').restartPending, true);
+    } else {
+      await assert.rejects(consent, /downgrade/i);
+      assert.equal(readProvenance().notes.sha, 'e'.repeat(40));
+    }
+  }
+  reset();
+});
+
+
+test('an explicit invalid ref is refused before cloning or acquiring the install lock', async () => {
+  reset();
+  let clones = 0;
+  _setInstallRunnersForTests({ clone: async () => { clones++; } });
+  for (const ref of ['', null, 'HEAD~1', 'abc1234']) await assert.rejects(extInstallHandler.handler({ url: URL_NOTES, ref }, ctx()), /ref|SHA|tag/i);
+  assert.equal(clones, 0);
+  await install(ctx());
+  reset();
+});
+
+test('auto-update leaves a downgrade or uncertain history for explicit human consent', async () => {
+  for (const relation of ['downgrade', 'unknown', 'diverged']) {
+    reset();
+    putRecord({ id: 'notes', originUrl: URL_NOTES, sha: 'e'.repeat(40), requires: [], dependencies: [], autoUpdate: true });
+    const c = ctx([{ id: 'notes', label: 'Notes', external: true, provenance: { sha: 'e'.repeat(40) } }]);
+    _setInstallRunnersForTests({ clone: fakeClone(), head: async () => 'c'.repeat(40), npm: async () => { assert.fail('no dependency install without consent'); }, commits: async () => null, relation: async () => relation });
+    const result = await autoUpdateExtension('notes', c);
+    assert.equal(result.applied, false);
+    assert.match(result.reason, /downgrade/i);
+    assert.equal(readProvenance().notes.sha, 'e'.repeat(40));
+  }
+  reset();
+});
+
+
+test('a recorded ref blocks automatic installs until an install without a ref clears it', async () => {
+  reset();
+  putRecord({ id: 'notes', originUrl: URL_NOTES, sha: 'e'.repeat(40), ref: 'v1', requires: [], dependencies: [], autoUpdate: true });
+  const c = ctx([{ id: 'notes', label: 'Notes', external: true, provenance: { sha: 'e'.repeat(40), ref: 'v1', autoUpdate: true } }]);
+  _setInstallRunnersForTests({ clone: async () => assert.fail('a pinned extension must not clone automatically') });
+  const blocked = await autoUpdateExtension('notes', c);
+  assert.equal(blocked.applied, false);
+  assert.match(blocked.reason, /pinned to v1/i);
+  await install(c);
+  assert.equal(readProvenance().notes.ref, undefined);
+  assert.equal(readProvenance().notes.autoUpdate, true);
+  useFakes({ sha: 'd'.repeat(40) });
+  assert.equal((await autoUpdateExtension('notes', c)).applied, true);
+  reset();
+});
+
+const installsOff = (fn) => async () => {
+  setExtensionInstallsOffForTest(() => true);
+  try { await fn(); } finally { setExtensionInstallsOffForTest(null); reset(); }
+};
+const OFF = /Extension installs are off on this deck/;
+
+test('installs off: install, update and uninstall are refused and nothing is cloned or removed', installsOff(async () => {
+  reset();
+  setExtensionInstallsOffForTest(null);
+  await install(ctx(), { requires: ['tasks:read'] });
+  setExtensionInstallsOffForTest(() => true);
+  const before = readProvenance().notes;
+  let cloned = 0;
+  _setInstallRunnersForTests({ clone: async () => { cloned += 1; } });
+  const c = ctx([{ id: 'notes', external: true }]);
+
+  await assert.rejects(() => extInstallHandler.handler({ type: 'ext-install', url: 'https://example.invalid/other.git' }, c), OFF);
+  await assert.rejects(() => extInstallHandler.handler({ type: 'ext-install', url: URL_NOTES }, c), OFF, 'an update is an install against the recorded origin');
+  await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c), OFF);
+  assert.deepEqual(await autoUpdateExtension('notes', (putRecord({ ...before, autoUpdate: true }), c)), { applied: false, reason: INSTALLS_OFF_MESSAGE });
+
+  assert.equal(cloned, 0);
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')), 'the installed extension is left in place');
+  assert.equal(readProvenance().notes.sha, before.sha);
+  assert.deepEqual(c.calls.replies, []);
+  assert.deepEqual(c.calls.deactivated, []);
+}));
+
+test('installs off: a consent staged before the deck refused installs cannot complete it', installsOff(async () => {
+  reset();
+  setExtensionInstallsOffForTest(null);
+  const c = ctx();
+  const disclosure = await disclose(c);
+  setExtensionInstallsOffForTest(() => true);
+  await assert.rejects(() => extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, c), OFF);
+  assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
+  await extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: false }, c);
+  assert.equal(reply(c, 'ext-install-done').cancelled, true, 'declining still clears the staged clone');
+}));
+
+test('installs off: the deck API install and uninstall actions are refused with the message', installsOff(async () => {
+  reset();
+  const c = ctx([{ id: 'notes', external: true }]);
+  const replies = c.calls.replies;
+  for (const [action, args] of [['admin.ext-install', { url: URL_NOTES }], ['admin.ext-uninstall', { id: 'notes' }]]) {
+    await routeControlMessage(JSON.stringify({ type: 'action', id: action, action, args }), c);
+    const r = replies.find((x) => x.id === action);
+    assert.equal(r.ok, false, action);
+    assert.equal(r.error.message, INSTALLS_OFF_MESSAGE, action);
+  }
+}));
+
+test('installs off: turning an extension off and on and changing its settings still work', installsOff(async () => {
+  reset();
+  const c = ctx([{ id: 'demo', label: 'Demo', defaultEnabled: true, settings: [{ key: 'pollMs', type: 'number', label: 'Poll' }] }]);
+  await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'demo', enabled: false }, c);
+  assert.equal(readConfig().extensions.demo, false);
+  assert.deepEqual(c.calls.deactivated, ['demo']);
+  await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'demo', enabled: true }, c);
+  assert.equal(readConfig().extensions.demo, true);
+  assert.deepEqual(c.calls.activated, ['demo']);
+  await extSettingSetHandler.handler({ type: 'ext-setting-set', id: 'demo', key: 'pollMs', value: 5000 }, c);
+  assert.equal(readConfig().extensionSettings.demo.pollMs, 5000);
+}));
+
+test('without the option a deck still installs, updates and uninstalls', async () => {
+  reset();
+  setExtensionInstallsOffForTest(null);
+  await install(ctx());
+  assert.ok(fs.existsSync(path.join(installedDir('notes', readProvenance().notes), 'index.js')));
+  const c = ctx([{ id: 'notes', external: true }]);
+  await install(c, { sha: 'd'.repeat(40) });
+  assert.equal(readProvenance().notes.sha, 'd'.repeat(40));
+  await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c);
+  assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
+  reset();
+});
+for (const legacy of [false, true]) {
+  test(`updates preserve same-URL assets and lazy imports (${legacy ? 'legacy' : 'generation'} install)`, async () => {
+    reset();
+    const id = legacy ? 'legacy-notes' : 'generation-notes';
+    const cloneVersion = (version) => async (url, dest) => {
+      await fakeClone({ id, deps: false, lock: false })(url, dest);
+      fs.writeFileSync(path.join(dest, 'index.js'), `export default {
+        id: '${id}', label: 'Notes', defaultEnabled: true, client: 'public/index.js',
+        load: () => import('./lazy.js'),
+      };`);
+      fs.writeFileSync(path.join(dest, 'lazy.js'), `export const version = '${version}';`);
+      fs.mkdirSync(path.join(dest, 'public'), { recursive: true });
+      for (const file of ['index.js', 'nested.js', 'style.css']) {
+        fs.writeFileSync(path.join(dest, 'public', file), version);
+      }
+    };
+    const stage = async (c, version) => {
+      c.calls.replies.length = 0;
+      _setInstallRunnersForTests({ clone: cloneVersion(version), head: async () => version.repeat(40), npm: async () => {}, relation: async () => 'upgrade', commits: async () => ({ commits: [], truncated: false }) });
+      await extInstallHandler.handler({ url: URL_NOTES }, c);
+      await extConsentHandler.handler({ tempId: reply(c, 'ext-install-disclosure').tempId, approve: true }, c);
+    };
+    let c;
+    if (legacy) {
+      const dir = path.join(externalDir(), id);
+      await cloneVersion('a')(URL_NOTES, dir);
+      putRecord({ id, originUrl: URL_NOTES, sha: 'a'.repeat(40), requires: [] });
+      c = ctx(await discoverExternal());
+    } else {
+      c = ctx();
+      await stage(c, 'a');
+    }
+    const runningDir = c.loaded.dirs[id];
+    const running = (await import(pathToFileURL(path.join(runningDir, 'index.js')).href)).default;
+    const server = createBoardServer({ extensionAssets: (name) => c.loaded.dirs[name] || null });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const base = `http://127.0.0.1:${server.address().port}/ext/${id}`;
+      const asset = async (file) => {
+        const res = await fetch(`${base}/${file}?v=running-a`);
+        assert.equal(res.status, 200);
+        return res.text();
+      };
+      assert.equal(await asset('index.js'), 'a');
+      await stage(c, 'b');
+      assert.equal(await asset('index.js'), 'a', 'the same versioned URL must keep the same bytes');
+      await stage(c, 'c');
+      assert.equal(await asset('nested.js'), 'a', 'a first fetch of a nested module uses the running generation');
+      assert.equal(await asset('style.css'), 'a');
+      assert.equal((await running.load()).version, 'a', 'a first lazy import uses the running generation');
+      assert.equal(c.loaded.dirs[id], runningDir);
+      assert.equal(c.loaded.list[0].provenance.sha, 'a'.repeat(40));
+      assert.equal(readProvenance()[id].sha, 'c'.repeat(40));
+      const next = await discoverExternal();
+      assert.equal(next.length, 1);
+      assert.notEqual(next[0].dir, runningDir);
+      assert.equal(fs.readFileSync(path.join(next[0].dir, 'public/index.js'), 'utf8'), 'c');
+      assert.equal((await next[0].load()).version, 'c');
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      reset();
+    }
+  });
+}
+
+test('reinstalling the same commit uses a new path and leaves the running generation intact', async () => {
+  reset();
+  const c = ctx();
+  await install(c);
+  const original = installedDir('notes', readProvenance().notes);
+  c.calls.replies.length = 0;
+  await install(c);
+  const selected = installedDir('notes', readProvenance().notes);
+  assert.notEqual(selected, original);
+  assert.equal(c.loaded.dirs.notes, original);
+  assert.ok(fs.existsSync(path.join(original, 'index.js')));
+  assert.ok(fs.existsSync(path.join(selected, 'index.js')));
+  reset();
+});
+
+test('a failed receipt publication preserves the prior install and removes the unpublished generation', async () => {
+  reset();
+  const c = ctx();
+  await install(c);
+  const before = readProvenance().notes;
+  c.calls.replies.length = 0;
+  const disclosure = await disclose(c, { sha: 'd'.repeat(40) });
+  const blocked = path.join(DATA_DIR, 'extensions.json.tmp');
+  fs.mkdirSync(blocked);
+  try {
+    await assert.rejects(() => extConsentHandler.handler({ tempId: disclosure.tempId, approve: true }, c), /EISDIR/);
+    assert.deepEqual(readProvenance().notes, before);
+    assert.equal(c.loaded.dirs.notes, installedDir('notes', before));
+    assert.ok(fs.existsSync(path.join(c.loaded.dirs.notes, 'index.js')));
+    assert.deepEqual(fs.readdirSync(generationRoot('notes')), [before.generation]);
+    assert.deepEqual(fs.readdirSync(tmpDir()), []);
+  } finally { fs.rmSync(blocked, { recursive: true, force: true }); reset(); }
 });

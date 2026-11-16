@@ -215,3 +215,9 @@ test('resume: wakes the descendants with the claimed target; a refused launch di
   await resumeHandler.handler({ type: 'resume', sessionId: 'S1' }, c);
   assert.deepEqual(woke, [['K1']]);
 });
+
+test('resume: manually restoring an archived session uses the restore reason', async () => {
+  const c = handlerCtx({ cwd: os.tmpdir(), archivedAt: 1 });
+  await resumeHandler.handler({ type: 'resume', sessionId: 'S1' }, c);
+  assert.equal(c.calls.resume[0].opts.reason, 'restore');
+});

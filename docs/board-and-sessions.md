@@ -73,7 +73,12 @@ Optional launch controls include:
 - **Auto-compaction threshold:** set the working-context budget.
 - **Runtime:** launch Claude locally, inside the project's devcontainer, or on a runtime an enabled extension adds. Codex currently runs on the
   host. **Settings → Sessions → Default runtime for new sessions** picks which one is pre-selected; a runtime that is
-  no longer offered or can't run the chosen agent falls back to Local.
+  no longer offered or can't run the chosen agent falls back to Local. The deck's
+  `--runtimes` startup option limits the list to the runtime ids it was started with (see
+  [Choosing a deck's runtimes](../README.md#choosing-a-decks-runtimes)); **Settings → Decks** shows each deck's. A
+  runtime that runs sessions at a location is offered only when every runtime the deck offers does: beside Local or
+  Devcontainer it shows as unavailable with the reason, and a deck of location runtimes starts nothing on its own
+  machine, not even a plain terminal.
 - **Codex sandbox and approvals:** for a Codex model only, pick the sandbox (read-only, workspace-write or
   danger-full-access), the approval policy (on-request, the default, which shows the card as needs-you while Codex
   waits for your answer; or never, which lets Codex carry on without asking), **Approve for me** (Codex's automatic review,
@@ -231,6 +236,7 @@ Right-click a card or open **Actions** to find:
 - **Peer review session…**, using an available different provider, preferring Claude before Codex.
 - **View diff** for uncommitted, branch, and PR review.
 - **Copy reference** (right-click only) to paste a session into another agent's chat; the agent reads it with `read_session_transcript`.
+- **GitHub repos…** on a session at a remote location (see [GitHub repos at a remote location](#github-repos-at-a-remote-location)).
 - **Open terminal** for a separate shell in the session directory.
 - **Snooze** until a preset or custom time, optionally with a wake-up note.
 - **Mark read / unread** to manage attention.
@@ -240,6 +246,23 @@ Right-click a card or open **Actions** to find:
 - **Archive** the session.
 
 Extensions may add more actions to this menu.
+
+### GitHub repos at a remote location
+
+A runtime that runs sessions away from this machine asks for **GitHub repos** (`owner/name`) in
+place of a folder when you dispatch. The session clones them there. A session it starts gets only
+the repos it names that its own session holds; any other repo it names has to be asked for with
+`request_repo`, like any repo the session finds it needs later.
+
+To give it another repo later, open **GitHub repos…** from the card's menu or **Actions**, type one
+or more `owner/name`, and choose **Add**. The runtime is told first, and the session then gets mail
+saying where to clone it. A fork shares its parent's location, so it gets the repo too.
+
+A session that finds it needs another repo asks with the `request_repo` tool. You get a toast
+naming the session, the repos and its reason, with **Allow** and **Decline**; the request also waits
+in **GitHub repos…** (shown as **GitHub repos (1 waiting)…**) until you answer it there. Either way
+the session gets mail with your answer. Only you can widen what a session reaches: a request adds
+nothing until you allow it.
 
 ## Chat, terminal, and files
 
@@ -269,6 +292,17 @@ available to retry.
 Automated terminal notifications (mail and PR/check nudges) wait while the composer holds an unsent
 draft, including multiline text. Once it is clear, Wrangler submits the notification automatically.
 Claude mail delivered through its messaging socket does not touch the terminal composer.
+Newly launched terminal agents get up to 15 seconds to connect to MCP before notifications can
+proceed through the composer and dialog checks. After five minutes of waiting behind unsent text,
+the card shows a blocked-notification warning, the spawning and parent sessions receive mail,
+and extensions receive a `session-notification:blocked` event. The draft stays untouched.
+
+Agent terminals set `GIT_TERMINAL_PROMPT=0`. When no `SSH_ASKPASS` helper is configured,
+they default to `SSH_ASKPASS=/usr/bin/false` and `SSH_ASKPASS_REQUIRE=force`. OpenSSH 8.4 or
+newer then fails unavailable credentials and host-key confirmations through that helper instead
+of placing a prompt on the agent's terminal, including during background plugin-marketplace
+Git fetches. User-provided askpass helpers and requirements are retained. Git's SSH command,
+identity and variant selection remain unchanged, including per-repository `core.sshCommand`.
 
 **Open terminal** creates an independent shell; it does not replace or interrupt the agent terminal.
 
@@ -290,6 +324,10 @@ The board's own deck is always first: you can rename and recolour it, but not re
 shows its connection: **Connecting**, **Ready**, **Incompatible** (its deck API version is one this
 board does not speak, or the URL reaches a deck already on the board) or **Unreachable** (the board
 cannot reach `GET /deck` there, often because the deck does not allow this board's origin).
+Under each deck's name, its **Runtimes** line lists the runtimes it offers, read-only: those named by
+its `--runtimes` startup option, or every runtime it has. A runtime it offers but won't launch on (a
+location runtime beside one that runs on the deck's machine) is struck through, with the reason on
+hover.
 
 With more than one deck on the board, each card shows its deck's name and colour. A card whose deck
 is unreachable stays on the board, greyed out and disabled, until the deck is back.
@@ -323,6 +361,26 @@ started this way is used up on that deck once the session launches. While that d
 its tiles offer neither. With only this board's own deck, the dialog has no picker.
 
 **Remove** takes a deck off the board; its sessions keep running on it.
+
+### Settings for each deck
+
+With more than one deck, **Settings** splits into **Board** tabs and **Deck** tabs. The Board tabs
+are this board's own: Appearance, the per-browser session view defaults and **Hide PR toasts the
+session already got** (under **Board**), the deck list, and Shortcuts. The Deck tabs (Sessions,
+Automation, Extensions and Updates) belong to the deck chosen in the picker beside them, this board's
+own deck by default. Each value is read from that deck and saved in that deck's own `config.json`,
+so changing another deck's default runtime, PR auto-fix default or an extension's switch changes
+nothing on this board's deck. Its **Default runtime** row offers the runtimes that deck reports.
+
+On another deck, **Extensions** turns each of its extensions on or off and edits their settings;
+installing, updating and removing extensions stays with the board on that deck's own machine.
+**Updates** checks that deck for updates, and offers **Restart** when that deck can restart itself. A restart waits up to 30 seconds for admitted requests and writes. If they remain busy, a restart you asked for goes ahead anyway and the log names what was still running. An automatic update restart instead shows **Restart pending** with each operation still running and its age, and the deck continues serving until it can be retried.
+**Sessions** also lists the deck's **Startup choices**, read-only: any option its `GET /deck` reports
+beyond the deck API's own fields, such as the runtimes it was started to offer.
+
+A deck that is not connected shows as unavailable in every Deck tab, never with the values it last
+sent, until the board reaches it again. With only this board's own deck, Settings has its usual tabs
+and no picker.
 
 Extensions load once, from the board's own install. A card's checklist is the one its own deck
 keeps, and ticking an item changes it on that deck alone. Another deck's task tile shows that deck's

@@ -26,6 +26,14 @@ export function prModelUrl(port = sessionApiPort()) {
   return `http://127.0.0.1:${port}/pr-model`;
 }
 
+// Where a session on a runtime with `statusEvents: true` posts its status
+// changes (scripts/status-event-hook.mjs). The launch hands it over as
+// STATUS_EVENT_URL_ENV.
+export const STATUS_EVENT_URL_ENV = 'AW_STATUS_EVENT_URL';
+export function statusEventUrl(port = sessionApiPort()) {
+  return `http://127.0.0.1:${port}/status-event`;
+}
+
 // Claude expands `${VAR}` in --mcp-config, so the token stays in the
 // environment and never reaches argv.
 export function claudeMcpConfigArg(port = sessionApiPort()) {
@@ -61,7 +69,7 @@ export function allowedToolName(tool) {
 // (itself a leaf — see server/extensions/index.js), derived from the very list
 // the loader registers, so an extension tool is granted in the same place it is
 // declared.
-const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'get_session_cost', 'get_model_front', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'restore_session', 'restore_task', 'assign_session', 'rename_session', 'update_schedule', 'read_mail', 'list_mail', 'read_session_transcript'];
+const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'get_session_cost', 'get_model_front', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'request_repo', 'send_message', 'archive_session', 'restore_session', 'restore_task', 'assign_session', 'rename_session', 'update_schedule', 'read_mail', 'list_mail', 'read_session_transcript'];
 
 // `ext` is injectable (defaulting to the boot-loaded extensions) so tests never
 // touch the memo or the shared config.json.

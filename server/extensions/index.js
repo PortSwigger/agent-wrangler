@@ -1,5 +1,6 @@
 import path from 'node:path';
 import semver from 'semver';
+import { pinnedUpdateReason } from './provenance.js';
 import { readConfig, extensionEnabled, extensionSettings } from '../config-store.js';
 import { SKILLS_ROOT, skillAt, skillsIn } from '../skill-catalog.js';
 import { validateSettingDef } from './setting-constraints.js';
@@ -69,7 +70,7 @@ export const BUILTIN = [
 export const RESERVED_GRAPH_KEYS = new Set([
   'nodes', 'edges', 'sessions', 'history', 'generatedAt', 'tasks', 'schedules', 'extensions',
   'legacyBoardSettings', 'trustCodexLaunchCwd', 'trustClaudeLaunchCwd',
-  'autoFixPrChecksDefault', 'mailWakesDormant', 'suppressNudgedPrToasts', 'prModelFooter', 'defaultSessionCwd', 'defaultRuntime',
+  'autoFixPrChecksDefault', 'mailWakesDormant', 'suppressNudgedPrToasts', 'prModelFooter', 'defaultSessionCwd', 'defaultRuntime', 'runtimeOffer',
   'codexPolicyDefaults', 'backgroundModel', 'quarantinedBuiltins', 'missingExtensionFiles',
 ]);
 
@@ -162,6 +163,7 @@ export const SESSION_HOOKS = ['onBeforeDispatch', 'onArchive', 'onFork', 'onPurg
 //     yours. See server/mcp/links.js.
 export const VALUE_HOOKS = ['session.launchContext', 'session.prepare', 'session.beforeSpawn', 'session.spawned', 'links.normalise'];
 export const LAUNCH_PHASES = ['dispatch', 'resume', 'fork'];
+export const LOCATION_HOOKS = ['provision', 'open', 'suspend', 'resume', 'delete', 'unpushed', 'transcript', 'diff', 'codexId'];
 const ID_RE = /^[a-z][a-z0-9-]*$/;
 
 // A settings DEF, not a value: what the Extensions tab draws a row for and what
@@ -434,10 +436,25 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
         }
         if (new Set(rt.agents).size !== rt.agents.length) fail(ext, `runtime ${rt.id} agents has a duplicate`);
       }
-      for (const k of ['resumable', 'skipsHostResumeGuard', 'liveByTmux']) {
+      for (const k of ['resumable', 'skipsHostResumeGuard', 'liveByTmux', 'statusEvents']) {
         if (rt[k] != null && typeof rt[k] !== 'boolean') fail(ext, `runtime ${rt.id} ${k} must be a boolean`);
       }
       if (rt.buildLaunch && rt.resumable !== false) fail(ext, `runtime ${rt.id} uses buildLaunch, so it must declare resumable: false`);
+      if (rt.location != null) {
+        if (typeof rt.location !== 'object' || Array.isArray(rt.location)) fail(ext, `runtime ${rt.id} location must be an object`);
+        if (rt.buildLaunch) fail(ext, `runtime ${rt.id} location needs wrapLaunch, not buildLaunch`);
+        if (typeof rt.location.provision !== 'function') fail(ext, `runtime ${rt.id} location.provision must be a function`);
+        for (const k of LOCATION_HOOKS) {
+          if (k !== 'provision' && rt.location[k] != null && typeof rt.location[k] !== 'function') fail(ext, `runtime ${rt.id} location.${k} must be a function`);
+        }
+        for (const k of Object.keys(rt.location)) {
+          if (!LOCATION_HOOKS.includes(k) && k !== 'suspendIdleHours') fail(ext, `runtime ${rt.id} location.${k} is not a location hook`);
+        }
+        const idle = rt.location.suspendIdleHours;
+        if (idle != null && typeof idle !== 'function' && !(typeof idle === 'number' && Number.isFinite(idle) && idle >= 0)) {
+          fail(ext, `runtime ${rt.id} location.suspendIdleHours must be a non-negative number or a function`);
+        }
+      }
     }
   }
   // `client` and `styles` are the two asset paths, checked identically: both are
@@ -525,7 +542,7 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // given with it to api.dispatch.submit rides `ext.<extId>.model`.
     // `agents` (1.37.0): the agent ids it takes, ['claude'] when the manifest
     // leaves it out; the dialog disables the option for any other agent.
-    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel, ownLaunch, agents }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel), ownLaunch: Boolean(ownLaunch), agents: [...(agents || ['claude'])] })),
+    runtimes: (runtimes || []).map(({ id: rid, label: rlabel, ownsModel, ownLaunch, agents, location }) => ({ id: rid, label: rlabel, ownsModel: Boolean(ownsModel), ownLaunch: Boolean(ownLaunch), agents: [...(agents || ['claude'])], location: Boolean(location) })),
     // The setting DEFS (third-party prose, rendered via textContent) plus the
     // current VALUES, re-read from config on every rebuild for exactly the
     // reason `enabled` is: an edit in another tab, or by hand in config.json,
@@ -544,12 +561,15 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     // the board needs on every tick.
     origin: provenance?.originUrl || '',
     sha: provenance?.sha || '',
+    runningSha: provenance?.sha || '',
     // What is on disk NOW, from the live record, against `sha` above, which is
     // what this process loaded. They differ after an in-place update, whose code
     // only loads on a restart; `restartPending` is the board's persistent
     // "restart to load it" flag, surviving a reload that drops the install
     // reply's one-shot notice.
     installedSha: installed[id]?.sha || '',
+    pinnedRef: installed[id]?.ref || null,
+    autoUpdateBlocked: pinnedUpdateReason(installed[id]),
     restartPending: Boolean(external && provenance?.sha && installed[id]?.sha && installed[id].sha !== provenance.sha),
     // The auto-update opt-in, for the detail pane's switch. False for a
     // builtin or hand-placed entry, which has no record to carry it.
@@ -833,7 +853,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   for (const rt of runtimes) {
     reg.runtimeIds.add(rt.id);
     out.runtimes.push(rt);
-    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function', ownLaunch: Boolean(rt.buildLaunch), agents: [...(rt.agents || ['claude'])] });
+    listEntry.runtimes.push({ id: rt.id, label: rt.label, ownsModel: typeof rt.validateModel === 'function', ownLaunch: Boolean(rt.buildLaunch), agents: [...(rt.agents || ['claude'])], location: Boolean(rt.location) });
   }
   for (const s of shipped) reg.skillNames.add(s);
   out.skillIds.push(...(ext.skills || []));

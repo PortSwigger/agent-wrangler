@@ -11,8 +11,11 @@ import { deliverFirstPrompt } from '../dispatch-runner.js';
 import { requestOrigin } from '../request-origin.js';
 import { supportsRemoteControl, supportsDisallowedTools } from '../agents/index.js';
 import { agentList } from '../agents/listing.js';
+import { modelFront } from '../agents/model-front.js';
 import { runHeadless } from '../headless.js';
 import { codexApprovalPolicyError } from '../extensions/codex-policy.js';
+import { findRuntime } from '../runtimes/index.js';
+import { normaliseRepos, checkLocationBranch } from '../locations/repos.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -66,7 +69,7 @@ const sessionsWake = ({ id, core }) => ({
 
 const sessionsArchive = ({ archiveSession }) => ({
   sessions: {
-    archive: (sid, { cascade = true } = {}) => archiveSession(sid, { cascade }),
+    archive: (sid, { cascade = true, allowUnpushed = false } = {}) => archiveSession(sid, { cascade, allowUnpushed: allowUnpushed === true }),
   },
 });
 
@@ -106,6 +109,34 @@ function spawnWorktree(worktree) {
 // resolve against the wrangler's cwd, never the session's, so it would grant
 // something nobody asked for. Existence is dispatch's business (and the
 // adapter's), not the façade's.
+// A runtime id, checked for existence here so a typo is refused by name;
+// whether it takes the agent is dispatch's check, as for the board.
+function checkRuntime(runtime) {
+  if (runtime === undefined || runtime === null) return {};
+  if (typeof runtime !== 'string' || !runtime) spawnError('runtime must be a runtime id string');
+  if (!findRuntime(runtime)) spawnError(`unknown runtime "${runtime}"`);
+  return { runtime };
+}
+
+function checkRepos(repos) {
+  if (repos === undefined) return {};
+  try {
+    return { repos: normaliseRepos(repos) };
+  } catch (err) {
+    return spawnError(err.message);
+  }
+}
+
+function checkBranch(branch, base, { repos } = {}) {
+  if (branch === undefined && base === undefined) return {};
+  try {
+    checkLocationBranch({ branch, base, repos });
+  } catch (err) {
+    return spawnError(err.message);
+  }
+  return { ...(branch ? { branch } : {}), ...(base ? { base } : {}) };
+}
+
 function checkAddDirs(addDirs) {
   if (addDirs === undefined) return {};
   if (!Array.isArray(addDirs)) spawnError('addDirs must be an array of absolute path strings');
@@ -218,7 +249,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
     // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
     spawn: async ({
       cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
-      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext, remoteControl, disallowedTools, approvalPolicy,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext, remoteControl, disallowedTools, approvalPolicy, runtime, repos, branch, base,
     } = {}) => {
       const approvalError = codexApprovalPolicyError(approvalPolicy, agent);
       if (approvalError) spawnError(approvalError);
@@ -226,6 +257,9 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
       const remoteControlOpt = checkRemoteControl(remoteControl, agent);
       const disallowedToolsOpt = checkDisallowedTools(disallowedTools, agent);
       const addDirsOpt = checkAddDirs(addDirs);
+      const runtimeOpt = checkRuntime(runtime);
+      const reposOpt = checkRepos(repos);
+      const branchOpt = checkBranch(branch, base, reposOpt);
       const extOpt = checkExt(ext);
       const imageNames = checkImages(id, images);
       if (taskId !== undefined && taskId !== null && (typeof taskId !== 'string' || !taskId)) spawnError('taskId must be a non-empty task id');
@@ -245,6 +279,9 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         parentSession,
         ...worktreeOpts,
         ...addDirsOpt,
+        ...runtimeOpt,
+        ...reposOpt,
+        ...branchOpt,
         ...extOpt,
         ...remoteControlOpt,
         ...disallowedToolsOpt,
@@ -391,7 +428,7 @@ const tasksWrite = ({ core }) => ({
 // kills panes.
 const tasksArchive = ({ archiveTask }) => ({
   tasks: {
-    archive: (taskId) => archiveTask(taskId),
+    archive: (taskId, { allowUnpushed = false } = {}) => archiveTask(taskId, { allowUnpushed: allowUnpushed === true }),
   },
 });
 
@@ -560,9 +597,11 @@ const usageRead = ({ scanUsage }) => ({
   },
 });
 
-const linksRead = ({ core }) => ({
+const linksRead = ({ core, prObservations }) => ({
   links: {
     get: (sid) => core.sessionManager.getLinks(sid).map((l) => ({ ...l })),
+    prObservation: (url) => prObservations.get(url),
+    prObservations: () => prObservations.all(),
   },
 });
 
@@ -578,7 +617,7 @@ const linksRead = ({ core }) => ({
 // externally-discovered session) and never an extension's. Upsert by
 // linkMatches, so a sweep re-attaching the same key updates it in place.
 // Synchronous like the hook itself; the rebuild is fire-and-forget.
-const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
+const linksWrite = ({ id, core, prObservations, linkNormalisersFor, hostApiFor, rebuild }) => {
   const normalise = (link) => {
     for (const { fn } of linkNormalisersFor(id)) {
       const out = fn({ link, host: hostApiFor(id) });
@@ -588,7 +627,7 @@ const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
   };
   return {
     links: {
-      ...linksRead({ core }).links,
+      ...linksRead({ core, prObservations }).links,
       attach: (sid, link) => {
         if (!core.sessionManager.entryFor(sid)) throw new Error(`links.attach: unknown session ${sid}`);
         const stored = normalise(link);
@@ -610,6 +649,7 @@ const linksWrite = ({ id, core, linkNormalisersFor, hostApiFor, rebuild }) => {
 const agentsRead = ({ listAgents = agentList }) => ({
   agents: {
     list: async () => deepFreeze(await listAgents()),
+    front: async (options) => deepFreeze(modelFront((await listAgents()).filter((a) => a.available), options, options)),
   },
 });
 

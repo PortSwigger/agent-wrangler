@@ -1117,19 +1117,19 @@ test('a valid runtime stages: claimed in _reg, tagged on out.runtimes, listed {i
   assert.equal(out.list[0].quarantine, null);
   assert.ok(out._reg.runtimeIds.has('toyrt'));
   assert.deepEqual(out.runtimes.map((r) => [r.id, r.extId, typeof r.wrapLaunch]), [['toyrt', 'fake', 'function']]);
-  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude'] }]);
-  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude'] }]);
+  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude'], location: false }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude'], location: false }]);
 });
 
 test('a runtime that defines validateModel is listed with ownsModel: true, for api.dispatch.submit', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ runtimes: [toyRuntime({ validateModel: () => null })] })], ...CORE_RUNTIMES });
-  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: true, ownLaunch: false, agents: ['claude'] }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: true, ownLaunch: false, agents: ['claude'], location: false }]);
 });
 
 test('a runtime\'s agents ride to the graph, for the dialog to gate the option by', () => {
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ runtimes: [toyRuntime({ agents: ['claude', 'codex'] })] })], ...CORE_RUNTIMES });
   assert.equal(out.list[0].quarantine, null);
-  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude', 'codex'] }]);
+  assert.deepEqual(extensionsForGraph(out.list, () => true)[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude', 'codex'], location: false }]);
 });
 
 test('a bad runtime agents list quarantines', () => {
@@ -1176,6 +1176,16 @@ test('a bad runtime shape quarantines', () => {
   assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ liveByTmux: true })] })));
   rejects(manifest({ runtimes: [toyRuntime(), toyRuntime({ label: 'Again' })] }), /duplicate runtime id "toyrt"/);
   assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ cost: async () => null })] })));
+  assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ location: { provision: async () => ({}) } })] })));
+  assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ location: { provision: async () => ({}), open: () => ({}), suspend: async () => {}, resume: async () => {}, delete: async () => {}, unpushed: async () => [], transcript: async () => '', diff: async () => null, codexId: async () => null, suspendIdleHours: 2 } })] })));
+  assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ location: { provision: async () => ({}), suspendIdleHours: () => 1 } })] })));
+  rejects(manifest({ runtimes: [toyRuntime({ location: 'remote' })] }), /runtime toyrt location must be an object/);
+  rejects(manifest({ runtimes: [toyRuntime({ location: { open: () => ({}) } })] }), /location\.provision must be a function/);
+  rejects(manifest({ runtimes: [toyRuntime({ location: { provision: async () => ({}), suspend: 1 } })] }), /location\.suspend must be a function/);
+  rejects(manifest({ runtimes: [toyRuntime({ location: { provision: async () => ({}), diff: 'x' } })] }), /location\.diff must be a function/);
+  rejects(manifest({ runtimes: [toyRuntime({ location: { provision: async () => ({}), handle: () => ({}) } })] }), /location\.handle is not a location hook/);
+  rejects(manifest({ runtimes: [toyRuntime({ location: { provision: async () => ({}), suspendIdleHours: -1 } })] }), /suspendIdleHours must be a non-negative number or a function/);
+  rejects(manifest({ runtimes: [toyRuntime({ wrapLaunch: undefined, buildLaunch: async () => '', resumable: false, location: { provision: async () => ({}) } })] }), /location needs wrapLaunch/);
   assert.ok(validateManifest(manifest({ runtimes: [toyRuntime({ wrapLaunch: undefined, buildLaunch: async () => '', resumable: false, deliver: async () => ({ ok: true }) })] })));
 });
 
@@ -1188,7 +1198,7 @@ test('unregister releases a runtime id, so a re-enable re-stages it', () => {
   assert.deepEqual(out.list[0].runtimes, []);
   registerExtension(out, manifest({ runtimes: [toyRuntime()] }), { cfg: {} });
   assert.deepEqual(out.runtimes.map((r) => r.id), ['toyrt']);
-  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude'] }]);
+  assert.deepEqual(out.list[0].runtimes, [{ id: 'toyrt', label: 'Toy', ownsModel: false, ownLaunch: false, agents: ['claude'], location: false }]);
 });
 
 test('a disabled extension claims no runtime id', () => {
@@ -1340,4 +1350,27 @@ test('spawn hooks register and unload through manifest hooks', () => {
   for (const name of Object.keys(hooks)) assert.equal(loaded.hooks[name].length, 1);
   unregisterExtension(loaded, loaded.list[0].id);
   for (const name of Object.keys(hooks)) assert.deepEqual(loaded.hooks[name], []);
+});
+
+
+test('graph receipts explicitly name the loaded commit', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ external: true, provenance: { sha: 'a'.repeat(40) } })] });
+  const [row] = extensionsForGraph(loaded.list, () => true, () => ({}), { fake: { sha: 'b'.repeat(40) } });
+  assert.equal(row.runningSha, 'a'.repeat(40));
+  assert.equal(row.installedSha, 'b'.repeat(40));
+  assert.equal(row.restartPending, true);
+  const restarted = loadExtensions({ cfg: {}, builtin: [manifest({ external: true, provenance: { sha: 'b'.repeat(40) } })] });
+  const [after] = extensionsForGraph(restarted.list, () => true, () => ({}), { fake: { sha: 'b'.repeat(40) } });
+  assert.equal(after.runningSha, after.installedSha);
+  assert.equal(after.restartPending, false);
+});
+
+
+test('graph pin state and auto-update reason follow the installed record until unpinned', () => {
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ external: true, provenance: { sha: 'a'.repeat(40), ref: 'v0' } })] });
+  const row = (record) => extensionsForGraph(loaded.list, () => true, () => ({}), { fake: record })[0];
+  assert.equal(row({ sha: 'b'.repeat(40), ref: 'v1' }).pinnedRef, 'v1');
+  assert.match(row({ sha: 'b'.repeat(40), ref: 'v1' }).autoUpdateBlocked, /pinned to v1/i);
+  assert.equal(row({ sha: 'b'.repeat(40) }).pinnedRef, null);
+  assert.equal(row({ sha: 'b'.repeat(40) }).autoUpdateBlocked, null);
 });

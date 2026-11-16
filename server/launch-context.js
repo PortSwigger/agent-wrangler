@@ -40,7 +40,7 @@ import { logError } from './log.js';
 // The hook may be async and may do work (task-memory binds the session's
 // by-session symlink here), so callers AWAIT collectLaunchContext before they
 // build the launch command. Reasons a launch asks:
-//   dispatch | resume | fork | message | snooze-wake | spawn | assign | adopt | headless
+//   dispatch | resume | restore | fork | message | snooze-wake | spawn | assign | adopt | headless
 // `assign` and `adopt` are not launches (a running session was re-pointed, or
 // the server adopted it at boot); the hook still runs so side effects land and
 // the caller discards the result.
@@ -48,7 +48,7 @@ import { logError } from './log.js';
 // Fork payloads include parentId, the parent card id, before inherited state is saved.
 // A hook that throws, or answers something unusable, is logged and skipped:
 // one broken extension must not keep a session from launching.
-export const LAUNCH_REASONS = ['dispatch', 'resume', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt', 'headless'];
+export const LAUNCH_REASONS = ['dispatch', 'resume', 'restore', 'fork', 'message', 'snooze-wake', 'spawn', 'assign', 'adopt', 'headless'];
 
 export const CLAUDE_HOOK_EVENTS = ['PreToolUse', 'PostToolUse'];
 
@@ -271,10 +271,16 @@ export function launchAddDirsOf(launchContext) {
 }
 
 // `K='v' K2='v2' ` — the env assignments a launch command line is prefixed with
-// (trailing space included, empty string when there are none). `quote` is the
-// adapter's own shellQuote, passed in so this module does not import the agents.
+// Includes non-interactive Git authentication defaults for the agent terminal.
+// `quote` is passed in so this module does not import the agents.
 export function launchEnvPrefix(launchContext, quote) {
-  return Object.entries(launchEnvOf(launchContext)).map(([k, v]) => `${k}=${quote(v)} `).join('');
+  const env = launchEnvOf(launchContext);
+  const askpass = env.SSH_ASKPASS != null ? quote(env.SSH_ASKPASS) : '"${SSH_ASKPASS-/usr/bin/false}"';
+  const requireAskpass = env.SSH_ASKPASS_REQUIRE != null ? quote(env.SSH_ASKPASS_REQUIRE)
+    : env.SSH_ASKPASS != null ? '"${SSH_ASKPASS_REQUIRE-}"'
+    : '"${SSH_ASKPASS_REQUIRE-$(test "${SSH_ASKPASS+x}" = x || printf force)}"';
+  return Object.entries(env).map(([k, v]) => `${k}=${quote(v)} `).join('')
+    + `GIT_TERMINAL_PROMPT=0 SSH_ASKPASS_REQUIRE=${requireAskpass} SSH_ASKPASS=${askpass} `;
 }
 
 // `/bin/sh -c '<check>' && ` — the pane-side refusal for `refuseIfSet`, run

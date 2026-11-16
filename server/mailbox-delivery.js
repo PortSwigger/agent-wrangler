@@ -1,10 +1,8 @@
 import { adapterFor } from './agents/index.js';
 import { notePrompt } from './prompt-ledger.js';
 import { mcpSeenAt as defaultMcpSeenAt } from './mcp-activity.js';
-import fs from 'node:fs';
-import os from 'node:os';
 import crypto from 'node:crypto';
-import { resolveResumeDir } from './transcript-reader.js';
+import { wakeDir } from './wake-dir.js';
 import { findClaudeSocket as defaultFindSocket, sendToClaudeSocket as defaultSendSocket } from './claude-socket.js';
 
 // Deliver mail to a live session. A dormant recipient keeps its mail unread
@@ -78,10 +76,7 @@ async function sendNotice(to, entry, target, text, socket, deps) {
 
 async function wakeDormant(to, entry, deps, notice = null) {
   const { sessionManager, tmuxFor } = deps;
-  let dir = await resolveResumeDir(entry.liveSessionId || to, { entryCwd: entry.cwd });
-  if (!dir || !fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = os.homedir(); }
-  }
+  const dir = await wakeDir(entry, to);
   const fresh = sessionManager.entryFor(to);
   if (!fresh || fresh.archivedAt) return { mode: 'skip' };
   if (fresh.snooze) return notice === null ? { mode: 'deferred', reason: 'snoozed, not waking' } : { mode: 'skip' };

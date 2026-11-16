@@ -60,6 +60,7 @@ export const AUTO_UPDATE_HELP = 'Install new commits at the update check when th
 // the reader can see that. The only thing left is the module Node cannot unload
 // and whatever its top-level code started, so the note says exactly that rather
 // than implying the uninstall is half-done.
+export const INSTALLS_OFF_NOTE = 'Extension installs are off on this deck. Its extensions can be turned on or off and their settings changed, but not installed, updated or uninstalled.';
 export const UNINSTALL_RESTART_NOTE = 'Its code stays in memory until the wrangler restarts.';
 
 function el(tag, className, text) {
@@ -161,7 +162,7 @@ const hasUpdate = (entry, status, removing) => Boolean(entry.external && entry.o
 // disabled) and the name, plus — when the last check found a newer commit — a
 // one-click update button beside it. The two are siblings, not nested, because
 // a button inside a button is not a thing a browser will click reliably.
-export function extensionListItemEl(entry, { selected, status, pendingRemoval, onSelect, onUpdate } = {}) {
+export function extensionListItemEl(entry, { selected, status, pendingRemoval, installsOff = false, onSelect, onUpdate } = {}) {
   const on = entry.enabled && !entry.quarantine && !pendingRemoval;
   const row = el('div', `ext-list-row${selected ? ' selected' : ''}${on ? '' : ' off'}`);
   row.dataset.extId = entry.id;
@@ -175,7 +176,9 @@ export function extensionListItemEl(entry, { selected, status, pendingRemoval, o
   if (hasUpdate(entry, status, pendingRemoval)) {
     // Only the background check counts changes; Check all's ls-remote cannot.
     if (status.commits) row.append(el('span', 'ext-update-count', changesText(status.commits, status.capped)));
-    row.append(iconButtonEl('ext-btn ext-btn-dark ext-btn-square', PROMOTE_ICON, `Update ${nameOf(entry)}`, () => onUpdate?.(entry)));
+    const update = iconButtonEl('ext-btn ext-btn-dark ext-btn-square', PROMOTE_ICON, `Update ${nameOf(entry)}`, () => onUpdate?.(entry));
+    if (installsOff) { update.disabled = true; update.title = INSTALLS_OFF_NOTE; }
+    row.append(update);
   }
   return row;
 }
@@ -207,8 +210,14 @@ function sourceEl(entry) {
     }
     kvRow(list, 'Repository', repo);
   }
-  if (entry.sha) kvRow(list, entry.restartPending ? 'Running' : 'Commit', el('span', 'ext-mono', entry.sha.slice(0, 8)));
-  if (entry.restartPending) kvRow(list, 'Installed', el('span', 'ext-mono', `${entry.installedSha.slice(0, 8)} — ${RESTART_PENDING_NOTE}`));
+  if (entry.external && entry.runningSha !== undefined) {
+    kvRow(list, 'Running', el('span', 'ext-mono', entry.runningSha || 'Unknown'));
+    const installed = entry.installedSha || 'Unknown';
+    kvRow(list, 'Installed', el('span', 'ext-mono', entry.restartPending ? `${installed} — ${RESTART_PENDING_NOTE}` : installed));
+  } else {
+    if (entry.sha) kvRow(list, entry.restartPending ? 'Running' : 'Commit', el('span', 'ext-mono', entry.sha.slice(0, 8)));
+    if (entry.restartPending) kvRow(list, 'Installed', el('span', 'ext-mono', `${entry.installedSha.slice(0, 8)} — ${RESTART_PENDING_NOTE}`));
+  }
   return list;
 }
 
@@ -217,7 +226,7 @@ function sourceEl(entry) {
 // settings.js's delegated click handler already drives (and where it puts its
 // flip note), so the enable switch has no second flip path.
 export function extensionDetailEl(entry, {
-  status, pendingRemoval, settings, onUninstall, onAutoUpdate,
+  status, pendingRemoval, settings, installsOff = false, onUninstall, onAutoUpdate,
 } = {}) {
   const pane = el('div', 'ext-detail-body');
   const head = el('div', 'setting-row ext-detail-head');
@@ -240,6 +249,7 @@ export function extensionDetailEl(entry, {
     if (entry.external) {
       const remove = el('button', 'ext-btn ext-btn-danger', 'Uninstall…');
       remove.type = 'button';
+      if (installsOff) { remove.disabled = true; remove.title = INSTALLS_OFF_NOTE; }
       remove.addEventListener('click', () => onUninstall?.(entry));
       actions.append(remove);
     }
@@ -261,7 +271,7 @@ export function extensionDetailEl(entry, {
 
   // Only an extension with a recorded origin has anything to update from: a
   // builtin ships with the wrangler and a hand-placed one has no record.
-  if (entry.external && entry.origin && !pendingRemoval) section(pane, 'Updates', autoUpdateRowEl(entry, onAutoUpdate));
+  if (entry.external && entry.origin && !pendingRemoval) section(pane, 'Updates', autoUpdateRowEl(entry, onAutoUpdate, installsOff));
   section(pane, 'Source', sourceEl(entry));
   if (settings && !pendingRemoval) section(pane, 'Settings', settings);
   return pane;
@@ -271,11 +281,12 @@ export function extensionDetailEl(entry, {
 // delegated toggle handler cannot see it (see extensionSettingRowsEl). It does
 // not move itself: turning it on waits for the caller's confirm, and the
 // graph's `autoUpdate` redraws the pane either way.
-function autoUpdateRowEl(entry, onAutoUpdate) {
+function autoUpdateRowEl(entry, onAutoUpdate, installsOff = false) {
   const row = el('div', 'ext-auto-update');
   const copy = el('div', 'setting-copy');
   copy.append(el('div', 'setting-label', 'Auto-update'));
   copy.append(el('div', 'setting-help', AUTO_UPDATE_HELP));
+  if (entry.autoUpdateBlocked) copy.append(el('div', 'setting-help', entry.autoUpdateBlocked));
   const actions = el('div', 'ext-row-actions');
   const on = Boolean(entry.autoUpdate);
   const toggle = el('button', `setting-toggle${on ? ' on' : ''}`);
@@ -284,6 +295,7 @@ function autoUpdateRowEl(entry, onAutoUpdate) {
   toggle.setAttribute('aria-checked', on ? 'true' : 'false');
   toggle.setAttribute('aria-label', `Auto-update ${nameOf(entry)}`);
   toggle.append(el('span', 'setting-knob'));
+  if (installsOff) { toggle.disabled = true; toggle.title = INSTALLS_OFF_NOTE; }
   toggle.addEventListener('click', () => onAutoUpdate?.(entry, !on));
   actions.append(toggle);
   row.append(copy, actions);
@@ -335,16 +347,26 @@ function urlInstallEl({ busy, onInstall }) {
   input.placeholder = 'https://github.com/…';
   input.setAttribute('aria-label', 'Extension git URL');
   input.dataset.refocus = 'url';
+  const ref = el('input', 'ext-install-ref');
+  ref.type = 'text';
+  ref.placeholder = 'Tag or full commit SHA (optional)';
+  ref.setAttribute('aria-label', 'Exact extension ref (optional)');
+  ref.dataset.refocus = 'ref';
+  ref.disabled = busy;
   const go = el('button', 'ext-btn ext-btn-primary', 'Install…');
   go.type = 'button';
   go.disabled = busy;
   const submit = () => {
     const url = input.value.trim();
-    if (url) onInstall?.(url);
+    if (url) {
+      if (ref.value.trim()) onInstall?.(url, ref.value.trim());
+      else onInstall?.(url);
+    }
   };
   go.addEventListener('click', submit);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
-  form.append(input, go);
+  ref.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  form.append(input, ref, go);
   pane.append(form);
   return pane;
 }
@@ -863,7 +885,7 @@ function defaultSettingsEl(entry, onSettingChange) {
 // the extension's own settings.panel contributions); without it the manifest
 // rows are drawn with `onSettingChange`.
 export function extensionsPanelEl({
-  entries = [], statuses = {}, checking = false, progress = '', busy = false,
+  entries = [], statuses = {}, checking = false, progress = '', busy = false, installsOff = false,
   pendingRemoval = [], pendingInstall = '', canRestart = false, restarting = false,
   selectedId = '', filter = '', adding = false, browse = null, addMode = 'browse', browseQuery = '',
   onSelect, onFilter, onAdd, onAddMode, onBrowseQuery, onInstall, onBrowse, onUninstall, onUpdate, onUpdateAll,
@@ -893,6 +915,7 @@ export function extensionsPanelEl({
       selected: selected?.id === entry.id,
       status: statusOf(entry),
       pendingRemoval: removing.has(entry.id),
+      installsOff,
       onSelect,
       onUpdate,
     });
@@ -913,7 +936,7 @@ export function extensionsPanelEl({
   if (updatable.length) {
     const all = el('button', 'ext-btn ext-btn-dark ext-btn-sm', 'Update all');
     all.type = 'button';
-    all.disabled = busy;
+    all.disabled = busy || installsOff;
     all.addEventListener('click', () => onUpdateAll?.(updatable));
     head.append(all);
   }
@@ -955,6 +978,7 @@ export function extensionsPanelEl({
   // still running rather than the one on disk, so its "restart to finish" line
   // lives here rather than on the entry.
   const notices = el('div', 'ext-notices');
+  if (installsOff) notices.append(noteEl('ext-row-note ext-installs-off', INSTALLS_OFF_NOTE));
   const stale = installed.filter((e) => e.restartPending).map((e) => e.label || e.id);
   if (pendingInstall) notices.append(noteEl('ext-row-note', progress || `Installed ${pendingInstall}. ${RESTART_NOTE}`));
   else if (progress) notices.append(noteEl('ext-install-progress', progress));
@@ -965,7 +989,7 @@ export function extensionsPanelEl({
   if (adding || !selected) {
     const installedOrigins = installed.map((e) => e.origin).filter(Boolean);
     detail.append(addExtensionEl({
-      busy, onInstall, browse, installedOrigins, onBrowse,
+      busy: busy || installsOff, onInstall, browse, installedOrigins, onBrowse,
       addMode, onAddMode, query: browseQuery, onQuery: onBrowseQuery,
     }));
   } else {
@@ -974,6 +998,7 @@ export function extensionsPanelEl({
       status: statusOf(selected),
       pendingRemoval: removing.has(selected.id),
       settings,
+      installsOff,
       onUninstall,
       onAutoUpdate,
     }));
@@ -1004,6 +1029,11 @@ export function updateStatusText(status) {
 // so where the wrangler can restart itself an update's primary button does both
 // and `later` keeps the plain update; an install goes live without one.
 export function consentButtonLabels(payload, canRestart) {
+  if (payload.downgrade || payload.requiresDowngradeConfirmation) {
+    return canRestart && payload.update
+      ? { ok: 'Confirm downgrade & restart', later: 'Confirm downgrade without restarting' }
+      : { ok: 'Confirm downgrade & install', later: null };
+  }
   if (payload.update && canRestart) {
     return { ok: payload.reconsentNeeded ? 'Approve, update & restart' : 'Update & restart', later: 'Update without restarting' };
   }
@@ -1016,7 +1046,12 @@ export function consentButtonLabels(payload, canRestart) {
 // the caller's Approve/Cancel. An UPDATE shows CHANGES only — the decision on
 // an update is what changed, and the full list is noise that hides it.
 export function consentBodyEl(payload) {
-  return payload.update ? updateConsentEl(payload) : installConsentEl(payload);
+  const body = payload.update ? updateConsentEl(payload) : installConsentEl(payload);
+  if (payload.downgrade || payload.requiresDowngradeConfirmation) {
+    const reason = payload.downgrade ? 'Downgrade' : 'Possible downgrade (history could not establish a forward update)';
+    body.append(el('div', 'ext-consent-note', `${reason}: replace ${(payload.previousSha || '').slice(0, 8)} with ${(payload.sha || '').slice(0, 8)}. Confirm explicitly to install this version.`));
+  }
+  return body;
 }
 
 function trustEl(lead) {

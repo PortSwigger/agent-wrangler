@@ -31,7 +31,7 @@ async function connect(deps, caller, opts) {
 test('buildMcpServer advertises the registered tools in tools/list', async () => {
   const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: activeTools({ ext: NO_EXT }) });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'cancel_schedule', 'create_terminal', 'detach_session', 'get_links', 'get_model_front', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'read_session_transcript', 'remove_links', 'rename_session', 'restore_session', 'restore_task', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'stop_status_notices', 'update_schedule', 'workflow_phase']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['archive_session', 'assign_session', 'attach_session', 'cancel_schedule', 'create_terminal', 'detach_session', 'get_links', 'get_model_front', 'get_session_activity', 'get_session_cost', 'get_session_info', 'list_mail', 'list_sessions', 'list_tasks', 'name_branch', 'read_mail', 'read_session_transcript', 'remove_links', 'rename_session', 'request_repo', 'restore_session', 'restore_task', 'schedule_session', 'send_message', 'set_links', 'spawn_session', 'spawn_workflow', 'stop_status_notices', 'update_schedule', 'workflow_phase']);
   await server.close();
 });
 
@@ -253,4 +253,45 @@ test('SDK boundary exposes Codex approval_policy and rejects invalid values befo
     await client.close();
     await server.close();
   }
+});
+
+test('a session at a location is offered exactly the tools any other session is', async () => {
+  const entries = { LOC: { runtime: 'testloc', location: { box: 1 }, repos: ['acme/widgets'], cwd: '/w' }, HOST: { cwd: '/a' } };
+  const deps = { ...fakeDeps(), sessionManager: { entryFor: (id) => entries[id] ?? null } };
+  const tools = activeTools({ ext: NO_EXT });
+  const names = async (caller) => {
+    const { client, server } = await connect(deps, caller, { tools });
+    const list = (await client.listTools()).tools.map((t) => t.name).sort();
+    await server.close();
+    return list;
+  };
+  const atLocation = await names('LOC');
+  assert.deepEqual(atLocation, await names('HOST'));
+  assert.equal(atLocation.length, tools.length);
+});
+
+test('restart waits for an MCP mutation and its response, then refuses fresh calls', async (t) => {
+  const { createRestartBarrier } = await import('../restart-barrier.js');
+  let release;
+  let entered;
+  const started = new Promise((r) => { entered = r; });
+  const gate = new Promise((r) => { release = r; });
+  t.after(() => release());
+  const exits = [];
+  const barrier = createRestartBarrier({ timeoutMs: 1000, settleMs: 0, exit: () => exits.push('exit') });
+  const deps = { ...fakeDeps(), restartBarrier: barrier, dispatch: async () => { entered(); await gate; return { sessionId: 'NEW', cwd: '/a' }; }, rebuild: async () => {} };
+  deps.taskStore.assign = () => true;
+  await withServer(deps, async (port) => {
+    const pending = rpc(port, 'tools/call', { name: 'spawn_session', arguments: { intent: 'work' } }, 100, { Authorization: 'Bearer tok-CARD1' });
+    await started;
+    assert.deepEqual(barrier.outstanding().map((o) => o.label).sort(), ['http:/mcp', 'mcp:spawn_session']);
+    const restarting = barrier.request('update');
+    assert.deepEqual(exits, []);
+    const refused = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { Authorization: 'Bearer tok-CARD1' }, body: '{}' });
+    assert.equal(refused.status, 503);
+    release();
+    const response = await pending;
+    assert.equal(response.result.structuredContent.sessionId, 'NEW');
+    assert.equal(await restarting, true);
+  });
 });

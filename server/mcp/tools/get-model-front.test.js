@@ -116,3 +116,8 @@ test('review selection rejects an unknown explicit source provider', async () =>
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /Unknown agent "codx"/);
 });
+
+test('host candidate restriction options do not change get_model_front', async () => {
+  const baseline = await call();
+  assert.deepEqual(await call({ agents: [], excludeModels: ['opus', 'gpt-6.1-sol'] }), baseline);
+});

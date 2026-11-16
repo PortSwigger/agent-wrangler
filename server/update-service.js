@@ -55,6 +55,7 @@ export function createUpdateService({
   support = { available: true, canApply: false, reason: NOT_STARTED_BY_SERVICE },
   mode = () => 'notify',
   isQuiet = () => true,
+  runWork = (fn) => fn(),
   rolledBack = null,
   onStatus = () => {},
   // The one way out for a restart, called at most once per process: with the
@@ -86,10 +87,10 @@ export function createUpdateService({
   let restartArmed = false;
   let restartTimer = null;
 
-  async function exclusive(fn) {
+  async function exclusive(fn, label) {
     if (busy) throw new UpdateBusyError();
     busy = true;
-    try { return await fn(); } finally { busy = false; }
+    try { return await runWork(fn, label); } finally { busy = false; }
   }
 
   function publish(status) {
@@ -101,7 +102,7 @@ export function createUpdateService({
   const runCheck = () => exclusive(async () => {
     if (!support.available) throw new Error(support.reason);
     return publish(await check());
-  });
+  }, 'update:check');
 
   const runApply = ({ automatic = false } = {}) => exclusive(async () => {
     if (!support.canApply) throw new Error(support.reason);
@@ -122,7 +123,7 @@ export function createUpdateService({
     restartArmed = true;
     onApplied(result);
     return result;
-  });
+  }, 'update:apply');
 
   // An auto-applied extension update loads only at a restart, and gets one on
   // the wrangler's own auto-apply terms: only where something brings the
@@ -147,7 +148,7 @@ export function createUpdateService({
     if (!checkExtensions || checkingExtensions) return;
     checkingExtensions = true;
     try {
-      const { autoApplied = [], ...summary } = await checkExtensions();
+      const { autoApplied = [], ...summary } = await runWork(checkExtensions, 'update:check-extensions');
       for (const { id } of autoApplied) awaitingRestart.add(id);
       latestExtensions = { ...summary, checkedAt: Date.now() };
       onExtensions(latestExtensions);

@@ -1,6 +1,6 @@
 // Results land on window.__compatProbe and in the view, for the test and for a
-// person looking at the board. The button's inline onclick is what a strict
-// CSP would block; the board's is Report-Only, so it runs and is reported.
+// person looking at the board. The button's inline onclick is what the board's
+// CSP blocks, so it never runs and the violation is reported.
 const results = { fields: null, file: null, extFile: null, legacyWs: null, inline: null, csp: null };
 window.__compatProbe = results;
 document.addEventListener('securitypolicyviolation', (e) => {

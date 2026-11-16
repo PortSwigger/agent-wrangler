@@ -132,7 +132,7 @@ export class ScheduleStore {
       enabled: true,
       when: v.when,
       action: v.action,
-      ...(v.action.kind === 'dispatch' && caller ? { scheduledBy: caller } : {}),
+      ...(caller ? { scheduledBy: caller } : {}),
       createdAt: new Date(now).toISOString(),
       lastRunAt: null,
       lastSessionId: null,
@@ -159,7 +159,7 @@ export class ScheduleStore {
     s.when = v.when;
     s.action = v.action;
     if (actionGiven) {
-      if (v.action.kind === 'dispatch' && caller) s.scheduledBy = caller;
+      if (caller) s.scheduledBy = caller;
       else delete s.scheduledBy;
     }
     if (whenChanged) {

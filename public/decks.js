@@ -106,9 +106,33 @@ export function deckRuntimes(descriptor) {
   const out = [];
   for (const r of list) {
     if (typeof r?.id !== 'string' || !r.id || out.some((x) => x.id === r.id)) continue;
-    out.push({ id: r.id, label: typeof r.label === 'string' && r.label ? r.label : r.id, agents: Array.isArray(r.agents) ? r.agents.filter((a) => typeof a === 'string') : null });
+    out.push({
+      id: r.id,
+      label: typeof r.label === 'string' && r.label ? r.label : r.id,
+      agents: Array.isArray(r.agents) ? r.agents.filter((a) => typeof a === 'string') : null,
+      ...(r.location === true ? { location: true } : {}),
+      ...(typeof r.unavailable === 'string' && r.unavailable ? { unavailable: r.unavailable } : {}),
+    });
   }
   return out.length ? out : [{ id: 'local', label: 'Local (host)', agents: null }];
+}
+
+// What Settings › Decks shows of a deck's runtime offer, read-only: the startup
+// pick (`offeredRuntimes`, null for every runtime) and each runtime it offers,
+// with the reason one it offers can't be launched on. Null before a descriptor.
+export function deckOfferSummary(descriptor) {
+  if (!descriptor || typeof descriptor !== 'object') return null;
+  const listed = Array.isArray(descriptor.runtimes) ? deckRuntimes(descriptor) : [];
+  const picked = Array.isArray(descriptor.offeredRuntimes)
+    ? descriptor.offeredRuntimes.filter((id) => typeof id === 'string' && id)
+    : null;
+  const ids = picked || listed.filter((r) => !r.unavailable || r.location).map((r) => r.id);
+  const runtimes = ids.map((id) => {
+    const r = listed.find((x) => x.id === id);
+    if (!r) return { id, label: id, unavailable: 'Not registered on this deck (its extension is off or missing).' };
+    return { id, label: r.label, ...(r.location ? { location: true } : {}), ...(r.unavailable ? { unavailable: r.unavailable } : {}) };
+  });
+  return { fromOption: Boolean(picked), runtimes };
 }
 
 // Whether any of a deck's runtimes runs `agent`.
@@ -196,7 +220,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
   }
 
   function open(entry) {
-    const d = { entry, deckId: null, graph: null, ext: null, status: 'connecting', duplicate: null, started: ++opened };
+    const d = { entry, deckId: null, graph: null, ext: null, status: 'connecting', live: false, duplicate: null, started: ++opened };
     const cached = cache?.get(entry);
     if (cached && typeof cached.deckId === 'string' && Array.isArray(cached.sessions) && cached.url === entry.url) {
       d.deckId = cached.deckId;
@@ -206,6 +230,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
       origin: () => originOfUrl(d.entry.url),
       onStatus: (status) => {
         d.status = status;
+        if (status !== 'ready') d.live = false;
         const id = d.client.descriptor()?.deckId;
         if (id) d.deckId = id;
         d.duplicate = duplicateOf(d);
@@ -218,6 +243,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
         if (!d.deckId) return;
         d.graph = stampDeck(stateToGraph(frame), d.deckId);
         d.ext = frame.ext && typeof frame.ext === 'object' ? frame.ext : null;
+        d.live = true;
         cache?.set(d.entry, { url: d.entry.url, deckId: d.deckId, sessions: d.graph.sessions || [], tasks: d.graph.tasks, schedules: d.graph.schedules });
         onChange();
       },
@@ -249,6 +275,9 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
     graph: d.duplicate ? null : d.graph,
     ext: d.duplicate ? null : d.ext,
     status: d.duplicate ? 'incompatible' : d.status,
+    // Whether `graph` is this connection's own state rather than the cached
+    // sessions left from before: only then are the deck's settings in it.
+    live: !d.duplicate && d.live,
     duplicate: d.duplicate,
     descriptor: d.client.descriptor(),
     name: deckLabel(d.entry, d.client.descriptor()),

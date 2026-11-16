@@ -2,7 +2,7 @@ import path from 'node:path';
 import { readJsonOrLoud, writeJsonAtomic } from '../atomic-json.js';
 import { createTokenStore } from './tokens.js';
 import { createLaptopCheck } from './check.js';
-import { createSessionApiServer, listenSessionApi, guarded } from './server.js';
+import { createSessionApiServer, listenSessionApi, guarded, LEGACY_ROUTES } from './server.js';
 import { setSessionApiPort } from '../runtime.js';
 import { warnLegacy } from '../deck/legacy.js';
 
@@ -23,7 +23,7 @@ export function createSessionApi({ dataDir, cardState, handlers, resolve, log = 
   const server = createSessionApiServer({ resolve: check, handlers, onRefuse });
   let bound = { host: '127.0.0.1', port: null };
 
-  const legacyHandlers = Object.fromEntries(Object.entries(handlers).map(([route, h]) => {
+  const legacyHandlers = Object.fromEntries(Object.entries(handlers).filter(([route]) => LEGACY_ROUTES.includes(route)).map(([route, h]) => {
     const handle = guarded(check, h, { legacy: true, onRefuse });
     return [route, (req, res) => {
       const at = bound.port ? `http://${bound.host}:${bound.port}` : 'its own port';

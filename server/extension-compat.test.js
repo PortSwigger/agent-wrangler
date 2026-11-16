@@ -25,12 +25,13 @@ async function stubCollector() {
 // Pins the surfaces an extension written before the deck API reaches: the
 // fixture in fixtures/compat-probe reads dropped session fields off the graph,
 // fetches GET /file and GET /ext-file and opens a /ws without ?api= on the
-// board's origin (forwarded to the deck), and runs an inline onclick handler,
-// in a real headless Chrome against an isolated instance. It declares `^1`, so
-// it boots on the 2.x server's v1 shim. Each surface must answer in its old
-// shape, and each must have gone through its adapter, which the one
-// deprecation warning per surface and the one `core.deprecated` event per
-// surface per extension show. Skips without Chrome, like board-acceptance.test.js.
+// board's origin (forwarded to the deck), and has an inline onclick handler the
+// board's CSP blocks, in a real headless Chrome against an isolated instance. It
+// declares `^1`, so it boots on the 2.x server's v1 shim. Each surface must
+// answer in its old shape, and each must have gone through its adapter, which
+// the one deprecation warning per surface and the one `core.deprecated` event
+// per surface per extension show. Skips without Chrome, like
+// board-acceptance.test.js.
 const FIXTURE = join(REPO_ROOT, 'server', 'fixtures', 'compat-probe');
 
 test('an extension using the pre-deck surfaces still works, each through its adapter', { timeout: 120_000, skip: browserTestSkipReason() }, async (t) => {
@@ -77,11 +78,11 @@ test('an extension using the pre-deck surfaces still works, each through its ada
     await tab.evaluate("document.getElementById('compat-inline').click()");
     const inline = await waitFor(async () => {
       const r = JSON.parse((await probe()) || 'null');
-      return r?.inline && r.csp ? r : null;
+      return r?.csp ? r : null;
     });
-    assert.ok(inline, `the inline handler never ran: ${await probe()}`);
-    assert.equal(inline.inline, 'ran', 'an inline handler still runs under the Report-Only CSP');
-    assert.deepEqual(inline.csp, { directive: 'script-src-attr', disposition: 'report' }, 'and is reported, not enforced');
+    assert.ok(inline, `no CSP violation was reported for the inline handler: ${await probe()}`);
+    assert.deepEqual(inline.csp, { directive: 'script-src-attr', disposition: 'enforce' }, 'the CSP blocks it');
+    assert.equal(inline.inline, null, 'an inline handler never runs');
 
     for (const field of ['pid', 'suspendedAt', 'jobId']) {
       assert.equal(warnings.filter((w) => w.includes(`session.${field} is deprecated`)).length, 1, `one warning for session.${field}`);

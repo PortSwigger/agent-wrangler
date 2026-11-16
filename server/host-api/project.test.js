@@ -54,6 +54,27 @@ test('projectSession distinguishes dormant nodes, exited nodes and absent graph 
   assert.equal(p.hasBackgroundShell, false);
 });
 
+test('projectSession prefers live activity over the stored mapping value', () => {
+  const src = { ...entry(), lastActivity: 100 };
+  assert.equal(projectSession(src, 'c', { node: { lastActivity: 200 } }).lastActivity, 200);
+  assert.equal(projectSession(entry(), 'c', { node: { lastActivity: 200 } }).lastActivity, 200);
+  assert.equal(projectSession(src, 'c', { node: { lastActivity: 0 } }).lastActivity, 0);
+});
+
+test('projectSession falls back to stored activity when live activity is unavailable', () => {
+  const src = { ...entry(), lastActivity: 100 };
+  assert.equal(projectSession(src, 'c').lastActivity, 100);
+  assert.equal(projectSession(src, 'c', { node: { lastActivity: null } }).lastActivity, 100);
+  assert.equal(projectSession(entry(), 'c', { node: {} }).lastActivity, null);
+  assert.equal(projectSession(null, 'c').lastActivity, null);
+});
+
+test('projectSession exposes the relaunch time from the mapping', () => {
+  assert.equal(projectSession({ ...entry(), relaunchedAt: 300 }, 'c').relaunchedAt, 300);
+  assert.equal(projectSession(entry(), 'c').relaunchedAt, null);
+  assert.equal(projectSession(null, 'c').relaunchedAt, null);
+});
+
 test('a projection is frozen all the way down and mutating it cannot reach the source', () => {
   const src = entry();
   const p = projectSession(src, 'card-1');

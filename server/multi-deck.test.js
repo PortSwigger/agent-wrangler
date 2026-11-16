@@ -228,9 +228,9 @@ const DIALOG = `JSON.stringify({
   runtimes: [...document.getElementById('m-runtime').options].map((o) => o.value),
   intent: document.getElementById('m-intent').value,
 })`;
-const LAUNCH_ON_PROBE = (intent) => `(() => {
+const LAUNCH_ON_PROBE = (intent, runtime = 'probe-shell') => `(() => {
   const rt = document.getElementById('m-runtime');
-  rt.value = 'probe-shell';
+  rt.value = ${JSON.stringify(runtime)};
   rt.dispatchEvent(new Event('change', { bubbles: true }));
   const box = document.getElementById('m-intent');
   if (${JSON.stringify(intent)}) box.value = ${JSON.stringify(intent)};
@@ -459,6 +459,67 @@ test('a new task or schedule lands on the deck picked, and an unreachable deck c
   }
 });
 
+// A deck-only instance whose agent command is not installed: each launch fails
+// at once. The first lands on a tmux server with no other sessions, the second
+// on one that still holds the first's corpse; both keep their dead pane, so the
+// board shows the card with the command's output, and the deck logs the failure.
+test('a launch whose agent command is missing shows its card with the command\'s output, and the deck logs it', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
+  const chromePath = findChrome();
+  if (!chromePath) {
+    assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');
+    return t.skip('no Chrome/Chromium found (set CHROME_BIN to enable)');
+  }
+  const dirA = mkdtempSync(join(tmpdir(), 'aw-failedlaunch-a-'));
+  const dirB = mkdtempSync(join(tmpdir(), 'aw-failedlaunch-b-'));
+  seedSessions(dirA, [['a-1', 'Login form']]);
+  writeFileSync(join(dirB, 'mappings.json'), '{}');
+  cpSync(join(REPO_ROOT, 'server', 'fixtures', 'deck-runtime-probe'), join(dirB, 'extensions', 'deck-runtime-probe'), { recursive: true });
+  let a, b, tab;
+  try {
+    a = await startInstance(dirA);
+    assert.ok(a.up, `deck A never started:\n${a.out()}`);
+    const board = `http://127.0.0.1:${a.port}`;
+    b = await startDeckOnly(dirB, `${board},http://localhost:${a.port}`);
+    const portB = b.port;
+    assert.ok(await waitFor(async () => (await (await fetch(`http://127.0.0.1:${portB}/deck`)).json()).runtimes.some((r) => r.id === 'probe-missing')), `deck B never offered its runtime:\n${b.out()}`);
+    const deckB = (await (await fetch(`http://127.0.0.1:${portB}/deck`)).json()).deckId;
+    const post = (body) => fetch(`${board}/api/decks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: board }, body: JSON.stringify(body) });
+    assert.equal((await post({ op: 'add', url: `http://127.0.0.1:${portB}`, name: 'Laptop B' })).status, 200);
+    tab = await openTab(chromePath, `${board}/`);
+    assert.ok(await waitFor(async () => JSON.parse(await tab.evaluate(CARDS) || '[]').length === 1), 'the board never drew its card');
+
+    for (const intent of ['Launch on an empty tmux server', 'Launch beside another session']) {
+      await tab.evaluate(`document.getElementById('new-session').click()`);
+      assert.ok(await waitFor(async () => tab.evaluate(`[...document.getElementById('m-deck').options].some((o) => o.value === ${JSON.stringify(deckB)} && !o.disabled)`)), 'deck B is offered');
+      await tab.evaluate(`(() => { const s = document.getElementById('m-deck'); s.value = ${JSON.stringify(deckB)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      await tab.evaluate(LAUNCH_ON_PROBE(intent, 'probe-missing'));
+      const failed = await waitFor(async () => {
+        const s = (await deckState(portB)).sessions.find((x) => x.intent === intent);
+        return s?.exitOutput && s;
+      }, { tries: 120 });
+      assert.ok(failed, `${intent}: deck B kept the dead pane's output:\n${b.out().slice(-2000)}`);
+      assert.match(failed.exitOutput, /aw-probe-missing-agent-cli/);
+      assert.match(failed.exitOutput, /not found/);
+      const logged = await waitFor(() => new RegExp(`launch failed ${failed.sessionId} \\(tmux \\S+\\) — exit 127: .*aw-probe-missing-agent-cli`).test(b.out()));
+      assert.ok(logged, `${intent}: deck B logged the failed launch:\n${b.out().slice(-2000)}`);
+
+      const card = `.session-card[data-card$="/${failed.sessionId}"]`;
+      assert.ok(await waitFor(async () => tab.evaluate(`Boolean(document.querySelector('${card}'))`)), `${intent}: the board shows the card`);
+      await tab.evaluate(`document.querySelector('${card}').click()`);
+      const shown = await waitFor(async () => tab.evaluate(`[...document.querySelectorAll('#term .term-exit, #chat-exit-notice:not([hidden])')].map((e) => e.textContent).join('\\n')`));
+      assert.match(shown || '', /aw-probe-missing-agent-cli/, `${intent}: the card's panel shows the command's output`);
+    }
+    assert.deepEqual(tab.errors, [], 'no console errors');
+  } finally {
+    await tab?.close();
+    try { b?.proc.kill(); } catch {}
+    try { a?.server.kill(); } catch {}
+    await sleep(500);
+    rmSync(dirA, { recursive: true, force: true });
+    rmSync(dirB, { recursive: true, force: true });
+  }
+});
+
 // A deck whose PATH holds tmux and git but no agent CLI: the board offers no
 // agent on it until one is installed there.
 const AGENTS = `JSON.stringify({
@@ -470,7 +531,7 @@ const AGENTS = `JSON.stringify({
   goDisabled: document.getElementById('m-go').disabled,
 })`;
 
-test('the dialog offers only the agents a deck has installed, and says so when it has none', { timeout: 180_000 }, async (t) => {
+test('the dialog offers only the agents a deck has installed, and says so when it has none', { timeout: 180_000, skip: browserTestSkipReason() }, async (t) => {
   const chromePath = findChrome();
   if (!chromePath) {
     assert.ok(!process.env.AW_REQUIRE_BROWSER, 'AW_REQUIRE_BROWSER is set but no Chrome/Chromium was found');

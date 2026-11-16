@@ -1,3 +1,4 @@
+import { readLastTurn } from './last-turn.js';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -7,7 +8,9 @@ import { discoverClaudeSessions, capturePane, classifyPane, claudeTitle, hasBack
 import { CLAUDE_DIR, SESSIONS_DIR, readJsonSafe, statusOf, liveStatusDecision, liveState } from './claude-paths.js';
 import { codexStatus as realCodexStatus } from './agents/codex-status.js';
 import { adapterFor, modelPillFor, maxContextWindowFor, discoveryFloor } from './agents/index.js';
-import { runtimeFor, findRuntime } from './runtimes/index.js';
+import { runtimeFor, findRuntime, takesStatusEvents } from './runtimes/index.js';
+import { withLocationReads, hasLocation } from './locations/index.js';
+import { cardStatusOf } from './status-events.js';
 import { worktreeStatus } from './worktree.js';
 import { repoSlugFor } from './repo-slug.js';
 import { isLegacyWorkerWorkflow } from './workflow.js';
@@ -142,10 +145,12 @@ function isAlive(pid) {
 
 // Read all session descriptors written by every live Claude process, skipping
 // stale files whose process has already exited.
-function readSessions() {
+// `skipPids`: the processes whose status comes from events, whose files are
+// never opened.
+function readSessions(skipPids = new Set()) {
   let files;
   try {
-    files = fs.readdirSync(SESSIONS_DIR).filter((f) => f.endsWith('.json'));
+    files = fs.readdirSync(SESSIONS_DIR).filter((f) => f.endsWith('.json') && !skipPids.has(Number(f.slice(0, -5))));
   } catch {
     return [];
   }
@@ -328,9 +333,23 @@ export async function applyRuntimeCost(runtime, args, enr) {
   return { ...(enr || {}), usd };
 }
 
-export const resolveRuntimeForGraph = (id) => findRuntime(id) || runtimeFor(undefined);
+export function reposOf(entry) {
+  return entry?.location !== undefined ? [...(entry.repos || [])] : null;
+}
 
-export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, codexStatus = realCodexStatus, mailStore, mailDraftBlocked } = {}) {
+export const resolveRuntimeForGraph = (id) => withLocationReads(findRuntime(id) || runtimeFor(undefined));
+
+// The live blob for a card whose status comes from events (`statusEvents`, the
+// store server/status-events.js keeps): what the last event said, and the
+// conversation id it named, or unknown before the first one.
+export function eventLive(entry, event) {
+  return { liveSid: event?.sessionId || entry?.liveSessionId || null, ...cardStatusOf(event), rawStatus: null, name: null, updatedAt: event?.at ?? null };
+}
+
+export async function buildGraph(sessionManager, enrich, { runtimeResolver = resolveRuntimeForGraph, discover = discoverClaudeSessions, capture = capturePane, codexStatus = realCodexStatus, mailStore, mailDraftBlocked, statusEvents = null } = {}) {
+  // A card on a runtime with `statusEvents: true` takes its status from the
+  // events its hooks post: none of its status files is read below.
+  const eventDriven = (entry) => Boolean(statusEvents && entry && takesStatusEvents(runtimeResolver(entry.runtime), entry.agent ?? 'claude'));
   const graphAnalysis = (agent, id, opts) => {
     const adapter = adapterFor(agent);
     return adapter.graphAnalysis ? adapter.graphAnalysis(id, opts, enrich) : adapter.analyze(id, opts);
@@ -350,7 +369,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   // file read and this is per-session, three times over), so a mid-build settings
   // flip can't hand two cards in one graph different defaults.
   const fixPrDefault = autoFixPrChecksDefault();
-  const sessions = readSessions();
   const roster = readRosterBySession();
 
   // Discover every Claude session running in tmux (not just app-launched ones)
@@ -384,7 +402,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   for (const entry of sessionManager?.activeEntries?.() || []) {
     if (entry.runtime !== 'devcontainer') {
       const rt = runtimeResolver(entry.runtime);
-      if (!rt?.buildLaunch && !rt?.liveByTmux) continue;
+      if (!rt?.buildLaunch && !rt?.liveByTmux && !hasLocation(rt)) continue;
     }
     const tmuxName = sessionManager?.tmuxNameFor?.(entry.sessionId);
     if (!tmuxName || discoveredTmux.has(tmuxName)) continue;
@@ -414,12 +432,22 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   }
   pidToTmux = new Map(primary.map((d) => [d.claudePid, d.tmuxName]));
 
+  const eventTmux = new Set();
+  const eventPids = new Set();
+  for (const d of primary) {
+    if (!eventDriven(sessionManager?.entryByTmux?.(d.tmuxName))) continue;
+    eventTmux.add(d.tmuxName);
+    if (d.claudePid) eventPids.add(d.claudePid);
+  }
+  const sessions = readSessions(eventPids);
+
   // The live Claude running in each owned tmux, keyed by tmux name: its post-fork
   // session id, hook-written status, and dispatch name. A resume forks the
   // conversation under a new id, so the *owner* id's own session file goes frozen;
   // this lets both passes below read the running fork's live state instead.
   const liveByTmux = new Map();
   for (const d of primary) {
+    if (eventTmux.has(d.tmuxName)) continue;
     const ls = liveState(d.claudePid);
     if (ls) liveByTmux.set(d.tmuxName, ls);
   }
@@ -455,6 +483,11 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     if (!branchCache.has(cwd)) branchCache.set(cwd, readBranch(cwd));
     return branchCache.get(cwd);
   };
+  // A location card's folder is a path where it runs, not here: its branch and
+  // repo come from the card.
+  const placeOf = async (entry, cwd) => (entry?.location !== undefined
+    ? { branch: entry.branch || null, repoSlug: entry.repos?.length === 1 ? entry.repos[0] : null }
+    : { branch: await branchFor(cwd), repoSlug: await repoSlugFor(cwd) });
   const seen = new Set();
 
   for (const s of sessions) {
@@ -595,6 +628,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoMergeOnPass: mapEntry?.autoMergeOnPass ?? false,
       childFullView: mapEntry?.childFullView ?? null,
       offBoard: mapEntry?.offBoard || null,
+      repos: reposOf(mapEntry),
+      repoRequests: mapEntry?.repoRequests || [],
       launchedCodeVersion: mapEntry?.launchedCodeVersion || null,
       links: mapEntry?.links || [],
       worktree: await worktreeStatus(mapEntry?.worktree),
@@ -602,6 +637,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       tasks: readJobInFlight(s.jobId),
       updatedAt: s.updatedAt || null,
       lastActivity: enrichment?.lastActivity ?? null,
+      lastTurn: await readLastTurn(agentId, mapEntry?.liveSessionId || s.sessionId, enrichment),
       hasTranscript: enrichment?.hasTranscript ?? false,
       tty: proc.get(s.pid)?.tty ?? null,
       managed: Boolean(tmux),
@@ -676,11 +712,15 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // transcript. Fall back to a pane scrape + owner enrichment when the file is
     // absent (no regression for sessions without a hook-written file).
     const runtime = runtimeResolver(appEntry?.runtime);
-    const live = (runtime.readLive ? await runtime.readLive({ entry: appEntry, tmuxName: d.tmuxName, socket: d.socket }) : null)
-      || adapter.readLive({ pid: d.claudePid, cwd: d.cwd })
+    const remote = hasLocation(runtime);
+    const fromEvents = eventDriven(appEntry);
+    const live = fromEvents
+      ? eventLive(appEntry, statusEvents.get(realSid))
+      : (runtime.readLive ? await runtime.readLive({ entry: appEntry, tmuxName: d.tmuxName, socket: d.socket }) : null)
+      || (remote ? null : adapter.readLive({ pid: d.claudePid, cwd: d.cwd }))
       || (adapter.presetsSessionId
         ? null
-        : { liveSid: appEntry?.liveSessionId || await adapter.discoverLiveId({ cwd: fcwd, launchedAt: 0, mintedAfter: discoveryFloor(appEntry) }), status: 'unknown', name: null, waitingFor: null });
+        : { liveSid: appEntry?.liveSessionId || (remote ? null : await adapter.discoverLiveId({ cwd: fcwd, launchedAt: 0, mintedAfter: discoveryFloor(appEntry) })), status: 'unknown', name: null, waitingFor: null });
     // The running conversation is the truth, and it can be one the entry has never
     // heard of: `/clear` swaps the live id under us. Persist it — this read is the
     // only place that sees the swap, and left unrecorded the entry keeps pointing at
@@ -690,11 +730,11 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     const costSid = live?.liveSid || appEntry?.liveSessionId;
     const enr = await applyRuntimeCost(runtime, { entry: appEntry, liveSid: costSid },
       (runtime.analyze ? await runtime.analyze({ entry: appEntry, liveSid: costSid }) : null)
-        || await adapter.analyze(costSid || realSid, { since: usageSince(appEntry) }));
+        || (remote ? null : await adapter.analyze(costSid || realSid, { since: usageSince(appEntry) })));
     // A recognized live status wins (Claude's mapped status, or Codex's). Else
     // surface a reported-but-unrecognized status as 'unknown', and only scrape when
     // nothing was reported (Codex has no status file → live.rawStatus is absent).
-    let status = live && live.status !== 'unknown' ? live.status : liveStatusDecision(live?.rawStatus);
+    let status = fromEvents || (live && live.status !== 'unknown') ? live.status : liveStatusDecision(live?.rawStatus);
     const paneText = await capture(d.paneId || d.tmuxName, 60, d.socket || '');
     // classify() may also carry a hint (e.g. devcontainer bring-up/failure) alongside
     // the status — only meaningful on the scrape branch, since a recognized live
@@ -702,7 +742,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     let scrapeWaitingFor = null;
     let scrapeWaitingReason = null;
     if (status === 'scrape') {
-      const c = adapterFor(agentId).statusSource === 'codex-rollout'
+      const c = adapterFor(agentId).statusSource === 'codex-rollout' && !remote
         ? await codexStatus({ liveSid: live?.liveSid || appEntry.liveSessionId, paneText })
         : paneText === '' ? { status: 'unknown' } : classifyPane(paneText, agentId);
       status = c.status;
@@ -751,12 +791,11 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       hasBackgroundShell,
       rawStatus: null,
       waitingFor: apiError ? apiError.waitingFor : (live?.waitingFor || scrapeWaitingFor || null),
-      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? (status === 'needs-you' ? scrapeWaitingReason : null)),
+      waitingReason: apiError ? apiError.waitingReason : (waiting?.waitingReason ?? (status === 'needs-you' ? (live?.waitingReason || scrapeWaitingReason) : null)),
       autoBlockSeconds: waiting?.autoBlockSeconds ?? null,
       kind: 'tmux',
       cwd: fcwd,
-      branch: await branchFor(fcwd),
-      repoSlug: await repoSlugFor(fcwd),
+      ...await placeOf(appEntry, fcwd),
       addDirs: [],
       intent: appEntry?.intent || '',
       createdAt: appEntry?.createdAt || null,
@@ -776,6 +815,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoMergeOnPass: appEntry?.autoMergeOnPass ?? false,
       childFullView: appEntry?.childFullView ?? null,
       offBoard: appEntry?.offBoard || null,
+      repos: reposOf(appEntry),
+      repoRequests: appEntry?.repoRequests || [],
       launchedCodeVersion: appEntry?.launchedCodeVersion || null,
       links: appEntry?.links || [],
       worktree: await worktreeStatus(appEntry?.worktree),
@@ -787,6 +828,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       // pure-scrape session (no live file) falls back to its last activity.
       updatedAt: live?.updatedAt ?? enr?.lastActivity ?? null,
       lastActivity: enr?.lastActivity ?? null,
+      lastTurn: remote ? (enr?.lastTurn ?? null) : await readLastTurn(agentId, costSid || realSid, enr),
       hasTranscript: enr?.hasTranscript ?? false,
       tty: proc.get(d.claudePid)?.tty ?? null,
       managed: true,
@@ -828,7 +870,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     // (which for them is the live id). Mirrors the Codex branch.
     const runtime = runtimeResolver(entry.runtime);
     const enrichment = await applyRuntimeCost(runtime, { entry, liveSid: entry.liveSessionId || sid }, (runtime.analyze ? await runtime.analyze({ entry, liveSid: entry.liveSessionId || sid }) : null)
-      || await graphAnalysis(agentId, entry.liveSessionId || sid, { since: usageSince(entry) }));
+      || (hasLocation(runtime) ? null : await graphAnalysis(agentId, entry.liveSessionId || sid, { since: usageSince(entry) })));
     const label = sessionLabel({
       agent: agentId,
       names: [entry.name, entry.lastLabel],
@@ -853,8 +895,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       waitingFor: null,
       kind: 'managed',
       cwd,
-      branch: await branchFor(cwd),
-      repoSlug: await repoSlugFor(cwd),
+      ...await placeOf(entry, cwd),
       addDirs: [],
       intent: entry.intent || '',
       createdAt: entry.createdAt || null,
@@ -874,6 +915,8 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoMergeOnPass: entry.autoMergeOnPass ?? false,
       childFullView: entry.childFullView ?? null,
       offBoard: entry.offBoard || null,
+      repos: reposOf(entry),
+      repoRequests: entry?.repoRequests || [],
       links: entry.links || [],
       suspendedAt: entry.suspendedAt || null,
       worktree: await worktreeStatus(entry.worktree),
@@ -881,6 +924,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       tasks: null,
       updatedAt: null,
       lastActivity: enrichment?.lastActivity ?? null,
+      lastTurn: hasLocation(runtime) ? (enrichment?.lastTurn ?? null) : await readLastTurn(agentId, entry.liveSessionId || sid, enrichment),
       tty: null,
       managed: false, // no live tmux → click takes the Resume path, not attach
       // Set while this dormant card's own Resume/Restart is in flight (the tmux is

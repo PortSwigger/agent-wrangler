@@ -1,4 +1,4 @@
-import { archiveCascade, descendantsOf } from './archive.js';
+import { archiveCascade, descendantsOf, unpushedFor } from './archive.js';
 import { resumeSession } from './resume.js';
 import { detachError } from './detach.js';
 import { attachError } from './attach.js';
@@ -63,14 +63,20 @@ export const taskRenameHandler = {
 // stops rendering nested and reappears as its own top-level card.
 // Shared with the `tasks:archive` host capability (server/index.js). Returns null
 // when there was nothing to archive (unknown or already archived).
-export async function archiveTaskCascade(taskId, ctx) {
-  if (!ctx.taskStore.archiveTask(taskId)) return null;
-  draftsFor(ctx.taskStore).delete(taskId);
-  const { assignments } = ctx.taskStore.snapshot();
-  const sessionIds = Object.entries(assignments)
+// A location session with commits on no remote branch stops it before
+// anything is stamped: the result is `{ unpushed }` unless allowUnpushed.
+export async function archiveTaskCascade(taskId, ctx, { allowUnpushed = false } = {}) {
+  const liveIds = () => Object.entries(ctx.taskStore.snapshot().assignments)
     .filter(([, tid]) => tid === taskId)
     .map(([sid]) => sid)
     .filter((sid) => !ctx.sessionManager.isArchived(sid));
+  if (!allowUnpushed) {
+    const unpushed = await unpushedFor(liveIds(), ctx);
+    if (unpushed.length) return { unpushed, sessionIds: [], unclean: false };
+  }
+  if (!ctx.taskStore.archiveTask(taskId)) return null;
+  draftsFor(ctx.taskStore).delete(taskId);
+  const sessionIds = liveIds();
   const { unclean } = await archiveCascade(sessionIds, ctx, { viaTaskArchive: taskId });
   return { sessionIds, unclean };
 }
@@ -78,9 +84,13 @@ export async function archiveTaskCascade(taskId, ctx) {
 export const taskArchiveHandler = {
   type: 'task-archive',
   async handler(msg, ctx) {
-    const result = await archiveTaskCascade(msg.taskId, ctx);
+    const result = await archiveTaskCascade(msg.taskId, ctx, { allowUnpushed: Boolean(msg.allowUnpushed) });
     if (!result) {
       await ctx.rebuild();
+      return;
+    }
+    if (result.unpushed) {
+      ctx.reply({ type: 'archive-unpushed', taskId: msg.taskId, request: { ...msg }, unpushed: result.unpushed });
       return;
     }
     const { sessionIds, unclean } = result;

@@ -25,6 +25,7 @@ test('resumes an archived session', async () => {
   const out = await restoreSessionTool.handler({ deps: d }, { target: 'S1' });
   assert.equal(out.isError, undefined);
   assert.equal(d.calls.resume.length, 1);
+  assert.equal(d.calls.resume[0].opts.reason, 'restore');
   assert.equal(out.structuredContent.restored, true);
 });
 

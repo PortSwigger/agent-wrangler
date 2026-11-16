@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Agent Wrangler</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
+  <link rel="stylesheet" href="vendor/xterm/xterm.css" />
   <!-- Quicksand + Pixelify Sans: loaded globally so any style can select them via
        its manifest `font` field; only applied where the --font var picks it up.
        Pixelify Sans is a readable 8-bit/pixel face (the Pixel Cats style uses it).
@@ -55,7 +55,7 @@
 
   <main>
     <div id="grid"></div>
-    <script>if (/^#view=ext:/.test(location.hash)) document.getElementById('grid').classList.add('hidden');</script>
+    <script src="ext-view-boot.js"></script>
     <!-- Slide-in working-tree diff, overlaying the #grid slot only (the terminal
          #sidebar stays live). Kept as a #grid sibling so it inherits the same flex
          column width; wired + rendered in diff-view.js. -->
@@ -214,6 +214,7 @@
              off the graph node), surfaced here too instead of only in the
              terminal view. -->
         <div id="chat-exit-notice" class="chat-exit-notice" hidden></div>
+        <div id="chat-unavailable" class="chat-unavailable" role="status" hidden></div>
         <div id="chat-notice-bar" class="chat-notice-bar" hidden></div>
         <div id="chat-composer" class="chat-composer">
           <button type="button" id="chat-suggestion" class="chat-suggestion" hidden></button>
@@ -322,6 +323,9 @@
            app.js's syncDispatchExtFields. `display: contents`, so an
            extension's control lays out as a .modal-card child. -->
       <div class="ext-dispatch-slot" data-at="top"></div>
+      <!-- Swapped for #m-repos-row by syncRuntimeToggle when the runtime runs
+           sessions elsewhere; the worktree row's veto stays on its own element. -->
+      <div class="dispatch-field" id="m-folder-row">
       <label>Folder (cwd)</label>
       <div class="folder-picker-row">
         <div class="combo">
@@ -350,6 +354,12 @@
           </div>
         </div>
       </div>
+      </div>
+      <div class="dispatch-field hidden" id="m-repos-row">
+        <label for="m-repos">GitHub repos</label>
+        <input id="m-repos" autocomplete="off" spellcheck="false" placeholder="owner/name, owner/other" />
+        <div id="m-repos-msg" class="worktree-msg">The session clones these from GitHub and branches off each default branch.</div>
+      </div>
       <div class="wf-worktree-note hidden" id="m-wf-worktree-note">
         <span class="wf-worktree-check" id="m-wf-worktree-check">✓</span>
         <span id="m-wf-worktree-text">A dedicated git worktree is created automatically.</span>
@@ -374,6 +384,7 @@
               <option value="local">Local (host)</option>
               <option value="devcontainer">Devcontainer</option>
             </select>
+            <div id="m-runtime-note" class="worktree-msg hidden"></div>
           </div>
           <div class="dispatch-field codex-policy-field hidden" id="m-codex-policy-row">
             <label for="m-codex-sandbox">Codex sandbox</label>
@@ -468,6 +479,22 @@
       <div class="modal-actions">
         <button id="fk-cancel" class="ghost">Cancel</button>
         <button id="fk-go" class="primary">Fork</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="repos-modal" class="hidden">
+    <div class="modal-card repos-card">
+      <h3>GitHub repos</h3>
+      <p class="fork-note">This session runs away from this machine and can clone only the repos listed here. Adding one lets it in at once, and the session is told where to clone it.</p>
+      <ul id="rp-have" class="repos-list"></ul>
+      <div id="rp-requests" class="repos-requests"></div>
+      <label for="rp-add">Add repos</label>
+      <input id="rp-add" placeholder="owner/name, owner/name" autocomplete="off" spellcheck="false" />
+      <div id="rp-msg" class="worktree-msg"></div>
+      <div class="modal-actions">
+        <button id="rp-cancel" class="ghost">Close</button>
+        <button id="rp-go" class="primary" disabled>Add</button>
       </div>
     </div>
   </div>
@@ -628,8 +655,8 @@
 
   <div id="toast" popover="manual"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+  <script src="vendor/xterm/xterm.js"></script>
+  <script src="vendor/xterm/addon-fit.js"></script>
   <!-- Vendored (offline-safe, pinned) markdown-it UMD: sets window.markdownit for
        the markdown renderer. Classic script so it's defined before app.js. -->
   <script src="vendor/markdown-it.min.js"></script>

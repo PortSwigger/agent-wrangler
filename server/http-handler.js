@@ -28,7 +28,7 @@ const MIME = {
 
 // The board server, on the board's own port: the board's HTML and scripts from
 // public/, extension board halves under /ext/<id>/, and styles (/api/styles,
-// /styles/*), all sent with a Report-Only CSP. Routes that pages and tools
+// /styles/*), all sent with BOARD_CSP. Routes that pages and tools
 // reached on this origin before the deck had a port of its own are forwarded
 // to the deck unchanged, Origin and Host included, so the deck's own gates
 // still decide: GET /file, /ext-file and /deck, POST /mcp, /pr-attach and
@@ -54,8 +54,6 @@ const MIME = {
 // stream that sends it on connect and after every change, so every browser on
 // the board shows the same list.
 
-// Report-Only: extension board halves with inline handlers keep running while
-// the browser reports what a strict policy would block.
 export const BOARD_CSP = "script-src 'self'; object-src 'none'; base-uri 'self'";
 
 const FORWARDED = {
@@ -140,7 +138,7 @@ export function createBoardServer({ boardPort, deckPort, extensionAssets = () =>
       return;
     }
 
-    res.setHeader('Content-Security-Policy-Report-Only', BOARD_CSP);
+    res.setHeader('Content-Security-Policy', BOARD_CSP);
     if (urlPath === '/') urlPath = '/index.html';
     // Browsers auto-probe /favicon.ico; serve the bundled SVG so it never 404s.
     // The explicit <link rel=icon> in index.html is what's actually used.

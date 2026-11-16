@@ -118,12 +118,26 @@ test('a session token sent to the board\'s port reaches the deck and is refused 
   }
 });
 
-test('the board page names the deck\'s port and carries a Report-Only CSP', async () => {
+test('the board page names the deck\'s port and enforces its CSP', async () => {
   const res = await fetch(`${base}/`);
-  assert.equal(res.headers.get('content-security-policy-report-only'), BOARD_CSP);
-  assert.match(BOARD_CSP, /script-src 'self'/);
-  assert.equal(res.headers.get('content-security-policy'), null, 'never enforced, so inline extension code keeps running');
+  assert.equal(res.headers.get('content-security-policy'), "script-src 'self'; object-src 'none'; base-uri 'self'");
+  assert.equal(res.headers.get('content-security-policy'), BOARD_CSP);
+  assert.equal(res.headers.get('content-security-policy-report-only'), null, 'enforced, not only reported');
   assert.match(await res.text(), new RegExp(`<meta name="aw-deck-port" content="${deck.address().port}" />`));
+});
+
+test('the board page loads every script from its own origin, none inline', async () => {
+  const html = await (await fetch(`${base}/`)).text();
+  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
+  assert.ok(scripts.length > 0);
+  for (const [tag, attrs, body] of scripts) {
+    const src = /\ssrc="([^"]+)"/.exec(attrs)?.[1];
+    assert.ok(src, `inline script: ${tag}`);
+    assert.equal(body.trim(), '', tag);
+    assert.equal(new URL(src, `${base}/`).origin, base, `script from another origin: ${src}`);
+  }
+  assert.doesNotMatch(html, /\son[a-z]+\s*=\s*["']/i, 'an inline event handler');
+  assert.doesNotMatch(html, /javascript:/i);
 });
 
 test('serves an enabled extension client module from its public/ dir, no-store', async () => {

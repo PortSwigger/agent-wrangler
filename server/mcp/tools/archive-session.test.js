@@ -200,3 +200,15 @@ test('archive_session with stop_container:true is a no-op for a non-devcontainer
   assert.equal(out.structuredContent.containerStopped, null);
   assert.equal(stopped, false);
 });
+
+test('archive_session refuses a location session with unpushed commits unless allow_unpushed', async () => {
+  const { d, calls } = deps();
+  d.findUnpushed = async () => [{ sessionId: 'CARD2', label: 'Beta', repos: [{ repo: 'acme/widgets', dir: '/w', commits: [{ sha: 'abc1234', subject: 'wip' }] }] }];
+  const refused = await archiveSessionTool.handler({ deps: d, caller: 'ME' }, { target: 'CARD2' });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content[0].text, /acme\/widgets: 1 commit on no remote branch \(abc1234 wip\)/);
+  assert.deepEqual(calls.archive, []);
+  const ok = await archiveSessionTool.handler({ deps: d, caller: 'ME' }, { target: 'CARD2', allow_unpushed: true });
+  assert.notEqual(ok.isError, true);
+  assert.equal(calls.archive.length, 1);
+});

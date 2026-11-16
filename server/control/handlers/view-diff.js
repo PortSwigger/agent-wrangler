@@ -1,5 +1,7 @@
 import { workingTreeDiff, branchDiff, pullRequestDiff as defaultPullRequestDiff } from '../../git-diff.js';
 import { recentCwds } from '../../transcript-reader.js';
+import { findRuntime } from '../../runtimes/index.js';
+import { locationDiff } from '../../locations/index.js';
 import { linkedPrForUrl } from './pr-links.js';
 
 // Bound how many historical cwds a not-a-repo launch dir makes us shell out to git
@@ -40,6 +42,11 @@ export const viewDiffHandler = {
       }
 
       const entry = ctx.sessionManager.entryFor(sessionId);
+      if (entry?.location !== undefined) {
+        const rt = (ctx.findRuntime || findRuntime)(entry.runtime);
+        ctx.reply({ type: 'diff', sessionId, reqId, mode, ...(await locationDiff(rt, entry, mode)) });
+        return;
+      }
       const cwd = entry?.worktree?.path || entry?.cwd || ctx.sessionFromGraph(sessionId)?.cwd;
       if (!cwd) {
         ctx.reply({ type: 'diff', sessionId, reqId, mode, state: 'error', error: 'No working directory for this session.' });

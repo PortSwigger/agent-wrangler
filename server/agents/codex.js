@@ -4,6 +4,9 @@ import { scanDaily, scanMonth } from './codex-usage.js';
 import { codexCostUsd } from '../pricing.js';
 import { codexHistory } from './codex-history.js';
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { launchAddDirArgs, launchCodexConfigArgs, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
 import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
@@ -15,7 +18,9 @@ import { codexMcpConfigArgs, prModelUrl } from '../mcp/client-config.js';
 import { codexPolicyArgs, codexPolicyAllowsAddDirs } from '../extensions/codex-policy.js';
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
 import { tomlString, notifyOverride } from '../codex-notify-config.js';
-import { postToolHookOverrides } from '../codex-hook-config.js';
+import { codexHookOverrides, PR_FOOTER_MATCHER } from '../codex-hook-config.js';
+import { codexStatusHooks } from '../status-hooks.js';
+import { statusEventEnv } from './claude.js';
 import { fileURLToPath } from 'node:url';
 import { installPath } from '../install-root.js';
 
@@ -33,7 +38,7 @@ const PR_FOOTER_HOOK_PATH = installPath(fileURLToPath(new URL('../../scripts/cod
 // `agent: 'codex'`, because Codex 0.149+ rejects a symlinked writable root.
 function envPrefix(sessionId, spawnedBy, launchContext) {
   let env = launchEnvGuard(launchContext, shellQuote) + launchEnvPrefix(launchContext, shellQuote)
-    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `;
+    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} ` + statusEventEnv(launchContext);
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
 }
@@ -67,7 +72,9 @@ function commonFlags({ toolRefreshNote, sessionId, cwd, addDirs = [], worktree =
   args.push(...launchCodexConfigArgs(launchContext));
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
   args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
-  for (const o of postToolHookOverrides(`${shellQuote(process.execPath)} ${shellQuote(PR_FOOTER_HOOK_PATH)}`)) args.push('-c', o);
+  const hooks = [{ event: 'PostToolUse', matcher: PR_FOOTER_MATCHER, command: `${shellQuote(process.execPath)} ${shellQuote(PR_FOOTER_HOOK_PATH)}` }];
+  if (launchContext?.statusEvents) hooks.push(...codexStatusHooks());
+  for (const o of codexHookOverrides(hooks)) args.push('-c', o);
   // A read-only sandbox refuses any --add-dir and the launch dies (see
   // codexPolicyAllowsAddDirs); it reads every folder anyway.
   if (codexPolicyAllowsAddDirs(codexPolicy)) {
@@ -78,13 +85,36 @@ function commonFlags({ toolRefreshNote, sessionId, cwd, addDirs = [], worktree =
   return args;
 }
 
-// The features a headless one-shot switches off, on top of a read-only sandbox:
-// every tool that could run a command, reach the web or act on the desktop. It
-// classifies or summarises what it is handed on stdin and must never act.
+// The features a headless one-shot switches off, on top of a read-only sandbox.
+// With the catalog edits below and `tools.experimental_request_user_input`
+// off, `codex debug prompt-input` lists no tools at all: it classifies or
+// summarises what it is handed on stdin and must never act.
 export const CODEX_HEADLESS_DISABLED_FEATURES = [
-  'shell_tool', 'unified_exec', 'apps', 'plugins', 'multi_agent', 'image_generation',
-  'browser_use', 'computer_use',
+  'shell_tool', 'unified_exec', 'apps', 'plugins', 'multi_agent', 'multi_agent_v2', 'image_generation',
+  'browser_use', 'computer_use', 'code_mode', 'code_mode_only', 'code_mode_host', 'sleep_tool', 'goals',
+  'view_image',
 ];
+
+// A model's catalog entry turns some tools on whatever the features say: its
+// tool_mode adds a code-mode `exec` that reaches every built-in tool, its
+// multi_agent_version the sub-agent tools, apply_patch_tool_type apply_patch
+// and experimental_supported_tools the rest. The run gets a one-model catalog
+// with those stripped.
+export function toollessCodexCatalog(raw, model) {
+  const entry = (Array.isArray(raw?.models) ? raw.models : []).find((m) => m?.slug === model);
+  if (!entry) throw new Error(`Codex's model catalog has no "${model}"; refusing a headless run that could keep its tools.`);
+  const { tool_mode: _t, multi_agent_version: _m, apply_patch_tool_type: _a, ...rest } = entry;
+  return { models: [{ ...rest, experimental_supported_tools: [] }] };
+}
+
+function readCodexCatalog(execFileFn, env) {
+  return new Promise((resolve, reject) => {
+    execFileFn('codex', ['debug', 'models'], { env, timeout: 30_000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
+      if (err) reject(err);
+      else try { resolve(JSON.parse(stdout)); } catch (parseErr) { reject(parseErr); }
+    });
+  });
+}
 
 // The adapter's `headless` capability (server/headless.js runs it): `codex exec`
 // with the prompt in argv and the payload piped on stdin, which Codex appends as
@@ -94,15 +124,25 @@ export const CODEX_HEADLESS_DISABLED_FEATURES = [
 // scan can bill it: its id is the `thread.started` event's `thread_id`.
 const codexHeadless = {
   defaultModel: () => defaultCodexModel(),
-  command({ prompt, model, effort, env = {}, cwd }) {
+  async command({ prompt, model, effort, env = {}, cwd, execFile: execFileFn = execFile }) {
+    const childEnv = { ...process.env, ...env };
+    const catalog = toollessCodexCatalog(await readCodexCatalog(execFileFn, childEnv), model);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-wrangler-codex-headless-'));
+    const catalogPath = path.join(dir, 'catalog.json');
+    fs.writeFileSync(catalogPath, JSON.stringify(catalog));
     const args = [
       'exec', '--json', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules',
       '--sandbox', 'read-only', '-C', cwd, '-m', model,
     ];
     if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
     for (const feature of CODEX_HEADLESS_DISABLED_FEATURES) args.push('--disable', feature);
-    args.push('-c', 'web_search="disabled"', prompt);
-    return { file: 'codex', args, env: { ...process.env, ...env } };
+    args.push(
+      '-c', 'web_search="disabled"',
+      '-c', 'tools.experimental_request_user_input.enabled=false',
+      '-c', `model_catalog_json=${tomlString(catalogPath)}`,
+      prompt,
+    );
+    return { file: 'codex', args, env: childEnv, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
   },
   // JSONL events. The answer is the last `agent_message` item; an `error` ITEM
   // is a warning Codex prints and carries on from (unknown config keys), while a
@@ -142,7 +182,7 @@ export const codex = {
     permissionModes: ['auto'],
     autoCompact: { min: 50000, presets: [50000, 100000, 250000] },
   },
-  launch: { grantPaths: 'realpath', availabilityOverride: 'codexAvailable', trust: 'codex-config', gitMetadataGrants: true, codexPolicy: true, recoverMissingConversation: true },
+  launch: { grantPaths: 'realpath', availabilityOverride: 'codexAvailable', trust: 'codex-config', gitMetadataGrants: true, codexPolicy: true, recoverMissingConversation: true, statusEvents: true },
   terminal: {
     readySignal: 'composer',
     contextSource: 'analysis',

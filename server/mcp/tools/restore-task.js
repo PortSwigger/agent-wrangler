@@ -13,7 +13,7 @@ export const restoreTaskTool = {
     task_id: z.string().min(1).describe('Archived task id to restore.'),
     restore_sessions: z.boolean().optional().describe('Also resume sessions archived with the task. Default true.'),
   },
-  async handler({ deps }, args = {}) {
+  async handler({ deps, caller }, args = {}) {
     const taskId = (args.task_id ?? '').trim();
     if (!taskId) return errorResult('task_id is required.');
     const task = deps.taskStore.tasks.find((t) => t.id === taskId);
@@ -29,7 +29,7 @@ export const restoreTaskTool = {
       for (const sessionId of cascadedSessionIds(taskId, deps.sessionManager)) {
         try {
           replies.length = 0;
-          await resumeSession(sessionId, ctx);
+          await resumeSession(sessionId, ctx, { caller });
           const needsDir = replies.find((m) => m.type === 'resume-needs-dir');
           if (needsDir) {
             failed.push({

@@ -141,3 +141,20 @@ test('an opted-in record is checked and counted against its EA branch; opting ou
   assert.equal(off.extensions[0].remoteSha, 'j1');
   assert.deepEqual(asked, [['ls', 'next'], ['count', 'next'], ['ls', null], ['count', null]]);
 });
+
+
+test('the background check reports pins even at HEAD and never hands them to auto-update', async () => {
+  for (const remoteSha of ['j0', 'j1']) {
+    const { check } = checker({
+      list: () => [list[1]],
+      provenance: () => ({ 'jira-links': { ...records['jira-links'], ref: 'v1', autoUpdate: true } }),
+      lsRemote: async () => remoteSha,
+      autoUpdate: async () => assert.fail('a pin must block automatic updates'),
+    });
+    const summary = await check();
+    const [status] = summary.extensions;
+    assert.equal(status.pinnedRef, 'v1');
+    assert.match(status.autoUpdateBlocked, /pinned to v1/i);
+    assert.deepEqual(summary.autoApplied, []);
+  }
+});
