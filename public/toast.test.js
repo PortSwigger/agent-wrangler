@@ -65,6 +65,36 @@ test('only contiguous top header bands reserve space on a multi-row board at eit
   }
 });
 
+test('centred modal header chains reserve close controls at both positions', () => {
+  for (const position of ['top-right', 'bottom-right']) {
+    for (const native of [true, false]) {
+      const { doc, clock } = fakeWorld();
+      doc.documentElement = {};
+      doc.defaultView = {
+        innerWidth: 1400, innerHeight: 900,
+        MutationObserver: class { observe() {} disconnect() {} },
+      };
+      const modal = doc.createElement(native ? 'dialog' : 'div');
+      modal.open = true;
+      doc.body.append(modal);
+      const head = doc.createElement('div');
+      head.closest = (selector) => selector === 'dialog' ? (native ? modal : null) : (native ? null : modal);
+      head.getBoundingClientRect = () => ({ left: 250, right: 1150, top: 150, bottom: 190, width: 900, height: 40 });
+      const lowerHead = doc.createElement('header');
+      lowerHead.closest = head.closest;
+      lowerHead.getBoundingClientRect = () => ({ left: 250, right: 1150, top: 346, bottom: 380, width: 900, height: 34 });
+      modal.append(head, lowerHead);
+      doc.querySelectorAll = (selector) => selector === 'dialog:modal' ? (native ? [modal] : []) : [lowerHead, head];
+      const toasts = createToasts({ document: doc, position, ...clock });
+      toasts.show('Visible');
+      toasts.showPersistent('request', { title: 'Action needed', actions: [], onDismiss() {} });
+      const stack = modal.children.find((el) => el.attrs.popover === 'manual') || stackOf(doc);
+      assert.equal(stack.style['--toast-top'], '198px');
+      assert.ok(900 - parseInt(stack.style['--toast-top']) - parseInt(stack.style['--toast-bottom']) >= 120);
+    }
+  }
+});
+
 test('two toasts fired 0.3 s apart both stay up, newest last', () => {
   const { doc, clock, toasts } = fakeWorld();
   toasts.show('Session needs you', false);

@@ -111,6 +111,7 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     const left = bounds?.width ? bounds.left : right - Math.min(560, viewport - 32);
     const headers = new Set(document.querySelectorAll?.(HEADERS) ?? []);
     const topBands = [];
+    const modalBands = new Map();
     let top = 16;
     let bottom = 18;
     for (const el of headers) {
@@ -118,13 +119,25 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
       if (r?.width > 0 && r.height > 0 && r.right > left && r.left < right && r.bottom > 0 && r.top < height) {
         if (el.matches?.(FOOTERS)) {
           if (r.top >= height / 2) bottom = Math.max(bottom, Math.ceil(height - r.top) + 8);
-        } else if (r.top <= height / 2) topBands.push(r);
+        } else if (r.top <= height / 2) {
+          const dialog = el.closest?.('dialog');
+          const modal = dialog ? (dialog === modals.at(-1) ? dialog : null) : el.closest?.('.modal-card');
+          if (modal) {
+            if (!modalBands.has(modal)) modalBands.set(modal, []);
+            modalBands.get(modal).push(r);
+          } else topBands.push(r);
+        }
       }
       if (!observedHeaders.has(el)) headerObserver?.observe(el);
     }
-    for (const r of topBands.sort((a, b) => a.top - b.top)) {
-      if (r.top > top + 8) break;
-      top = Math.max(top, Math.ceil(r.bottom) + 8);
+    for (const bands of [topBands, ...modalBands.values()]) {
+      bands.sort((a, b) => a.top - b.top);
+      let edge = bands === topBands ? top : bands[0].top;
+      for (const r of bands) {
+        if (r.top > edge + 8) break;
+        edge = Math.max(edge, Math.ceil(r.bottom) + 8);
+      }
+      top = Math.max(top, edge);
     }
     for (const el of observedHeaders) if (!headers.has(el)) headerObserver?.unobserve(el);
     observedHeaders.clear();
