@@ -1432,7 +1432,7 @@ export class SessionManager {
   resume(sessionId, cwd, opts = {}) {
     const existing = this._resuming.get(sessionId);
     if (existing) return existing;
-    const p = Promise.resolve(this._runWork(() => this._doResume(sessionId, cwd, opts)))
+    const p = Promise.resolve(this._runWork(() => this._doResume(sessionId, cwd, opts), `session:resume:${sessionId}`))
       .finally(() => this._resuming.delete(sessionId));
     this._resuming.set(sessionId, p);
     return p;
@@ -1453,10 +1453,10 @@ export class SessionManager {
     return this._resuming.size > 0 || this._launchesInFlight > 0;
   }
 
-  async _whileLaunching(launch) {
+  async _whileLaunching(launch, label = 'session:launch') {
     this._launchesInFlight += 1;
     try {
-      return await this._runWork(launch);
+      return await this._runWork(launch, label);
     } finally {
       this._launchesInFlight -= 1;
     }
@@ -1648,7 +1648,7 @@ export class SessionManager {
   // liveSessionId||sessionId so a previously-resumed session forks from its
   // current state, not a frozen owner-id transcript.
   fork(opts) {
-    return this._whileLaunching(() => this._doFork(opts));
+    return this._whileLaunching(() => this._doFork(opts), 'session:fork');
   }
 
   async _doFork({ sourceId, parentId, parentEntry, cwd, prompt = '', name = '' } = {}) {
@@ -2289,7 +2289,7 @@ export class SessionManager {
         if (pending.entry) this._locationHook(pending.sessionId, pending.entry, 'delete');
         throw err;
       }
-    });
+    }, 'session:dispatch');
   }
 
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime, addDirs = [], taskId, launchReason = 'dispatch',

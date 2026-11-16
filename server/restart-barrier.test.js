@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { setImmediate } from 'node:timers/promises';
-import { createRestartBarrier } from './restart-barrier.js';
+import { createRestartBarrier, formatAge } from './restart-barrier.js';
 
 function deferred() {
   let resolve;
@@ -56,6 +56,7 @@ test('timeout keeps restart pending, reopens admission and permits retry', async
   assert.equal(barrier.status().phase, 'pending');
   assert.match(statuses.at(-1).message, /pending/i);
   assert.equal(barrier.run(() => 42), 42);
+  assert.equal(barrier.draining(), false);
   gate.resolve();
   await write;
   assert.equal(await barrier.request('retry'), true);
@@ -176,4 +177,131 @@ test('automatic quiet checks include interactive turns, requests and scheduled l
   assert.equal(quiet({ launching: true }), false);
   assert.equal(quiet({ due: [{}] }), false);
   barrier.run(() => assert.equal(quiet(), false));
+});
+
+// A clock the test can jump forward, so an op can be "seven minutes old"
+// without waiting seven minutes.
+function clock() {
+  let skew = 0;
+  return { now: () => Date.now() + skew, advance: (ms) => { skew += ms; } };
+}
+
+test('formatAge renders seconds, minutes and hours', () => {
+  assert.equal(formatAge(0), '0s');
+  assert.equal(formatAge(45_000), '45s');
+  assert.equal(formatAge(7 * 60_000 + 30_000), '7m');
+  assert.equal(formatAge(2 * 3_600_000), '2h');
+  assert.equal(formatAge(2 * 3_600_000 + 5 * 60_000), '2h5m');
+});
+
+test('timed-out drain lists every outstanding label with its age and logs each one', async () => {
+  const time = clock();
+  const logs = [];
+  const { barrier, exits, statuses } = fixture({ timeoutMs: 20, now: time.now, log: (line) => logs.push(line) });
+  const tool = deferred();
+  const sweep = deferred();
+  const toolRun = barrier.run(() => tool.promise, 'mcp:spawn_workflow');
+  time.advance(7 * 60_000);
+  const sweepRun = barrier.run(() => sweep.promise, 'sweep:jobs:tick');
+  time.advance(45_000);
+  assert.equal(await barrier.request('auto-updated jobs'), false);
+  assert.deepEqual(exits, []);
+  const status = statuses.at(-1);
+  assert.equal(status.phase, 'pending');
+  assert.equal(status.message, 'Restart pending: mcp:spawn_workflow (7m), sweep:jobs:tick (45s)');
+  assert.deepEqual(status.running.map((r) => r.label), ['mcp:spawn_workflow', 'sweep:jobs:tick']);
+  assert.equal(logs.length, 2);
+  assert.match(logs[0], /still running .*mcp:spawn_workflow \(7m\)/);
+  assert.match(logs[1], /still running .*sweep:jobs:tick \(45s\)/);
+  tool.resolve();
+  sweep.resolve();
+  await Promise.all([toolRun, sweepRun]);
+  assert.deepEqual(barrier.outstanding(), []);
+});
+
+test('forced board restart drains for the full timeout, refuses new work, then exits naming what it cut short', async () => {
+  const time = clock();
+  const { barrier, exits, statuses } = fixture({ timeoutMs: 60, now: time.now });
+  const stuck = deferred();
+  barrier.run(() => stuck.promise, 'mcp:spawn_workflow');
+  time.advance(7 * 60_000);
+  const started = Date.now();
+  const restart = barrier.request('restart requested from the board', { force: true });
+  assert.throws(() => barrier.run(() => assert.fail('new work ran'), 'http:/pr-attach'), { code: 'restarting' });
+  await setImmediate();
+  assert.deepEqual(exits, []);
+  assert.equal(await restart, true);
+  assert.ok(Date.now() - started >= 55, 'waited the full drain timeout before forcing');
+  assert.deepEqual(exits, ['restart requested from the board']);
+  const status = statuses.at(-1);
+  assert.equal(status.phase, 'restarting');
+  assert.equal(status.message, 'Forcing restart; still running: mcp:spawn_workflow (7m)');
+  stuck.resolve();
+});
+
+test('a forced restart upgrades an unforced drain already in progress', async () => {
+  const { barrier, exits, statuses } = fixture({ timeoutMs: 40 });
+  const stuck = deferred();
+  barrier.run(() => stuck.promise, 'headless:classify');
+  const auto = barrier.request('auto-updated jobs');
+  const manual = barrier.request('restart requested from the board', { force: true });
+  assert.equal(manual, auto);
+  assert.equal(await manual, true);
+  assert.deepEqual(exits, ['auto-updated jobs']);
+  assert.match(statuses.at(-1).message, /^Forcing restart; still running: headless:classify/);
+  stuck.resolve();
+});
+
+test('repeated unattended restarts keep giving up while work is stuck', async () => {
+  const { barrier, exits } = fixture({ timeoutMs: 20 });
+  const stuck = deferred();
+  barrier.run(() => stuck.promise, 'rebuild');
+  assert.equal(await barrier.request('auto-updated jobs'), false);
+  assert.equal(await barrier.request('updated to abc1234'), false);
+  assert.deepEqual(exits, []);
+  stuck.resolve();
+});
+
+test('labels are released on sync throw, async reject and success', async () => {
+  const { barrier } = fixture();
+  const seen = [];
+  assert.throws(() => barrier.run(() => {
+    seen.push(barrier.outstanding().map((o) => o.label));
+    throw new Error('sync boom');
+  }, 'ext-store:jobs.save'), /sync boom/);
+  assert.deepEqual(barrier.outstanding(), []);
+
+  const reject = deferred();
+  const failing = barrier.run(async () => { await reject.promise; throw new Error('async boom'); }, 'mcp:spawn_session');
+  assert.deepEqual(barrier.outstanding().map((o) => o.label), ['mcp:spawn_session']);
+  reject.resolve();
+  await assert.rejects(failing, /async boom/);
+  assert.deepEqual(barrier.outstanding(), []);
+
+  assert.equal(barrier.run(() => 'sync ok', 'control:restart-server'), 'sync ok');
+  assert.deepEqual(barrier.outstanding(), []);
+
+  const ok = deferred();
+  const succeeding = barrier.run(() => ok.promise, 'sweep:jobs:tick');
+  assert.deepEqual(barrier.outstanding().map((o) => o.label), ['sweep:jobs:tick']);
+  ok.resolve('async ok');
+  assert.equal(await succeeding, 'async ok');
+  assert.deepEqual(barrier.outstanding(), []);
+  assert.deepEqual(seen, [['ext-store:jobs.save']]);
+  assert.equal(barrier.inFlight(), 0);
+});
+
+test('HTTP and store wrappers label their work by route and method', async (t) => {
+  const { barrier } = fixture();
+  const seen = [];
+  const store = barrier.wrapStore({ save() { seen.push(barrier.outstanding().map((o) => o.label)); } }, 'ext-store:jobs');
+  store.save();
+  const server = http.createServer(barrier.http((_req, res) => {
+    seen.push(barrier.outstanding().map((o) => o.label));
+    res.end('ok');
+  }));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  await (await fetch(`http://127.0.0.1:${server.address().port}/status-event?x=1`, { method: 'POST' })).text();
+  assert.deepEqual(seen, [['ext-store:jobs.save'], ['http:/status-event']]);
 });

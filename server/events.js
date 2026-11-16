@@ -38,7 +38,7 @@ export function createEventBus({ onError = () => {}, isActive = () => true, runW
       if (owner != null && !isActive(owner)) continue;
       delivered += 1;
       try {
-        const out = runWork(() => fn(payload));
+        const out = runWork(() => fn(payload), `event:${name}${owner ? `:${owner}` : ''}`);
         if (out && typeof out.then === 'function') out.then(undefined, (err) => onError(`[events] handler for "${name}"${owner ? ` (${owner})` : ''} rejected`, err));
       } catch (err) {
         onError(`[events] handler for "${name}"${owner ? ` (${owner})` : ''} threw`, err);
