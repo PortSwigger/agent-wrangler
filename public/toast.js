@@ -37,6 +37,12 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   let clearButton = null;
   let held = false; // hovered or focused: every timer waits
   let headerObserver = null;
+  let modalObserver = null;
+  let watching = false;
+  let frame = null;
+  let scrollAfterLayout = false;
+  const requestFrame = document.defaultView?.requestAnimationFrame?.bind(document.defaultView);
+  const cancelFrame = document.defaultView?.cancelAnimationFrame?.bind(document.defaultView);
   const observedHeaders = new Set();
   position = position === 'bottom-right' ? position : 'top-right';
 
@@ -79,14 +85,21 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     const el = root();
     clearButton.hidden = live.length < 2;
     const open = () => el.matches?.(':popover-open');
-    if (!live.length) { held = false; if (open()) el.hidePopover(); return; }
+    if (!live.length) { held = false; stopWatching(); if (open()) el.hidePopover(); return; }
+    watch();
     const want = host();
     if (el.parentNode !== want) { if (open()) el.hidePopover(); want.append(el); }
     else if (raise && open()) el.hidePopover();
     if (el.showPopover && !open()) el.showPopover();
-    layout();
+    scheduleLayout();
     // Re-showing restarts CSS animations: start each bar where its timer is.
     for (const t of live) if (t.bar) t.bar.style.animationDelay = `${-(t.duration - left(t))}ms`;
+  }
+
+  function scheduleLayout() {
+    if (!live.length || frame != null) return;
+    if (requestFrame) frame = requestFrame(() => { frame = null; layout(); });
+    else layout();
   }
 
   function layout() {
@@ -102,16 +115,24 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     for (const el of headers) {
       const r = el.getBoundingClientRect?.();
       if (r?.width > 0 && r.height > 0 && r.right > left && r.left < right && r.bottom > 0 && r.top < height) {
-        if (el.matches?.(FOOTERS)) bottom = Math.max(bottom, Math.ceil(height - r.top) + 8);
-        else top = Math.max(top, Math.ceil(r.bottom) + 8);
+        if (el.matches?.(FOOTERS)) {
+          if (r.top >= height / 2) bottom = Math.max(bottom, Math.ceil(height - r.top) + 8);
+        } else if (r.top <= height / 2) top = Math.max(top, Math.ceil(r.bottom) + 8);
       }
       if (!observedHeaders.has(el)) headerObserver?.observe(el);
     }
     for (const el of observedHeaders) if (!headers.has(el)) headerObserver?.unobserve(el);
     observedHeaders.clear();
     for (const el of headers) observedHeaders.add(el);
+    const budget = Math.max(0, height - 120);
+    if (top + bottom > budget) {
+      const scale = budget / (top + bottom);
+      top = Math.floor(top * scale);
+      bottom = Math.floor(bottom * scale);
+    }
     stack.style.setProperty('--toast-top', `${top}px`);
     stack.style.setProperty('--toast-bottom', `${bottom}px`);
+    if (scrollAfterLayout) { scrollAfterLayout = false; scrollToNewest(); }
   }
 
   function left(t) { return t.timer == null ? t.remaining : t.remaining - (now() - t.started); }
@@ -146,7 +167,10 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     el.insertBefore(t.el, position === 'top-right' ? clearButton.nextSibling : clearButton);
   }
 
-  function scrollToNewest() { stack.scrollTop = position === 'top-right' ? 0 : stack.scrollHeight; }
+  function scrollToNewest() {
+    stack.scrollTop = position === 'top-right' ? 0 : stack.scrollHeight;
+    scrollAfterLayout = frame != null;
+  }
 
   function setPosition(value) {
     position = value === 'bottom-right' ? value : 'top-right';
@@ -271,14 +295,16 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
 
   // A modal dialog opening goes into the top layer above the stack; follow it.
   function watch() {
+    if (watching) return;
+    watching = true;
     const RO = document.defaultView?.ResizeObserver ?? globalThis.ResizeObserver;
-    if (RO) headerObserver = new RO(layout);
-    document.defaultView?.addEventListener?.('resize', layout);
-    document.addEventListener?.('scroll', layout, true);
+    if (RO) headerObserver ||= new RO(scheduleLayout);
+    document.defaultView?.addEventListener?.('resize', scheduleLayout);
+    document.addEventListener?.('scroll', scheduleLayout, true);
     const MO = document.defaultView?.MutationObserver ?? globalThis.MutationObserver;
     if (!MO || !document.documentElement) return;
     modals.push(...(document.querySelectorAll?.('dialog:modal') ?? []));
-    new MO((records) => {
+    modalObserver ||= new MO((records) => {
       let changed = modals.some((d) => d.isConnected === false);
       for (const r of records) {
         if (r.type === 'childList') continue;
@@ -290,10 +316,24 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
         if (d.open && d.isConnected !== false && d.matches(':modal')) modals.push(d);
       }
       if (changed && live.length) place(true);
-      else layout();
-    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['open', 'class', 'hidden'] });
+      else scheduleLayout();
+    });
+    modalObserver.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['open', 'class', 'hidden'] });
   }
-  watch();
+
+  function stopWatching() {
+    if (!watching) return;
+    watching = false;
+    if (frame != null) cancelFrame?.(frame);
+    frame = null;
+    scrollAfterLayout = false;
+    modalObserver?.disconnect?.();
+    headerObserver?.disconnect?.();
+    observedHeaders.clear();
+    modals.length = 0;
+    document.defaultView?.removeEventListener?.('resize', scheduleLayout);
+    document.removeEventListener?.('scroll', scheduleLayout, true);
+  }
 
   const dismissId = (id, persistent = false) => { const t = live.find((x) => !!x.persistent === persistent && x.id === id); if (t) dismiss(t); };
   return { show, showPersistent, setPosition, dismiss: dismissId, dismissPersistent: (id) => dismissId(id, true), count: () => live.length, clear };

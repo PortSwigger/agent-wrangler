@@ -250,3 +250,100 @@ test('both positions reserve visible header controls and follow resized or hidde
   observe([{ type: 'attributes', attributeName: 'class', target: header }]);
   assert.equal(stackOf(doc).style['--toast-top'], '16px');
 });
+
+test('a low header in an 800px viewport cannot hide persistent notifications at either position', () => {
+  for (const position of ['top-right', 'bottom-right']) {
+    const { doc, clock } = fakeWorld();
+    doc.defaultView = { innerWidth: 1000, innerHeight: 800 };
+    const header = doc.createElement('header');
+    header.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 750, bottom: 790, width: 946, height: 40 });
+    const footer = doc.createElement('footer');
+    footer.matches = () => true;
+    footer.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 10, bottom: 50, width: 946, height: 40 });
+    doc.querySelectorAll = () => [header, footer];
+    const toasts = createToasts({ document: doc, position, ...clock });
+    toasts.showPersistent('request', { title: 'Action needed', actions: [], onDismiss() {} });
+    const stack = stackOf(doc);
+    assert.equal(stack.style['--toast-top'], '16px');
+    assert.equal(stack.style['--toast-bottom'], '18px');
+    assert.equal(toasts.count(), 1);
+  }
+});
+
+test('large edge chrome still leaves at least 120px of usable stack height', () => {
+  const { doc, clock } = fakeWorld();
+  doc.defaultView = { innerWidth: 1000, innerHeight: 800 };
+  const header = doc.createElement('header');
+  header.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 0, bottom: 760, width: 946, height: 760 });
+  const footer = doc.createElement('footer');
+  footer.matches = () => true;
+  footer.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 720, bottom: 800, width: 946, height: 80 });
+  doc.querySelectorAll = () => [header, footer];
+  const toasts = createToasts({ document: doc, ...clock });
+  toasts.show('Visible');
+  const stack = stackOf(doc);
+  const available = 800 - parseInt(stack.style['--toast-top']) - parseInt(stack.style['--toast-bottom']);
+  assert.ok(available >= 120, `usable height was ${available}px`);
+});
+
+test('layout batches into one animation frame and releases observers and pending work when empty', () => {
+  const { doc, clock } = fakeWorld();
+  const frames = new Map();
+  const observed = new Set();
+  const events = new Map();
+  let nextFrame = 0;
+  let mutation;
+  let resize;
+  let reads = 0;
+  let mutationActive = false;
+  const header = doc.createElement('header');
+  header.getBoundingClientRect = () => { reads++; return { left: 54, right: 1000, top: 0, bottom: 72, width: 946, height: 72 }; };
+  doc.documentElement = {};
+  doc.defaultView = {
+    innerWidth: 1000, innerHeight: 800,
+    requestAnimationFrame: (fn) => { frames.set(++nextFrame, fn); return nextFrame; },
+    cancelAnimationFrame: (id) => frames.delete(id),
+    addEventListener: (name, fn) => events.set(name, fn),
+    removeEventListener: (name) => events.delete(name),
+    MutationObserver: class {
+      constructor(fn) { mutation = fn; }
+      observe() { mutationActive = true; }
+      disconnect() { mutationActive = false; }
+    },
+    ResizeObserver: class {
+      constructor(fn) { resize = fn; }
+      observe(el) { observed.add(el); }
+      unobserve(el) { observed.delete(el); }
+      disconnect() { observed.clear(); }
+    },
+  };
+  doc.addEventListener = (name, fn) => events.set(name, fn);
+  doc.removeEventListener = (name) => events.delete(name);
+  doc.querySelectorAll = (selector) => selector === 'dialog:modal' ? [] : [header];
+  const toasts = createToasts({ document: doc, ...clock });
+  toasts.show('First');
+  const stack = stackOf(doc);
+  Object.defineProperty(stack, 'scrollHeight', { get: () => stack.style['--toast-top'] ? 900 : 800 });
+  toasts.setPosition('bottom-right');
+  resize();
+  mutation([]);
+  events.get('scroll')();
+  assert.equal(reads, 0, 'geometry waits until the animation frame');
+  assert.equal(frames.size, 1);
+  const flush = () => { const callbacks = [...frames.values()]; frames.clear(); for (const fn of callbacks) fn(); };
+  flush();
+  assert.equal(reads, 1);
+  assert.equal(stackOf(doc).style['--toast-top'], '80px');
+  assert.equal(stack.scrollTop, 900, 'newest notice stays visible after the frame changes the available height');
+  events.get('resize')();
+  toasts.clear();
+  assert.equal(frames.size, 0);
+  assert.equal(observed.size, 0);
+  assert.equal(mutationActive, false);
+  assert.equal(events.size, 0);
+  toasts.show('Again');
+  flush();
+  assert.equal(stackOf(doc).style['--toast-top'], '80px');
+  assert.equal(mutationActive, true);
+  assert.ok(observed.has(header));
+});
