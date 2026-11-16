@@ -30,6 +30,9 @@ import { deliverNotice } from './mailbox-delivery.js';
 import { createStatusWatcher } from './status-notices.js';
 import { createStatusNoticeRunner } from './status-notice-runner.js';
 import { createMailSettleSweeper, createDeferralTracker } from './mail-runner.js';
+import { createNotificationBlocks } from './notification-blocks.js';
+import { createNotificationReadiness } from './notification-readiness.js';
+import { mcpSeenAt } from './mcp-activity.js';
 import { runDispatch } from './dispatch-runner.js';
 import { runSessionAction } from './session-action-runner.js';
 import { deliverPrNudge } from './pr-nudge-runner.js';
@@ -354,7 +357,20 @@ const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, (
 // itself into their draft and the Enter submits the pair fused together — the
 // gate holds the line until the composer reads empty. Deliberately NOT used by
 // deliverMessage (a human pressing send chose this moment) — see pane-deferral.js.
+const notificationBlocks = createNotificationBlocks({
+  entryFor: (id) => sessionManager.entryFor(id), mailStore, events: coreEvents,
+  isPending: (id) => paneDeferral.pending(id).length > 0,
+  hasPane: (id) => Boolean(tmuxFor(id)),
+  log: logError,
+});
+const notificationReady = createNotificationReadiness({
+  entryFor: (id) => sessionManager.entryFor(id),
+  isResuming: (id) => sessionManager.isResuming(id), mcpSeenAt,
+});
 const paneDeferral = createPaneDeferral({
+  readyFor: notificationReady,
+  onBlocked: (id, reason) => notificationBlocks.deferred(id, reason),
+  onReady: (id) => notificationBlocks.resolved(id),
   tmuxFor,
   socketFor,
   agentFor: (id) => sessionManager.entryFor(id)?.agent ?? 'claude',
@@ -1388,7 +1404,11 @@ async function rebuildOnce() {
     broadcast({ type: 'notify', session: { sessionId: s.sessionId, label: notifyLabel(s.label), waitingFor: s.waitingFor } });
   }
   statusNotices.run(graph).catch((error) => logError('[status-notice]', error));
-  for (const session of graph.sessions) session.statusNoticeBlocked = statusNotices.blocked(session.sessionId);
+  notificationBlocks.sweep();
+  for (const session of graph.sessions) {
+    session.statusNoticeBlocked = statusNotices.blocked(session.sessionId);
+    session.notificationBlocked = notificationBlocks.blocked(session.sessionId);
+  }
   // The state stream leaves history off a frame while it is unchanged, and skips
   // the frame when nothing but generatedAt moved (see deck/state.js).
   stateStream.observe(graph, extState);

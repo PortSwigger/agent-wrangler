@@ -785,7 +785,7 @@ test('buildInnerCommand with NO launch context carries no env var and no grant f
   const cmd = buildInnerCommand({ args: ['--permission-mode', 'auto'], sessionId: 'sid-1' });
   assert.doesNotMatch(cmd, /AW_TASK_MEMORY='/);
   assert.doesNotMatch(cmd, /--add-dir/);
-  assert.match(cmd, /^AW_SESSION_ID='sid-1' /);
+  assert.match(cmd, /(?:^| )AW_SESSION_ID='sid-1' /);
 });
 
 test('buildInnerCommand: a launch-context env var cannot override core\'s AW_SESSION_ID (core assigns last)', () => {

@@ -526,3 +526,22 @@ test('a Codex approval diagnostic survives the board needs-you gate', async () =
   assert.equal(JSON.parse(reason.slice(reason.indexOf(': ') + 2)).check, 'approval-selector');
   assert.deepEqual(d.sent, []);
 });
+
+test('concurrent direct notifications cannot paste into the same composer', async () => {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const d = deps();
+  d.sendText = async (name, text) => { d.sent.push(text); await held; };
+  const pd = createPaneDeferral(d);
+  const first = pd.deliverOrDefer({ id: 'c1', text: 'first' });
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = pd.deliverOrDefer({ id: 'c1', text: 'second' });
+  await new Promise((resolve) => setImmediate(resolve));
+  const observed = [...d.sent];
+  release();
+  await first;
+  assert.equal(await second, 'deferred');
+  assert.deepEqual(observed, ['first']);
+  await pd.drain();
+  assert.deepEqual(d.sent, ['first', 'second']);
+});

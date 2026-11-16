@@ -2293,6 +2293,16 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   { sid, taskId, markdown }` (the review is skipped when nobody listens).
   Since 1.93.0, `pr:observation` publishes the full PR observation described
   below; `events` alone grants these payloads without `links:read`.
+  `session-notification:blocked` (1.96.0) publishes
+  `{ sid, reason: 'composer-not-empty', since, at }` once per episode when an
+  automated terminal notification has waited behind an unconfirmed-empty
+  composer for five minutes. Times are milliseconds. The event contains no
+  composer text. The board flags the session, and its spawning and parent
+  sessions receive mail when available. Notifications remain queued; the host
+  never clears or overwrites the draft. The episode clears on delivery, when
+  pending work disappears, or when the session is archived or snoozed. Episode
+  timers restart with the server. The `events` capability grants this payload
+  without requiring `sessions:read`; consumers that require it declare `^1.96.0`.
   Since 1.59.0, `session-status:needs-you`, `session-status:idle-held`,
   `session-status:quiet` and `session-status:exited` publish
   `{ sid, kind, at, waitingFor, idleMs, quietMs, exitReason }` for every session,
