@@ -197,3 +197,56 @@ test('keyboard focus pauses timers until focus leaves the shared stack', () => {
   clock.advance(1);
   assert.deepEqual(shown(doc), []);
 });
+
+test('top-right is the default, newest first; changing position reorders existing notices without dismissal', () => {
+  const { doc, clock } = fakeWorld();
+  const toasts = createToasts({ document: doc, ...clock });
+  toasts.show('Old', false, { id: 'old' });
+  clock.advance(1000);
+  toasts.show('New');
+  assert.equal(stackOf(doc).attrs['data-position'], 'top-right');
+  assert.deepEqual(shown(doc), ['New', 'Old']);
+  assert.equal(stackOf(doc).children[0].textContent, 'Clear all');
+  toasts.setPosition('bottom-right');
+  assert.equal(stackOf(doc).attrs['data-position'], 'bottom-right');
+  assert.deepEqual(shown(doc), ['Old', 'New']);
+  assert.equal(stackOf(doc).children.at(-1).textContent, 'Clear all');
+  clock.advance(4000);
+  assert.deepEqual(shown(doc), ['New'], 'position changes preserve the remaining lifetime');
+  toasts.setPosition('top-right');
+  toasts.show('Newest');
+  assert.deepEqual(shown(doc), ['Newest', 'New']);
+});
+
+test('both positions reserve visible header controls and follow resized or hidden headers', () => {
+  const { doc, clock } = fakeWorld();
+  let observe;
+  let resize;
+  let height = 72;
+  const header = doc.createElement('header');
+  header.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 0, bottom: height, width: 946, height });
+  const offscreen = doc.createElement('header');
+  offscreen.getBoundingClientRect = () => ({ left: 0, right: 200, top: 0, bottom: 300, width: 200, height: 300 });
+  const footer = doc.createElement('footer');
+  footer.matches = () => true;
+  footer.getBoundingClientRect = () => ({ left: 400, right: 900, top: 700, bottom: 750, width: 500, height: 50 });
+  doc.documentElement = {};
+  doc.defaultView = {
+    innerWidth: 1000, innerHeight: 800,
+    MutationObserver: class { constructor(fn) { observe = fn; } observe() {} },
+    ResizeObserver: class { constructor(fn) { resize = fn; } observe() {} unobserve() {} },
+  };
+  doc.querySelectorAll = (selector) => selector === 'dialog:modal' ? [] : [header, offscreen, footer];
+  const toasts = createToasts({ document: doc, ...clock });
+  toasts.show('Visible');
+  assert.equal(stackOf(doc).style['--toast-top'], '80px');
+  assert.equal(stackOf(doc).style['--toast-bottom'], '108px', 'modal footer controls remain unobscured');
+  height = 110;
+  resize();
+  assert.equal(stackOf(doc).style['--toast-top'], '118px');
+  toasts.setPosition('bottom-right');
+  assert.equal(stackOf(doc).style['--toast-top'], '118px', 'bottom stack cannot grow over the header either');
+  height = 0;
+  observe([{ type: 'attributes', attributeName: 'class', target: header }]);
+  assert.equal(stackOf(doc).style['--toast-top'], '16px');
+});

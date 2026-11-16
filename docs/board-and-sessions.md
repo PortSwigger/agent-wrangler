@@ -219,8 +219,11 @@ subscriber is archived or missing, or the subscriber calls `stop_status_notices`
 
 ## Messages at the bottom of the board
 
-Short messages (toasts) and persistent notifications share a bottom-right stack, newest at the
-bottom, above any open dialog. With two or more messages, **Clear all** dismisses the whole stack
+Short messages (toasts) and persistent notifications share a top-right stack, above any open
+dialog and below visible header controls. **Settings → Appearance → Toast position** switches
+between **Top right** (the default) and **Bottom right**, immediately and for this browser.
+Newest messages sit nearest the chosen edge, with **Clear all** beside that edge. With two or
+more messages, **Clear all** dismisses the whole stack
 without running actions, answering requests or marking anything read. Persistent notifications
 stay until acted on or dismissed and are never evicted to make room for another message.
 
@@ -411,7 +414,7 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 
 **Settings** has Appearance, Decks, Sessions, Automation, Extensions, Shortcuts and Updates tabs, covering:
 
-- Theme, terminal side, terminal font size, and chat font size.
+- Theme, terminal side, toast position, terminal font size, and chat font size.
 - The decks this board shows, with each one's name, colour and connection (see
   [Add a deck to the board](#add-a-deck-to-the-board)).
 - Child-card and Chat defaults, the default folder for new sessions, and the Codex sandbox and approval

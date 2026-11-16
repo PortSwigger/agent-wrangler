@@ -57,7 +57,7 @@ import {
 import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
-import { toast, dismissToast } from './toast.js';
+import { toast, dismissToast, setToastPosition } from './toast.js';
 import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
@@ -282,6 +282,7 @@ function noteExtClientFacts(list) {
 // `extApi.send` stays the RAW send: the per-extension binding happens inside
 // slots.apiFor, which is the only place the extension id is known.
 const notifications = createNotifications({ document });
+setToastPosition(getSetting('toastPosition'));
 const repoAccess = createRepoAccess({ document, send: (m) => send(m), toast, dismissToast });
 // Back api.targets / api.front and api.rail (slots binds the extension id).
 const boardTargets = createBoardTargets({
@@ -7823,6 +7824,7 @@ initSettings({
   // on its own, so they have to be applied on the flip itself.
   onChange: (id, value) => {
     if (id === 'terminalSide') applyTerminalSide(value);
+    else if (id === 'toastPosition') setToastPosition(value);
     else if (LEGACY_SERVER_SETTING_IDS.includes(id) && latestGraph) applyGraph(latestGraph);
   },
   appearance: {

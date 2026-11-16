@@ -2,10 +2,14 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createNotifications, MAX_ACTIONS } from './notifications.js';
-import { toast, dismissToast } from './toast.js';
+import { toast, dismissToast, getToasts, setToastPosition } from './toast.js';
 import { fakeWorld } from './test-fixtures/toast-world.js';
 
-const fakeDocument = () => fakeWorld().doc;
+const fakeDocument = () => {
+  const { doc } = fakeWorld();
+  getToasts(doc).setPosition('bottom-right');
+  return doc;
+};
 const cards = (doc) => (doc.body.children[0]?.children || []).filter((c) => c.classList.contains('toast'));
 const find = (el, cls) => el.children.find((c) => c.className.split(' ').includes(cls));
 const buttons = (card) => find(card, 'toast-actions').children.filter((c) => !c.hidden);
@@ -152,6 +156,12 @@ test('the default notification adapter shares the stack used by board toast call
     toast('Transient', false, { id: 'a', duration: Infinity });
     assert.equal(doc.body.children.length, 1);
     assert.equal(cards(doc).length, 2);
+    assert.deepEqual(cards(doc).map((card) => find(card, 'toast-text').textContent), ['Transient', 'Persistent']);
+    setToastPosition('bottom-right');
+    assert.deepEqual(cards(doc).map((card) => find(card, 'toast-text').textContent), ['Persistent', 'Transient']);
+    assert.equal(doc.body.children[0].attrs['data-position'], 'bottom-right');
+    setToastPosition('top-right');
+    assert.deepEqual(cards(doc).map((card) => find(card, 'toast-text').textContent), ['Transient', 'Persistent']);
     dismissToast('a');
     assert.equal(cards(doc).length, 1);
     n.clear('ext');

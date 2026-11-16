@@ -2554,14 +2554,17 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 - **Client `api.ui.markdownPreview(md)`** returns sanitised HTML from the shared
   markdown renderer (`public/markdown-preview.js`).
 - **Client `api.ui.notify({ id, title, body, actions })`** (1.23.0) raises a card in
-  the board's shared bottom-right toast stack for something the human did not ask
+  the board's shared toast stack for something the human did not ask
   about. Cards stack, stay until answered or closed, and never take focus. It
   resolves with the clicked action's `id` (`actions` is up to three
   `{ id, label, primary? }`), or `null` when the card is dismissed with ×, Clear all or
   withdrawn. Showing an `id` that is already up updates it in place.
   `api.ui.withdraw(id)` takes one down. Ids are per extension, and an extension's
   cards are removed when it is turned off. Persistent cards do not count towards
-  the transient toast limit and are never evicted. All text is set as text.
+  the transient toast limit and are never evicted. The stack defaults to top-right;
+  core **Settings → Appearance → Toast position** can move it to bottom-right for
+  this browser. Newest messages sit nearest the chosen edge, below visible header
+  controls and above an open dialog. All text is set as text.
 - **Client `api.ui.toast({ severity, text, detail, actions })`** (1.71.0) shows a
   transient message in the board's own toast stack (`public/toast.js`), the one
   core's toasts and `ui.notify` use, for feedback on something the human just did.

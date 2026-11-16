@@ -1,5 +1,5 @@
 // The board's shared stack: up to MAX_TOASTS transient messages plus persistent
-// notifications, newest at the bottom. Pure DOM and timers, so
+// notifications, newest nearest the chosen edge. Pure DOM and timers, so
 // every module can surface feedback without importing app state; `document` and
 // the clock are injected so the stacking rules are unit-testable.
 //
@@ -21,18 +21,24 @@
 export const MAX_TOASTS = 3;
 export const SEVERITY_MS = { success: 3000, info: 5000, warning: 8000, error: Infinity };
 
+const FOOTERS = '.modal-actions, dialog footer';
+const HEADERS = `header, [role="banner"], [role="toolbar"], #panel, #system-banner, .search-head, .diff-head, .file-head, .usage-head, .terminal-dialog-head, .modal-card > h3, dialog > :first-child:has(> :is(h1, h2, h3)), dialog > :first-child > :first-child:has(:is(h1, h2, h3)), ${FOOTERS}`;
+
 function severityOf(isErr, opts) {
   if (typeof isErr === 'string' && isErr in SEVERITY_MS) return isErr;
   if (isErr) return 'error';
   return opts?.severity in SEVERITY_MS ? opts.severity : 'info';
 }
 
-export function createToasts({ document, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout, now = () => Date.now() }) {
+export function createToasts({ document, position = 'top-right', setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout, now = () => Date.now() }) {
   const live = []; // oldest first: { el, id, key, rank, remaining, started, timer }
   const modals = []; // open modal dialogs, in the order they opened
   let stack = null;
   let clearButton = null;
   let held = false; // hovered or focused: every timer waits
+  let headerObserver = null;
+  const observedHeaders = new Set();
+  position = position === 'bottom-right' ? position : 'top-right';
 
   function root() {
     if (stack) return stack;
@@ -42,6 +48,7 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
     stack.setAttribute('popover', 'manual');
     stack.setAttribute('role', 'region');
     stack.setAttribute('aria-label', 'Messages');
+    stack.setAttribute('data-position', position);
     clearButton = button('toast-clear', 'Clear all', clear);
     stack.append(clearButton);
     const hold = (on) => () => { held = on; for (const t of live) (on ? pause : run)(t); };
@@ -77,8 +84,34 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
     if (el.parentNode !== want) { if (open()) el.hidePopover(); want.append(el); }
     else if (raise && open()) el.hidePopover();
     if (el.showPopover && !open()) el.showPopover();
+    layout();
     // Re-showing restarts CSS animations: start each bar where its timer is.
     for (const t of live) if (t.bar) t.bar.style.animationDelay = `${-(t.duration - left(t))}ms`;
+  }
+
+  function layout() {
+    if (!stack || !live.length) return;
+    const viewport = document.defaultView?.innerWidth || document.documentElement?.clientWidth || 800;
+    const height = document.defaultView?.innerHeight || document.documentElement?.clientHeight || 800;
+    const bounds = stack.getBoundingClientRect?.();
+    const right = bounds?.width ? bounds.right : viewport - 16;
+    const left = bounds?.width ? bounds.left : right - Math.min(560, viewport - 32);
+    const headers = new Set(document.querySelectorAll?.(HEADERS) ?? []);
+    let top = 16;
+    let bottom = 18;
+    for (const el of headers) {
+      const r = el.getBoundingClientRect?.();
+      if (r?.width > 0 && r.height > 0 && r.right > left && r.left < right && r.bottom > 0 && r.top < height) {
+        if (el.matches?.(FOOTERS)) bottom = Math.max(bottom, Math.ceil(height - r.top) + 8);
+        else top = Math.max(top, Math.ceil(r.bottom) + 8);
+      }
+      if (!observedHeaders.has(el)) headerObserver?.observe(el);
+    }
+    for (const el of observedHeaders) if (!headers.has(el)) headerObserver?.unobserve(el);
+    observedHeaders.clear();
+    for (const el of headers) observedHeaders.add(el);
+    stack.style.setProperty('--toast-top', `${top}px`);
+    stack.style.setProperty('--toast-bottom', `${bottom}px`);
   }
 
   function left(t) { return t.timer == null ? t.remaining : t.remaining - (now() - t.started); }
@@ -107,6 +140,23 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
   }
 
   function clear() { for (const t of [...live]) dismiss(t); }
+
+  function insert(t) {
+    const el = root();
+    el.insertBefore(t.el, position === 'top-right' ? clearButton.nextSibling : clearButton);
+  }
+
+  function scrollToNewest() { stack.scrollTop = position === 'top-right' ? 0 : stack.scrollHeight; }
+
+  function setPosition(value) {
+    position = value === 'bottom-right' ? value : 'top-right';
+    if (!stack) return;
+    stack.setAttribute('data-position', position);
+    const ordered = position === 'top-right' ? [...live].reverse() : live;
+    stack.replaceChildren(...(position === 'top-right' ? [clearButton, ...ordered.map((t) => t.el)] : [...ordered.map((t) => t.el), clearButton]));
+    place();
+    scrollToNewest();
+  }
 
   function button(className, label, onClick) {
     const b = document.createElement('button');
@@ -196,9 +246,9 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
     t.el = build(t, text, severity, { actions, duration, details });
     while (live.filter((item) => !item.persistent).length >= MAX_TOASTS) evict();
     live.push(t);
-    root().append(t.el);
+    insert(t);
     place(true);
-    stack.scrollTop = stack.scrollHeight;
+    scrollToNewest();
     t.measure();
     run(t);
     return t.el;
@@ -212,15 +262,19 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
     t.el = build(t, title, 'info', { body, actions, duration: Infinity });
     if (fresh) {
       live.push(t);
-      root().append(t.el);
+      insert(t);
     }
     place(true);
-    if (fresh) stack.scrollTop = stack.scrollHeight;
+    if (fresh) scrollToNewest();
     t.measure();
   }
 
   // A modal dialog opening goes into the top layer above the stack; follow it.
   function watch() {
+    const RO = document.defaultView?.ResizeObserver ?? globalThis.ResizeObserver;
+    if (RO) headerObserver = new RO(layout);
+    document.defaultView?.addEventListener?.('resize', layout);
+    document.addEventListener?.('scroll', layout, true);
     const MO = document.defaultView?.MutationObserver ?? globalThis.MutationObserver;
     if (!MO || !document.documentElement) return;
     modals.push(...(document.querySelectorAll?.('dialog:modal') ?? []));
@@ -229,19 +283,20 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
       for (const r of records) {
         if (r.type === 'childList') continue;
         const d = r.target;
-        if (d.tagName !== 'DIALOG') continue;
+        if (d.tagName !== 'DIALOG' || (r.attributeName && r.attributeName !== 'open')) continue;
         changed = true;
         const i = modals.indexOf(d);
         if (i >= 0) modals.splice(i, 1);
         if (d.open && d.isConnected !== false && d.matches(':modal')) modals.push(d);
       }
       if (changed && live.length) place(true);
-    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
+      else layout();
+    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['open', 'class', 'hidden'] });
   }
   watch();
 
   const dismissId = (id, persistent = false) => { const t = live.find((x) => !!x.persistent === persistent && x.id === id); if (t) dismiss(t); };
-  return { show, showPersistent, dismiss: dismissId, dismissPersistent: (id) => dismissId(id, true), count: () => live.length, clear };
+  return { show, showPersistent, setPosition, dismiss: dismissId, dismissPersistent: (id) => dismissId(id, true), count: () => live.length, clear };
 }
 
 const shared = new WeakMap();
@@ -256,4 +311,8 @@ export function toast(text, isErr, opts) {
 
 export function dismissToast(id) {
   shared.get(globalThis.document)?.dismiss(id);
+}
+
+export function setToastPosition(position) {
+  getToasts(globalThis.document).setPosition(position);
 }

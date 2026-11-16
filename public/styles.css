@@ -1222,23 +1222,27 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
 
 /* The toast stack (public/toast.js): a manual popover, so it is drawn in the top
    layer, above board modals and (moved inside the topmost one) above modal
-   <dialog>s. Bottom-right, newest at the bottom. Its font is set here because
+   <dialog>s. Newest nearest the chosen edge. Its font is set here because
    inside a dialog it inherits from the dialog. */
 #toast {
-  position: fixed; inset: auto 16px 18px auto; margin: 0;
+  --toast-top: 16px;
+  --toast-bottom: 18px;
+  position: fixed; inset: var(--toast-top) 16px auto auto; margin: 0;
   padding: 0; border: 0; background: none; overflow-y: auto; color: var(--fg);
   display: flex; flex-direction: column; align-items: stretch; gap: 8px;
-  max-height: calc(100dvh - 36px); overscroll-behavior: contain;
+  max-height: calc(100dvh - var(--toast-top) - var(--toast-bottom)); overscroll-behavior: contain;
   width: max-content; max-width: min(560px, calc(100vw - 32px));
   font: 13px/1.45 var(--font, system-ui, -apple-system, sans-serif); text-align: left;
 }
 #toast:not(:popover-open) { display: none; }
+#toast[data-position="bottom-right"] { top: auto; bottom: var(--toast-bottom); }
 .toast-clear {
   position: sticky; top: 0; z-index: 1; align-self: flex-end; flex-shrink: 0;
   padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--surface); color: var(--fg); font: inherit; cursor: pointer;
 }
 .toast-clear[hidden] { display: none; }
+#toast[data-position="bottom-right"] .toast-clear { top: auto; bottom: 0; }
 #toast button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 .toast {
   --toast-bg: var(--accent); --toast-fg: var(--accent-fg);
