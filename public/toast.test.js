@@ -43,6 +43,15 @@ test('shadow gutters preserve card offsets and the usable content height', () =>
   assert.match(css, /#toast\[data-position="bottom-right"\] \{ top: auto; bottom: calc\(var\(--toast-bottom\) - 24px\); \}/);
 });
 
+test('shadow padding passes pointer input through and sticky Clear all stays inside the content edges', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+  const rule = (selector) => css.slice(css.indexOf(`${selector} {`)).match(/^[^{]+\{([^}]*)\}/)[1];
+  assert.match(rule('#toast'), /pointer-events: none;/);
+  for (const selector of ['.toast', '.toast-clear']) assert.match(rule(selector), /pointer-events: auto;/);
+  assert.match(rule('.toast-clear'), /top: 12px;/);
+  assert.match(rule('#toast[data-position="bottom-right"] .toast-clear'), /top: auto; bottom: 24px;/);
+});
+
 test('shadow gutters do not enlarge the modal header collision band in either position', () => {
   for (const position of ['top-right', 'bottom-right']) {
     const { doc, clock } = fakeWorld();

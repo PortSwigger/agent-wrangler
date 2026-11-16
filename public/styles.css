@@ -1228,7 +1228,7 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   --toast-top: 12px;
   --toast-bottom: 12px;
   position: fixed; inset: calc(var(--toast-top) - 12px) 0 auto auto; margin: 0; box-sizing: content-box;
-  padding: 12px 12px 24px; border: 0; background: none; overflow-y: auto; color: var(--fg);
+  padding: 12px 12px 24px; border: 0; background: none; overflow-y: auto; color: var(--fg); pointer-events: none;
   display: flex; flex-direction: column; align-items: stretch; gap: 8px;
   max-height: calc(100dvh - var(--toast-top) - var(--toast-bottom)); overscroll-behavior: contain;
   width: max-content; max-width: min(560px, calc(100vw - 24px));
@@ -1237,15 +1237,16 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
 #toast:not(:popover-open) { display: none; }
 #toast[data-position="bottom-right"] { top: auto; bottom: calc(var(--toast-bottom) - 24px); }
 .toast-clear {
-  position: sticky; top: 0; z-index: 1; align-self: flex-end; flex-shrink: 0;
+  position: sticky; top: 12px; z-index: 1; align-self: flex-end; flex-shrink: 0; pointer-events: auto;
   padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--surface); color: var(--fg); font: inherit; cursor: pointer;
 }
 .toast-clear[hidden] { display: none; }
-#toast[data-position="bottom-right"] .toast-clear { top: auto; bottom: 0; }
+#toast[data-position="bottom-right"] .toast-clear { top: auto; bottom: 24px; }
 #toast button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 .toast {
   --toast-accent: var(--accent);
+  pointer-events: auto;
   position: relative; box-sizing: border-box; max-width: 100%; min-width: min(200px, 100%); flex-shrink: 0;
   display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px;
   padding: 13px 34px 9px 12px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
