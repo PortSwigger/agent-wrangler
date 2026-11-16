@@ -193,6 +193,14 @@ export const SETTINGS = [
     default: 'right',
   },
   {
+    id: 'toastPosition',
+    type: 'segmented',
+    options: [{ value: 'top-right', label: 'Top right' }, { value: 'bottom-right', label: 'Bottom right' }],
+    label: 'Toast position',
+    help: 'Where board messages and persistent notification cards appear. Applies immediately and is saved for this browser.',
+    default: 'top-right',
+  },
+  {
     id: 'autoUpdate',
     type: 'segmented',
     scope: 'server',
@@ -215,7 +223,7 @@ export const SETTINGS = [
 // toggle per server extension off graph.extensions, so a new extension needs
 // no settings.js edit at all.
 export const SETTINGS_TABS = [
-  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide'] },
+  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition'] },
   { id: 'decks', label: 'Decks', settingIds: [] },
   {
     id: 'sessions',
@@ -242,7 +250,7 @@ export const SETTINGS_TABS = [
 // with its own sessions, read from and written to the deck chosen in the
 // picker. A board with only its own deck keeps SETTINGS_TABS.
 export const BOARD_TABS = [
-  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide'] },
+  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition'] },
   { id: 'board', label: 'Board', settingIds: ['subagentsExpandedByDefault', 'childFullViewByDefault', 'chatViewDefault', 'suppressNudgedPrToasts'] },
   { id: 'decks', label: 'Decks', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },

@@ -1220,52 +1220,50 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
 }
 .system-banner-action:hover { opacity: 0.9; }
 
-/* api.ui.notify's stack (public/notifications.js): persistent cards in the
-   bottom-right corner, newest at the bottom, that never take focus. Clear of
-   the #toast stack, which sits bottom-centre. */
-.notif-stack {
-  position: fixed; right: 16px; bottom: 16px; z-index: 30;
-  display: flex; flex-direction: column; gap: 8px; width: 340px; max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px); overflow-y: auto; pointer-events: none;
-}
-.notif-stack:empty { display: none; }
-.notif-card {
-  position: relative; pointer-events: auto;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  box-shadow: 0 6px 20px var(--shadow); padding: 12px 14px;
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-}
-.notif-title { font-size: 13px; font-weight: 600; padding-right: 20px; overflow-wrap: anywhere; }
-.notif-body { margin-top: 4px; font-size: 12px; color: var(--fg-muted); line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
-.notif-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
-.notif-actions button { padding: 4px 10px; font-size: 12px; }
-.notif-close {
-  position: absolute; top: 6px; right: 6px; padding: 0 6px; border: none;
-  background: none; color: var(--fg-muted); font-size: 16px; line-height: 1; cursor: pointer;
-}
-.notif-close:hover { color: var(--fg); background: none; }
 /* The toast stack (public/toast.js): a manual popover, so it is drawn in the top
    layer, above board modals and (moved inside the topmost one) above modal
-   <dialog>s. Bottom-centre, newest at the bottom. Its font is set here because
+   <dialog>s. Newest nearest the chosen edge. Its font is set here because
    inside a dialog it inherits from the dialog. */
 #toast {
-  position: fixed; inset: auto auto 18px 50%; transform: translateX(-50%); margin: 0;
-  padding: 0; border: 0; background: none; overflow: visible; color: var(--fg);
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  width: max-content; max-width: min(560px, calc(100vw - 32px));
+  --toast-top: 12px;
+  --toast-bottom: 12px;
+  position: fixed; inset: calc(var(--toast-top) - 12px) 0 auto auto; margin: 0; box-sizing: content-box;
+  padding: 12px 12px 24px; border: 0; background: none; overflow: visible; color: var(--fg); pointer-events: none;
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+  max-height: calc(100dvh - var(--toast-top) - var(--toast-bottom)); overscroll-behavior: contain;
+  width: max-content; max-width: min(560px, calc(100vw - 24px));
   font: 13px/1.45 var(--font, system-ui, -apple-system, sans-serif); text-align: left;
 }
 #toast:not(:popover-open) { display: none; }
-.toast {
-  --toast-bg: var(--accent); --toast-fg: var(--accent-fg);
-  position: relative; box-sizing: border-box; max-width: 100%; min-width: 200px;
-  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px;
-  padding: 9px 34px 9px 16px; border-radius: 8px; overflow: hidden;
-  background: var(--toast-bg); color: var(--toast-fg); box-shadow: 0 4px 16px var(--shadow);
+#toast[data-position="bottom-right"] { top: auto; bottom: calc(var(--toast-bottom) - 24px); }
+.toast-list {
+  display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto;
+  padding: 12px 12px 24px; margin: -12px -12px -24px; overscroll-behavior: contain;
 }
-.toast-success { --toast-bg: var(--green); --toast-fg: #fff; }
-.toast-warning { --toast-bg: var(--warn); --toast-fg: #1b1b1b; }
-.toast-error { --toast-bg: var(--red); --toast-fg: #fff; }
+.toast-list[data-overflow="true"] { margin-top: 0; margin-bottom: 0; }
+.toast-clear {
+  z-index: 1; align-self: flex-end; flex-shrink: 0; pointer-events: auto;
+  padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--fg); font: inherit; cursor: pointer;
+}
+.toast-clear[hidden] { display: none; }
+#toast button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.toast {
+  --toast-accent: var(--accent);
+  pointer-events: auto;
+  position: relative; box-sizing: border-box; max-width: 100%; min-width: min(200px, 100%); flex-shrink: 0;
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px;
+  padding: 13px 34px 9px 12px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  background: var(--surface); color: var(--fg); box-shadow: 0 3px 6px var(--shadow), 0 8px 20px var(--shadow);
+}
+.toast::before {
+  content: ''; position: absolute; left: 0; top: 0; height: 4px; width: 100%;
+  background: var(--toast-accent);
+}
+.toast:has(.toast-progress)::before { background: color-mix(in srgb, var(--toast-accent) 30%, var(--surface)); }
+.toast-success { --toast-accent: var(--green); }
+.toast-warning { --toast-accent: var(--warn); }
+.toast-error { --toast-accent: var(--red); }
 /* About three lines; Details lifts the clamp. */
 .toast-text {
   flex: 1 1 auto; min-width: 0; white-space: pre-line; overflow-wrap: anywhere;
@@ -1277,12 +1275,18 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow-y: auto; opacity: 0.92;
 }
 .toast-details[hidden] { display: none; }
-.toast-actions { display: flex; gap: 12px; flex: 0 0 auto; margin-left: auto; }
+.toast-persistent .toast-text { flex-basis: 100%; font-weight: 600; }
+.toast-body {
+  flex-basis: 100%; margin-top: 4px; white-space: pre-line; overflow-wrap: anywhere;
+}
+.toast-persistent .toast-actions { margin-top: 8px; }
+.toast-action-primary { font-weight: 800; }
+.toast-actions { display: flex; flex-wrap: wrap; gap: 8px 12px; max-width: 100%; margin-left: auto; }
 .toast-actions:empty { display: none; }
 .toast-action {
   padding: 0; border: none; background: none;
   color: inherit; font: inherit; font-weight: 600; text-decoration: underline;
-  cursor: pointer; white-space: nowrap;
+  cursor: pointer; white-space: normal; overflow-wrap: anywhere;
 }
 .toast-action[hidden] { display: none; }
 .toast-action:hover { background: none; opacity: 0.8; }
@@ -1291,11 +1295,9 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   background: none; color: inherit; font-size: 16px; line-height: 1.2; cursor: pointer; opacity: 0.75;
 }
 .toast-close:hover { background: none; opacity: 1; }
-/* Depleting time-remaining bar along an action toast's bottom edge; JS sets its
-   duration and start, and it pauses with the timers while the stack is hovered. */
 .toast-progress {
-  position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
-  background: currentColor; opacity: 0.5; transform-origin: left;
+  position: absolute; left: 0; top: 0; height: 4px; width: 100%;
+  background: var(--toast-accent); transform-origin: left;
   animation-name: toast-deplete; animation-timing-function: linear; animation-fill-mode: forwards;
 }
 #toast:hover .toast-progress, #toast:has(:focus-visible) .toast-progress { animation-play-state: paused; }

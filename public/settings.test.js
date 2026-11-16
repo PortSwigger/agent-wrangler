@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SETTINGS_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, extensionFlipNote, getSetting, EXT_SETTING_PREFIX, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS } from './settings.js';
+import { SETTINGS_TABS, BOARD_TABS, SETTINGS, isOpenSettingsKey, tabIndexAfterKey, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, extensionFlipNote, getSetting, setSetting, EXT_SETTING_PREFIX, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS } from './settings.js';
 
 test('settings are grouped into seven ordered tabs', () => {
   assert.deepEqual(SETTINGS_TABS.map(({ id, label }) => ({ id, label })), [
@@ -21,6 +21,7 @@ test('each registered setting appears in exactly one tab', () => {
   assert.equal(settingIds.length, new Set(settingIds).size);
   assert.deepEqual(new Set(settingIds), new Set([
     'terminalSide',
+    'toastPosition',
     'subagentsExpandedByDefault',
     'childFullViewByDefault',
     'chatViewDefault',
@@ -190,6 +191,26 @@ function memoryStorage(initial = {}) {
   const data = new Map(Object.entries(initial));
   return { getItem: (k) => (data.has(k) ? data.get(k) : null), setItem: (k, v) => data.set(k, String(v)), data };
 }
+
+test('core Appearance toast position defaults top-right and persists bottom-right across reloads', async (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const storage = memoryStorage();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
+    else delete globalThis.localStorage;
+  });
+  assert.equal(getSetting('toastPosition'), 'top-right');
+  assert.ok(SETTINGS_TABS.find((tab) => tab.id === 'appearance').settingIds.includes('toastPosition'));
+  assert.ok(BOARD_TABS.find((tab) => tab.id === 'appearance').settingIds.includes('toastPosition'));
+  setSetting('toastPosition', 'bottom-right');
+  const reloaded = await import('./settings.js?toast-position-reload');
+  assert.equal(reloaded.getSetting('toastPosition'), 'bottom-right');
+  reloaded.setSetting('toastPosition', 'top-right');
+  assert.equal(getSetting('toastPosition'), 'top-right');
+  storage.setItem('cm-setting-toastPosition', 'invalid');
+  assert.equal(getSetting('toastPosition'), 'top-right');
+});
 
 test('the three former server defaults are board-owned settings', () => {
   for (const id of LEGACY_SERVER_SETTING_IDS) {

@@ -553,7 +553,7 @@ export function createSlots({ document, storage, onError = (...a) => console.err
   //             reported and gives ''. Style the result with `.chat-prose` or
   //             the extension's own CSS.
   //             `notify({ id, title, body, actions })` (1.23.0) raises a card
-  //             in the bottom-right stack (public/notifications.js) and
+  //             in the shared toast stack (public/notifications.js) and
   //             resolves with the clicked action's id, or null when it is
   //             closed or withdrawn; `withdraw(id)` takes one down. The owner
   //             is forced to this extension, and its cards go when it does.

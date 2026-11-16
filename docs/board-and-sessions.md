@@ -219,9 +219,23 @@ subscriber is archived or missing, or the subscriber calls `stop_status_notices`
 
 ## Messages at the bottom of the board
 
-Short messages (toasts) stack bottom-centre, up to three at once, newest at the bottom, and show
-above any open dialog. How long one stays depends on its kind: a success 3 seconds, information 5,
-a warning 8, and an error until you close it with **×**. Hovering over the stack pauses every timer.
+Short messages (toasts) and persistent notifications share a stack about 12px from the
+top-right corner. Messages can cover board headers. Over an open dialog, the stack keeps
+its header, Close button and footer controls clear. **Settings → Appearance → Toast position** switches
+between **Top right** (the default) and **Bottom right**, immediately and for this browser.
+Newest messages sit nearest the chosen edge, with **Clear all** beside that edge. With two or
+more messages, **Clear all** dismisses the whole stack
+without running actions, answering requests or marking anything read. Persistent notifications
+stay until acted on or dismissed and are never evicted to make room for another message.
+All messages use the theme’s default surface and text colours. A stripe across the top shows
+severity. On timed toasts, the stripe drains in the severity colour over a tinted track; messages
+without a timer have a solid stripe. Both shades follow the active theme’s severity colours:
+information uses `accent`, success `green`, warning `warn`, and error `red`. A theme inherits
+any colour it does not set from its light or dark base.
+
+Up to three transient toasts appear at once. How long one stays depends on its kind: a success
+3 seconds, information 5, a warning 8, and an error until you close it with **×**. Hovering over
+the stack or focusing its buttons with the keyboard pauses every timer.
 A long message shows its first three lines with **Details** for the rest; opening Details keeps that
 message up until you close it. When a fourth arrives, the oldest plain message makes room before one
 with an action (such as **Resume** after an archive) or an error. Several launch warnings from
@@ -406,7 +420,7 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 
 **Settings** has Appearance, Decks, Sessions, Automation, Extensions, Shortcuts and Updates tabs, covering:
 
-- Theme, terminal side, terminal font size, and chat font size.
+- Theme, terminal side, toast position, terminal font size, and chat font size.
 - The decks this board shows, with each one's name, colour and connection (see
   [Add a deck to the board](#add-a-deck-to-the-board)).
 - Child-card and Chat defaults, the default folder for new sessions, and the Codex sandbox and approval
