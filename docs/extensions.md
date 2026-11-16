@@ -687,9 +687,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   store-method promises to finish. Nested work belonging to an admitted
   operation may finish. New calls receive a retryable
   `restarting` error (HTTP 503 with `Retry-After: 1` for session API requests).
-  If work does not finish, core cancels the restart, reopens admission and shows
-  **Restart pending** in Settings › Updates; the installed update still awaits
-  a restart. Automatic activation also waits for interactive working turns,
+  If work does not finish, an automatic restart is cancelled: core reopens
+  admission and shows **Restart pending** in Settings › Updates, naming each
+  operation still running and its age; the installed update still awaits a
+  restart. A restart a human asked for (**Restart** or **Restart now**) exits
+  anyway after the 30 seconds and names what it cut short. Automatic activation also waits for interactive working turns,
   headless runs, launches and schedules due within two minutes. Manual restarts
   drain server work while worker panes carry on.
 

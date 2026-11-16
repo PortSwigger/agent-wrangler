@@ -134,6 +134,7 @@ process.on('unhandledRejection', (err) => logError('[unhandledRejection]', err))
 // Registered before anything can exit, so even a failed boot says why it went.
 let publishRestartStatus = () => {};
 const restartBarrier = createRestartBarrier({
+  log,
   isIdle: () => headlessRunsInFlight() === 0,
   onStatus: (status) => {
     log(`[agent-wrangler] ${status.message}`);
@@ -142,7 +143,7 @@ const restartBarrier = createRestartBarrier({
   exit: (reason) => { shutdownLog.noteReason(reason); process.exit(0); },
 });
 const shutdownLog = installShutdownLog();
-shutdownLog.onSignal((signal, finish) => restartBarrier.request(`signal ${signal}`, finish));
+shutdownLog.onSignal((signal, finish) => restartBarrier.request(`signal ${signal}`, { afterDrain: finish }));
 
 ensurePtyHelperExecutable();
 
@@ -232,7 +233,7 @@ const coreTelemetry = createCoreTelemetry({
   // Tool-less, on Settings › Background model, billed to the card whose
   // prompts it typed.
   classify: async ({ prompt, stdin, sessionId }) => {
-    const r = await restartBarrier.run(() => runHeadless({ prompt, stdin, timeoutMs: 60000 }));
+    const r = await restartBarrier.run(() => runHeadless({ prompt, stdin, timeoutMs: 60000 }), 'headless:classify');
     if (r.liveSessionId && sessionManager.entryFor(sessionId)) sessionManager.recordPriorLiveSessionId(sessionId, r.liveSessionId, r.agent);
     return r;
   },
@@ -476,7 +477,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
         extId: id,
         settings: buildExtSettings({ id, settingDefs: e.settings, readSettings: (extId) => extensionSettings(extId) }),
         log,
-      }));
+      }), `ext-store:${name === id ? id : `${id}:${name}`}`);
     }
     // buildHostApi still THROWS as its contract (an unsatisfiable
     // engines.wranglerApi, an unknown capability) — what changed is that the
@@ -607,7 +608,7 @@ function startSweepsFor(id) {
     if (sweep.extId !== id) continue;
     const t = setInterval(() => {
       if (restartBarrier.draining()) return;
-      Promise.resolve().then(() => restartBarrier.run(() => sweep.run({ host: hostApiFor(id) }))).catch((err) => logError(`[ext:${id}:${sweep.id}]`, err));
+      Promise.resolve().then(() => restartBarrier.run(() => sweep.run({ host: hostApiFor(id) }), `sweep:${id}:${sweep.id}`)).catch((err) => logError(`[ext:${id}:${sweep.id}]`, err));
     }, sweep.everyMs);
     t.unref();
     handles.push(t);
@@ -734,7 +735,7 @@ let lastControlActivity = Date.now();
 // could interleave diffCheckStatus's last-notified state and re-fire a transition into a
 // duplicate wake/resume. A targeted poll (`only` set) is never guarded — it must not be
 // starved by a long full sweep and never runs the transition diff below.
-const pollPrStatuses = createFullSweepGuard((only) => backgroundWork(() => runPrStatusSweep(only)));
+const pollPrStatuses = createFullSweepGuard((only) => backgroundWork('pr-status-sweep', () => runPrStatusSweep(only)));
 
 // Broadcast a PR event once its pane nudge has been delivered. `nudged` is true
 // only when the session actually has the line: pasted into a live pane, or
@@ -1183,7 +1184,7 @@ const sessionApi = createSessionApi({
     if (entry.archivedAt) return 'archived';
     return entry.tmux && sessionManager.alive.has(entry.tmux) ? 'running' : 'stopped';
   },
-  handlers: { '/mcp': mcpRequestHandler, '/pr-attach': restartBarrier.http(prAttachHandler), '/pr-model': prModelHandler, '/status-event': restartBarrier.http(statusEventHandler) },
+  handlers: { '/mcp': mcpRequestHandler, '/pr-attach': restartBarrier.http(prAttachHandler, 'http:/pr-attach'), '/pr-model': prModelHandler, '/status-event': restartBarrier.http(statusEventHandler, 'http:/status-event') },
   log, logWarn, logError,
 });
 // Every launch starts a fresh status lifecycle with its fresh token.
@@ -1389,7 +1390,7 @@ async function rebuildOnce() {
   return graph;
 }
 
-const rebuild = createRebuildCoalescer(() => backgroundWork(rebuildOnce));
+const rebuild = createRebuildCoalescer(() => backgroundWork('rebuild', rebuildOnce));
 let codeVersion = null;
 // codeVersion as a log shows it: a checkout's short commit, a package's whole
 // version (slicing "10.10.10" to seven characters would name another release).
@@ -1401,13 +1402,14 @@ const QUIET_SCHEDULE_WINDOW_MS = 2 * 60 * 1000;
 
 publishRestartStatus = (status) => broadcast({ type: 'restart-status', ...status });
 
-async function backgroundWork(fn) {
+async function backgroundWork(label, fn) {
   if (!restartBarrier.accepting()) return;
-  return restartBarrier.run(fn);
+  return restartBarrier.run(fn, label);
 }
 
-function exitForRestart(reason) {
-  restartBarrier.request(reason).catch((err) => logError('[restart]', err));
+// `force` only for a restart a human asked for; see request() in restart-barrier.js.
+function exitForRestart(reason, { force = false } = {}) {
+  restartBarrier.request(reason, { force }).catch((err) => logError('[restart]', err));
 }
 
 function wranglerIsQuiet() {
@@ -1521,7 +1523,7 @@ controlWss.on('connection', (ws) => {
     // reads exactly like the hard kill a missing reason is supposed to mean. The
     // small delay lets the ack reach the browser before the socket dies with us.
     restartBarrier,
-    restart: () => exitForRestart('restart requested from the board'),
+    restart: () => exitForRestart('restart requested from the board', { force: true }),
     canRestart: restartSupported(),
     updates,
     staleGuiSession: () => staleGuiSession,
@@ -1598,6 +1600,8 @@ async function main() {
     onApplied: (result) => {
       if (result.extensions) {
         broadcast({ type: 'update-applied', extensions: result.extensions });
+        // Unforced: an unattended restart gives up and reopens rather than cut
+        // short work nobody chose to interrupt.
         exitForRestart(`auto-updated ${result.extensions.join(', ')}`);
         return;
       }
@@ -1638,7 +1642,7 @@ async function main() {
   // 4h idle threshold gives ample hysteresis. Rebuild only when it actually acts.
   setInterval(() => {
     if (restartBarrier.draining()) return;
-    restartBarrier.run(() => sessionManager.reconcileSuspend(lastGraph?.sessions || [], readConfig()))
+    restartBarrier.run(() => sessionManager.reconcileSuspend(lastGraph?.sessions || [], readConfig()), 'reconcile-suspend')
       .then((ids) => { if (ids.length) return rebuild(); })
       .catch(() => {});
   }, 60000);
@@ -1764,7 +1768,7 @@ async function main() {
     setInterval(() => { if (!restartBarrier.draining()) updates.tick(); }, UPDATE_CHECK_MS).unref();
   }
   setInterval(() => installDrift.poll(), 60 * 1000).unref();
-  setInterval(() => backgroundWork(refreshOneStaleSession).catch((err) => logError('[agent-wrangler] session refresh failed:', err?.message || err)), 60 * 1000).unref();
+  setInterval(() => backgroundWork('refresh-stale-session', refreshOneStaleSession).catch((err) => logError('[agent-wrangler] session refresh failed:', err?.message || err)), 60 * 1000).unref();
 
   // Background PR check-status poll. setInterval fires on a fixed cadence regardless
   // of whether the prior async tick has settled, so a slow sweep CAN overlap the next
@@ -1780,8 +1784,8 @@ async function main() {
   // process alive. The single-instance-per-DATA_DIR lock makes this the sole
   // scheduler owner, so a schedule can never double-fire across instances.
   const schedulePoll = setInterval(() => {
-    backgroundWork(fireDueSchedules).catch(() => {});
-    backgroundWork(fireDueSnoozeWakesTick).catch(() => {});
+    backgroundWork('schedules', fireDueSchedules).catch(() => {});
+    backgroundWork('snooze-wakes', fireDueSnoozeWakesTick).catch(() => {});
   }, 30000);
   schedulePoll.unref();
 
@@ -1791,9 +1795,9 @@ async function main() {
   // passed while the server was down fires on this first sweep rather than
   // waiting up to 2s more — and, more importantly, so it's not lost entirely if
   // the process is killed again before the interval's first tick.
-  backgroundWork(fireMailSettlesTick).catch(() => {});
+  backgroundWork('mail-settles', fireMailSettlesTick).catch(() => {});
   const mailPoll = setInterval(() => {
-    backgroundWork(fireMailSettlesTick).catch(() => {});
+    backgroundWork('mail-settles', fireMailSettlesTick).catch(() => {});
   }, 2000);
   mailPoll.unref();
 
@@ -1804,7 +1808,7 @@ async function main() {
   // tick captures no panes and runs no tmux at all. No logging here for the same
   // reason as the sweeps above: at 2s a line would be tens of thousands a day.
   const paneDrainPoll = setInterval(() => {
-    backgroundWork(() => paneDeferral.drain()).catch(() => {});
+    backgroundWork('pane-deferral', () => paneDeferral.drain()).catch(() => {});
   }, 2000);
   paneDrainPoll.unref();
 
