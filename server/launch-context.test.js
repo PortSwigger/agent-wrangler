@@ -521,17 +521,39 @@ test('claudeHooks: in a devcontainer, a hook under a granted dir is rewritten to
   assert.ok(!script.slice(script.indexOf('sh -lc')).includes('/ext/secrets/mask-bash.mjs'));
 });
 
-test('agent launch environment prevents Git prompts and preserves custom SSH commands', () => {
+test('agent launches disable terminal prompts while preserving SSH configuration', () => {
   for (const [env, context, expected] of [
-    [{}, undefined, '"ssh" -o BatchMode=yes'],
-    [{ GIT_SSH_COMMAND: 'ssh -i "custom key" -p 2222' }, undefined, 'ssh -i "custom key" -p 2222 -o BatchMode=yes'],
-    [{ GIT_SSH: '/custom/ssh' }, undefined, '"/custom/ssh" -o BatchMode=yes'],
-    [{ GIT_SSH: '/custom path/ssh' }, undefined, '"/custom path/ssh" -o BatchMode=yes'],
-    [{ GIT_SSH_COMMAND: 'ssh -p 2222' }, { env: { GIT_SSH_COMMAND: 'ssh -i "context key"' } }, 'ssh -i "context key" -o BatchMode=yes'],
+    [{}, undefined, ['0', '/usr/bin/false', 'force', '', '']],
+    [{ GIT_SSH_COMMAND: 'ssh -i "custom key" -p 2222' }, undefined, ['0', '/usr/bin/false', 'force', 'ssh -i "custom key" -p 2222', '']],
+    [{ GIT_SSH: '/custom path/ssh' }, undefined, ['0', '/usr/bin/false', 'force', '', '/custom path/ssh']],
+    [{ SSH_ASKPASS: '/custom helper', SSH_ASKPASS_REQUIRE: 'prefer' }, undefined, ['0', '/custom helper', 'prefer', '', '']],
+    [{ SSH_ASKPASS: '/custom helper' }, undefined, ['0', '/custom helper', '', '', '']],
+    [{ SSH_ASKPASS_REQUIRE: 'prefer' }, undefined, ['0', '/usr/bin/false', 'prefer', '', '']],
+    [{}, { env: { SSH_ASKPASS: '/context helper', SSH_ASKPASS_REQUIRE: 'never' } }, ['0', '/context helper', 'never', '', '']],
+    [{}, { env: { SSH_ASKPASS: '/context helper' } }, ['0', '/context helper', '', '', '']],
   ]) {
-    const cmd = launchEnvPrefix(context, shellQuote) + `/bin/sh -c 'printf "%s\\n" "$GIT_TERMINAL_PROMPT" "$GIT_SSH_COMMAND"'`;
+    const cmd = launchEnvPrefix(context, shellQuote) + `/bin/sh -c 'printf "%s\\n" "$GIT_TERMINAL_PROMPT" "$SSH_ASKPASS" "$SSH_ASKPASS_REQUIRE" "$GIT_SSH_COMMAND" "$GIT_SSH"'`;
     const result = spawnSync('/bin/sh', ['-c', cmd], { env: { PATH: process.env.PATH, GIT_TERMINAL_PROMPT: '1', ...env }, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(result.stdout.trim().split('\n'), ['0', expected]);
+    assert.deepEqual(result.stdout.split('\n').slice(0, -1), expected);
   }
+});
+
+test('Git in an agent terminal uses the repository core.sshCommand identity', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-ssh-command-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const ssh = path.join(dir, 'fake ssh');
+  const argsFile = path.join(dir, 'args');
+  fs.writeFileSync(ssh, `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(argsFile)}\nexit 1\n`, { mode: 0o700 });
+  const env = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_SSH_VARIANT: 'ssh' };
+  for (const args of [['init', '-q'], ['config', 'core.sshCommand', `${shellQuote(ssh)} --identity repo-key`]]) {
+    const result = spawnSync('git', args, { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const result = spawnSync('/bin/sh', ['-c', launchEnvPrefix(undefined, shellQuote)
+    + 'git ls-remote ssh://127.0.0.1:1/acme/widgets.git'], { cwd: dir, env, encoding: 'utf8', timeout: 2000 });
+  assert.notEqual(result.status, 0);
+  const args = fs.readFileSync(argsFile, 'utf8').split('\n');
+  assert.deepEqual(args.slice(0, 2), ['--identity', 'repo-key']);
+  assert.ok(args.includes('127.0.0.1'));
 });

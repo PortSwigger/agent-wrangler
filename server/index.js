@@ -358,7 +358,8 @@ const { sessionFromGraph, tmuxFor, socketFor } = createTargets(sessionManager, (
 // deliverMessage (a human pressing send chose this moment) — see pane-deferral.js.
 const notificationBlocks = createNotificationBlocks({
   entryFor: (id) => sessionManager.entryFor(id), mailStore, events: coreEvents,
-  isPending: (id) => Boolean(mailStore.unreadInfo(id).unread || paneDeferral.pending(id).length),
+  isPending: (id) => paneDeferral.pending(id).length > 0,
+  hasPane: (id) => Boolean(tmuxFor(id)),
   log: logError,
 });
 const notificationReady = createNotificationReadiness({

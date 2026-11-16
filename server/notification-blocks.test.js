@@ -12,7 +12,7 @@ function fixture(t) {
   const mailStore = new MailboxStore(path.join(dir, 'mail.json'));
   const entries = { child: { spawnedBy: 'parent', parentSession: 'nested' }, parent: {}, nested: {} };
   const events = [];
-  const blocks = createNotificationBlocks({ entryFor: (id) => entries[id], mailStore,
+  const blocks = createNotificationBlocks({ entryFor: (id) => entries[id], mailStore, isPending: () => true,
     events: { emit: (...args) => events.push(args) } });
   return { blocks, entries, events, mailStore };
 }
@@ -88,4 +88,52 @@ test('a full supervisor mailbox retries without repeating the host event or othe
   assert.equal(mailStore.unreadMessages('parent').length, 1);
   assert.equal(mailStore.unreadMessages('nested').length, 1);
   assert.equal(events.length, 1);
+});
+
+test('a missing pane clears the composer episode even while mail remains pending', (t) => {
+  const { blocks, mailStore, events } = fixture(t);
+  mailStore.append('child', { from: 'other', body: 'mail' }, 0);
+  blocks.deferred('child', 'composer not confirmed empty', 0);
+  blocks.deferred('child', 'no tmux target', BLOCKED_AFTER_MS - 1);
+  blocks.sweep(BLOCKED_AFTER_MS);
+  assert.equal(blocks.blocked('child', BLOCKED_AFTER_MS), false);
+  assert.equal(events.length, 0);
+});
+
+test('already notified unread mail does not keep a canceled pane notification blocked', (t) => {
+  const { entries, mailStore, events } = fixture(t);
+  const blocks = createNotificationBlocks({ entryFor: (id) => entries[id], mailStore,
+    events: { emit: (...args) => events.push(args) } });
+  mailStore.append('child', { from: 'other', body: 'mail' }, 0);
+  mailStore.takeDueSettles(BLOCKED_AFTER_MS - 1);
+  mailStore.markNotified('child', BLOCKED_AFTER_MS - 1);
+  blocks.deferred('child', 'composer not confirmed empty', 0);
+  blocks.sweep(BLOCKED_AFTER_MS);
+  assert.equal(mailStore.unreadInfo('child').unread, 1);
+  assert.equal(blocks.blocked('child', BLOCKED_AFTER_MS), false);
+  assert.equal(events.length, 0);
+});
+
+test('mail still awaiting notification keeps a composer episode pending', (t) => {
+  const { entries, mailStore, events } = fixture(t);
+  const blocks = createNotificationBlocks({ entryFor: (id) => entries[id], mailStore,
+    events: { emit: (...args) => events.push(args) } });
+  mailStore.append('child', { from: 'other', body: 'mail' }, 0);
+  blocks.deferred('child', 'composer not confirmed empty', 0);
+  blocks.sweep(BLOCKED_AFTER_MS);
+  assert.equal(blocks.blocked('child', BLOCKED_AFTER_MS), true);
+  assert.equal(events.length, 1);
+});
+
+test('a dormant recipient clears its episode without a new terminal delivery attempt', (t) => {
+  const { entries, mailStore, events } = fixture(t);
+  let live = true;
+  const blocks = createNotificationBlocks({ entryFor: (id) => entries[id], mailStore,
+    events: { emit: (...args) => events.push(args) }, hasPane: () => live });
+  mailStore.append('child', { from: 'other', body: 'mail' }, 0);
+  blocks.deferred('child', 'composer not confirmed empty', 0);
+  live = false;
+  blocks.sweep(BLOCKED_AFTER_MS);
+  assert.equal(blocks.blocked('child', BLOCKED_AFTER_MS), false);
+  assert.equal(events.length, 0);
 });

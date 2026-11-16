@@ -275,11 +275,12 @@ export function launchAddDirsOf(launchContext) {
 // `quote` is passed in so this module does not import the agents.
 export function launchEnvPrefix(launchContext, quote) {
   const env = launchEnvOf(launchContext);
-  const ssh = env.GIT_SSH_COMMAND != null ? quote(env.GIT_SSH_COMMAND)
-    : env.GIT_SSH != null ? quote(quote(env.GIT_SSH))
-    : '"${GIT_SSH_COMMAND:-\\"${GIT_SSH:-ssh}\\"}"';
+  const askpass = env.SSH_ASKPASS != null ? quote(env.SSH_ASKPASS) : '"${SSH_ASKPASS-/usr/bin/false}"';
+  const requireAskpass = env.SSH_ASKPASS_REQUIRE != null ? quote(env.SSH_ASKPASS_REQUIRE)
+    : env.SSH_ASKPASS != null ? '"${SSH_ASKPASS_REQUIRE-}"'
+    : '"${SSH_ASKPASS_REQUIRE-$(test "${SSH_ASKPASS+x}" = x || printf force)}"';
   return Object.entries(env).map(([k, v]) => `${k}=${quote(v)} `).join('')
-    + `GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=${ssh}" -o BatchMode=yes" `;
+    + `GIT_TERMINAL_PROMPT=0 SSH_ASKPASS_REQUIRE=${requireAskpass} SSH_ASKPASS=${askpass} `;
 }
 
 // `/bin/sh -c '<check>' && ` — the pane-side refusal for `refuseIfSet`, run

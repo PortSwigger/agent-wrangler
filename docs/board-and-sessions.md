@@ -297,10 +297,12 @@ proceed through the composer and dialog checks. After five minutes of waiting be
 the card shows a blocked-notification warning, the spawning and parent sessions receive mail,
 and extensions receive a `session-notification:blocked` event. The draft stays untouched.
 
-Agent terminals set `GIT_TERMINAL_PROMPT=0` and append `-o BatchMode=yes` to the configured
-SSH command. Background Git fetches, including plugin marketplace refreshes, fail when
-credentials are unavailable instead of placing a password or key-passphrase prompt on the agent's
-terminal. Existing SSH command options are retained.
+Agent terminals set `GIT_TERMINAL_PROMPT=0`. When no `SSH_ASKPASS` helper is configured,
+they default to `SSH_ASKPASS=/usr/bin/false` and `SSH_ASKPASS_REQUIRE=force`. OpenSSH 8.4 or
+newer then fails unavailable credentials and host-key confirmations through that helper instead
+of placing a prompt on the agent's terminal, including during background plugin-marketplace
+Git fetches. User-provided askpass helpers and requirements are retained. Git's SSH command,
+identity and variant selection remain unchanged, including per-repository `core.sshCommand`.
 
 **Open terminal** creates an independent shell; it does not replace or interrupt the agent terminal.
 
