@@ -103,3 +103,75 @@ test('sweep guard is released when rebuilding fails', async (t) => {
   await h.fireDueSchedules();
   assert.equal(h.calls, 2);
 });
+
+for (const kind of ['cron', 'once']) {
+  test(`hung ${kind} launch times out, continues the batch and releases later ticks`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let finish;
+    let first = true;
+    const h = harness(t, () => {
+      if (first) {
+        first = false;
+        return new Promise((resolve) => { finish = resolve; });
+      }
+      return Promise.resolve({ sessionId: 'HEALTHY' });
+    });
+    const stuck = h.create(kind === 'once' ? { kind: 'once', runAt: '2026-11-16T09:00:00Z' } : undefined);
+    h.create();
+    const sweep = h.fireDueSchedules();
+    let settled = false;
+    sweep.then(() => { settled = true; });
+    t.mock.timers.tick(600000);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, true, 'a hung launch must not hold the sweep forever');
+    await sweep;
+    assert.equal(h.calls, 2);
+    assert.equal(h.messages[0].type, 'schedule-error');
+    assert.equal(h.messages[0].id, stuck.id);
+    assert.match(h.messages[0].message, /timed out/i);
+    assert.equal(h.messages[1].type, 'schedule-fired');
+    assert.equal(h.reload().due(Date.parse('2026-11-16T09:00:00Z')).length, 0);
+    h.advance(86400000);
+    await h.fireDueSchedules();
+    assert.equal(h.calls, kind === 'cron' ? 4 : 3);
+    const beforeLateCompletion = h.store.snapshot();
+    const beforeMessages = [...h.messages];
+    finish({ sessionId: 'LATE' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(h.store.snapshot(), beforeLateCompletion);
+    assert.deepEqual(h.messages, beforeMessages);
+  });
+}
+
+test('manual launch timeout preserves its automatic slot and ignores late rejection', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let rejectLaunch;
+  const h = harness(t, () => new Promise((_resolve, reject) => { rejectLaunch = reject; }));
+  const s = h.create();
+  const firing = h.fireSchedule(s.id, { manual: true });
+  t.mock.timers.tick(600000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.messages.length, 1);
+  assert.equal(h.messages[0].type, 'schedule-error');
+  await firing;
+  assert.equal(h.store.snapshot().schedules[0].nextRunAt, s.nextRunAt);
+  assert.equal(h.store.snapshot().schedules[0].enabled, true);
+  rejectLaunch(new Error('Late launch failure'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.messages.length, 1);
+});
+
+test('a four-minute launch still records success before the deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let finish;
+  const h = harness(t, () => new Promise((resolve) => { finish = resolve; }));
+  const s = h.create();
+  const sweep = h.fireDueSchedules();
+  t.mock.timers.tick(240000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(h.messages, []);
+  finish({ sessionId: 'SLOW' });
+  await sweep;
+  assert.equal(h.messages[0].type, 'schedule-fired');
+  assert.equal(h.store.snapshot().schedules.find((x) => x.id === s.id).lastSessionId, 'SLOW');
+});

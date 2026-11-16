@@ -924,9 +924,14 @@ async function fireSchedule(id, { manual = false } = {}) {
   if (!snap) return;
   const now = Date.now();
   const at = new Date(now).toISOString();
+  const launchTimeoutMinutes = 10;
+  let launchTimer;
   try {
     if (!manual) scheduleStore.markFired(id, { at, sessionId: null }, now);
-    const { sessionId } = await performScheduleAction(snap.action, now, snap.scheduledBy);
+    const deadline = new Promise((_, reject) => {
+      launchTimer = setTimeout(() => reject(new Error(`Scheduled launch timed out after ${launchTimeoutMinutes} minutes; its outcome is unknown.`)), launchTimeoutMinutes * 60000);
+    });
+    const { sessionId } = await Promise.race([performScheduleAction(snap.action, now, snap.scheduledBy), deadline]);
     scheduleStore.markFired(id, { at, sessionId }, now, { advance: false });
     // A one-off that fired cleanly has nothing left to show; delete it so agents'
     // self-scheduled wake-ups don't pile up as dead rows. A failed one stays (below).
@@ -940,6 +945,8 @@ async function fireSchedule(id, { manual = false } = {}) {
   } catch (err) {
     if (manual) scheduleStore.markFired(id, { at, sessionId: null }, now, { advance: false });
     broadcast({ type: 'schedule-error', id, name: snap.name, message: String(err?.message || err) });
+  } finally {
+    clearTimeout(launchTimer);
   }
 }
 
