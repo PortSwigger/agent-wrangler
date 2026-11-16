@@ -32,6 +32,33 @@ test('notices use theme surface and text with a theme-derived top stripe and cou
   assert.doesNotMatch(css, /--toast-(?:bg|fg)/);
 });
 
+test('shadow gutters preserve card offsets and the usable content height', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+  const stack = css.slice(css.indexOf('#toast {')).match(/^[^{]+\{([^}]*)\}/)[1];
+  assert.match(stack, /box-sizing: content-box;/);
+  assert.match(stack, /padding: 12px 12px 24px;/);
+  assert.match(stack, /inset: calc\(var\(--toast-top\) - 12px\) 4px auto auto;/);
+  assert.match(stack, /max-height: calc\(100dvh - var\(--toast-top\) - var\(--toast-bottom\)\);/);
+  assert.match(stack, /max-width: min\(560px, calc\(100vw - 32px\)\);/);
+  assert.match(css, /#toast\[data-position="bottom-right"\] \{ top: auto; bottom: calc\(var\(--toast-bottom\) - 24px\); \}/);
+});
+
+test('shadow gutters do not enlarge the header collision band in either position', () => {
+  for (const position of ['top-right', 'bottom-right']) {
+    const { doc, clock } = fakeWorld();
+    doc.defaultView = { innerWidth: 1000, innerHeight: 800 };
+    const header = doc.createElement('header');
+    header.getBoundingClientRect = () => ({ left: 400, right: 430, top: 0, bottom: 72, width: 30, height: 72 });
+    doc.querySelectorAll = () => [header];
+    const toasts = createToasts({ document: doc, position, ...clock });
+    toasts.show('First', 'error');
+    const stack = stackOf(doc);
+    stack.getBoundingClientRect = () => ({ left: 424, right: 996, width: 572 });
+    toasts.show('Second', 'error');
+    assert.equal(stack.style['--toast-top'], '16px', 'a header under only the shadow gutter does not move the cards');
+  }
+});
+
 test('every timed toast has a countdown stripe and untimed notices have a solid stripe', () => {
   const { doc, toasts } = fakeWorld();
   const latest = () => stackOf(doc).children.filter((c) => c.classList.contains('toast')).at(-1);
