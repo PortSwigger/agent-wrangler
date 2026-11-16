@@ -2554,17 +2554,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 - **Client `api.ui.markdownPreview(md)`** returns sanitised HTML from the shared
   markdown renderer (`public/markdown-preview.js`).
 - **Client `api.ui.notify({ id, title, body, actions })`** (1.23.0) raises a card in
-  the board's bottom-right notification stack for something the human did not ask
+  the board's shared bottom-right toast stack for something the human did not ask
   about. Cards stack, stay until answered or closed, and never take focus. It
   resolves with the clicked action's `id` (`actions` is up to three
-  `{ id, label, primary? }`), or `null` when the card is closed with × or
+  `{ id, label, primary? }`), or `null` when the card is dismissed with ×, Clear all or
   withdrawn. Showing an `id` that is already up updates it in place.
   `api.ui.withdraw(id)` takes one down. Ids are per extension, and an extension's
-  cards are removed when it is turned off. All text is set as text.
+  cards are removed when it is turned off. Persistent cards do not count towards
+  the transient toast limit and are never evicted. All text is set as text.
 - **Client `api.ui.toast({ severity, text, detail, actions })`** (1.71.0) shows a
   transient message in the board's own toast stack (`public/toast.js`), the one
-  core's toasts use, for feedback on something the human just did. It shows on
-  every view, not only the extension's own, and above an open dialog.
+  core's toasts and `ui.notify` use, for feedback on something the human just did.
+  It shows on every view, not only the extension's own, and above an open dialog.
   `severity` is `'success'`, `'info'` (the default), `'warning'` or `'error'`
   and sets how long it stays: 3 s, 5 s, 8 s, or until closed. `detail` is
   longer text behind a Details expander, and `actions` is up to three

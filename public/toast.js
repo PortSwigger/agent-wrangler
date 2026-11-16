@@ -1,5 +1,5 @@
-// The board's toast stack: up to MAX_TOASTS transient messages, newest at the
-// bottom, each with a close button. Zero coupling — pure DOM and timers — so
+// The board's shared stack: up to MAX_TOASTS transient messages plus persistent
+// notifications, newest at the bottom. Pure DOM and timers, so
 // every module can surface feedback without importing app state; `document` and
 // the clock are injected so the stacking rules are unit-testable.
 //
@@ -31,16 +31,19 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
   const live = []; // oldest first: { el, id, key, rank, remaining, started, timer }
   const modals = []; // open modal dialogs, in the order they opened
   let stack = null;
+  let clearButton = null;
   let held = false; // hovered or focused: every timer waits
 
   function root() {
-    if (stack && stack.isConnected !== false) return stack;
+    if (stack) return stack;
     stack = document.getElementById?.('toast') || document.createElement('div');
     stack.id = 'toast';
     stack.className = '';
     stack.setAttribute('popover', 'manual');
     stack.setAttribute('role', 'region');
     stack.setAttribute('aria-label', 'Messages');
+    clearButton = button('toast-clear', 'Clear all', clear);
+    stack.append(clearButton);
     const hold = (on) => () => { held = on; for (const t of live) (on ? pause : run)(t); };
     stack.addEventListener('mouseenter', hold(true));
     stack.addEventListener('mouseleave', () => { if (!stack.matches?.(':focus-within')) hold(false)(); });
@@ -67,6 +70,7 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
   // a top-layer element opened after it.
   function place(raise = false) {
     const el = root();
+    clearButton.hidden = live.length < 2;
     const open = () => el.matches?.(':popover-open');
     if (!live.length) { held = false; if (open()) el.hidePopover(); return; }
     const want = host();
@@ -92,14 +96,17 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
     t.timer = later(() => dismiss(t), Math.max(0, t.remaining));
   }
 
-  function dismiss(t) {
+  function dismiss(t, notify = true) {
     const i = live.indexOf(t);
     if (i < 0) return;
     live.splice(i, 1);
     if (t.timer != null) cancel(t.timer);
     t.el.remove();
     place();
+    if (notify) t.onDismiss?.();
   }
+
+  function clear() { for (const t of [...live]) dismiss(t); }
 
   function button(className, label, onClick) {
     const b = document.createElement('button');
@@ -110,14 +117,22 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
     return b;
   }
 
-  function build(t, text, severity, { actions, duration, details }) {
-    const el = document.createElement('div');
+  function build(t, text, severity, { actions, duration, details, body: messageBody }) {
+    const el = t.el || document.createElement('div');
+    el.replaceChildren();
     el.className = `toast toast-${severity}`;
+    if (t.persistent) el.classList.toggle('toast-persistent');
     el.setAttribute('role', severity === 'error' || severity === 'warning' ? 'alert' : 'status');
     const body = document.createElement('div');
     body.className = 'toast-text';
     body.textContent = text;
     el.append(body);
+    if (messageBody) {
+      const content = document.createElement('div');
+      content.className = 'toast-body';
+      content.textContent = messageBody;
+      el.append(content);
+    }
     let more = null;
     if (details) {
       more = document.createElement('div');
@@ -129,7 +144,7 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
     const row = document.createElement('div');
     row.className = 'toast-actions';
     for (const action of actions) {
-      row.append(button('toast-action', action.label, () => { dismiss(t); action.onClick(); }));
+      row.append(button(`toast-action${action.primary ? ' toast-action-primary' : ''}`, action.label, () => { dismiss(t, false); action.onClick(); }));
     }
     // Opening Details means the human is reading it: it then stays until closed.
     const expander = button('toast-action toast-more', 'Details', () => {
@@ -161,8 +176,9 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
   // with actions, and an error last, so a 4th toast never silently drops an
   // error or an undo while a passing note is still up.
   function evict() {
-    const lowest = Math.min(...live.map((t) => t.rank));
-    dismiss(live.find((t) => t.rank === lowest));
+    const transient = live.filter((t) => !t.persistent);
+    const lowest = Math.min(...transient.map((t) => t.rank));
+    dismiss(transient.find((t) => t.rank === lowest));
   }
 
   function show(text, isErr, opts) {
@@ -174,17 +190,33 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
     const id = opts?.id ?? null;
     // The same message again restarts its toast instead of stacking a copy.
     const key = actions.length || details ? null : `${severity}\n${text}`;
-    const same = live.find((t) => (id != null && t.id === id) || (key != null && t.key === key));
+    const same = live.find((t) => !t.persistent && ((id != null && t.id === id) || (key != null && t.key === key)));
     if (same) dismiss(same);
     const t = { id, key, rank: severity === 'error' ? 2 : actions.length ? 1 : 0, duration, remaining: duration, started: 0, timer: null, bar: null };
     t.el = build(t, text, severity, { actions, duration, details });
-    while (live.length >= MAX_TOASTS) evict();
+    while (live.filter((item) => !item.persistent).length >= MAX_TOASTS) evict();
     live.push(t);
     root().append(t.el);
     place(true);
+    stack.scrollTop = stack.scrollHeight;
     t.measure();
     run(t);
     return t.el;
+  }
+
+  function showPersistent(id, { title, body, actions, onDismiss }) {
+    let t = live.find((item) => item.persistent && item.id === id);
+    const fresh = !t;
+    if (!t) t = { id, persistent: true, duration: Infinity, remaining: Infinity, timer: null };
+    t.onDismiss = onDismiss;
+    t.el = build(t, title, 'info', { body, actions, duration: Infinity });
+    if (fresh) {
+      live.push(t);
+      root().append(t.el);
+    }
+    place(true);
+    if (fresh) stack.scrollTop = stack.scrollHeight;
+    t.measure();
   }
 
   // A modal dialog opening goes into the top layer above the stack; follow it.
@@ -193,30 +225,35 @@ export function createToasts({ document, setTimeout: later = globalThis.setTimeo
     if (!MO || !document.documentElement) return;
     modals.push(...(document.querySelectorAll?.('dialog:modal') ?? []));
     new MO((records) => {
-      let changed = false;
+      let changed = modals.some((d) => d.isConnected === false);
       for (const r of records) {
+        if (r.type === 'childList') continue;
         const d = r.target;
         if (d.tagName !== 'DIALOG') continue;
         changed = true;
         const i = modals.indexOf(d);
         if (i >= 0) modals.splice(i, 1);
-        if (d.open && d.matches(':modal')) modals.push(d);
+        if (d.open && d.isConnected !== false && d.matches(':modal')) modals.push(d);
       }
       if (changed && live.length) place(true);
-    }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'] });
+    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
   }
   watch();
 
-  const dismissId = (id) => { const t = live.find((x) => x.id === id); if (t) dismiss(t); };
-  return { show, dismiss: dismissId, count: () => live.length, clear: () => { for (const t of [...live]) dismiss(t); } };
+  const dismissId = (id, persistent = false) => { const t = live.find((x) => !!x.persistent === persistent && x.id === id); if (t) dismiss(t); };
+  return { show, showPersistent, dismiss: dismissId, dismissPersistent: (id) => dismissId(id, true), count: () => live.length, clear };
 }
 
-let shared = null;
+const shared = new WeakMap();
+export function getToasts(document) {
+  if (!shared.has(document)) shared.set(document, createToasts({ document }));
+  return shared.get(document);
+}
+
 export function toast(text, isErr, opts) {
-  shared ||= createToasts({ document: globalThis.document });
-  shared.show(text, isErr, opts);
+  getToasts(globalThis.document).show(text, isErr, opts);
 }
 
 export function dismissToast(id) {
-  shared?.dismiss(id);
+  shared.get(globalThis.document)?.dismiss(id);
 }

@@ -2,56 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createToasts, MAX_TOASTS, SEVERITY_MS } from './toast.js';
-
-// Just enough DOM for the stack: elements with children, classes, attributes,
-// listeners and a popover state, plus a manual clock.
-function fakeWorld() {
-  const make = (tag) => {
-    const classes = new Set();
-    const el = {
-      tag, children: [], parentNode: null, textContent: '', attrs: {}, listeners: {}, style: {}, hidden: false, popoverOpen: false, shows: 0,
-      get className() { return [...classes].join(' '); },
-      set className(v) { classes.clear(); for (const c of String(v).split(/\s+/).filter(Boolean)) classes.add(c); },
-      classList: { toggle: (c) => (classes.has(c) ? (classes.delete(c), false) : (classes.add(c), true)), contains: (c) => classes.has(c) },
-      get isConnected() { let n = el; while (n.parentNode) n = n.parentNode; return n === doc.body; },
-      setAttribute(k, v) { el.attrs[k] = v; },
-      addEventListener(t, fn) { (el.listeners[t] ||= []).push(fn); },
-      fire(t, e = {}) { for (const fn of el.listeners[t] || []) fn({ stopPropagation() {}, ...e }); },
-      click() { el.fire('click'); },
-      matches: (sel) => (sel === ':popover-open' ? el.popoverOpen : false),
-      showPopover() { el.popoverOpen = true; el.shows++; },
-      hidePopover() { el.popoverOpen = false; },
-      append(...kids) { for (const k of kids) { if (k.parentNode) k.remove(); k.parentNode = el; el.children.push(k); } },
-      remove() { if (!el.parentNode) return; const p = el.parentNode; p.children.splice(p.children.indexOf(el), 1); el.parentNode = null; if (el.popoverOpen) el.popoverOpen = false; },
-    };
-    return el;
-  };
-  const doc = { createElement: make, getElementById: () => null };
-  doc.body = make('body');
-  let t = 0;
-  const timers = new Map();
-  let next = 1;
-  const clock = {
-    setTimeout: (fn, ms) => { timers.set(next, { fn, at: t + ms }); return next++; },
-    clearTimeout: (id) => timers.delete(id),
-    now: () => t,
-    advance(ms) {
-      const end = t + ms;
-      for (;;) {
-        const due = [...timers].filter(([, v]) => v.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
-        if (!due) break;
-        timers.delete(due[0]);
-        t = due[1].at;
-        due[1].fn();
-      }
-      t = end;
-    },
-  };
-  return { doc, clock, toasts: createToasts({ document: doc, ...clock }) };
-}
+import { fakeWorld } from './test-fixtures/toast-world.js';
 
 const stackOf = (doc) => doc.body.children.find((c) => c.attrs.popover === 'manual');
-const shown = (doc) => (stackOf(doc)?.children || []).map((c) => c.children[0].textContent);
+const shown = (doc) => (stackOf(doc)?.children || []).filter((c) => c.classList.contains('toast')).map((c) => c.children[0].textContent);
 const part = (el, cls) => el.children.find((c) => c.className.split(' ').includes(cls));
 const actionsOf = (el) => part(el, 'toast-actions').children;
 
@@ -82,7 +36,7 @@ test('severity sets the lifetime: success 3 s, info 5 s, warning 8 s, error unti
   toasts.show('broken', true);
   clock.advance(10 * 60 * 1000);
   assert.deepEqual(shown(doc), ['broken']);
-  part(stackOf(doc).children[0], 'toast-close').click();
+  part(stackOf(doc).children.find((c) => c.classList.contains('toast')), 'toast-close').click();
   assert.deepEqual(shown(doc), []);
 });
 
@@ -90,7 +44,7 @@ test('the legacy call shapes keep working: plain, isErr, one action, actions + d
   const { doc, clock, toasts } = fakeWorld();
   let undone = 0;
   toasts.show('Task archived', false, { label: 'Restore task', duration: 10000, onClick: () => undone++ });
-  const el = stackOf(doc).children[0];
+  const el = stackOf(doc).children.find((c) => c.classList.contains('toast'));
   assert.equal(el.className, 'toast toast-info');
   assert.equal(el.attrs.role, 'status');
   assert.equal(actionsOf(el)[0].textContent, 'Restore task');
@@ -102,8 +56,8 @@ test('the legacy call shapes keep working: plain, isErr, one action, actions + d
   clock.advance(1500);
   assert.deepEqual(shown(doc), []);
   toasts.show('Nope', true);
-  assert.equal(stackOf(doc).children[0].className, 'toast toast-error');
-  assert.equal(stackOf(doc).children[0].attrs.role, 'alert');
+  assert.equal(stackOf(doc).children.find((c) => c.classList.contains('toast')).className, 'toast toast-error');
+  assert.equal(stackOf(doc).children.find((c) => c.classList.contains('toast')).attrs.role, 'alert');
 });
 
 test('hovering the stack pauses every timer, and leaving resumes with the time left', () => {
@@ -154,7 +108,7 @@ test('the same message restarts its toast, and the same id replaces in place', (
 test('details sit behind a Details expander that pins the toast open', () => {
   const { doc, clock, toasts } = fakeWorld();
   toasts.show('3 launch warnings', 'warning', { details: '• a\n• b\n• c' });
-  const el = stackOf(doc).children[0];
+  const el = stackOf(doc).children.find((c) => c.classList.contains('toast'));
   const more = part(el, 'toast-details');
   const expander = part(part(el, 'toast-actions'), 'toast-more');
   assert.equal(more.textContent, '• a\n• b\n• c');
@@ -208,4 +162,38 @@ test('dismiss takes down the toast with that id and leaves the rest', () => {
   toasts.dismiss('repo-request:rr_1');
   toasts.dismiss('repo-request:gone');
   assert.deepEqual(shown(doc), ['fyi']);
+});
+
+test('Clear all appears only for multiple items and follows expiry and explicit dismissal', () => {
+  const { doc, clock, toasts } = fakeWorld();
+  toasts.show('First', 'success');
+  const clear = part(stackOf(doc), 'toast-clear');
+  assert.equal(clear.hidden, true);
+  toasts.show('Second', 'info', { id: 'second' });
+  assert.equal(clear.hidden, false);
+  clock.advance(3000);
+  assert.equal(clear.hidden, true);
+  toasts.show('Third', true);
+  assert.equal(clear.hidden, false);
+  toasts.dismiss('second');
+  assert.equal(clear.hidden, true);
+  toasts.clear();
+  assert.equal(clear.hidden, true);
+  assert.equal(stackOf(doc).popoverOpen, false);
+});
+
+test('keyboard focus pauses timers until focus leaves the shared stack', () => {
+  const { doc, clock, toasts } = fakeWorld();
+  const first = toasts.show('First', 'success');
+  const close = part(first, 'toast-close');
+  close.matches = (selector) => selector === ':focus-visible';
+  clock.advance(1000);
+  stackOf(doc).fire('focusin', { target: close });
+  clock.advance(10000);
+  assert.deepEqual(shown(doc), ['First']);
+  stackOf(doc).fire('focusout', { relatedTarget: doc.body });
+  clock.advance(1999);
+  assert.deepEqual(shown(doc), ['First']);
+  clock.advance(1);
+  assert.deepEqual(shown(doc), []);
 });
