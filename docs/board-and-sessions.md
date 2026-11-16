@@ -374,7 +374,7 @@ nothing on this board's deck. Its **Default runtime** row offers the runtimes th
 
 On another deck, **Extensions** turns each of its extensions on or off and edits their settings;
 installing, updating and removing extensions stays with the board on that deck's own machine.
-**Updates** checks that deck for updates, and offers **Restart** when that deck can restart itself. A restart waits up to 30 seconds for admitted requests and writes. If they remain busy, **Restart pending** stays visible and the restart can be retried; the deck continues serving.
+**Updates** checks that deck for updates, and offers **Restart** when that deck can restart itself. A restart waits up to 30 seconds for admitted requests and writes. If they remain busy, a restart you asked for goes ahead anyway and the log names what was still running. An automatic update restart instead shows **Restart pending** with each operation still running and its age, and the deck continues serving until it can be retried.
 **Sessions** also lists the deck's **Startup choices**, read-only: any option its `GET /deck` reports
 beyond the deck API's own fields, such as the runtimes it was started to offer.
 

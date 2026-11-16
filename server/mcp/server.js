@@ -34,7 +34,7 @@ export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
         const invoke = () => (tool.extId
           ? tool.handler({ host: deps?.hostApiFor?.(tool.extId), caller }, args)
           : tool.handler({ deps, caller }, args));
-        return deps?.restartBarrier ? deps.restartBarrier.run(invoke) : invoke();
+        return deps?.restartBarrier ? deps.restartBarrier.run(invoke, `mcp:${tool.name}`) : invoke();
       },
     );
   }
@@ -73,5 +73,5 @@ export function createMcpRequestHandler(deps) {
       }
     }
   };
-  return deps?.restartBarrier ? deps.restartBarrier.http(handleMcp) : handleMcp;
+  return deps?.restartBarrier ? deps.restartBarrier.http(handleMcp, 'http:/mcp') : handleMcp;
 }

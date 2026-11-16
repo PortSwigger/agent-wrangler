@@ -68,7 +68,7 @@ export async function routeControlMessage(raw, ctx, { handlers = null, legacy = 
     else if (legacy) await routeLegacyMessage(msg, ctx, { registry, invoke: invokeHandler });
   };
   try {
-    await (ctx.restartBarrier ? ctx.restartBarrier.run(invoke) : invoke());
+    await (ctx.restartBarrier ? ctx.restartBarrier.run(invoke, `control:${msg.type === 'action' ? msg.action : msg.type}`) : invoke());
   } catch (err) {
     if (!(err instanceof RestartPendingError)) throw err;
     const error = { code: err.code, message: err.message, retryable: true };
