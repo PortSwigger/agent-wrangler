@@ -14,7 +14,7 @@
     "max",
     "ultra"
    ],
-   "defaultEffort": "medium",
+   "defaultEffort": "low",
    "contextWindow": 272000
   },
   {
@@ -81,7 +81,7 @@
     "max",
     "ultra"
    ],
-   "defaultEffort": "medium",
+   "defaultEffort": "low",
    "contextWindow": 272000
   },
   {
@@ -131,7 +131,7 @@
     "max",
     "ultra"
    ],
-   "defaultEffort": null,
+   "defaultEffort": "low",
    "contextWindow": 272000
   },
   {
@@ -148,7 +148,7 @@
     "max",
     "ultra"
    ],
-   "defaultEffort": null,
+   "defaultEffort": "medium",
    "contextWindow": 372000
   },
   {
@@ -163,7 +163,7 @@
     "high",
     "xhigh"
    ],
-   "defaultEffort": null,
+   "defaultEffort": "medium",
    "contextWindow": 272000
   },
   {
