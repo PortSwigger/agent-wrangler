@@ -1248,9 +1248,14 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   --toast-accent: var(--accent);
   position: relative; box-sizing: border-box; max-width: 100%; min-width: min(200px, 100%); flex-shrink: 0;
   display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px;
-  padding: 9px 34px 9px 12px; border-left: 4px solid var(--toast-accent); border-radius: 8px; overflow: hidden;
+  padding: 13px 34px 9px 12px; border-radius: 8px; overflow: hidden;
   background: var(--surface); color: var(--fg); box-shadow: 0 4px 16px var(--shadow);
 }
+.toast::before {
+  content: ''; position: absolute; left: 0; top: 0; height: 4px; width: 100%;
+  background: var(--toast-accent);
+}
+.toast:has(.toast-progress)::before { background: color-mix(in srgb, var(--toast-accent) 30%, var(--surface)); }
 .toast-success { --toast-accent: var(--green); }
 .toast-warning { --toast-accent: var(--warn); }
 .toast-error { --toast-accent: var(--red); }
@@ -1285,10 +1290,8 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   background: none; color: inherit; font-size: 16px; line-height: 1.2; cursor: pointer; opacity: 0.75;
 }
 .toast-close:hover { background: none; opacity: 1; }
-/* Depleting time-remaining bar along an action toast's bottom edge; JS sets its
-   duration and start, and it pauses with the timers while the stack is hovered. */
 .toast-progress {
-  position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
+  position: absolute; left: 0; top: 0; height: 4px; width: 100%;
   background: var(--toast-accent); transform-origin: left;
   animation-name: toast-deplete; animation-timing-function: linear; animation-fill-mode: forwards;
 }

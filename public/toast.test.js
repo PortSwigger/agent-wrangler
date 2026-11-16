@@ -9,20 +9,44 @@ const shown = (doc) => (stackOf(doc)?.children || []).filter((c) => c.classList.
 const part = (el, cls) => el.children.find((c) => c.className.split(' ').includes(cls));
 const actionsOf = (el) => part(el, 'toast-actions').children;
 
-test('notices use theme surface and text with severity only on the left stripe and timer', () => {
+test('notices use theme surface and text with a theme-derived top stripe and countdown track', () => {
   const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
   const rule = (selector) => css.slice(css.indexOf(`${selector} {`)).match(/^[^{]+\{([^}]*)\}/)[1];
   const toast = rule('.toast');
   assert.match(toast, /background: var\(--surface\);/);
   assert.match(toast, /color: var\(--fg\);/);
-  assert.match(toast, /border-left: 4px solid var\(--toast-accent\);/);
+  assert.doesNotMatch(toast, /border-left:/);
   assert.match(toast, /--toast-accent: var\(--accent\);/);
   for (const [severity, token] of [['success', 'green'], ['warning', 'warn'], ['error', 'red']]) {
     assert.equal(rule(`.toast-${severity}`).trim(), `--toast-accent: var(--${token});`);
   }
   assert.match(rule('.toast-progress'), /background: var\(--toast-accent\);/);
+  for (const selector of ['.toast::before', '.toast-progress']) {
+    assert.match(rule(selector), /top: 0; height: 4px; width: 100%;/);
+    assert.doesNotMatch(rule(selector), /bottom:/);
+  }
+  assert.match(rule('.toast::before'), /background: var\(--toast-accent\);/);
+  assert.match(rule('.toast:has(.toast-progress)::before'), /background: color-mix\(in srgb, var\(--toast-accent\) 30%, var\(--surface\)\);/);
+  assert.match(css, /#toast:hover \.toast-progress, #toast:has\(:focus-visible\) \.toast-progress \{ animation-play-state: paused; \}/);
   for (const selector of ['.toast-action', '.toast-close']) assert.match(rule(selector), /color: inherit;/);
   assert.doesNotMatch(css, /--toast-(?:bg|fg)/);
+});
+
+test('every timed toast has a countdown stripe and untimed notices have a solid stripe', () => {
+  const { doc, toasts } = fakeWorld();
+  const latest = () => stackOf(doc).children.filter((c) => c.classList.contains('toast')).at(-1);
+  for (const severity of ['success', 'info', 'warning', 'error']) {
+    toasts.show(severity, severity);
+    const bar = part(latest(), 'toast-progress');
+    if (severity === 'error') assert.equal(bar, undefined);
+    else assert.equal(bar.style.animationDuration, `${SEVERITY_MS[severity]}ms`);
+  }
+  toasts.show('Timed error', 'error', { duration: 15000 });
+  assert.equal(part(latest(), 'toast-progress').style.animationDuration, '15000ms');
+  toasts.show('Untimed action', 'info', { duration: Infinity, actions: [{ label: 'Act', onClick() {} }] });
+  assert.equal(part(latest(), 'toast-progress'), undefined);
+  toasts.showPersistent('request', { title: 'Persistent', actions: [], onDismiss() {} });
+  assert.equal(part(latest(), 'toast-progress'), undefined);
 });
 
 test('board column header controls reserve space at both toast positions', () => {
@@ -201,6 +225,7 @@ test('details sit behind a Details expander that pins the toast open', () => {
   assert.equal(more.hidden, true);
   assert.equal(expander.hidden, false);
   expander.click();
+  assert.equal(part(el, 'toast-progress'), undefined, 'opening Details restores a solid stripe');
   assert.equal(more.hidden, false);
   assert.equal(expander.textContent, 'Less');
   assert.equal(el.classList.contains('expanded'), true);

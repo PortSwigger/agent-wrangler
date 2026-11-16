@@ -253,7 +253,7 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     const close = button('toast-close', '×', () => dismiss(t));
     close.setAttribute('aria-label', 'Dismiss');
     el.append(close);
-    if (actions.length && Number.isFinite(duration)) {
+    if (Number.isFinite(duration)) {
       const bar = document.createElement('div');
       bar.className = 'toast-progress';
       bar.style.animationDuration = `${duration}ms`;
