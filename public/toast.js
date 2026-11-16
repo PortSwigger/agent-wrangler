@@ -35,6 +35,7 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   const modals = []; // open modal dialogs, in the order they opened
   let stack = null;
   let clearButton = null;
+  let list = null;
   let held = false; // hovered or focused: every timer waits
   let headerObserver = null;
   let modalObserver = null;
@@ -56,7 +57,9 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     stack.setAttribute('aria-label', 'Messages');
     stack.setAttribute('data-position', position);
     clearButton = button('toast-clear', 'Clear all', clear);
-    stack.append(clearButton);
+    list = document.createElement('div');
+    list.className = 'toast-list';
+    stack.append(...(position === 'top-right' ? [clearButton, list] : [list, clearButton]));
     const hold = (on) => () => { held = on; for (const t of live) (on ? pause : run)(t); };
     stack.addEventListener('mouseenter', hold(true));
     stack.addEventListener('mouseleave', () => { if (!stack.matches?.(':focus-within')) hold(false)(); });
@@ -181,12 +184,12 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   function clear() { for (const t of [...live]) dismiss(t); }
 
   function insert(t) {
-    const el = root();
-    el.insertBefore(t.el, position === 'top-right' ? clearButton.nextSibling : clearButton);
+    root();
+    list.insertBefore(t.el, position === 'top-right' ? list.children[0] : null);
   }
 
   function scrollToNewest() {
-    stack.scrollTop = position === 'top-right' ? 0 : stack.scrollHeight;
+    list.scrollTop = position === 'top-right' ? 0 : list.scrollHeight;
     scrollAfterLayout = frame != null;
   }
 
@@ -195,7 +198,8 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     if (!stack) return;
     stack.setAttribute('data-position', position);
     const ordered = position === 'top-right' ? [...live].reverse() : live;
-    stack.replaceChildren(...(position === 'top-right' ? [clearButton, ...ordered.map((t) => t.el)] : [...ordered.map((t) => t.el), clearButton]));
+    list.replaceChildren(...ordered.map((t) => t.el));
+    stack.replaceChildren(...(position === 'top-right' ? [clearButton, list] : [list, clearButton]));
     place();
     scrollToNewest();
   }

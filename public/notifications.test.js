@@ -10,7 +10,7 @@ const fakeDocument = () => {
   getToasts(doc).setPosition('bottom-right');
   return doc;
 };
-const cards = (doc) => (doc.body.children[0]?.children || []).filter((c) => c.classList.contains('toast'));
+const cards = (doc) => (doc.body.children[0]?.children.find((c) => c.classList.contains('toast-list'))?.children || []).filter((c) => c.classList.contains('toast'));
 const find = (el, cls) => el.children.find((c) => c.className.split(' ').includes(cls));
 const buttons = (card) => find(card, 'toast-actions').children.filter((c) => !c.hidden);
 
@@ -202,7 +202,7 @@ test('persistent cards and Clear all stay interactive through nested modals and 
   observe([{ type: 'childList', target: doc.body }]);
   assert.equal(stack.parentNode, outer);
   assert.equal(stack.popoverOpen, true);
-  assert.equal(stack.children.filter((el) => el.classList.contains('toast')).length, 2);
+  assert.equal(find(stack, 'toast-list').children.length, 2);
   outer.open = false;
   observe([{ target: outer }]);
   assert.equal(stack.parentNode, doc.body);

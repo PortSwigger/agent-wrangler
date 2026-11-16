@@ -5,7 +5,8 @@ import { createToasts, MAX_TOASTS, SEVERITY_MS } from './toast.js';
 import { fakeWorld } from './test-fixtures/toast-world.js';
 
 const stackOf = (doc) => doc.body.children.find((c) => c.attrs.popover === 'manual');
-const shown = (doc) => (stackOf(doc)?.children || []).filter((c) => c.classList.contains('toast')).map((c) => c.children[0].textContent);
+const listOf = (doc) => stackOf(doc)?.children.find((c) => c.classList.contains('toast-list'));
+const shown = (doc) => (listOf(doc)?.children || []).filter((c) => c.classList.contains('toast')).map((c) => c.children[0].textContent);
 const part = (el, cls) => el.children.find((c) => c.className.split(' ').includes(cls));
 const actionsOf = (el) => part(el, 'toast-actions').children;
 
@@ -43,13 +44,66 @@ test('shadow gutters preserve card offsets and the usable content height', () =>
   assert.match(css, /#toast\[data-position="bottom-right"\] \{ top: auto; bottom: calc\(var\(--toast-bottom\) - 24px\); \}/);
 });
 
-test('shadow padding passes pointer input through and sticky Clear all stays inside the content edges', () => {
+test('shadow padding passes pointer input through while cards and Clear all remain interactive', () => {
   const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
   const rule = (selector) => css.slice(css.indexOf(`${selector} {`)).match(/^[^{]+\{([^}]*)\}/)[1];
   assert.match(rule('#toast'), /pointer-events: none;/);
   for (const selector of ['.toast', '.toast-clear']) assert.match(rule(selector), /pointer-events: auto;/);
-  assert.match(rule('.toast-clear'), /top: 12px;/);
-  assert.match(rule('#toast[data-position="bottom-right"] .toast-clear'), /top: auto; bottom: 24px;/);
+});
+
+test('Clear all has a separate fixed row outside the scrolling card list', () => {
+  const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+  const rule = (selector) => css.slice(css.indexOf(`${selector} {`)).match(/^[^{]+\{([^}]*)\}/)[1];
+  assert.match(rule('#toast'), /overflow: visible;/);
+  assert.match(rule('.toast-list'), /overflow-y: auto;/);
+  assert.match(rule('.toast-list'), /min-height: 0;/);
+  assert.match(rule('.toast-list'), /padding: 12px 12px 24px; margin: -12px -12px -24px;/);
+  assert.match(rule('#toast'), /gap: 8px;/);
+  assert.doesNotMatch(rule('.toast-clear'), /position: sticky;/);
+  assert.match(rule('.toast-clear'), /flex-shrink: 0;/);
+  for (const position of ['top-right', 'bottom-right']) {
+    const { doc, toasts } = fakeWorld({ position });
+    toasts.show('First', 'error');
+    toasts.showPersistent('request', { title: 'Second', actions: [], onDismiss() {} });
+    const stack = stackOf(doc);
+    const list = part(stack, 'toast-list');
+    const clear = part(stack, 'toast-clear');
+    assert.equal(clear.hidden, false);
+    assert.equal(list.children.length, 2);
+    assert.deepEqual(stack.children, position === 'top-right' ? [clear, list] : [list, clear]);
+    list.scrollTop = 100;
+    assert.equal(clear.parentNode, stack);
+    clear.click();
+    assert.equal(toasts.count(), 0);
+  }
+});
+
+test('closing the host dialog restores corner offsets in both positions', () => {
+  for (const position of ['top-right', 'bottom-right']) {
+    const { doc, clock } = fakeWorld();
+    let observe;
+    doc.documentElement = {};
+    doc.defaultView = { innerWidth: 1000, innerHeight: 800, MutationObserver: class { constructor(fn) { observe = fn; } observe() {} } };
+    const dialog = doc.createElement('dialog');
+    dialog.tagName = 'DIALOG';
+    dialog.matches = (selector) => selector === ':modal' && dialog.open;
+    doc.body.append(dialog);
+    const head = doc.createElement('header');
+    head.closest = (selector) => selector === 'dialog' ? dialog : null;
+    head.getBoundingClientRect = () => ({ left: 400, right: 1000, top: 0, bottom: 72, width: 600, height: 72 });
+    doc.querySelectorAll = (selector) => selector === 'dialog:modal' ? [] : [head];
+    const toasts = createToasts({ document: doc, position, ...clock });
+    toasts.show('Visible', 'error');
+    const stack = stackOf(doc);
+    dialog.open = true;
+    observe([{ type: 'attributes', attributeName: 'open', target: dialog }]);
+    assert.equal(stack.style['--toast-top'], '80px');
+    dialog.open = false;
+    observe([{ type: 'attributes', attributeName: 'open', target: dialog }]);
+    assert.equal(stack.parentNode, doc.body);
+    assert.equal(stack.style['--toast-top'], '12px');
+    assert.equal(stack.style['--toast-bottom'], '12px');
+  }
 });
 
 test('shadow gutters do not enlarge the modal header collision band in either position', () => {
@@ -72,7 +126,7 @@ test('shadow gutters do not enlarge the modal header collision band in either po
 
 test('every timed toast has a countdown stripe and untimed notices have a solid stripe', () => {
   const { doc, toasts } = fakeWorld();
-  const latest = () => stackOf(doc).children.filter((c) => c.classList.contains('toast')).at(-1);
+  const latest = () => listOf(doc).children.filter((c) => c.classList.contains('toast')).at(-1);
   for (const severity of ['success', 'info', 'warning', 'error']) {
     toasts.show(severity, severity);
     const bar = part(latest(), 'toast-progress');
@@ -185,7 +239,7 @@ test('severity sets the lifetime: success 3 s, info 5 s, warning 8 s, error unti
   toasts.show('broken', true);
   clock.advance(10 * 60 * 1000);
   assert.deepEqual(shown(doc), ['broken']);
-  part(stackOf(doc).children.find((c) => c.classList.contains('toast')), 'toast-close').click();
+  part(listOf(doc).children.find((c) => c.classList.contains('toast')), 'toast-close').click();
   assert.deepEqual(shown(doc), []);
 });
 
@@ -193,7 +247,7 @@ test('the legacy call shapes keep working: plain, isErr, one action, actions + d
   const { doc, clock, toasts } = fakeWorld();
   let undone = 0;
   toasts.show('Task archived', false, { label: 'Restore task', duration: 10000, onClick: () => undone++ });
-  const el = stackOf(doc).children.find((c) => c.classList.contains('toast'));
+  const el = listOf(doc).children.find((c) => c.classList.contains('toast'));
   assert.equal(el.className, 'toast toast-info');
   assert.equal(el.attrs.role, 'status');
   assert.equal(actionsOf(el)[0].textContent, 'Restore task');
@@ -205,8 +259,8 @@ test('the legacy call shapes keep working: plain, isErr, one action, actions + d
   clock.advance(1500);
   assert.deepEqual(shown(doc), []);
   toasts.show('Nope', true);
-  assert.equal(stackOf(doc).children.find((c) => c.classList.contains('toast')).className, 'toast toast-error');
-  assert.equal(stackOf(doc).children.find((c) => c.classList.contains('toast')).attrs.role, 'alert');
+  assert.equal(listOf(doc).children.find((c) => c.classList.contains('toast')).className, 'toast toast-error');
+  assert.equal(listOf(doc).children.find((c) => c.classList.contains('toast')).attrs.role, 'alert');
 });
 
 test('hovering the stack pauses every timer, and leaving resumes with the time left', () => {
@@ -257,7 +311,7 @@ test('the same message restarts its toast, and the same id replaces in place', (
 test('details sit behind a Details expander that pins the toast open', () => {
   const { doc, clock, toasts } = fakeWorld();
   toasts.show('3 launch warnings', 'warning', { details: '• a\n• b\n• c' });
-  const el = stackOf(doc).children.find((c) => c.classList.contains('toast'));
+  const el = listOf(doc).children.find((c) => c.classList.contains('toast'));
   const more = part(el, 'toast-details');
   const expander = part(part(el, 'toast-actions'), 'toast-more');
   assert.equal(more.textContent, '• a\n• b\n• c');
@@ -481,7 +535,7 @@ test('layout batches into one animation frame and releases observers and pending
   const toasts = createToasts({ document: doc, ...clock });
   toasts.show('First');
   const stack = stackOf(doc);
-  Object.defineProperty(stack, 'scrollHeight', { get: () => stack.style['--toast-top'] ? 900 : 800 });
+  Object.defineProperty(listOf(doc), 'scrollHeight', { get: () => stack.style['--toast-top'] ? 900 : 800 });
   toasts.setPosition('bottom-right');
   resize();
   mutation([]);
@@ -492,7 +546,7 @@ test('layout batches into one animation frame and releases observers and pending
   flush();
   assert.equal(reads, 1);
   assert.equal(stackOf(doc).style['--toast-top'], '80px');
-  assert.equal(stack.scrollTop, 900, 'newest notice stays visible after the frame changes the available height');
+  assert.equal(listOf(doc).scrollTop, 900, 'newest notice stays visible after the frame changes the available height');
   events.get('resize')();
   toasts.clear();
   assert.equal(frames.size, 0);
