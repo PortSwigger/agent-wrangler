@@ -22,7 +22,7 @@ export const MAX_TOASTS = 3;
 export const SEVERITY_MS = { success: 3000, info: 5000, warning: 8000, error: Infinity };
 
 const FOOTERS = '.modal-actions, dialog footer';
-const HEADERS = `header, [role="banner"], [role="toolbar"], #panel, #system-banner, .task-head, .search-head, .diff-head, .file-head, .usage-head, .terminal-dialog-head, .modal-card > h3, dialog > :first-child:has(> :is(h1, h2, h3)), dialog > :first-child > :first-child:has(:is(h1, h2, h3)), ${FOOTERS}`;
+const HEADERS = `header, [role="banner"], [role="toolbar"], .file-head, .usage-head, .terminal-dialog-head, .modal-card > h3, dialog > :first-child:has(> :is(h1, h2, h3)), dialog > :first-child > :first-child:has(:is(h1, h2, h3)), ${FOOTERS}`;
 
 function severityOf(isErr, opts) {
   if (typeof isErr === 'string' && isErr in SEVERITY_MS) return isErr;
@@ -107,32 +107,32 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     const viewport = document.defaultView?.innerWidth || document.documentElement?.clientWidth || 800;
     const height = document.defaultView?.innerHeight || document.documentElement?.clientHeight || 800;
     const bounds = stack.getBoundingClientRect?.();
-    const right = bounds?.width ? bounds.right - 12 : viewport - 16;
-    const left = bounds?.width ? bounds.left + 12 : right - Math.min(560, viewport - 32);
-    const headers = new Set(document.querySelectorAll?.(HEADERS) ?? []);
-    const topBands = [];
+    const right = bounds?.width ? bounds.right - 12 : viewport - 12;
+    const left = bounds?.width ? bounds.left + 12 : right - Math.min(560, viewport - 24);
+    const modalOf = (el) => {
+      const dialog = el.closest?.('dialog');
+      return dialog ? (dialog === modals.at(-1) ? dialog : null) : el.closest?.('.modal-card, .file-card');
+    };
+    const headers = new Set([...(document.querySelectorAll?.(HEADERS) ?? [])].filter(modalOf));
     const modalBands = new Map();
-    let top = 16;
-    let bottom = 18;
+    let top = 12;
+    let bottom = 12;
     for (const el of headers) {
       const r = el.getBoundingClientRect?.();
       if (r?.width > 0 && r.height > 0 && r.right > left && r.left < right && r.bottom > 0 && r.top < height) {
         if (el.matches?.(FOOTERS)) {
           if (r.top >= height / 2) bottom = Math.max(bottom, Math.ceil(height - r.top) + 8);
         } else if (r.top <= height / 2) {
-          const dialog = el.closest?.('dialog');
-          const modal = dialog ? (dialog === modals.at(-1) ? dialog : null) : el.closest?.('.modal-card');
-          if (modal) {
-            if (!modalBands.has(modal)) modalBands.set(modal, []);
-            modalBands.get(modal).push(r);
-          } else topBands.push(r);
+          const modal = modalOf(el);
+          if (!modalBands.has(modal)) modalBands.set(modal, []);
+          modalBands.get(modal).push(r);
         }
       }
       if (!observedHeaders.has(el)) headerObserver?.observe(el);
     }
-    for (const bands of [topBands, ...modalBands.values()]) {
+    for (const bands of modalBands.values()) {
       bands.sort((a, b) => a.top - b.top);
-      let edge = bands === topBands ? top : bands[0].top;
+      let edge = bands[0].top;
       for (const r of bands) {
         if (r.top > edge + 8) break;
         edge = Math.max(edge, Math.ceil(r.bottom) + 8);

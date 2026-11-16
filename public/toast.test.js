@@ -37,17 +37,19 @@ test('shadow gutters preserve card offsets and the usable content height', () =>
   const stack = css.slice(css.indexOf('#toast {')).match(/^[^{]+\{([^}]*)\}/)[1];
   assert.match(stack, /box-sizing: content-box;/);
   assert.match(stack, /padding: 12px 12px 24px;/);
-  assert.match(stack, /inset: calc\(var\(--toast-top\) - 12px\) 4px auto auto;/);
+  assert.match(stack, /inset: calc\(var\(--toast-top\) - 12px\) 0 auto auto;/);
   assert.match(stack, /max-height: calc\(100dvh - var\(--toast-top\) - var\(--toast-bottom\)\);/);
-  assert.match(stack, /max-width: min\(560px, calc\(100vw - 32px\)\);/);
+  assert.match(stack, /max-width: min\(560px, calc\(100vw - 24px\)\);/);
   assert.match(css, /#toast\[data-position="bottom-right"\] \{ top: auto; bottom: calc\(var\(--toast-bottom\) - 24px\); \}/);
 });
 
-test('shadow gutters do not enlarge the header collision band in either position', () => {
+test('shadow gutters do not enlarge the modal header collision band in either position', () => {
   for (const position of ['top-right', 'bottom-right']) {
     const { doc, clock } = fakeWorld();
     doc.defaultView = { innerWidth: 1000, innerHeight: 800 };
+    const modal = doc.createElement('div');
     const header = doc.createElement('header');
+    header.closest = (selector) => selector === 'dialog' ? null : modal;
     header.getBoundingClientRect = () => ({ left: 400, right: 430, top: 0, bottom: 72, width: 30, height: 72 });
     doc.querySelectorAll = () => [header];
     const toasts = createToasts({ document: doc, position, ...clock });
@@ -55,7 +57,7 @@ test('shadow gutters do not enlarge the header collision band in either position
     const stack = stackOf(doc);
     stack.getBoundingClientRect = () => ({ left: 424, right: 996, width: 572 });
     toasts.show('Second', 'error');
-    assert.equal(stack.style['--toast-top'], '16px', 'a header under only the shadow gutter does not move the cards');
+    assert.equal(stack.style['--toast-top'], '12px', 'a header under only the shadow gutter does not move the cards');
   }
 });
 
@@ -76,7 +78,7 @@ test('every timed toast has a countdown stripe and untimed notices have a solid 
   assert.equal(part(latest(), 'toast-progress'), undefined);
 });
 
-test('board column header controls reserve space at both toast positions', () => {
+test('board headers leave the stack at the viewport corner at both positions', () => {
   for (const position of ['top-right', 'bottom-right']) {
     const { doc, clock } = fakeWorld();
     doc.defaultView = { innerWidth: 1400, innerHeight: 800 };
@@ -88,11 +90,12 @@ test('board column header controls reserve space at both toast positions', () =>
     const toasts = createToasts({ document: doc, position, ...clock });
     toasts.show('Visible');
     toasts.showPersistent('request', { title: 'Action needed', actions: [], onDismiss() {} });
-    assert.equal(stackOf(doc).style['--toast-top'], '140px');
+    assert.equal(stackOf(doc).style['--toast-top'], '12px');
+    assert.equal(stackOf(doc).style['--toast-bottom'], '12px');
   }
 });
 
-test('only contiguous top header bands reserve space on a multi-row board at either position', () => {
+test('multi-row board headers never move the corner stack', () => {
   for (const position of ['top-right', 'bottom-right']) {
     const { doc, clock } = fakeWorld();
     doc.defaultView = { innerWidth: 1400, innerHeight: 900 };
@@ -109,10 +112,10 @@ test('only contiguous top header bands reserve space on a multi-row board at eit
     doc.querySelectorAll = (selector) => selector === 'dialog:modal' ? [] : heads;
     const toasts = createToasts({ document: doc, position, ...clock });
     toasts.show('Visible');
-    assert.equal(stackOf(doc).style['--toast-top'], '106px');
+    assert.equal(stackOf(doc).style['--toast-top'], '12px');
     offset = 100;
     toasts.setPosition(position);
-    assert.equal(stackOf(doc).style['--toast-top'], '106px', 'scrolling lower rows across the viewport midpoint does not move the stack');
+    assert.equal(stackOf(doc).style['--toast-top'], '12px', 'scrolling lower rows across the viewport midpoint does not move the stack');
   }
 });
 
@@ -356,16 +359,19 @@ test('top-right is the default, newest first; changing position reorders existin
   assert.deepEqual(shown(doc), ['Newest', 'New']);
 });
 
-test('both positions reserve visible header controls and follow resized or hidden headers', () => {
+test('both positions reserve visible modal header controls and follow resized or hidden headers', () => {
   const { doc, clock } = fakeWorld();
   let observe;
   let resize;
   let height = 72;
+  const modal = doc.createElement('div');
   const header = doc.createElement('header');
+  header.closest = (selector) => selector === 'dialog' ? null : modal;
   header.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 0, bottom: height, width: 946, height });
   const offscreen = doc.createElement('header');
   offscreen.getBoundingClientRect = () => ({ left: 0, right: 200, top: 0, bottom: 300, width: 200, height: 300 });
   const footer = doc.createElement('footer');
+  footer.closest = header.closest;
   footer.matches = () => true;
   footer.getBoundingClientRect = () => ({ left: 400, right: 900, top: 700, bottom: 750, width: 500, height: 50 });
   doc.documentElement = {};
@@ -386,7 +392,7 @@ test('both positions reserve visible header controls and follow resized or hidde
   assert.equal(stackOf(doc).style['--toast-top'], '118px', 'bottom stack cannot grow over the header either');
   height = 0;
   observe([{ type: 'attributes', attributeName: 'class', target: header }]);
-  assert.equal(stackOf(doc).style['--toast-top'], '16px');
+  assert.equal(stackOf(doc).style['--toast-top'], '12px');
 });
 
 test('a low header in an 800px viewport cannot hide persistent notifications at either position', () => {
@@ -402,8 +408,8 @@ test('a low header in an 800px viewport cannot hide persistent notifications at 
     const toasts = createToasts({ document: doc, position, ...clock });
     toasts.showPersistent('request', { title: 'Action needed', actions: [], onDismiss() {} });
     const stack = stackOf(doc);
-    assert.equal(stack.style['--toast-top'], '16px');
-    assert.equal(stack.style['--toast-bottom'], '18px');
+    assert.equal(stack.style['--toast-top'], '12px');
+    assert.equal(stack.style['--toast-bottom'], '12px');
     assert.equal(toasts.count(), 1);
   }
 });
@@ -411,9 +417,12 @@ test('a low header in an 800px viewport cannot hide persistent notifications at 
 test('large edge chrome still leaves at least 120px of usable stack height', () => {
   const { doc, clock } = fakeWorld();
   doc.defaultView = { innerWidth: 1000, innerHeight: 800 };
+  const modal = doc.createElement('div');
   const header = doc.createElement('header');
+  header.closest = (selector) => selector === 'dialog' ? null : modal;
   header.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 0, bottom: 760, width: 946, height: 760 });
   const footer = doc.createElement('footer');
+  footer.closest = header.closest;
   footer.matches = () => true;
   footer.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 720, bottom: 800, width: 946, height: 80 });
   doc.querySelectorAll = () => [header, footer];
@@ -434,7 +443,9 @@ test('layout batches into one animation frame and releases observers and pending
   let resize;
   let reads = 0;
   let mutationActive = false;
+  const modal = doc.createElement('div');
   const header = doc.createElement('header');
+  header.closest = (selector) => selector === 'dialog' ? null : modal;
   header.getBoundingClientRect = () => { reads++; return { left: 54, right: 1000, top: 0, bottom: 72, width: 946, height: 72 }; };
   doc.documentElement = {};
   doc.defaultView = {

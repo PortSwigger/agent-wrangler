@@ -219,8 +219,9 @@ subscriber is archived or missing, or the subscriber calls `stop_status_notices`
 
 ## Messages at the bottom of the board
 
-Short messages (toasts) and persistent notifications share a top-right stack, above any open
-dialog and below visible header controls. **Settings → Appearance → Toast position** switches
+Short messages (toasts) and persistent notifications share a stack about 12px from the
+top-right corner. Messages can cover board headers. Over an open dialog, the stack keeps
+its header, Close button and footer controls clear. **Settings → Appearance → Toast position** switches
 between **Top right** (the default) and **Bottom right**, immediately and for this browser.
 Newest messages sit nearest the chosen edge, with **Clear all** beside that edge. With two or
 more messages, **Clear all** dismisses the whole stack
