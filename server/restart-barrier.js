@@ -100,17 +100,23 @@ export function createRestartBarrier({ timeoutMs = 30000, settleMs = 250, exit =
   }
 
   // `label` defaults to the request path, so a stuck request names its route.
-  function http(handler, label = null) {
+  // `track: false` admits the request (still 503 while draining) without
+  // holding a restart: for a connection that can stay open idle for as long as
+  // its client likes, whose real work, if any, is tracked by its own run().
+  function http(handler, label = null, { track = true } = {}) {
     return async (req, res, ...args) => {
       try {
-        await run(async () => {
+        const serve = async () => {
           const responded = new Promise((resolve) => {
             res.once('finish', resolve);
             res.once('close', resolve);
           });
           await handler(req, res, ...args);
           await responded;
-        }, label ?? `http:${String(req.url || '').split('?')[0]}`);
+        };
+        if (track) await run(serve, label ?? `http:${String(req.url || '').split('?')[0]}`);
+        else if (closed && !scope.getStore()?.active) throw new RestartPendingError();
+        else await serve();
       } catch (err) {
         if (res.headersSent || res.destroyed) return;
         req.resume();

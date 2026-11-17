@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer, createMcpRequestHandler } from './server.js';
@@ -284,7 +285,7 @@ test('restart waits for an MCP mutation and its response, then refuses fresh cal
   await withServer(deps, async (port) => {
     const pending = rpc(port, 'tools/call', { name: 'spawn_session', arguments: { intent: 'work' } }, 100, { Authorization: 'Bearer tok-CARD1' });
     await started;
-    assert.deepEqual(barrier.outstanding().map((o) => o.label).sort(), ['http:/mcp', 'mcp:spawn_session']);
+    assert.deepEqual(barrier.outstanding().map((o) => o.label), ['mcp:spawn_session']);
     const restarting = barrier.request('update');
     assert.deepEqual(exits, []);
     const refused = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { Authorization: 'Bearer tok-CARD1' }, body: '{}' });
@@ -293,5 +294,64 @@ test('restart waits for an MCP mutation and its response, then refuses fresh cal
     const response = await pending;
     assert.equal(response.result.structuredContent.sessionId, 'NEW');
     assert.equal(await restarting, true);
+  });
+});
+
+// An MCP client can hold a /mcp connection open idle for as long as it stays
+// connected (here: a POST whose body never finishes). That must not hold an
+// unattended restart pending; a tool call inside one still does.
+async function openStream(port) {
+  const req = http.request({ host: '127.0.0.1', port, path: '/mcp', method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok-CARD1' } });
+  req.on('error', () => {});
+  req.flushHeaders();
+  req.write('{"jsonrpc":"2.0",');
+  await new Promise((r) => setTimeout(r, 20));
+  return { close: () => req.destroy() };
+}
+
+test('an open /mcp stream does not block an unforced restart', async () => {
+  const { createRestartBarrier } = await import('../restart-barrier.js');
+  const exits = [];
+  const statuses = [];
+  const barrier = createRestartBarrier({ timeoutMs: 200, settleMs: 0, exit: () => exits.push('exit'), onStatus: (s) => statuses.push(s.phase) });
+  await withServer({ ...fakeDeps(), restartBarrier: barrier }, async (port) => {
+    const stream = await openStream(port);
+    try {
+      assert.deepEqual(barrier.outstanding(), []);
+      assert.equal(await barrier.request('update'), true);
+      assert.deepEqual(exits, ['exit']);
+      assert.deepEqual(statuses, ['draining', 'restarting']);
+      // Admission stays closed to fresh MCP requests while the restart lands.
+      const refused = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { Authorization: 'Bearer tok-CARD1' }, body: '{}' });
+      assert.equal(refused.status, 503);
+    } finally { stream.close(); }
+  });
+});
+
+test('a pending MCP tool call still leaves an unforced restart pending beside an open stream', async (t) => {
+  const { createRestartBarrier } = await import('../restart-barrier.js');
+  let release;
+  let entered;
+  const started = new Promise((r) => { entered = r; });
+  const gate = new Promise((r) => { release = r; });
+  t.after(() => release());
+  const exits = [];
+  const statuses = [];
+  const barrier = createRestartBarrier({ timeoutMs: 200, settleMs: 0, exit: () => exits.push('exit'), onStatus: (s) => statuses.push(s) });
+  const deps = { ...fakeDeps(), restartBarrier: barrier, dispatch: async () => { entered(); await gate; return { sessionId: 'NEW', cwd: '/a' }; }, rebuild: async () => {} };
+  deps.taskStore.assign = () => true;
+  await withServer(deps, async (port) => {
+    const stream = await openStream(port);
+    try {
+      const pending = rpc(port, 'tools/call', { name: 'spawn_session', arguments: { intent: 'work' } }, 101, { Authorization: 'Bearer tok-CARD1' });
+      await started;
+      assert.equal(await barrier.request('update'), false);
+      assert.deepEqual(exits, []);
+      const last = statuses.at(-1);
+      assert.equal(last.phase, 'pending');
+      assert.deepEqual(last.running.map((r) => r.label), ['mcp:spawn_session']);
+      release();
+      assert.equal((await pending).result.structuredContent.sessionId, 'NEW');
+    } finally { stream.close(); }
   });
 });

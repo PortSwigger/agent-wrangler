@@ -145,6 +145,10 @@ for reconnection. A `restart-ack` acknowledges the request; `restart-status`
 reports `draining`, `restarting`, or `pending`, and `config.restartStatus` retains
 that state for a newly connected tab.
 
+An idle MCP stream (a session's open `/mcp` connection) does not hold a
+restart: new `/mcp` requests are refused while draining, but only an MCP tool
+call in flight counts as work to wait for, under its `mcp:<tool>` label.
+
 Board and update draining is bounded to 30 seconds. On a timeout the log names
 each operation still running with its age, and `restart-status` lists them in
 its message and in `running` (`[{ label, ageMs }]`). A manual restart then exits
