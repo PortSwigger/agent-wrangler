@@ -133,12 +133,12 @@ export async function mirrorWorktreeTrust(cwd, opts = {}) {
 
 // A login's own Claude config dir (the CLAUDE_CONFIG_DIR a launch context sets)
 // gets the same trust a default launch writes, authorised only by the server's
-// config: SESSIONS_DIR, a worktree whose repo the server config trusts, and the
-// launch cwd itself when the server config already covers it. Nothing the
+// config: SESSIONS_DIR, MEMORY_DIR, a worktree whose repo the server config
+// trusts, and the launch cwd itself when the server config already covers it. Nothing the
 // login's own file trusts authorises anything. The dir must already exist (it
 // is never created), must not be the server's own or the CLI's default config
 // dir, and a symlinked .claude.json is left alone. Never throws.
-export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, serverFile = claudeConfigFile(), log = console.warn } = {}) {
+export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, memoryDir, serverFile = claudeConfigFile(), log = console.warn } = {}) {
   const skip = (why) => { log(`[claude-trust] skipped login config ${JSON.stringify(configDir)}: ${why}`); return false; };
   if (typeof configDir !== 'string' || !path.isAbsolute(configDir)) return skip('not an absolute path');
   try {
@@ -154,6 +154,7 @@ export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, serv
     if (fs.lstatSync(file).isSymbolicLink()) return skip('.claude.json is a symlink');
   } catch { /* no file yet */ }
   if (sessionsDir) ensureClaudeTrust(sessionsDir, { file, log });
+  if (memoryDir) ensureClaudeTrust(memoryDir, { file, log });
   if (!cwd) return true;
   await mirrorWorktreeTrust(cwd, { file, authority: serverFile, log });
   const gitTop = (await gitScope(cwd))?.top;

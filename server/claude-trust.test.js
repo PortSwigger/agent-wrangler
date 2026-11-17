@@ -210,15 +210,16 @@ async function withLogin(fn) {
   });
 }
 
-test('ensureLoginClaudeTrust: writes SESSIONS_DIR, a trusted repo\'s worktree and a trusted cwd, never the server config', async () => {
+test('ensureLoginClaudeTrust: writes SESSIONS_DIR, MEMORY_DIR, a trusted repo\'s worktree and a trusted cwd, never the server config', async () => {
   await withLogin(async ({ root, repo, worktree, file, login, loginFile }) => {
     const server = trusting(repo);
     fs.writeFileSync(file, server);
     const sessionsDir = path.join(root, 'sessions');
-    assert.equal(await ensureLoginClaudeTrust(login, { cwd: worktree, sessionsDir, serverFile: file, log: quiet }), true);
-    assert.deepEqual(trustedKeys(loginFile), [sessionsDir, worktree].sort());
-    assert.equal(await ensureLoginClaudeTrust(login, { cwd: path.join(repo), sessionsDir, serverFile: file, log: quiet }), true);
-    assert.deepEqual(trustedKeys(loginFile), [sessionsDir, repo, worktree].sort());
+    const memoryDir = path.join(root, 'memory');
+    assert.equal(await ensureLoginClaudeTrust(login, { cwd: worktree, sessionsDir, memoryDir, serverFile: file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(loginFile), [sessionsDir, memoryDir, worktree].sort());
+    assert.equal(await ensureLoginClaudeTrust(login, { cwd: path.join(repo), sessionsDir, memoryDir, serverFile: file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(loginFile), [sessionsDir, memoryDir, repo, worktree].sort());
     assert.equal(fs.readFileSync(file, 'utf8'), server);
     assert.equal(fs.statSync(loginFile).mode & 0o777, 0o600);
   });
