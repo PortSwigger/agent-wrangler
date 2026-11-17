@@ -16,6 +16,7 @@ import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName, sanitizeBranch } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
+import { MEMORY_DIR } from './extensions/builtin/task-memory/memory-store.js';
 import { paneCommand } from './launch-script.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
 import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, codexPolicyDefaults } from './config-store.js';
@@ -602,12 +603,12 @@ export class SessionManager {
 
   // Called after the launch context is collected, so a launch whose context
   // points CLAUDE_CONFIG_DIR at a login's own config gets the same trust there.
-  // A default launch makes exactly the two calls it always has.
   async _trustClaudeLaunch(dir, launchContext) {
     this._ensureClaudeTrust(SESSIONS_DIR);
+    this._ensureClaudeTrust(MEMORY_DIR);
     await this._mirrorWorktreeTrust(dir);
     const loginDir = launchEnvOf(launchContext).CLAUDE_CONFIG_DIR;
-    if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, sessionsDir: SESSIONS_DIR });
+    if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, sessionsDir: SESSIONS_DIR, memoryDir: MEMORY_DIR });
   }
 
   // The secret-variable file for one pane launch (launch-secrets.js), or null.

@@ -15,6 +15,7 @@ import { registerRuntime, unregisterRuntimesFor } from './runtimes/index.js';
 import { readBranch } from './state-reader.js';
 import { writeConfig } from './config-store.js';
 import { DATA_DIR } from './data-dir.js';
+import { MEMORY_DIR } from './extensions/builtin/task-memory/memory-store.js';
 
 const clean = { tmux: 'cc_abc', sessionId: 's1', status: 0, archived: false };
 
@@ -2367,13 +2368,13 @@ test('dispatch: worktree mode does not add a common-git-dir --add-dir for claude
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('dispatch trusts SESSIONS_DIR (never the launch cwd) for a claude session, and not for codex', async () => {
+test('dispatch trusts SESSIONS_DIR and MEMORY_DIR (never the launch cwd) for a claude session, and not for codex', async () => {
   const sm = smForDispatch();
   const trusted = [];
   sm._ensureClaudeTrust = (p) => trusted.push(p);
   await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
   await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
-  assert.deepEqual(trusted, [SESSIONS_DIR]);
+  assert.deepEqual(trusted, [SESSIONS_DIR, MEMORY_DIR]);
 });
 
 async function withClaudeTrustSetting(value, fn) {
@@ -2405,7 +2406,7 @@ async function worktreeTrustMirrorCalls(setting) {
     await withClaudeTrustSetting(setting, async () => {
       const sm = smForDispatch();
       sm.killForSession = async () => [];
-      sm._ensureClaudeTrust = () => {};
+      sm._ensureClaudeTrust = (p) => { calls.push(['trust', p]); };
       sm._mirrorWorktreeTrust = async (p) => { calls.push(['mirror', p]); };
       let launchedDir;
       sm._newSession = async (_t, d) => { launchedDir = d; };
@@ -2429,11 +2430,12 @@ test('launch, resume and fork in a worktree mirror its repo\'s Claude trust onto
   assert.match(wt, /worktrees\.noindex/);
   // dispatch, resume, claude fork; never the codex fork.
   assert.deepEqual(calls.filter(([k]) => k === 'mirror').map(([, p]) => p), [wt, wt, wt]);
+  assert.deepEqual(calls.filter(([k]) => k === 'trust').map(([, p]) => p), [SESSIONS_DIR, MEMORY_DIR, SESSIONS_DIR, MEMORY_DIR, SESSIONS_DIR, MEMORY_DIR]);
 });
 
 test('launch, resume and fork never call the worktree trust mirror when the setting is off', async () => {
   const calls = await worktreeTrustMirrorCalls(false);
-  assert.deepEqual(calls.filter(([k]) => k === 'mirror'), []);
+  assert.deepEqual(calls.filter(([k]) => k === 'mirror' || k === 'trust'), []);
 });
 
 // A launch context that points CLAUDE_CONFIG_DIR at a login's own config gets
@@ -2499,24 +2501,24 @@ test('login trust: dispatch, resume, fork and worktree trust land in a fixture l
     await sm.dispatch({ cwd: repo, intent: 'x', worktree: true, worktreeAuto: true });
     const wt = sm.launchedDir;
     assert.match(wt, /worktrees\.noindex/);
-    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, wt].sort());
-    assert.deepEqual(order, ['context', ['trust', SESSIONS_DIR], ['mirror', wt], ['login', sm.loginDir]], 'launch context is collected before any trust');
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, wt].sort());
+    assert.deepEqual(order, ['context', ['trust', SESSIONS_DIR], ['trust', MEMORY_DIR], ['mirror', wt], ['login', sm.loginDir]], 'launch context is collected before any trust');
 
     sm.loginDir = login('resume');
     sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
     await sm._doResume('c1', wt, {});
-    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, wt].sort());
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, wt].sort());
 
     sm.loginDir = login('fork');
     await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: wt }, cwd: wt });
-    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, wt].sort());
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, wt].sort());
 
     // A plain checkout the server already trusts: the cwd itself, never a parent.
     sm.loginDir = login('trusted-cwd');
     await sm.dispatch({ cwd: repo, intent: 'x' });
-    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, repo].sort());
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, repo].sort());
 
-    assert.deepEqual(trusted(serverDir), [SESSIONS_DIR, repo, wt].sort(), 'the server config gets only what a default launch writes');
+    assert.deepEqual(trusted(serverDir), [SESSIONS_DIR, MEMORY_DIR, repo, wt].sort(), 'the server config gets only what a default launch writes');
   });
 });
 
@@ -2531,23 +2533,39 @@ test('login trust: an untrusted folder is never trusted in the login config', as
     sm.loginDir = login('dispatch', { projects: { [repo]: { hasTrustDialogAccepted: true } } });
     await sm.dispatch({ cwd: repo, intent: 'x', worktree: true, worktreeAuto: true });
     const wt = sm.launchedDir;
-    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, repo].sort(), 'no worktree entry');
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, repo].sort(), 'no worktree entry');
 
     sm.loginDir = login('resume');
     sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
     await sm._doResume('c1', wt, {});
-    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR]);
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR].sort());
 
     sm.loginDir = login('fork');
     await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: elsewhere }, cwd: elsewhere });
-    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR]);
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR].sort());
 
     // A server config trusting an unrelated folder grants nothing here either.
     serveTrust([path.join(root, 'other')]);
     sm.loginDir = login('dispatch-2');
     await sm.dispatch({ cwd: elsewhere, intent: 'x' });
-    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR]);
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR].sort());
     assert.ok(!trusted(serverDir).includes(elsewhere) && !trusted(serverDir).includes(wt));
+  });
+});
+
+test('login trust: disabling launch trust leaves both configs unchanged', async () => {
+  await withLoginTrustFixture(async ({ repo, login, trusted, serveTrust, serverDir }) => {
+    serveTrust([repo]);
+    const sm = smWithLogin();
+    sm.loginDir = login('disabled');
+    await withClaudeTrustSetting(false, async () => {
+      await sm.dispatch({ cwd: repo, intent: 'x' });
+      sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: repo });
+      await sm._doResume('c1', repo, {});
+      await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: repo }, cwd: repo });
+    });
+    assert.deepEqual(trusted(sm.loginDir), []);
+    assert.deepEqual(trusted(serverDir), [repo]);
   });
 });
 
@@ -2563,7 +2581,7 @@ test('login trust: a refused launch context writes no trust anywhere', async () 
   });
 });
 
-test('login trust: a default launch writes trust exactly as before', async () => {
+test('login trust: a default launch writes both managed roots without a login write', async () => {
   await withLoginTrustFixture(async ({ repo, serveTrust, trusted, serverDir }) => {
     serveTrust([repo]);
     const order = [];
@@ -2573,9 +2591,9 @@ test('login trust: a default launch writes trust exactly as before', async () =>
     sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
     await sm._doResume('c1', wt, {});
     await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: wt }, cwd: wt });
-    const launch = ['context', ['trust', SESSIONS_DIR], ['mirror', wt]];
-    assert.deepEqual(order, [...launch, ...launch, ...launch], 'the same two calls per launch, and no login write');
-    assert.deepEqual(trusted(serverDir), [SESSIONS_DIR, repo, wt].sort());
+    const launch = ['context', ['trust', SESSIONS_DIR], ['trust', MEMORY_DIR], ['mirror', wt]];
+    assert.deepEqual(order, [...launch, ...launch, ...launch], 'the same trust calls per launch, and no login write');
+    assert.deepEqual(trusted(serverDir), [SESSIONS_DIR, MEMORY_DIR, repo, wt].sort());
   });
 });
 
