@@ -73,5 +73,10 @@ export function createMcpRequestHandler(deps) {
       }
     }
   };
-  return deps?.restartBarrier ? deps.restartBarrier.http(handleMcp, 'http:/mcp') : handleMcp;
+  // The request itself is untracked: an MCP client can hold its connection open
+  // idle for as long as it stays connected, and that must not keep a restart
+  // pending. The work inside it is tracked by each tool's own `mcp:<tool>` run.
+  return deps?.restartBarrier
+    ? deps.restartBarrier.http(handleMcp, 'http:/mcp', { track: false })
+    : handleMcp;
 }

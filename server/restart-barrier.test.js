@@ -305,3 +305,25 @@ test('HTTP and store wrappers label their work by route and method', async (t) =
   await (await fetch(`http://127.0.0.1:${server.address().port}/status-event?x=1`, { method: 'POST' })).text();
   assert.deepEqual(seen, [['ext-store:jobs.save'], ['http:/status-event']]);
 });
+
+test('an untracked HTTP stream is refused while draining but never holds a restart', async (t) => {
+  const { barrier, exits } = fixture();
+  const opened = deferred();
+  const server = http.createServer(barrier.http((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write(':\n\n');
+    opened.resolve();
+  }, 'http:/stream', { track: false }));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const ac = new AbortController();
+  t.after(() => ac.abort());
+  await fetch(url, { signal: ac.signal });
+  await opened.promise;
+  assert.equal(barrier.inFlight(), 0);
+  const restart = barrier.request('update');
+  assert.equal((await fetch(url)).status, 503);
+  assert.equal(await restart, true);
+  assert.deepEqual(exits, ['update']);
+});
