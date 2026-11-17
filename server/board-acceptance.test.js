@@ -309,6 +309,29 @@ test('the board loads in a real browser with no console errors', { timeout: 180_
       'the .diff-row side-by-side rule is missing from the stylesheet',
     );
 
+    // Extensions hide their wrapper when the selected session does not apply.
+    // Layout-transparent wrappers must still hide all their contents.
+    const slotVisibility = await evaluateChecked(`(() => {
+      const slot = document.createElement('div');
+      slot.className = 'ext-slot';
+      const action = document.createElement('button');
+      action.textContent = 'Extension action';
+      slot.append(action);
+      document.body.append(slot);
+      try {
+        const shown = action.getClientRects().length > 0;
+        slot.hidden = true;
+        const hidden = action.getClientRects().length === 0;
+        slot.hidden = false;
+        const shownAgain = action.getClientRects().length > 0;
+        slot.hidden = true;
+        action.textContent = 'Updated extension action';
+        return { shown, hidden, shownAgain, hiddenAfterUpdate: action.getClientRects().length === 0 };
+      } finally { slot.remove(); }
+    })()`);
+    assert.deepEqual(slotVisibility, { shown: true, hidden: true, shownAgain: true, hiddenAfterUpdate: true },
+      'a hidden extension slot must hide its contents when selection or state changes');
+
     // The grid can render before the probe extension's client has registered.
     assert.ok(await waitFor(() => evaluate(`!!window.__probeApi`)), 'the probe extension never registered');
 
