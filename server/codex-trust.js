@@ -49,23 +49,79 @@ function headerFor(dirPath) {
   return `[projects.${tomlString(dirPath)}]`;
 }
 
-// Single-bracket table headers only, one per line — `[[..]]` array-of-tables
-// (used elsewhere in codex's config, e.g. mcp_servers) are a different TOML
-// construct and never how `projects.*` entries are written, so excluding them
-// here can't mask a real collision on a `projects.*` key.
-function tableHeaders(text) {
-  return (text.match(/^\[[^\[\]].*\]$/gm) || []).map((l) => l.trim());
+const BASIC_ESCAPES = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+
+// Parse one `[a."b".'c']` table header line into its key parts, or null if the
+// line isn't a single-bracket header. Header TEXT can't be compared directly:
+// the same key can be spelled several ways — codex itself rewrites the whole
+// file with literal-string keys (`[projects.'/x']`) while this module writes
+// basic-string ones (`[projects."/x"]`), and comparing raw text once let a
+// launch append a second header for a key that was already trusted, which
+// makes codex refuse to load config.toml at all.
+function parseHeaderKey(line) {
+  const s = line.trim();
+  if (!s.startsWith('[') || s.startsWith('[[')) return null;
+  const parts = [];
+  let i = 1;
+  const ws = () => { while (s[i] === ' ' || s[i] === '\t') i++; };
+  for (;;) {
+    ws();
+    if (s[i] === '"') {
+      let out = '';
+      for (i++; i < s.length && s[i] !== '"'; i++) {
+        if (s[i] !== '\\') { out += s[i]; continue; }
+        const c = s[++i];
+        if (c in BASIC_ESCAPES) out += BASIC_ESCAPES[c];
+        else if (c === 'u' || c === 'U') {
+          const n = c === 'u' ? 4 : 8;
+          const hex = s.slice(i + 1, i + 1 + n);
+          const code = parseInt(hex, 16);
+          if (!/^[0-9A-Fa-f]+$/.test(hex) || hex.length !== n || code > 0x10ffff) return null;
+          out += String.fromCodePoint(code);
+          i += n;
+        } else return null;
+      }
+      if (s[i++] !== '"') return null;
+      parts.push(out);
+    } else if (s[i] === "'") {
+      const end = s.indexOf("'", i + 1);
+      if (end < 0) return null;
+      parts.push(s.slice(i + 1, end));
+      i = end + 1;
+    } else {
+      const m = /^[A-Za-z0-9_-]+/.exec(s.slice(i));
+      if (!m) return null;
+      parts.push(m[0]);
+      i += m[0].length;
+    }
+    ws();
+    if (s[i] === '.') { i++; continue; }
+    if (s[i] !== ']') return null;
+    i++;
+    ws();
+    return i === s.length || s[i] === '#' ? parts : null;
+  }
+}
+
+// Every single-bracket table header's key, canonicalised so different
+// spellings of one key compare equal. `[[..]]` array-of-tables (used elsewhere
+// in codex's config, e.g. skills.config) are a different TOML construct and
+// never how `projects.*` entries are written, so excluding them here can't
+// mask a real collision on a `projects.*` key.
+function tableKeys(text) {
+  const keys = [];
+  for (const line of text.split('\n')) {
+    const parts = parseHeaderKey(line);
+    if (parts) keys.push(JSON.stringify(parts));
+  }
+  return keys;
 }
 
 // Exported for tests only, so a test asserting "no duplicate survives" reuses
 // this exact scanner instead of a second copy that could drift from it.
 export function hasDuplicateHeader(text) {
-  const seen = new Set();
-  for (const h of tableHeaders(text)) {
-    if (seen.has(h)) return true;
-    seen.add(h);
-  }
-  return false;
+  const keys = tableKeys(text);
+  return new Set(keys).size !== keys.length;
 }
 
 // Ensure `dirPath` is trusted in Codex's persisted config so a non-interactive
@@ -84,7 +140,7 @@ export function ensureCodexTrust(dirPath) {
   } catch (e) {
     if (e.code !== 'ENOENT') throw e;
   }
-  if (text.includes(header)) return;
+  if (tableKeys(text).includes(JSON.stringify(['projects', dirPath]))) return;
 
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const needsBlankLine = text.length > 0 && !text.endsWith('\n\n');
