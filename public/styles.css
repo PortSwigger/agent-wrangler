@@ -468,6 +468,8 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    chip as a .sess-meta or .card-meta flex item — so the slot machinery adds no
    box of its own to size or style. */
 #panel-sections, .sess-meta-ext, .card-meta-ext, .ext-slot { display: contents; }
+/* The author display rule overrides the browser's default [hidden] styling. */
+.ext-slot[hidden] { display: none; }
 
 /* The dispatch modal's three `dispatch.field` anchor hosts (index.html,
    #m-dispatch-fields), same layout-transparency rule: an extension's control
