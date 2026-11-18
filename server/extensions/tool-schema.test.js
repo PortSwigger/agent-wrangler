@@ -14,12 +14,12 @@ test('board schema failures group tools by extension, update and clear on recove
   const a = probe('first');
   const b = probe('second');
   const c = probe('third', 'other', 'other error');
-  const expected = [{ extId: 'demo', tools: [{ name: 'first', error: 'broken schema' }, { name: 'second', error: 'broken schema' }] }, { extId: 'other', tools: [{ name: 'third', error: 'other error' }] }];
-  assert.deepEqual(schemas.extensionToolSchemaFailures([a]), [ { extId: 'demo', tools: [{ name: 'first', error: 'broken schema' }] } ]);
+  const expected = [{ extId: 'demo' }, { extId: 'other' }];
+  assert.deepEqual(schemas.extensionToolSchemaFailures([a]), [{ extId: 'demo' }]);
   assert.deepEqual(schemas.extensionToolSchemaFailures([c, b, a]), expected);
   assert.deepEqual(schemas.extensionToolSchemaFailures([a, b, c]), expected);
   a.inputSchema = z.object({});
-  assert.deepEqual(schemas.extensionToolSchemaFailures([a, b]), [{ extId: 'demo', tools: [{ name: 'second', error: 'broken schema' }] }]);
+  assert.deepEqual(schemas.extensionToolSchemaFailures([a, b]), [{ extId: 'demo' }]);
   b.inputSchema = z.object({});
   assert.deepEqual(schemas.extensionToolSchemaFailures([a, b]), []);
   assert.deepEqual(schemas.extensionToolSchemaFailures([]), []);
@@ -33,6 +33,8 @@ test('a recovered schema can fail again without duplicate process diagnostics', 
   tool.inputSchema = z.object({});
   assert.deepEqual(schemas.extensionToolSchemaFailures([tool]), []);
   tool.inputSchema = probe('recovery').inputSchema;
-  assert.equal(schemas.extensionToolSchemaFailures([tool])[0].tools[0].name, 'recovery');
+  assert.deepEqual(schemas.extensionToolSchemaFailures([tool]), [{ extId: 'repeated' }]);
   assert.equal(warnings.length, 1);
+  assert.match(warnings[0][0], /repeated\/recovery/);
+  assert.equal(warnings[0][1].message, 'broken schema');
 });

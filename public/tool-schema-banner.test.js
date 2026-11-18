@@ -11,18 +11,19 @@ function environment() {
   const context = vm.createContext({
     deckStatus: 'ready', fdBannerActive: false, quarantinedBuiltins: [],
     toolSchemaFailures: [{ extId: 'demo', tools: [{ name: 'first', error: 'bad schema' }, { name: 'second', error: '<unsafe>' }] }, { extId: 'other', tools: [{ name: 'third', error: 'other error' }] }],
+    latestExtensions: [{ id: 'demo', label: 'Demo Extension' }],
     missingExtensionFiles: [], staleGuiSession: null, restartPendingExts: [], rolledBackUpdate: null,
     rolledBackText: () => null, showSystemBanner: (...args) => shown.push(args),
   });
   return { shown, context };
 }
 
-test('schema failures persist with extension, tool names and errors and no dismiss control', () => {
+test('schema failures persist with only extension names and a log reference, without dismissal', () => {
   const { shown, context } = environment();
   vm.runInContext(`${standingBanner}\nsyncStandingBanner(); syncStandingBanner();`, context);
   assert.equal(shown.length, 2);
-  assert.match(shown[0][0], /demo.*first.*bad schema.*second.*<unsafe>.*other.*third.*other error/);
-  assert.match(shown[0][0], /unavailable/i);
+  assert.match(shown[0][0], /Demo Extension.*other.*some tools couldn't be loaded; see wrangler\.log/);
+  assert.doesNotMatch(shown[0][0], /first|second|third|bad schema|unsafe|other error/);
   assert.equal(shown[0].length, 1, 'no dismiss options');
 });
 

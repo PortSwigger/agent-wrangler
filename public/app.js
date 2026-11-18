@@ -7242,8 +7242,8 @@ function syncStandingBanner() {
   }
   if (fdBannerActive) return;
   if (toolSchemaFailures.length) {
-    const details = toolSchemaFailures.map(({ extId, tools }) => `${extId}: ${tools.map(({ name, error }) => `${name} (${error})`).join(', ')}`);
-    showSystemBanner(`⚠ Extension tools unavailable — schema conversion failed: ${details.join('; ')}`);
+    const names = toolSchemaFailures.map(({ extId }) => latestExtensions.find((e) => e.id === extId)?.label || extId);
+    showSystemBanner(`⚠ Extension${names.length === 1 ? '' : 's'} ${names.join(', ')}: some tools couldn't be loaded; see wrangler.log`);
     return;
   }
   if (quarantinedBuiltins.length) {

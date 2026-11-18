@@ -74,7 +74,7 @@ test('missing extension incidents survive state snapshots and recovery frames', 
 
 test('tool schema failures survive reconnects, update without duplication and clear on recovery', () => {
   const stream = createStateStream({ startRev: 100 });
-  const failures = [{ extId: 'demo', tools: [{ name: 'probe', error: 'broken schema' }] }];
+  const failures = [{ extId: 'demo' }];
   stream.observe(graph({ toolSchemaFailures: failures }));
   assert.deepEqual(JSON.parse(stream.snapshot()).status.toolSchemaFailures, failures);
   stream.next();
