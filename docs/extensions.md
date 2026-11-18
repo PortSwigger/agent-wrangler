@@ -2564,8 +2564,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the transient toast limit and are never evicted. The stack defaults to top-right;
   core **Settings → Appearance → Toast position** can move it to bottom-right for
   this browser. Newest messages sit nearest the chosen corner, about 12px from the
-  viewport edges. They can cover board headers, but keep an open dialog’s header,
-  Close button and footer controls clear. All text is set as text.
+  viewport edges, including while dialogs open or close. They can cover board or
+  dialog controls. All text is set as text.
 - **Client `api.ui.toast({ severity, text, detail, actions })`** (1.71.0) shows a
   transient message in the board's own toast stack (`public/toast.js`), the one
   core's toasts and `ui.notify` use, for feedback on something the human just did.

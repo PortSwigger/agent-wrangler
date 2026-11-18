@@ -97,7 +97,7 @@ test('overflowing lists contain their shadow gutters inside the allocated rows',
   }
 });
 
-test('core modal control rows reserve space for overflowing stacks', () => {
+test('modal control rows leave overflowing stacks anchored to the viewport', () => {
   for (const position of ['top-right', 'bottom-right']) {
     for (const kind of ['settings', 'modal-card', 'file-viewer', 'terminal']) {
       const { doc, clock } = fakeWorld();
@@ -124,13 +124,14 @@ test('core modal control rows reserve space for overflowing stacks', () => {
       list.clientHeight = 300;
       Object.defineProperty(list, 'scrollHeight', { get: () => toasts.count() * 60 });
       for (let i = 1; i < 16; i++) toasts.showPersistent(String(i), { title: `Card ${i}`, actions: [] });
-      assert.equal(stack.style[footer ? '--toast-bottom' : '--toast-top'], footer ? '135px' : '120px', kind);
+      assert.equal(stack.style['--toast-top'], '12px', kind);
+      assert.equal(stack.style['--toast-bottom'], '12px', kind);
       assert.equal(list.attrs['data-overflow'], 'true', `${kind}: scrollport must stay within the reserved area`);
     }
   }
 });
 
-test('closing the host dialog restores corner offsets in both positions', () => {
+test('opening and closing native dialogs preserves corner offsets in both positions', () => {
   for (const position of ['top-right', 'bottom-right']) {
     const { doc, clock } = fakeWorld();
     let observe;
@@ -149,30 +150,13 @@ test('closing the host dialog restores corner offsets in both positions', () => 
     const stack = stackOf(doc);
     dialog.open = true;
     observe([{ type: 'attributes', attributeName: 'open', target: dialog }]);
-    assert.equal(stack.style['--toast-top'], '80px');
+    assert.equal(stack.style['--toast-top'], '12px');
+    assert.equal(stack.parentNode, dialog);
     dialog.open = false;
     observe([{ type: 'attributes', attributeName: 'open', target: dialog }]);
     assert.equal(stack.parentNode, doc.body);
     assert.equal(stack.style['--toast-top'], '12px');
     assert.equal(stack.style['--toast-bottom'], '12px');
-  }
-});
-
-test('shadow gutters do not enlarge the modal header collision band in either position', () => {
-  for (const position of ['top-right', 'bottom-right']) {
-    const { doc, clock } = fakeWorld();
-    doc.defaultView = { innerWidth: 1000, innerHeight: 800 };
-    const modal = doc.createElement('div');
-    const header = doc.createElement('header');
-    header.closest = (selector) => selector === 'dialog' ? null : modal;
-    header.getBoundingClientRect = () => ({ left: 400, right: 430, top: 0, bottom: 72, width: 30, height: 72 });
-    doc.querySelectorAll = () => [header];
-    const toasts = createToasts({ document: doc, position, ...clock });
-    toasts.show('First', 'error');
-    const stack = stackOf(doc);
-    stack.getBoundingClientRect = () => ({ left: 424, right: 996, width: 572 });
-    toasts.show('Second', 'error');
-    assert.equal(stack.style['--toast-top'], '12px', 'a header under only the shadow gutter does not move the cards');
   }
 });
 
@@ -193,48 +177,7 @@ test('every timed toast has a countdown stripe and untimed notices have a solid 
   assert.equal(part(latest(), 'toast-progress'), undefined);
 });
 
-test('board headers leave the stack at the viewport corner at both positions', () => {
-  for (const position of ['top-right', 'bottom-right']) {
-    const { doc, clock } = fakeWorld();
-    doc.defaultView = { innerWidth: 1400, innerHeight: 800 };
-    const header = doc.createElement('div');
-    header.getBoundingClientRect = () => ({ left: 1050, right: 1384, top: 92, bottom: 132, width: 334, height: 40 });
-    const pageHeader = doc.createElement('header');
-    pageHeader.getBoundingClientRect = () => ({ left: 0, right: 1400, top: 0, bottom: 84, width: 1400, height: 84 });
-    doc.querySelectorAll = (selector) => selector.split(', ').includes('.task-head') ? [header, pageHeader] : [];
-    const toasts = createToasts({ document: doc, position, ...clock });
-    toasts.show('Visible');
-    toasts.showPersistent('request', { title: 'Action needed', actions: [], onDismiss() {} });
-    assert.equal(stackOf(doc).style['--toast-top'], '12px');
-    assert.equal(stackOf(doc).style['--toast-bottom'], '12px');
-  }
-});
-
-test('multi-row board headers never move the corner stack', () => {
-  for (const position of ['top-right', 'bottom-right']) {
-    const { doc, clock } = fakeWorld();
-    doc.defaultView = { innerWidth: 1400, innerHeight: 900 };
-    let offset = 0;
-    const heads = [628, 346, 64, 0].map((top) => {
-      const head = doc.createElement('header');
-      head.getBoundingClientRect = () => {
-        const y = top > 64 ? top - offset : top;
-        const height = top === 0 ? 56 : 34;
-        return { left: 1050, right: 1384, top: y, bottom: y + height, width: 334, height };
-      };
-      return head;
-    });
-    doc.querySelectorAll = (selector) => selector === 'dialog:modal' ? [] : heads;
-    const toasts = createToasts({ document: doc, position, ...clock });
-    toasts.show('Visible');
-    assert.equal(stackOf(doc).style['--toast-top'], '12px');
-    offset = 100;
-    toasts.setPosition(position);
-    assert.equal(stackOf(doc).style['--toast-top'], '12px', 'scrolling lower rows across the viewport midpoint does not move the stack');
-  }
-});
-
-test('centred modal header chains reserve close controls at both positions', () => {
+test('centred modal headers do not move toasts at either position', () => {
   for (const position of ['top-right', 'bottom-right']) {
     for (const native of [true, false]) {
       const { doc, clock } = fakeWorld();
@@ -258,7 +201,7 @@ test('centred modal header chains reserve close controls at both positions', () 
       toasts.show('Visible');
       toasts.showPersistent('request', { title: 'Action needed', actions: [], onDismiss() {} });
       const stack = modal.children.find((el) => el.attrs.popover === 'manual') || stackOf(doc);
-      assert.equal(stack.style['--toast-top'], '198px');
+      assert.equal(stack.style['--toast-top'], '12px');
       assert.ok(900 - parseInt(stack.style['--toast-top']) - parseInt(stack.style['--toast-bottom']) >= 120);
     }
   }
@@ -474,80 +417,6 @@ test('top-right is the default, newest first; changing position reorders existin
   assert.deepEqual(shown(doc), ['Newest', 'New']);
 });
 
-test('both positions reserve visible modal header controls and follow resized or hidden headers', () => {
-  const { doc, clock } = fakeWorld();
-  let observe;
-  let resize;
-  let height = 72;
-  const modal = doc.createElement('div');
-  const header = doc.createElement('header');
-  header.closest = (selector) => selector === 'dialog' ? null : modal;
-  header.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 0, bottom: height, width: 946, height });
-  const offscreen = doc.createElement('header');
-  offscreen.getBoundingClientRect = () => ({ left: 0, right: 200, top: 0, bottom: 300, width: 200, height: 300 });
-  const footer = doc.createElement('footer');
-  footer.closest = header.closest;
-  footer.matches = () => true;
-  footer.getBoundingClientRect = () => ({ left: 400, right: 900, top: 700, bottom: 750, width: 500, height: 50 });
-  doc.documentElement = {};
-  doc.defaultView = {
-    innerWidth: 1000, innerHeight: 800,
-    MutationObserver: class { constructor(fn) { observe = fn; } observe() {} },
-    ResizeObserver: class { constructor(fn) { resize = fn; } observe() {} unobserve() {} },
-  };
-  doc.querySelectorAll = (selector) => selector === 'dialog:modal' ? [] : [header, offscreen, footer];
-  const toasts = createToasts({ document: doc, ...clock });
-  toasts.show('Visible');
-  assert.equal(stackOf(doc).style['--toast-top'], '80px');
-  assert.equal(stackOf(doc).style['--toast-bottom'], '108px', 'modal footer controls remain unobscured');
-  height = 110;
-  resize();
-  assert.equal(stackOf(doc).style['--toast-top'], '118px');
-  toasts.setPosition('bottom-right');
-  assert.equal(stackOf(doc).style['--toast-top'], '118px', 'bottom stack cannot grow over the header either');
-  height = 0;
-  observe([{ type: 'attributes', attributeName: 'class', target: header }]);
-  assert.equal(stackOf(doc).style['--toast-top'], '12px');
-});
-
-test('a low header in an 800px viewport cannot hide persistent notifications at either position', () => {
-  for (const position of ['top-right', 'bottom-right']) {
-    const { doc, clock } = fakeWorld();
-    doc.defaultView = { innerWidth: 1000, innerHeight: 800 };
-    const header = doc.createElement('header');
-    header.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 750, bottom: 790, width: 946, height: 40 });
-    const footer = doc.createElement('footer');
-    footer.matches = () => true;
-    footer.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 10, bottom: 50, width: 946, height: 40 });
-    doc.querySelectorAll = () => [header, footer];
-    const toasts = createToasts({ document: doc, position, ...clock });
-    toasts.showPersistent('request', { title: 'Action needed', actions: [], onDismiss() {} });
-    const stack = stackOf(doc);
-    assert.equal(stack.style['--toast-top'], '12px');
-    assert.equal(stack.style['--toast-bottom'], '12px');
-    assert.equal(toasts.count(), 1);
-  }
-});
-
-test('large edge chrome still leaves at least 120px of usable stack height', () => {
-  const { doc, clock } = fakeWorld();
-  doc.defaultView = { innerWidth: 1000, innerHeight: 800 };
-  const modal = doc.createElement('div');
-  const header = doc.createElement('header');
-  header.closest = (selector) => selector === 'dialog' ? null : modal;
-  header.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 0, bottom: 760, width: 946, height: 760 });
-  const footer = doc.createElement('footer');
-  footer.closest = header.closest;
-  footer.matches = () => true;
-  footer.getBoundingClientRect = () => ({ left: 54, right: 1000, top: 720, bottom: 800, width: 946, height: 80 });
-  doc.querySelectorAll = () => [header, footer];
-  const toasts = createToasts({ document: doc, ...clock });
-  toasts.show('Visible');
-  const stack = stackOf(doc);
-  const available = 800 - parseInt(stack.style['--toast-top']) - parseInt(stack.style['--toast-bottom']);
-  assert.ok(available >= 120, `usable height was ${available}px`);
-});
-
 test('layout batches into one animation frame and releases observers and pending work when empty', () => {
   const { doc, clock } = fakeWorld();
   const frames = new Map();
@@ -558,10 +427,6 @@ test('layout batches into one animation frame and releases observers and pending
   let resize;
   let reads = 0;
   let mutationActive = false;
-  const modal = doc.createElement('div');
-  const header = doc.createElement('header');
-  header.closest = (selector) => selector === 'dialog' ? null : modal;
-  header.getBoundingClientRect = () => { reads++; return { left: 54, right: 1000, top: 0, bottom: 72, width: 946, height: 72 }; };
   doc.documentElement = {};
   doc.defaultView = {
     innerWidth: 1000, innerHeight: 800,
@@ -583,12 +448,13 @@ test('layout batches into one animation frame and releases observers and pending
   };
   doc.addEventListener = (name, fn) => events.set(name, fn);
   doc.removeEventListener = (name) => events.delete(name);
-  doc.querySelectorAll = (selector) => selector === 'dialog:modal' ? [] : [header];
+  doc.querySelectorAll = () => [];
   const toasts = createToasts({ document: doc, ...clock });
   toasts.show('First');
   const stack = stackOf(doc);
-  Object.defineProperty(listOf(doc), 'scrollHeight', { get: () => stack.style['--toast-top'] ? 900 : 800 });
+  Object.defineProperty(listOf(doc), 'scrollHeight', { get: () => { reads++; return 900; } });
   toasts.setPosition('bottom-right');
+  reads = 0;
   resize();
   mutation([]);
   events.get('scroll')();
@@ -596,8 +462,8 @@ test('layout batches into one animation frame and releases observers and pending
   assert.equal(frames.size, 1);
   const flush = () => { const callbacks = [...frames.values()]; frames.clear(); for (const fn of callbacks) fn(); };
   flush();
-  assert.equal(reads, 1);
-  assert.equal(stackOf(doc).style['--toast-top'], '80px');
+  assert.equal(reads, 2, 'one overflow measurement and one scroll to the newest notice');
+  assert.equal(stackOf(doc).style['--toast-top'], '12px');
   assert.equal(listOf(doc).scrollTop, 900, 'newest notice stays visible after the frame changes the available height');
   events.get('resize')();
   toasts.clear();
@@ -607,7 +473,7 @@ test('layout batches into one animation frame and releases observers and pending
   assert.equal(events.size, 0);
   toasts.show('Again');
   flush();
-  assert.equal(stackOf(doc).style['--toast-top'], '80px');
+  assert.equal(stackOf(doc).style['--toast-top'], '12px');
   assert.equal(mutationActive, true);
-  assert.ok(observed.has(header));
+  assert.ok(observed.has(listOf(doc)));
 });
