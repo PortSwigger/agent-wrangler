@@ -655,7 +655,7 @@ import semver from 'semver';
 // telemetry, kept until 3.0 removes them. A `^1` manifest boots on the shim
 // and its `host.version` reads V1_SHIM_VERSION. No façade key was reshaped, so
 // both majors build from V1_BUILDERS and no v2.js exists yet.
-export const HOST_API_VERSION = '2.0.0';
+export const HOST_API_VERSION = '2.1.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
 export const V1_SHIM_VERSION = '1.96.0';

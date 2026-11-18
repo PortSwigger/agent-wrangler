@@ -75,7 +75,7 @@ function reply(c, type) {
 // is the honest case; a test passes them separately to stage a repo whose
 // package.json disclosure and index.js manifest DISAGREE.
 function fakeClone({
-  id = 'notes', requires = [], lock = true, declaration = true, deps = true,
+  id = 'notes', requires = [], lock = true, declaration = true, deps = true, zod = false,
   declaredId = id, declaredRequires = requires, indexThrows = false, defaultEnabled = true,
   range = null, declaredRange = range, earlyAdopter = null, declaredEarlyAdopter = earlyAdopter,
 } = {}) {
@@ -88,7 +88,7 @@ function fakeClone({
     fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({
       name: 'notes',
       type: 'module',
-      ...(deps ? { dependencies: { left: '^1.0.0' } } : {}),
+      ...(deps || zod ? { dependencies: { ...(deps ? { left: '^1.0.0' } : {}), ...(zod ? { zod: '^4.6.7' } : {}) } } : {}),
       ...(declaration ? {
         wranglerExtension: {
           id: declaredId, label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', requires: declaredRequires,
@@ -1019,4 +1019,21 @@ test('a failed receipt publication preserves the prior install and removes the u
     assert.deepEqual(fs.readdirSync(generationRoot('notes')), [before.generation]);
     assert.deepEqual(fs.readdirSync(tmpDir()), []);
   } finally { fs.rmSync(blocked, { recursive: true, force: true }); reset(); }
+});
+
+test('install and update warn about package.json zod without refusing installation', async () => {
+  reset();
+  const c = ctx();
+  const first = await install(c, { zod: true });
+  assert.match(first.warnings[0], /zod.*schema:zod.*host.schema.z/);
+  assert.equal(reply(c, 'ext-install-done').installed, true);
+  const next = ctx();
+  const update = await install(next, { zod: true });
+  assert.equal(update.update, true);
+  assert.deepEqual(update.warnings, first.warnings);
+  assert.equal(reply(next, 'ext-install-done').installed, true);
+  const clean = ctx();
+  const disclosure = await disclose(clean);
+  assert.deepEqual(disclosure.warnings, []);
+  await extConsentHandler.handler({ tempId: disclosure.tempId, approve: false }, clean);
 });

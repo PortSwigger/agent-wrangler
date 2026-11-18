@@ -14,9 +14,9 @@ function canonical(value) {
   return value;
 }
 
-export function extensionToolFingerprint(tools) {
+export function extensionToolFingerprint(tools, hostApiFor) {
   const schemas = tools.flatMap((tool) => {
-    const converted = toolInputSchema(tool);
+    const converted = toolInputSchema(tool, hostApiFor);
     return converted ? [{ name: tool.name, description: tool.description, inputSchema: converted.jsonSchema }] : [];
   })
     .sort((a, b) => a.name.localeCompare(b.name));

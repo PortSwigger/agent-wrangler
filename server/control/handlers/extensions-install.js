@@ -338,6 +338,8 @@ export const extInstallHandler = {
         refuseIncompatible(ctx, { id: declared.id, label: declared.label, range: declared.range, reason: mismatch });
         return;
       }
+      const warnings = declared.warnings || [];
+      for (const warning of warnings) log(`[agent-wrangler] extension ${declared.id}: ${warning}`);
       const sha = await runners.head(dir);
       if (ref && /^[0-9a-f]{40}$/i.test(ref) && sha !== ref.toLowerCase()) throw new Error('The checked out commit does not match the exact ref');
       // Refused BEFORE consent and before any registry fetch: an extension
@@ -358,6 +360,7 @@ export const extInstallHandler = {
       const history = existing ? await runners.commits(dir, existing.sha || '').catch(() => null) : null;
       const reply = {
         type: 'ext-install-disclosure',
+        warnings,
         tempId,
         sha,
         ...(ref === undefined ? {} : { ref }),

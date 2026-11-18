@@ -1,3 +1,5 @@
+import { buildHostApi } from '../host-api/index.js';
+import { extensionToolSchemaFailures } from '../extensions/tool-schema.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -422,5 +424,25 @@ test('tools/list uses the checked conversion without invoking an extension conve
       assert.equal(listed[0].inputSchema.properties.title.type, 'string');
     }
     assert.equal(conversions, 1);
+  } finally { await client.close(); await server.close(); }
+});
+
+test('host schema factories power MCP listing, validation, fingerprints and diagnostics', async () => {
+  const host = buildHostApi({ id: 'schema-demo', requires: ['schema:zod'], range: '^2.1.0' });
+  const hostApiFor = (id) => { assert.equal(id, host.id); return host; };
+  const tools = [{
+    name: 'host_schema_probe', extId: host.id, description: 'Example',
+    inputSchema: ({ host }) => ({ title: host.schema.z.string().min(1) }),
+    handler: (_, args) => ({ content: [{ type: 'text', text: args.title }] }),
+  }];
+  const staticTools = [{ ...tools[0], inputSchema: { title: z.string().min(1) } }];
+  assert.equal(extensionToolFingerprint(tools, hostApiFor), extensionToolFingerprint(staticTools));
+  assert.deepEqual(extensionToolSchemaFailures(tools, hostApiFor), []);
+  const { client, server } = await connect({ ...fakeDeps(), hostApiFor }, 'CARD1', { tools });
+  try {
+    const listed = (await client.listTools()).tools;
+    assert.equal(listed[0].inputSchema.properties.title.type, 'string');
+    assert.equal((await client.callTool({ name: tools[0].name, arguments: { title: 'ok' } })).content[0].text, 'ok');
+    assert.equal((await client.callTool({ name: tools[0].name, arguments: { title: '' } })).isError, true);
   } finally { await client.close(); await server.close(); }
 });

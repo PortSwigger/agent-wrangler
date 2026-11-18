@@ -440,6 +440,9 @@ export function readDeclaration(dir) {
     requires: [...(d.requires || [])],
     range: engines?.wranglerApi ?? null,
     earlyAdopterBranch: ea?.branch ?? null,
+    ...(Object.hasOwn(pkg.dependencies || {}, 'zod') || Object.hasOwn(pkg.optionalDependencies || {}, 'zod') ? {
+      warnings: ['This extension depends on its own zod. Declare schema:zod and build tool schemas with host.schema.z instead; extensions must not bundle zod.'],
+    } : {}),
   };
 }
 

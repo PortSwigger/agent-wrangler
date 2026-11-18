@@ -474,3 +474,16 @@ test('unavailable ancestry is unknown, rather than permission to downgrade silen
   const git = async () => { throw new Error('fetch unavailable'); };
   assert.equal(await commitRelation('/dest', 'a'.repeat(40), { git }), 'unknown');
 });
+
+test('zod dependency warnings use package.json runtime dependencies only', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-zod-warning-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const section of ['dependencies', 'optionalDependencies', 'devDependencies', 'peerDependencies']) {
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      wranglerExtension: { id: 'example', label: 'Example' },
+      [section]: { zod: '^4.6.7' },
+    }));
+    const warnings = readDeclaration(dir).warnings || [];
+    assert.equal(warnings.length, ['dependencies', 'optionalDependencies'].includes(section) ? 1 : 0);
+  }
+});

@@ -38,3 +38,20 @@ test('a recovered schema can fail again without duplicate process diagnostics', 
   assert.match(warnings[0][0], /repeated\/recovery/);
   assert.equal(warnings[0][1].message, 'broken schema');
 });
+
+test('schema factory errors omit only the failing tool', (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const hostApiFor = () => ({ id: 'demo' });
+  for (const inputSchema of [
+    ({ host }) => ({ title: host.schema.z.string() }),
+    () => { throw new Error('factory failed'); },
+    () => undefined,
+    () => [],
+    () => Promise.resolve({}),
+    () => Promise.reject(new Error('async factory failed')),
+  ]) {
+    const tool = { name: 'factory_probe', extId: 'demo', inputSchema };
+    assert.equal(schemas.toolInputSchema(tool, hostApiFor), null);
+    assert.deepEqual(schemas.extensionToolSchemaFailures([tool], hostApiFor), [{ extId: 'demo' }]);
+  }
+});

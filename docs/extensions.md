@@ -508,6 +508,43 @@ a [`core.deprecated`](#core-events) event under the surface id in the last colum
   [Migrating an unsplit manifest](#migrating-an-unsplit-manifest) still work through adapters, log
   one warning on first use naming the replacement, and are reported as `core.deprecated`.
 
+### Tool schemas with the host’s Zod
+
+Extensions must build tool schemas with core’s Zod instance and must not bundle their own `zod`.
+Declare `schema:zod` in `requires` and `engines: { wranglerApi: '^2.1.0' }` in both the manifest
+and `package.json`’s `wranglerExtension` block. The capability provides **`host.schema.z`** (Zod 4).
+Use a synchronous `inputSchema({ host })` factory so the host is available when building a tool’s
+schema; it returns a Zod object schema or a raw shape, just like a static `inputSchema`:
+
+```js
+export default {
+  id: 'example',
+  label: 'Example',
+  requires: ['schema:zod'],
+  engines: { wranglerApi: '^2.1.0' },
+  tools: [{
+    name: 'example_echo',
+    description: 'Echo a message.',
+    inputSchema: ({ host }) => ({ text: host.schema.z.string().min(1) }),
+    handler: async (_frame, { text }) => ({ content: [{ type: 'text', text }] }),
+  }],
+};
+```
+
+Factories may run repeatedly for MCP registration, tool fingerprints and diagnostics. Keep them
+side-effect free. Existing static schemas remain supported. A throwing or invalid factory follows
+the same tool omission and diagnostic path as a schema conversion failure.
+
+A core Zod **major** upgrade requires a host API **major** bump. Extensions must use a compatible,
+major-bounded `engines.wranglerApi` range so install and update reject an incompatible host before
+loading the extension, with the required and served API versions in the reason. This applies even
+when a legacy host API shim is retained: a shim must not serve a different Zod major under the same
+API major.
+
+Install and update warn when `package.json` declares `zod` in `dependencies` or
+`optionalDependencies`. The warning appears in consent and the server log (including automatic
+updates); it does not block installation. Remove the dependency when migrating to `host.schema.z`.
+
 ### Session launch capabilities
 
 | Capability | Host surface |
