@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { setImmediate } from 'node:timers/promises';
-import { createRestartBarrier, formatAge } from './restart-barrier.js';
+import { createRestartBarrier, dialogsFrame, formatAge } from './restart-barrier.js';
 
 function deferred() {
   let resolve;
@@ -326,4 +326,48 @@ test('an untracked HTTP stream is refused while draining but never holds a resta
   assert.equal((await fetch(url)).status, 503);
   assert.equal(await restart, true);
   assert.deepEqual(exits, ['update']);
+});
+
+test('an unattended restart waits, still admitting work, while a dialog is open', async () => {
+  let open = 1;
+  const { barrier, exits, statuses } = fixture({ isHeld: () => open > 0, holdPollMs: 5 });
+  const restart = barrier.request('auto-updated x');
+  await new Promise((r) => setTimeout(r, 200)); // longer than the drain timeout
+  assert.deepEqual(exits, []);
+  assert.equal(statuses.at(-1).phase, 'held');
+  assert.equal(barrier.draining(), false);
+  assert.equal(barrier.run(() => 'saved'), 'saved');
+  open = 0;
+  assert.equal(await restart, true);
+  assert.deepEqual(exits, ['auto-updated x']);
+});
+
+test('a forced restart ignores open dialogs, and releases a held one', async () => {
+  const held = fixture({ isHeld: () => true, holdPollMs: 5 });
+  const auto = held.barrier.request('auto');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(held.exits, []);
+  held.barrier.request('restart requested from the board', { force: true });
+  assert.equal(await auto, true);
+  assert.deepEqual(held.exits, ['auto']);
+
+  const forced = fixture({ isHeld: () => true });
+  assert.equal(await forced.barrier.request('board', { force: true }), true);
+  assert.equal(forced.statuses.some((s) => s.phase === 'held'), false);
+});
+
+test('a signal restart is not held by open dialogs', async () => {
+  const done = [];
+  const { barrier } = fixture({ isHeld: () => true });
+  await barrier.request('signal SIGTERM', { afterDrain: (r) => done.push(r) });
+  assert.deepEqual(done, ['signal SIGTERM']);
+});
+
+test('dialogsFrame reads only a dialogs frame, clamped', () => {
+  assert.equal(dialogsFrame(Buffer.from('{"type":"dialogs","open":2}')), 2);
+  assert.equal(dialogsFrame('{"type":"dialogs","open":-3}'), 0);
+  assert.equal(dialogsFrame('{"type":"dialogs","open":"x"}'), 0);
+  assert.equal(dialogsFrame('{"type":"dialogs","open":1e9}'), 50);
+  assert.equal(dialogsFrame('{"type":"action","action":"dialogs"}'), null);
+  assert.equal(dialogsFrame('not json "dialogs"'), null);
 });

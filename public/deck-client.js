@@ -177,9 +177,18 @@ export function createDeckClient({
     return status === 'ready' && actions.has(action) && ws?.readyState === 1;
   }
 
+  // A fire-and-forget frame outside the action protocol (the open-dialog
+  // count). False when the socket is down; onOpen is the time to resend.
+  function signal(frame) {
+    if (!ws || ws.readyState !== 1) return false;
+    ws.send(JSON.stringify(frame));
+    return true;
+  }
+
   return {
     start,
     refresh,
+    signal,
     supports,
     act,
     canSend,

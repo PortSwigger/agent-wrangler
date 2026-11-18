@@ -93,7 +93,7 @@ import { createLinkNormaliser } from './mcp/links.js';
 import { createExtDeliver } from './ext-deliver.js';
 import { sweepStaging, sweepGenerations } from './extensions/external.js';
 import { log, logWarn, logError } from './log.js';
-import { createRestartBarrier, restartIsQuiet } from './restart-barrier.js';
+import { dialogsFrame, createRestartBarrier, restartIsQuiet } from './restart-barrier.js';
 import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange, knownModelId } from './price-catalog.js';
@@ -137,9 +137,15 @@ process.on('unhandledRejection', (err) => logError('[unhandledRejection]', err))
 
 // Registered before anything can exit, so even a failed boot says why it went.
 let publishRestartStatus = () => {};
+// Open dialogs per board connection (a `dialogs` frame from the client), so an
+// unattended restart waits until nobody is mid-typing. A socket's entry goes
+// when it closes.
+const openDialogs = new Map();
+const dialogsOpen = () => [...openDialogs.values()].reduce((a, b) => a + b, 0);
 const restartBarrier = createRestartBarrier({
   log,
   isIdle: () => headlessRunsInFlight() === 0,
+  isHeld: () => dialogsOpen() > 0,
   onStatus: (status) => {
     log(`[agent-wrangler] ${status.message}`);
     publishRestartStatus(status);
@@ -1566,7 +1572,17 @@ controlWss.on('connection', (ws) => {
     staleGuiSession: () => staleGuiSession,
     recheckGuiSession: async () => { staleGuiSession = await sessionManager.checkGuiSession(); },
   };
-  ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx, { legacy: ws.legacy }); });
+  ws.on('message', (raw) => {
+    lastControlActivity = Date.now();
+    const dialogs = dialogsFrame(raw);
+    if (dialogs !== null) {
+      if (dialogs > 0) openDialogs.set(ws, dialogs);
+      else openDialogs.delete(ws);
+      return;
+    }
+    routeControlMessage(raw, ctx, { legacy: ws.legacy });
+  });
+  ws.on('close', () => openDialogs.delete(ws));
 });
 
 // --- PTY channel: stream a tmux attach to xterm.js ---
