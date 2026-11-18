@@ -16,7 +16,7 @@ export const getModelFrontTool = {
     + 'front only for being faster. Pass `pick` to check one setting against the whole installed-agent '
     + 'front, regardless of filters: whether it is on the front, and the best setting that beats it. '
     + 'An unscored pick has no numbers or verdict. Numbers measure doing a coding task '
-    + '(Terminal-Bench 4.0), not reviewing one. Only settings this board can launch. Read-only.',
+    + '(Terminal-Bench 4.1, or 4.0 where the board has not run a model on 4.1), not reviewing one. Only settings this board can launch. Read-only.',
   inputSchema: {
     reviewFor: z.string().optional().describe('Source provider for an independent review. Returns reviewAgent using declared provider preference, excluding this provider; defaults to the calling session provider.'),
     agent: z.string().optional().describe(`Only this agent's front settings (${knownAgentIds().join(', ')}); does not restrict pick judgement.`),
