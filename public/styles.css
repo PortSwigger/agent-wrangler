@@ -426,7 +426,8 @@ body.dragging { user-select: none; cursor: col-resize; }
 .sess-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 /* "Actions" overflow button — a bordered pill (kebab glyph + label) that opens
    the session-action menu. The eight inline icons collapsed into this one entry. */
-.sess-actions-btn { height: 26px; padding: 0 10px 0 9px; display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--border); color: var(--fg-muted); border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; }
+.toast-clear, .sess-actions-btn { height: 26px; padding: 0 10px 0 9px; display: inline-flex; align-items: center; font: inherit; font-size: 12px; font-weight: 500; }
+.sess-actions-btn { gap: 5px; background: transparent; border: 1px solid var(--border); color: var(--fg-muted); border-radius: 7px; cursor: pointer; }
 .sess-actions-btn:hover { color: var(--fg); background: var(--surface-2); }
 .sess-actions-btn svg { width: 15px; height: 15px; fill: currentColor; }
 /* Hairline between the Actions button and the inline window controls. */
@@ -1245,8 +1246,8 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
 .toast-list[data-overflow="true"] { margin-top: 0; margin-bottom: 0; }
 .toast-clear {
   z-index: 1; align-self: flex-end; flex-shrink: 0; pointer-events: auto;
-  padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--surface); color: var(--fg); font: inherit; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--fg); cursor: pointer;
 }
 .toast-clear[hidden] { display: none; }
 #toast button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }

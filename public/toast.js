@@ -21,9 +21,6 @@
 export const MAX_TOASTS = 3;
 export const SEVERITY_MS = { success: 3000, info: 5000, warning: 8000, error: Infinity };
 
-const FOOTERS = '.modal-actions, dialog footer';
-const HEADERS = `header, [role="banner"], [role="toolbar"], .file-head, .usage-head, .terminal-dialog-head, .modal-card > h3, dialog > :first-child:has(> :is(h1, h2, h3)), dialog > :first-child > :first-child:has(:is(h1, h2, h3)), ${FOOTERS}`;
-
 function severityOf(isErr, opts) {
   if (typeof isErr === 'string' && isErr in SEVERITY_MS) return isErr;
   if (isErr) return 'error';
@@ -37,14 +34,13 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   let clearButton = null;
   let list = null;
   let held = false; // hovered or focused: every timer waits
-  let headerObserver = null;
+  let listObserver = null;
   let modalObserver = null;
   let watching = false;
   let frame = null;
   let scrollAfterLayout = false;
   const requestFrame = document.defaultView?.requestAnimationFrame?.bind(document.defaultView);
   const cancelFrame = document.defaultView?.cancelAnimationFrame?.bind(document.defaultView);
-  const observedHeaders = new Set();
   position = position === 'bottom-right' ? position : 'top-right';
 
   function root() {
@@ -107,52 +103,8 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
 
   function layout() {
     if (!stack || !live.length) return;
-    const viewport = document.defaultView?.innerWidth || document.documentElement?.clientWidth || 800;
-    const height = document.defaultView?.innerHeight || document.documentElement?.clientHeight || 800;
-    const bounds = stack.getBoundingClientRect?.();
-    const right = bounds?.width ? bounds.right - 12 : viewport - 12;
-    const left = bounds?.width ? bounds.left + 12 : right - Math.min(560, viewport - 24);
-    const modalOf = (el) => {
-      const dialog = el.closest?.('dialog');
-      return dialog ? (dialog === modals.at(-1) ? dialog : null) : el.closest?.('.modal-card, .file-card');
-    };
-    const headers = new Set([...(document.querySelectorAll?.(HEADERS) ?? [])].filter(modalOf));
-    const modalBands = new Map();
-    let top = 12;
-    let bottom = 12;
-    for (const el of headers) {
-      const r = el.getBoundingClientRect?.();
-      if (r?.width > 0 && r.height > 0 && r.right > left && r.left < right && r.bottom > 0 && r.top < height) {
-        if (el.matches?.(FOOTERS)) {
-          if (r.top >= height / 2) bottom = Math.max(bottom, Math.ceil(height - r.top) + 8);
-        } else if (r.top <= height / 2) {
-          const modal = modalOf(el);
-          if (!modalBands.has(modal)) modalBands.set(modal, []);
-          modalBands.get(modal).push(r);
-        }
-      }
-      if (!observedHeaders.has(el)) headerObserver?.observe(el);
-    }
-    for (const bands of modalBands.values()) {
-      bands.sort((a, b) => a.top - b.top);
-      let edge = bands[0].top;
-      for (const r of bands) {
-        if (r.top > edge + 8) break;
-        edge = Math.max(edge, Math.ceil(r.bottom) + 8);
-      }
-      top = Math.max(top, edge);
-    }
-    for (const el of observedHeaders) if (!headers.has(el)) headerObserver?.unobserve(el);
-    observedHeaders.clear();
-    for (const el of headers) observedHeaders.add(el);
-    const budget = Math.max(0, height - 120);
-    if (top + bottom > budget) {
-      const scale = budget / (top + bottom);
-      top = Math.floor(top * scale);
-      bottom = Math.floor(bottom * scale);
-    }
-    stack.style.setProperty('--toast-top', `${top}px`);
-    stack.style.setProperty('--toast-bottom', `${bottom}px`);
+    stack.style.setProperty('--toast-top', '12px');
+    stack.style.setProperty('--toast-bottom', '12px');
     list.setAttribute('data-overflow', 'false');
     list.setAttribute('data-overflow', String(list.scrollHeight > list.clientHeight));
     if (scrollAfterLayout) { scrollAfterLayout = false; scrollToNewest(); }
@@ -322,7 +274,10 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     if (watching) return;
     watching = true;
     const RO = document.defaultView?.ResizeObserver ?? globalThis.ResizeObserver;
-    if (RO) headerObserver ||= new RO(scheduleLayout);
+    if (RO) {
+      listObserver ||= new RO(scheduleLayout);
+      listObserver.observe(list);
+    }
     document.defaultView?.addEventListener?.('resize', scheduleLayout);
     document.addEventListener?.('scroll', scheduleLayout, true);
     const MO = document.defaultView?.MutationObserver ?? globalThis.MutationObserver;
@@ -352,8 +307,7 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     frame = null;
     scrollAfterLayout = false;
     modalObserver?.disconnect?.();
-    headerObserver?.disconnect?.();
-    observedHeaders.clear();
+    listObserver?.disconnect?.();
     modals.length = 0;
     document.defaultView?.removeEventListener?.('resize', scheduleLayout);
     document.removeEventListener?.('scroll', scheduleLayout, true);
