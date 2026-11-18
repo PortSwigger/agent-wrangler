@@ -775,13 +775,15 @@ async function runPrStatusSweep(only) {
     ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
   ].filter((l) => !only || (l.scope === only.scope && l.ownerId === only.ownerId));
   let changed = false;
+  const threadsByUrl = new Map();
   // The install-wide fallback for a session with no explicit autoFixPrChecks —
   // read once per sweep and shared by every pane-nudge decision below (the
   // merged/closed line here, plus all three transition loops), so one tick can't
   // gate two of them on different defaults.
   const fixPrDefault = autoFixPrChecksDefault();
-  for await (const { scope, ownerId, url, number, unresolvedCount, previousUnresolvedCount, status: res, fetchedAt } of observePrLinks(links)) {
+  for await (const { scope, ownerId, url, number, unresolvedCount, unresolvedThreads, previousUnresolvedCount, status: res, fetchedAt } of observePrLinks(links)) {
     if (res == null) continue;
+    if (unresolvedThreads) threadsByUrl.set(url, unresolvedThreads);
     const store = scope === 'task' ? taskStore : sessionManager;
     // A merged/closed PR is dead: drop its link automatically (any pr link,
     // however it was attached). Nudge a live owning session's pane, like the
@@ -812,7 +814,7 @@ async function runPrStatusSweep(only) {
     const current = [
       ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
       ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
-    ];
+    ].map((l) => ({ ...l, unresolvedThreads: threadsByUrl.get(l.url) }));
     // Collected so the unresolved-comment loop below can skip its OWN pane
     // nudge for any link that just got a checkStatus nudge this same tick (see
     // that loop for why: a "Request changes" review with inline comments fires

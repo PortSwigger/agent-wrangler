@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount, fetchPrDiff, fetchPrObservation } from './pr-status.js';
+import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount, fetchPrDiff, fetchPrObservation, fetchUnresolvedThreads } from './pr-status.js';
 
 const runner = (stdout, code = 0) => async () => ({ code, stdout });
 const prRunner = (text) => {
@@ -204,4 +204,27 @@ test('observation failures carry diagnostics without changing fetchPrStatus null
   assert.deepEqual(result, { status: null, error: 'offline' });
   assert.equal((await fetchPrObservation('u', runner('invalid'))).status, null);
   assert.match((await fetchPrObservation('u', runner('invalid'))).error, /invalid/i);
+});
+
+
+test('fetchUnresolvedThreads returns author, current or original location and bounded root comments', async () => {
+  const result = await fetchUnresolvedThreads('u', unresolvedRun(JSON.stringify([
+    { id: 't1', path: 'app.js', line: 42, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Please fix this' }] } },
+    { id: 't2', path: 'old.js', line: null, originalLine: 7, comments: { nodes: [{ author: null, body: 'x'.repeat(1000) }] } },
+    { id: 't3', path: 'empty.js', comments: { nodes: [] } },
+  ])));
+  assert.deepEqual(result[0], { id: 't1', author: 'reviewer', path: 'app.js', line: 42, body: 'Please fix this' });
+  assert.equal(result[1].line, 7);
+  assert.equal(result[1].author, null);
+  assert.equal(result[1].body.length, 321);
+  assert.equal(result[2].body, '');
+  assert.deepEqual(await fetchUnresolvedThreads('u', unresolvedRun('[]')), []);
+});
+
+test('fetchUnresolvedThreads preserves the null-on-failure contract', async () => {
+  for (const output of ['', 'null', '{}', 'not json', '[null]']) {
+    assert.equal(await fetchUnresolvedThreads('u', unresolvedRun(output)), null);
+  }
+  assert.equal(await fetchUnresolvedThreads('u', unresolvedRun('[]', 1)), null);
+  assert.equal(await fetchUnresolvedThreads('u', async () => { throw new Error('unavailable'); }), null);
 });
