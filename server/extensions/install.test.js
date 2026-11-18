@@ -484,6 +484,20 @@ test('zod dependency warnings use package.json runtime dependencies only', (t) =
       [section]: { zod: '^4.6.7' },
     }));
     const warnings = readDeclaration(dir).warnings || [];
-    assert.equal(warnings.length, ['dependencies', 'optionalDependencies'].includes(section) ? 1 : 0);
+    assert.equal(warnings.length, ['dependencies', 'optionalDependencies', 'peerDependencies'].includes(section) ? 1 : 0);
+  }
+});
+
+test('optional zod peers warn only when zod is also a runtime dependency', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-zod-peer-warning-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const dependencies of [undefined, { zod: '^4.6.7' }]) {
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      wranglerExtension: { id: 'example', label: 'Example' },
+      peerDependencies: { zod: '^4.6.7' },
+      peerDependenciesMeta: { zod: { optional: true } },
+      dependencies,
+    }));
+    assert.equal((readDeclaration(dir).warnings || []).length, dependencies ? 1 : 0);
   }
 });

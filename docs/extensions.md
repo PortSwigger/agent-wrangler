@@ -542,7 +542,8 @@ when a legacy host API shim is retained: a shim must not serve a different Zod m
 API major.
 
 Install and update warn when `package.json` declares `zod` in `dependencies` or
-`optionalDependencies`. The warning appears in consent and the server log (including automatic
+`optionalDependencies`, or as a non-optional `peerDependencies` entry (npm installs those peers
+automatically). The warning appears in consent and the server log (including automatic
 updates); it does not block installation. Remove the dependency when migrating to `host.schema.z`.
 
 ### Session launch capabilities

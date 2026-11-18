@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import semver from 'semver';
@@ -236,4 +237,13 @@ test('a malformed range never passes', () => {
   assert.equal(isValidRange('not a range'), false);
   assert.equal(servesRange('not a range'), false);
   assert.equal(isValidRange('^1.0.0'), true);
+});
+
+test('the host API major pins the Zod major it serves', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  const zodMajorByHostMajor = { 2: 4 };
+  const zodMajor = zodMajorByHostMajor[semver.major(HOST_API_VERSION)];
+  assert.ok(zodMajor, 'Declare the Zod major served by this host API major');
+  assert.ok(semver.subset(pkg.dependencies.zod, `^${zodMajor}.0.0`),
+    'A core Zod major upgrade requires a host API major bump; preserve existing API majors’ Zod contract');
 });
