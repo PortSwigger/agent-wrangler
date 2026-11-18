@@ -14,7 +14,8 @@ alone. UI, presets and defaults belong to their callers.
 
 | Key | Source | Licence | Gives |
 | --- | --- | --- | --- |
-| `board` | [Terminal-Bench leaderboard](https://github.com/harbor-framework/terminal-bench/tree/main/leaderboard/submissions) | Apache-2.0 | Max-effort accuracy, tokens and trial time in each vendor's harness |
+| `board` | [Terminal-Bench leaderboard](https://github.com/harbor-framework/terminal-bench/tree/main/leaderboard/submissions) | Apache-2.0 | Max-effort accuracy, tokens and trial time in each vendor's harness, on the newest Terminal-Bench version run for each model |
+| `hub` | [tbench.ai](https://www.tbench.ai/) (Harbor Hub leaderboard the page embeds) | Published by the board's maintainers, cited | Accuracy on the newest Terminal-Bench version for max runs the GitHub board has only at an older version, re-scored on the same trajectories |
 | `anthropic` | [Opus](https://www.anthropic.com/claude-opus-5-5), [Sonnet](https://www.anthropic.com/claude-sonnet-5-5), [Haiku](https://www.anthropic.com/claude-haiku-5-5) | Published results, cited | Terminal-Bench accuracy/cost CSVs by effort |
 | `anthropic-card` | [Fable 5.2 system card](https://assets.claude.com/27d60918d218125e7504bc7354c4b4626ec56b11.pdf), section 8.5 | Published results, read by hand and cited | Fable 5.2 accuracy at max only; cost, other efforts and minutes come from `like` |
 | `openai` | [Terra launch](https://openai.com/index/introducing-gpt-6-1-terra/), [Sol launch](https://openai.com/index/introducing-gpt-6-1-sol/) | Published results, read by hand and cited | Accuracy by effort; costs are null |
@@ -32,17 +33,23 @@ Artificial Analysis data is used. Review terms before adding any source.
 
 1. Run `npm run gen:catalog` for fresh prices using core's existing mechanism.
 2. Run `node scripts/read-front-sources.mjs`. It uses the newest **committed**
-   inputs as its base, reads the board version from `leaderboard.yaml` via GitHub
-   API, selects the newest max run in Claude Code/Codex, and reads only the
-   Anthropic chart titled with that benchmark version. It writes
+   inputs as its base. Through the GitHub API it selects, for each model, the max
+   run in Claude Code/Codex on the newest Terminal-Bench version the board has
+   run it on (the version in `leaderboard.yaml`, or `4-1-0` in a submission name),
+   then the newest by date. When tbench.ai's leaderboard (the Harbor Hub data its
+   home page embeds) is on a newer version and lists the same model at max in the
+   same harness with the same tokens, it is a re-score of that run: accuracy comes
+   from the Hub row (`hub_row`), tokens and minutes from the GitHub run. Other
+   tokens mean another run, so the reader flags it for a person instead. It reads the Anthropic chart titled with the newest
+   version the page charts. It writes
    `.claude/skills/evaluate-model/inputs-<today>.json`. `--base FILE` and
    `--out FILE` allow an explicit baseline and scratch output.
 3. Run `node .claude/skills/evaluate-model/evaluate.js --diff FRESH BASE`.
    Exit 0 means no numerical or manual-flag change: discard the fresh reading.
-   Exit 1 prints CHANGED/NEW/GONE lines: rescore. Exit 2 means the benchmark
-   major/minor scale changed: manually re-read every vendor sweep before
-   rescoring; never mix versions. Exit 3 means malformed inputs or another
-   error: fix the source reading first. Patch versions keep the scale.
+   Exit 1 prints CHANGED/NEW/GONE lines: rescore. Exit 2 means a model moved to
+   a newer major/minor version: check every vendor for sweeps charted at it by
+   hand, then rescore. Exit 3 means malformed inputs or another error: fix the
+   source reading first. Patch versions keep the scale.
 4. Run `node .claude/skills/evaluate-model/evaluate.js FRESH --write` to report
    sources, anchors, rows and all three fronts and generate the JSON file.
    Without `--write`, the evaluator only prints a report. Keep the dated inputs.
@@ -50,8 +57,9 @@ Artificial Analysis data is used. Review terms before adding any source.
    committed inputs. When refreshing, keep this expectation on the newest file.
 
 An unreadable permitted source fails the reader (exit 3) without writing inputs.
-A board major/minor change also fails it until every vendor sweep is manually
-read at the new scale. A missing board run is removed, never retained silently;
+Each model uses the newest version wherever the board or its vendor has one, so
+one front can mix versions; the credit names them. A missing board run is
+removed, never retained silently;
 a model still needs its own board row or vendor max, plus a valid donor chain.
 
 The weekly/manual `refresh-model-front` workflow runs the catalog generator
@@ -64,10 +72,16 @@ Slack notices are conditional on `SLACK_WEBHOOK_URL`. No auto-merge.
 
 `inputs-<date>.json` records `sources` (name, by, licence, url, gives), `credit`,
 `benchmarks` (name, version, weight), `models`, and optional `manual` source flags.
-A model has `price: {write, read, output}`, optional sibling `like`, and each
-benchmark's `board` and/or `sweep: {source, efforts: {effort: [accuracy, usd|null]}}`.
-Board fields are copied verbatim from metrics; `uncached_input_tokens` counts
-all input, including the cached share. Total must equal input plus output.
+A model has `price: {write, read, output}`, optional sibling `like`, optional
+`supersededBy`, and each benchmark's `board` and/or
+`sweep: {source, version, efforts: {effort: [accuracy, usd|null]}}`.
+Board fields are copied verbatim from metrics, plus the run's `version`;
+`uncached_input_tokens` counts all input, including the cached share. Total must
+equal input plus output. A `-regrade` run re-scores an earlier run's trajectories
+against newer tests, so its trial time is the regrading's: `minutes_file` names
+the newest original run, whose `avg_trial_duration_sec` it takes instead. A
+`hub_row` names the tbench.ai row whose accuracy and `version` replace the GitHub
+run's; every other field is still the GitHub run's.
 
 The evaluator preserves the established derivation:
 
@@ -86,5 +100,6 @@ The evaluator preserves the established derivation:
   cheapest first and do not rely on the later public maths/API.
 
 No borrowed quality, Auto rows, unmeasured `minimal`/`ultra` efforts, review
-multiplier, preset or programme enters core's data. Superseded models stay
-excluded; `sonnet[1m]` shares Sonnet's measurements.
+multiplier, preset or programme enters core's data. A superseded model stays
+in the inputs with `supersededBy` only as its successor's `like` donor for the
+ladder or minutes; it has no rows. `sonnet[1m]` shares Sonnet's measurements.
