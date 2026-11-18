@@ -678,7 +678,7 @@ test('agents.list() marks the Background model, Claude Haiku by default', async 
 test('agents.front() projects the installed-agent MCP front and freezes fresh results', async () => {
   let agents = [
     { id: 'claude', available: true, efforts: [{ value: 'low' }, { value: 'high' }], models: [{ value: 'opus', efforts: ['low', 'high'] }] },
-    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-sol', efforts: ['low', 'xhigh'] }, { value: 'gpt-6-luna', efforts: ['low'] }] },
+    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-terra', efforts: ['low', 'xhigh'] }, { value: 'gpt-6-luna', efforts: ['low'] }] },
     { id: 'unavailable', available: false, efforts: [], models: [] },
   ];
   const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => agents }) });
@@ -701,7 +701,7 @@ test('agents.front() projects the installed-agent MCP front and freezes fresh re
 test('agents.front() restricts candidates before dominance and curve calculation', async () => {
   const agents = [
     { id: 'claude', available: true, efforts: [{ value: 'low' }, { value: 'high' }], models: [{ value: 'opus' }, { value: 'sonnet' }] },
-    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-sol' }, { value: 'gpt-6-luna' }] },
+    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.2-sol' }, { value: 'gpt-6-luna' }] },
     { id: 'offline', available: false, efforts: [], models: [] },
   ];
   const before = structuredClone(agents);
@@ -712,8 +712,8 @@ test('agents.front() restricts candidates before dominance and curve calculation
   assert.ok(claude.front.some((p) => p.model === 'sonnet'), 'removing Codex promotes Sonnet');
   assert.ok(claude.front.every((p) => p.agent === 'claude'));
   assert.equal(claude.front.find((p) => p.model === 'opus' && p.effort === 'low').onCurve, true);
-  assert.equal((await host.agents.front({ agent: 'claude' })).front.find((p) => p.model === 'opus' && p.effort === 'low').onCurve, false);
-  const excluded = await host.agents.front({ excludeModels: ['gpt-6.1-sol', 'gpt-6-luna'] });
+  assert.equal((await host.agents.front({ agent: 'claude' })).front.some((p) => p.model === 'opus' && p.effort === 'low'), false, 'filtering after dominance keeps GPT-6.2 Sol low beating it');
+  const excluded = await host.agents.front({ excludeModels: ['gpt-6.2-sol', 'gpt-6-luna'] });
   assert.deepEqual(excluded, claude);
   const onlySonnet = await host.agents.front({ agents: ['claude'], excludeModels: ['opus'] });
   assert.ok(onlySonnet.front.length > 0);

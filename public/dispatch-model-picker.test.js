@@ -231,11 +231,11 @@ test('zero cost and time remain measured values and non-finite values are unavai
 test('selecting a scored model clears the no-benchmark overlay and restores all metrics', () => {
   const h = pickerHarness({ agent: 'claude', model: 'unmeasured', effort: 'high' });
   assert.match(h.nodes.get('.model-front-readout').innerHTML, /No benchmark data available/);
-  h.set({ agent: 'codex', model: 'gpt-6.1-sol', effort: 'medium' });
+  h.set({ agent: 'codex', model: 'gpt-6.2-sol', effort: 'medium' });
   const html = h.nodes.get('.model-front-readout').innerHTML;
-  assert.match(html, /55 \/ 100/);
-  assert.match(html, /\$1\.14 \/ task/);
-  assert.match(html, /36\.8 min/);
+  assert.match(html, /58 \/ 100/);
+  assert.match(html, /\$0\.63 \/ task/);
+  assert.match(html, /14\.1 min/);
   assert.doesNotMatch(html, /model-front-benchmark-overlay|Unavailable/);
 });
 
@@ -305,7 +305,7 @@ test('model colours stay stable across effort changes and agent list ordering', 
 test('log cost ticks use round dollar values at their actual logarithmic positions', async () => {
   const { costTicks } = await import('./dispatch-model-picker.js');
   const ticks = costTicks();
-  assert.deepEqual(ticks.map((t) => t.label), ['$0.10', '$0.20', '$0.50', '$1', '$2', '$5', '$10', '$20']);
+  assert.deepEqual(ticks.map((t) => t.label), ['$0.10', '$0.20', '$0.50', '$1', '$2', '$5', '$10', '$20', '$50']);
   assert.ok(ticks.every((t) => t.cost >= 0 && t.cost <= 100));
   const one = ticks.find((t) => t.usd === 1), two = ticks.find((t) => t.usd === 2), ten = ticks.find((t) => t.usd === 10);
   assert.ok(Math.abs((two.cost - one.cost) / (ten.cost - one.cost) - Math.log10(2)) < 1e-10);
@@ -366,9 +366,9 @@ test('graph cost range fits visible points and expands for an expensive selected
   const { costRange, costTicks } = await import('./dispatch-model-picker.js');
   const visible = [...MODEL_FRONT.frontOf(agents), ...MODEL_FRONT.unavailableOf(MODEL_FRONT.frontOf(agents))];
   const range = costRange(visible);
-  assert.deepEqual(range, [0.1, 20]);
-  assert.equal(costTicks(range).at(-1).label, '$20');
-  assert.deepEqual(costRange([...visible, { usd: 22.87 }]), [0.1, 50]);
+  assert.deepEqual(range, [0.1, 10]);
+  assert.equal(costTicks(range).at(-1).label, '$10');
+  assert.deepEqual(costRange([...visible, { usd: 50.03 }]), [0.1, 100]);
   assert.deepEqual(costRange([]), [0.1, 10]);
   const single = costRange([{ usd: 1 }]);
   assert.ok(single[0] <= 1 && single[1] >= 1 && single[1] > single[0]);

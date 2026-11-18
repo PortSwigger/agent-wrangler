@@ -63,6 +63,13 @@
    "cacheWrite1h": 20,
    "cacheRead": 0.25
   },
+  "claude-mythos-5-2": {
+   "input": 8,
+   "output": 40,
+   "cacheWrite5m": 10,
+   "cacheWrite1h": 16,
+   "cacheRead": 0.2
+  },
   "claude-mythos-preview": {
    "input": 10,
    "output": 50,
@@ -915,14 +922,26 @@
    "output": 50,
    "cacheWrite5m": 12.5,
    "cacheWrite1h": 20,
-   "cacheRead": 1
+   "cacheRead": 1,
+   "long": {
+    "threshold": 272000,
+    "input": 20,
+    "output": 75,
+    "cacheRead": 2
+   }
   },
   "gpt-6-cyber": {
    "input": 20,
    "output": 100,
    "cacheWrite5m": 25,
    "cacheWrite1h": 40,
-   "cacheRead": 2
+   "cacheRead": 2,
+   "long": {
+    "threshold": 272000,
+    "input": 40,
+    "output": 150,
+    "cacheRead": 4
+   }
   },
   "gpt-6-luna": {
    "input": 0.1,
@@ -987,6 +1006,45 @@
     "input": 2,
     "output": 7.5,
     "cacheRead": 0.1
+   }
+  },
+  "gpt-6.2-astra": {
+   "input": 8,
+   "output": 40,
+   "cacheWrite5m": 10,
+   "cacheWrite1h": 16,
+   "cacheRead": 0.4,
+   "long": {
+    "threshold": 272000,
+    "input": 16,
+    "output": 60,
+    "cacheRead": 0.8
+   }
+  },
+  "gpt-6.2-astra-law": {
+   "input": 8,
+   "output": 40,
+   "cacheWrite5m": 10,
+   "cacheWrite1h": 16,
+   "cacheRead": 0.4,
+   "long": {
+    "threshold": 272000,
+    "input": 16,
+    "output": 60,
+    "cacheRead": 0.8
+   }
+  },
+  "gpt-6.2-sol": {
+   "input": 2,
+   "output": 10,
+   "cacheWrite5m": 2.5,
+   "cacheWrite1h": 4,
+   "cacheRead": 0.1,
+   "long": {
+    "threshold": 272000,
+    "input": 4,
+    "output": 15,
+    "cacheRead": 0.2
    }
   },
   "gpt-audio": {
@@ -1341,6 +1399,20 @@
    "cacheWrite5m": 2.5,
    "cacheWrite1h": 4,
    "cacheRead": 0.1
+  },
+  "gemini-4-carbon": {
+   "input": 2,
+   "output": 10,
+   "cacheWrite5m": 2.5,
+   "cacheWrite1h": 4,
+   "cacheRead": 0.1
+  },
+  "gemini-4-hydrogen": {
+   "input": 1.5,
+   "output": 7.5,
+   "cacheWrite5m": 1.875,
+   "cacheWrite1h": 3,
+   "cacheRead": 0.075
   },
   "gemini-exp-1114": {
    "input": 0,

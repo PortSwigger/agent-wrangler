@@ -1,9 +1,9 @@
 {
  "models": [
   {
-   "slug": "gpt-6.1-sol",
-   "displayName": "GPT-6.1-Sol",
-   "description": "Latest workhorse model for coding and everyday work.",
+   "slug": "gpt-6.2-sol",
+   "displayName": "GPT-6.2-Sol",
+   "description": "Fast, go-to model for coding and everyday work.",
    "visibility": "list",
    "priority": 1,
    "efforts": [
@@ -15,12 +15,12 @@
     "ultra"
    ],
    "defaultEffort": "medium",
-   "contextWindow": 272000
+   "contextWindow": 500000
   },
   {
-   "slug": "gpt-6-astra",
-   "displayName": "GPT-6-Astra",
-   "description": "Frontier intelligence for the most demanding work.",
+   "slug": "gpt-6.2-astra",
+   "displayName": "GPT-6.2-Astra",
+   "description": "Our most capable model for complex coding and professional work.",
    "visibility": "list",
    "priority": 2,
    "efforts": [
@@ -35,11 +35,62 @@
    "contextWindow": 272000
   },
   {
-   "slug": "gpt-6-sol",
-   "displayName": "GPT-6-Sol",
-   "description": "Previous generation workhorse model.",
+   "slug": "gpt-6.1-sol",
+   "displayName": "GPT-6.1-Sol",
+   "description": "Previous generation model for coding and everyday work.",
    "visibility": "list",
    "priority": 3,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra"
+   ],
+   "defaultEffort": "medium",
+   "contextWindow": 500000
+  },
+  {
+   "slug": "gpt-6.1-terra",
+   "displayName": "GPT-6.1 Terra",
+   "description": "Efficient model that excels at visual understanding and computer use.",
+   "visibility": "list",
+   "priority": 4,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra"
+   ],
+   "defaultEffort": "low",
+   "contextWindow": 500000
+  },
+  {
+   "slug": "gpt-6-astra",
+   "displayName": "GPT-6-Astra",
+   "description": "Previous generation model for complex coding and professional work.",
+   "visibility": "list",
+   "priority": 5,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra"
+   ],
+   "defaultEffort": "low",
+   "contextWindow": 272000
+  },
+  {
+   "slug": "gpt-6-sol",
+   "displayName": "GPT-6-Sol",
+   "description": "Legacy model for coding and everyday work.",
+   "visibility": "list",
+   "priority": 6,
    "efforts": [
     "low",
     "medium",
@@ -52,11 +103,27 @@
    "contextWindow": 272000
   },
   {
+   "slug": "gpt-reserve",
+   "displayName": "GPT-Reserve",
+   "description": "Fast and affordable agentic coding model.",
+   "visibility": "hide",
+   "priority": 7,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "defaultEffort": "medium",
+   "contextWindow": 272000
+  },
+  {
    "slug": "gpt-6-luna",
    "displayName": "GPT-6-Luna",
    "description": "Fast and affordable model for easier tasks.",
    "visibility": "list",
-   "priority": 4,
+   "priority": 8,
    "efforts": [
     "low",
     "medium",
@@ -70,9 +137,9 @@
   {
    "slug": "gpt-5.6-sol",
    "displayName": "GPT-5.6-Sol",
-   "description": "Older generation workhorse model.",
+   "description": "Legacy model for coding and everyday work.",
    "visibility": "list",
-   "priority": 5,
+   "priority": 9,
    "efforts": [
     "low",
     "medium",
@@ -87,9 +154,9 @@
   {
    "slug": "gpt-5.6-terra",
    "displayName": "GPT-5.6-Terra",
-   "description": "Older balanced model for straightforward work.",
+   "description": "Legacy balanced model for agentic coding.",
    "visibility": "list",
-   "priority": 8,
+   "priority": 10,
    "efforts": [
     "low",
     "medium",
@@ -104,9 +171,9 @@
   {
    "slug": "gpt-5.6-luna",
    "displayName": "GPT-5.6-Luna",
-   "description": "Older fast and efficient model.",
+   "description": "Legacy fast model for simpler tasks.",
    "visibility": "list",
-   "priority": 9,
+   "priority": 11,
    "efforts": [
     "low",
     "medium",
@@ -118,60 +185,11 @@
    "contextWindow": 272000
   },
   {
-   "slug": "gpt-daybreak-blue-latest",
-   "displayName": "Daybreak Blue",
-   "description": "Latest frontier agentic coding model for broad defensive cybersecurity work.",
-   "visibility": "hide",
-   "priority": 11,
-   "efforts": [
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-    "ultra"
-   ],
-   "defaultEffort": null,
-   "contextWindow": 272000
-  },
-  {
-   "slug": "gpt-daybreak-red-latest",
-   "displayName": "Daybreak Red",
-   "description": "Cyber-permissive variant of our latest frontier agentic coding model for advanced, authorized cybersecurity research.",
-   "visibility": "hide",
-   "priority": 12,
-   "efforts": [
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-    "ultra"
-   ],
-   "defaultEffort": null,
-   "contextWindow": 372000
-  },
-  {
-   "slug": "gpt-5.5",
-   "displayName": "GPT-5.5",
-   "description": "Legacy coding model.",
-   "visibility": "list",
-   "priority": 13,
-   "efforts": [
-    "low",
-    "medium",
-    "high",
-    "xhigh"
-   ],
-   "defaultEffort": null,
-   "contextWindow": 272000
-  },
-  {
    "slug": "codex-auto-review",
    "displayName": "Codex Auto Review",
    "description": "Automatic approval review model for Codex.",
    "visibility": "hide",
-   "priority": 43,
+   "priority": 12,
    "efforts": [
     "low",
     "medium",
