@@ -71,3 +71,15 @@ test('missing extension incidents survive state snapshots and recovery frames', 
   stream.observe(graph({ missingExtensionFiles: [] }));
   assert.deepEqual(JSON.parse(stream.next()).status.missingExtensionFiles, []);
 });
+
+test('tool schema failures survive reconnects, update without duplication and clear on recovery', () => {
+  const stream = createStateStream({ startRev: 100 });
+  const failures = [{ extId: 'demo', tools: [{ name: 'probe', error: 'broken schema' }] }];
+  stream.observe(graph({ toolSchemaFailures: failures }));
+  assert.deepEqual(JSON.parse(stream.snapshot()).status.toolSchemaFailures, failures);
+  stream.next();
+  stream.observe(graph({ toolSchemaFailures: failures }));
+  assert.equal(stream.next(), null);
+  stream.observe(graph({ toolSchemaFailures: [] }));
+  assert.deepEqual(JSON.parse(stream.next()).status.toolSchemaFailures, []);
+});

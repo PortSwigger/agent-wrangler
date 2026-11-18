@@ -1082,6 +1082,9 @@ function applyGraph(graph) {
   // this banner is the wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  const hadToolSchemaFailures = toolSchemaFailures.length > 0;
+  toolSchemaFailures = Array.isArray(graph.toolSchemaFailures) ? graph.toolSchemaFailures : [];
+  if (hadToolSchemaFailures && !toolSchemaFailures.length && !fdBannerActive) hideSystemBanner();
   const hadMissingFiles = missingExtensionFiles.length > 0;
   missingExtensionFiles = Array.isArray(graph.missingExtensionFiles) ? graph.missingExtensionFiles : [];
   if (hadMissingFiles && !missingExtensionFiles.length && !fdBannerActive) hideSystemBanner();
@@ -7201,6 +7204,7 @@ applyChatFontSize(chatFontSize());
 // namespace of its own, though system-banner.js now has one for the producers
 // that do.
 let quarantinedBuiltins = [];
+let toolSchemaFailures = [];
 let restartPendingExts = [];
 let missingExtensionFiles = [];
 // #system-banner is one slot and the fd watchdog is the more urgent producer, so
@@ -7237,6 +7241,11 @@ function syncStandingBanner() {
     return;
   }
   if (fdBannerActive) return;
+  if (toolSchemaFailures.length) {
+    const details = toolSchemaFailures.map(({ extId, tools }) => `${extId}: ${tools.map(({ name, error }) => `${name} (${error})`).join(', ')}`);
+    showSystemBanner(`⚠ Extension tools unavailable — schema conversion failed: ${details.join('; ')}`);
+    return;
+  }
   if (quarantinedBuiltins.length) {
     const many = quarantinedBuiltins.length !== 1;
     showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
