@@ -94,13 +94,13 @@ function defaultMerge(url) {
 // needed). `first: 100` caps the thread list; a PR with more silently undercounts
 // (not worth paginating for v1). The jq filter runs inside gh, so stdout is just
 // the unresolved count as a bare integer.
-const UNRESOLVED_QUERY = 'query($url:URI!){resource(url:$url){...on PullRequest{reviewThreads(first:100){nodes{isResolved}}}}}';
+const UNRESOLVED_QUERY = 'query($url:URI!){resource(url:$url){...on PullRequest{reviewThreads(first:100){nodes{id isResolved path line originalLine comments(first:1){nodes{author{login} body}}}}}}}';
 const UNRESOLVED_JQ = '.data.resource.reviewThreads.nodes | map(select(.isResolved==false)) | length';
 
-function defaultUnresolvedRun(url) {
+function defaultUnresolvedRun(url, jq = UNRESOLVED_JQ) {
   return new Promise((resolve) => {
     execFile('gh', ['api', 'graphql', '-f', `query=${UNRESOLVED_QUERY}`, '-f', `url=${url}`,
-      '-q', UNRESOLVED_JQ], { timeout: 15000 },
+      '-q', jq], { timeout: 15000 },
       (err, stdout) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: stdout || '' }));
   });
 }
@@ -119,6 +119,25 @@ export async function fetchUnresolvedThreadCount(url, run = defaultUnresolvedRun
     if (!trimmed) return null;
     const n = Number(trimmed);
     return Number.isInteger(n) && n >= 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchUnresolvedThreads(url, run = (u) => defaultUnresolvedRun(u,
+  '.data.resource.reviewThreads.nodes | map(select(.isResolved==false) | .comments.nodes |= map(.body = ((.body // "") | .[0:321])))')) {
+  try {
+    const { code, stdout } = await run(url);
+    if (code !== 0) return null;
+    const threads = JSON.parse(stdout);
+    if (!Array.isArray(threads)) return null;
+    return threads.map((thread) => ({
+      id: thread.id,
+      author: thread.comments?.nodes?.[0]?.author?.login ?? null,
+      path: thread.path,
+      line: thread.line ?? thread.originalLine ?? null,
+      body: String(thread.comments?.nodes?.[0]?.body ?? '').slice(0, 321),
+    }));
   } catch {
     return null;
   }

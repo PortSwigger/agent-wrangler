@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readJsonOrLoud, writeJsonAtomic } from './atomic-json.js';
-import { fetchPrObservation, fetchUnresolvedThreadCount } from './pr-status.js';
+import { fetchPrObservation, fetchUnresolvedThreads } from './pr-status.js';
 
 function freeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -58,7 +58,7 @@ export function createPrObservationStore({ directory, events, onError = () => {}
   };
 }
 
-export function createPrObservationPoller({ observations, fetchStatus = fetchPrObservation, fetchUnresolved = fetchUnresolvedThreadCount }) {
+export function createPrObservationPoller({ observations, fetchStatus = fetchPrObservation, fetchUnresolved = fetchUnresolvedThreads }) {
   const inFlight = new Map();
   function fetch(url) {
     if (inFlight.has(url)) return inFlight.get(url);
@@ -67,8 +67,8 @@ export function createPrObservationPoller({ observations, fetchStatus = fetchPrO
       const fetchedAt = new Date().toISOString();
       const durable = observations.record(url, result, fetchedAt);
       if (!durable && result.status?.state !== 'OPEN') return { status: null };
-      const unresolvedCount = result.status?.state === 'OPEN' ? await fetchUnresolved(url) : null;
-      return { status: result.status, fetchedAt, unresolvedCount };
+      const unresolvedThreads = result.status?.state === 'OPEN' ? await fetchUnresolved(url) : null;
+      return { status: result.status, fetchedAt, unresolvedCount: unresolvedThreads?.length ?? null, unresolvedThreads };
     })().finally(() => inFlight.delete(url));
     inFlight.set(url, pending);
     return pending;

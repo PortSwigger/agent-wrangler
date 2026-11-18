@@ -88,7 +88,7 @@ test('duplicate owners and overlapping sweeps share existing status and thread f
   let resolve;
   const poll = createPrObservationPoller({ observations: store,
     fetchStatus: async (u) => { calls.push(['status', u]); return new Promise((r) => { resolve = r; }); },
-    fetchUnresolved: async (u) => { calls.push(['threads', u]); return 3; },
+    fetchUnresolved: async (u) => { calls.push(['threads', u]); return Array(3).fill({ body: 'review text' }); },
   });
   const links = [{ url, scope: 'task', ownerId: 't1' }, { url, scope: 'session', ownerId: 's1' }];
   const first = collect(poll(links));
@@ -98,6 +98,8 @@ test('duplicate owners and overlapping sweeps share existing status and thread f
   assert.deepEqual(calls, [['status', url], ['threads', url]]);
   assert.equal(a.length, 2);
   assert.equal(a[0].unresolvedCount, 3);
+  assert.equal(a[0].unresolvedThreads[0].body, 'review text');
+  assert.equal(store.get(url).unresolvedThreads, undefined);
   assert.equal(a[1].status, b[0].status);
   assert.equal(store.get(url).headSha, 'abc');
 });
@@ -193,7 +195,7 @@ test('observation storage failure does not stop open PR link updates and thread 
   events.on('pr:observation', () => { emitted = true; });
   const next = { ...status, headSha: 'new-head', dirty: true, checkStatus: 'failing' };
   const poll = createPrObservationPoller({ observations: store,
-    fetchStatus: async () => ({ status: next, error: null }), fetchUnresolved: async () => 7 });
+    fetchStatus: async () => ({ status: next, error: null }), fetchUnresolved: async () => Array(7).fill({ body: 'review text' }) });
   const [update] = await collect(poll([{ url }]));
   assert.deepEqual(update.status, next);
   assert.equal(update.unresolvedCount, 7);
