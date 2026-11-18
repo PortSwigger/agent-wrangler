@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { rewriteHostUrls, containerInputPaths, launchDirDest, launchInputs, buildPaneScript, devcontainer, stopContainer, hasDevcontainerConfig } from './devcontainer.js';
+import { rewriteHostUrls, containerInputPaths, launchDirDest, launchInputs, buildPaneScript, devcontainer, stopContainer, removeWorktreeContainers, hasDevcontainerConfig } from './devcontainer.js';
 
 test('rewriteHostUrls: swaps loopback for the container-reachable host', () => {
   const inner = 'claude --mcp-config \'{"url":"http://127.0.0.1:8787/mcp"}\'';
@@ -211,6 +211,54 @@ test('stopContainer: null-degrades when docker errors (never breaks the archive 
     throw new Error('docker daemon not running');
   };
   assert.equal(await stopContainer('/repo', { run }), null);
+});
+
+// A docker double holding one worktree project whose volumes include one shared
+// with the main checkout, as the template names them.
+function fakeDocker() {
+  const calls = [];
+  const byKind = {
+    ps: 'app1\npg1\n',
+    network: 'net1\n',
+    volume: 'repo-wt_devcontainer_postgres-data\nrepo_devcontainer_claude-config\n',
+  };
+  const run = async (cmd, args) => {
+    calls.push(args);
+    // One line per container, so the project repeats.
+    if (args[0] === 'ps' && args.includes('--format')) return { stdout: 'repo-wt_devcontainer\nrepo-wt_devcontainer\n' };
+    if (args.includes('-q')) {
+      return { stdout: args.includes('label=com.docker.compose.project=repo-wt_devcontainer') ? byKind[args[0]] : '' };
+    }
+    return { stdout: '' };
+  };
+  return { run, calls };
+}
+
+test('removeWorktreeContainers: removes the project\'s containers, networks and own volumes, not shared ones', async () => {
+  const { run, calls } = fakeDocker();
+  assert.deepEqual(await removeWorktreeContainers('/wt', { run }), ['repo-wt_devcontainer']);
+  assert.ok(calls[0].includes('label=devcontainer.local_folder=/wt'));
+  assert.ok(calls[0].includes('-a'), 'finds stopped containers too: archive has usually stopped the app');
+  const removals = calls.filter((a) => a[0] === 'rm' || a[1] === 'rm');
+  assert.deepEqual(removals, [
+    ['rm', '-f', 'app1', 'pg1'],
+    ['network', 'rm', 'net1'],
+    ['volume', 'rm', 'repo-wt_devcontainer_postgres-data'],
+  ]);
+  assert.ok(!calls.some((a) => a.includes('repo_devcontainer_claude-config') || a[0] === 'compose'),
+    'the volume shared with the main checkout must survive');
+});
+
+test('removeWorktreeContainers: no-op when no container ever ran for the dir', async () => {
+  const calls = [];
+  const run = async (cmd, args) => { calls.push(args); return { stdout: '' }; };
+  assert.deepEqual(await removeWorktreeContainers('/wt', { run }), []);
+  assert.equal(calls.length, 1);
+});
+
+test('removeWorktreeContainers: degrades to [] when docker errors (never breaks the removal it follows)', async () => {
+  const run = async () => { throw new Error('docker daemon not running'); };
+  assert.deepEqual(await removeWorktreeContainers('/wt', { run }), []);
 });
 
 test('hasDevcontainerConfig: true for .devcontainer/devcontainer.json or a top-level .devcontainer.json', () => {

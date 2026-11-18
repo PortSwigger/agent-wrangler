@@ -22,8 +22,30 @@ function tempRepo() {
 // ctx double: entryFor returns the given worktree entry; reply records frames.
 function ctx(worktree) {
   const sent = [];
-  return { sent, sessionManager: { entryFor: () => ({ worktree }) }, reply: (o) => sent.push(o) };
+  const containersRemovedFor = [];
+  return {
+    sent, containersRemovedFor,
+    sessionManager: { entryFor: () => ({ worktree }) },
+    reply: (o) => sent.push(o),
+    removeWorktreeContainers: async (dir) => { containersRemovedFor.push([dir, fs.existsSync(dir)]); },
+  };
 }
+
+test('worktree-remove: tears down the worktree\'s containers once its folder is gone', async () => {
+  const repo = tempRepo();
+  const wt = await createWorktree({ cwd: repo, branch: 'dc', auto: false });
+  const c = ctx({ path: wt.path, branch: 'dc', repoRoot: repo });
+  await worktreeRemoveHandler.handler({ type: 'worktree-remove', sessionId: 'S1' }, c);
+  assert.deepEqual(c.containersRemovedFor, [[wt.path, false]]);
+});
+
+test('worktree-remove: leaves containers alone when the worktree removal fails', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-wth-notrepo-'));
+  const c = ctx({ path: dir, branch: 'x', repoRoot: dir });
+  await worktreeRemoveHandler.handler({ type: 'worktree-remove', sessionId: 'S1' }, c);
+  assert.equal(c.sent[0].type, 'error');
+  assert.deepEqual(c.containersRemovedFor, []);
+});
 
 test('worktree-remove: removes a clean worktree and offers branch deletion', async () => {
   const repo = tempRepo();

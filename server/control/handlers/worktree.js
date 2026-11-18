@@ -1,4 +1,5 @@
 import { removeWorktree, deleteBranch, repoRootForWorktree, branchExists } from '../../worktree.js';
+import { removeWorktreeContainers } from '../../runtimes/devcontainer.js';
 
 // Cleanup offered after archiving a session that ran in a wrangler-created
 // worktree. The mapping entry survives archive, so entry.worktree is still
@@ -17,6 +18,8 @@ export const worktreeRemoveHandler = {
     try {
       const repoRoot = await repoRootForWorktree(wt);
       await removeWorktree({ worktreePath: wt.path, repoRoot });
+      // ctx.removeWorktreeContainers overrides the docker-shelling helper in tests.
+      await (ctx.removeWorktreeContainers || removeWorktreeContainers)(wt.path);
       // Re-check the branch so the follow-up toast only offers branch deletion when
       // there's a branch left to delete.
       const stillBranch = Boolean(repoRoot && wt.branch && (await branchExists(repoRoot, wt.branch)));
