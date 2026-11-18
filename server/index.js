@@ -20,6 +20,7 @@ import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { readProvenance } from './extensions/provenance.js';
+import { extensionToolSchemaFailures } from './extensions/tool-schema.js';
 import { extensionToolFingerprint } from './extensions/tool-fingerprint.js';
 import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor, themeSources } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
@@ -1389,6 +1390,7 @@ async function rebuildOnce() {
   // rather than the connect announcement so the banner survives a reconnect the
   // same way fdWarning's re-send does. A handful of short ids at most.
   graph.quarantinedBuiltins = quarantinedBuiltinIds();
+  graph.toolSchemaFailures = extensionToolSchemaFailures(ext.tools);
   graph.missingExtensionFiles = missingExtensionFiles;
   // Boot-fixed too, and carried the same way for the same reason.
   graph.staleGuiSession = staleGuiSession;
