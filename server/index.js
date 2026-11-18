@@ -821,6 +821,8 @@ async function runPrStatusSweep(only) {
     // both diffs in the same sweep, and two unawaited deliverPrNudge calls to
     // one pane would interleave — the same hazard planCheckTransition's merge
     // branch already guards against for merge-vs-nudge).
+    const unresolvedEvents = diffUnresolvedComments(current);
+    const unresolvedByKey = new Map(unresolvedEvents.map((ev) => [`${ev.scope}:${ev.ownerId}:${ev.url}`, ev]));
     const checkStatusKeys = new Set();
     for (const ev of diffCheckStatus(current)) {
       checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
@@ -847,7 +849,7 @@ async function runPrStatusSweep(only) {
         // flips live promptly; an 'error' (resume failed) surfaces via onPrWakeError
         // and must NOT rebuild.
         deliverPrNudge(ev, entry, {
-          message: prPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
+          message: prPaneNudge(ev, unresolvedByKey.get(`${ev.scope}:${ev.ownerId}:${ev.url}`)), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
         }).then(announceAfterNudge(checksEvent)).catch(() => broadcast({ ...checksEvent, nudged: false }));
       }
@@ -894,7 +896,7 @@ async function runPrStatusSweep(only) {
     // changes" review commonly trips BOTH diffs in one sweep (new inline
     // comments AND a fresh changes-requested transition), and two unawaited
     // deliverPrNudge calls to the same pane would interleave their pastes.
-    for (const ev of diffUnresolvedComments(current)) {
+    for (const ev of unresolvedEvents) {
       const entry = sessionManager.entryFor(ev.ownerId);
       const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
       const commentNudge = !checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault);

@@ -465,7 +465,7 @@ test('review thread notices quote bounded untrusted excerpts with author and loc
   assert.ok(!notice.includes('x'.repeat(321)));
   assert.ok(notice.includes('…'));
   assert.ok(!notice.includes('\u001b'));
-  assert.match(prPaneNudge({ ...ev, checkStatus: 'changes-requested' }), /server\/app.js:12/);
+  assert.match(prPaneNudge({ ...ev, checkStatus: 'changes-requested' }, ev), /server\/app.js:12/);
 });
 
 test('review thread notices cap the number of excerpts and report omissions', () => {
@@ -473,4 +473,24 @@ test('review thread notices cap the number of excerpts and report omissions', ()
     unresolvedThreads: Array.from({ length: 8 }, (_, i) => ({ author: 'a', path: `file${i}`, body: 'text' })) });
   assert.equal(notice.split('\n> ').length - 1, 5);
   assert.match(notice, /3 more unresolved threads omitted/);
+});
+
+test('check-status notices carry excerpts only for a simultaneous unresolved-thread increase', () => {
+  const link = { scope: 'session', ownerId: 'review-combined', url: 'https://github.com/acme/widgets/pull/78', number: 78,
+    headSha: 'abc', checkStatus: 'pending', unresolvedCount: 1,
+    unresolvedThreads: [{ author: 'old', path: 'old.js', line: 1, body: 'old comment' }] };
+  diffCheckStatus([link]);
+  diffUnresolvedComments([link]);
+  const increased = { ...link, checkStatus: 'changes-requested', unresolvedCount: 2,
+    unresolvedThreads: [...link.unresolvedThreads, { author: 'new', path: 'new.js', line: 2, body: 'new comment' }] };
+  const [check] = diffCheckStatus([increased]);
+  const [thread] = diffUnresolvedComments([increased]);
+  const combined = prPaneNudge(check, thread);
+  assert.match(combined, /changes requested on review/);
+  assert.match(combined, /new comment/);
+  assert.doesNotMatch(combined, /old comment/);
+  assert.match(prUnresolvedPaneNudge(thread), /new comment/);
+  const [laterCheck] = diffCheckStatus([{ ...increased, checkStatus: 'failing' }]);
+  assert.deepEqual(diffUnresolvedComments([increased]), []);
+  assert.doesNotMatch(prPaneNudge(laterCheck), /comment|untrusted/);
 });
