@@ -366,8 +366,8 @@ test('graph cost range fits visible points and expands for an expensive selected
   const { costRange, costTicks } = await import('./dispatch-model-picker.js');
   const visible = [...MODEL_FRONT.frontOf(agents), ...MODEL_FRONT.unavailableOf(MODEL_FRONT.frontOf(agents))];
   const range = costRange(visible);
-  assert.deepEqual(range, [0.1, 50]);
-  assert.equal(costTicks(range).at(-1).label, '$50');
+  assert.deepEqual(range, [0.1, 10]);
+  assert.equal(costTicks(range).at(-1).label, '$10');
   assert.deepEqual(costRange([...visible, { usd: 50.03 }]), [0.1, 100]);
   assert.deepEqual(costRange([]), [0.1, 10]);
   const single = costRange([{ usd: 1 }]);

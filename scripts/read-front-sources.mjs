@@ -13,6 +13,7 @@ const CHARTS = [
   ['https://www.anthropic.com/claude-sonnet-5-5', { opus55: ['claude', 'opus'] }],
   ['https://www.anthropic.com/claude-haiku-5-5', { haiku55: ['claude', 'haiku'], sonnet55: ['claude', 'sonnet'] }],
 ];
+const HUB = 'https://www.tbench.ai/';
 const METRICS = ['accuracy', 'n_trials', 'uncached_input_tokens', 'cached_input_tokens', 'output_tokens', 'total_tokens', 'avg_trial_duration_sec'];
 const EXCLUDED = new Set(['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5', 'gpt-5.5-sol', 'gpt-5.5-terra']);
 const newer = (a, b) => { const [x, y] = [a, b].map((v) => v.split('.').map(Number)); return x[0] - y[0] || x[1] - y[1]; };
@@ -25,6 +26,44 @@ export function boardFile(name, agent, priceId) {
   return m && { name, date: m[1], version: m[2] ? `${m[2]}.${m[3]}` : null, regrade: !!m[4] };
 }
 
+// The leaderboard tbench.ai renders, as the Harbor Hub query its page embeds: Terminal-Bench's
+// newest version, including re-scores of runs the GitHub board has only at an older version.
+export function hubLeaderboard(html) {
+  let found = null;
+  const walk = (v) => {
+    if (!v || typeof v !== 'object' || found) return;
+    if (Array.isArray(v.queries)) {
+      for (const q of v.queries) if (Array.isArray(q?.queryKey) && q.queryKey[0] === 'leaderboard' && q.queryKey[1] === 'terminal-bench/terminal-bench') found = q.state?.data;
+      return;
+    }
+    for (const x of Object.values(v)) walk(x);
+  };
+  for (const record of flightRecords(html)) walk(record);
+  const version = /^Terminal-Bench (\d+\.\d+)$/.exec(found?.leaderboard?.title ?? '')?.[1];
+  if (!version || !found.leaderboard.name || !Array.isArray(found.rows)) throw new Error('tbench.ai: no Terminal-Bench leaderboard data on the page');
+  return { name: found.leaderboard.name, version, rows: found.rows };
+}
+
+// tbench.ai's label for a model: claude-opus-5-5 is "Opus 5.5", gpt-6.2-sol is "GPT-6.2 Sol".
+export function hubLabel(priceId) {
+  const claude = /^claude-([a-z]+)-(\d+(?:-\d+)*)$/.exec(priceId), gpt = /^gpt-(\d+(?:\.\d+)*)-([a-z]+)$/.exec(priceId);
+  const cap = (w) => w[0].toUpperCase() + w.slice(1);
+  return claude ? `${cap(claude[1])} ${claude[2].replaceAll('-', '.')}` : gpt ? `GPT-${gpt[1]} ${cap(gpt[2])}` : null;
+}
+
+// Next's flight records contain JSON, not executable page code.
+function flightRecords(html) {
+  const flight = [...html.matchAll(/self\.__next_f\.push\((.*?)\)<\/script>/gs)]
+    .map((m) => JSON.parse(m[1])?.[1]).filter((s) => typeof s === 'string').join('');
+  const records = [];
+  for (const line of flight.split('\n')) {
+    const value = line.slice(line.indexOf(':') + 1);
+    if (!/^[\[{]/.test(value)) continue;
+    try { records.push(JSON.parse(value)); } catch { /* Non-JSON flight records are not data. */ }
+  }
+  return records;
+}
+
 export function anthropicSweeps(html, version, series) {
   const charts = [];
   const walk = (v) => {
@@ -32,14 +71,7 @@ export function anthropicSweeps(html, version, series) {
     if (v._type === 'chart' && v.title === `Terminal-Bench ${version}`) charts.push(v);
     for (const x of Object.values(v)) walk(x);
   };
-  // Next's flight records contain JSON, not executable page code.
-  const flight = [...html.matchAll(/self\.__next_f\.push\((.*?)\)<\/script>/gs)]
-    .map((m) => JSON.parse(m[1])?.[1]).filter((s) => typeof s === 'string').join('');
-  for (const line of flight.split('\n')) {
-    const value = line.slice(line.indexOf(':') + 1);
-    if (!/^[\[{]/.test(value)) continue;
-    try { walk(JSON.parse(value)); } catch { /* Non-JSON flight records are not chart data. */ }
-  }
+  for (const record of flightRecords(html)) walk(record);
   if (!charts.length) throw new Error(`Anthropic: no Terminal-Bench ${version} chart`);
   const result = {};
   for (const chart of charts) {
@@ -76,6 +108,8 @@ export async function readSources({ base, prices, catalog, github, fetchText, to
     if (row.metadata?.reasoning_effort !== 'max' || row.metadata?.agent_display?.label !== (agent === 'claude' ? 'Claude Code' : 'Codex')) throw new Error(`board: ${file} is not max effort in the vendor harness`);
     return row;
   };
+  const hub = hubLeaderboard(await fetchText(HUB));
+  log.push(`hub: ${HUB} embeds the Harbor Hub ${hub.name} leaderboard (Terminal-Bench ${hub.version}, ${hub.rows.length} rows)`);
   const versions = new Set();
   for (const [agent, models] of Object.entries(inputs.models)) for (const [id, model] of Object.entries(models)) {
     const priceId = agent === 'claude' ? CLAUDE[id] : id;
@@ -97,15 +131,27 @@ export async function readSources({ base, prices, catalog, github, fetchText, to
       entry.board.minutes_file = original.name;
       entry.board.avg_trial_duration_sec = (await harnessed(original.name, agent)).metrics?.avg_trial_duration_sec;
     }
-    versions.add(run.version);
-    log.push(`board: ${agent} ${id}: ${run.name} (Terminal-Bench ${run.version})${run.regrade ? `, minutes from ${entry.board.minutes_file}` : ''}`);
+    // The Hub re-scores a run's trajectories on a newer version without a GitHub file. Same tokens
+    // means the same trajectories: accuracy comes from the Hub, tokens and minutes from the run.
+    if (newer(hub.version, run.version) > 0) {
+      const label = hubLabel(priceId), harness = agent === 'claude' ? 'Claude Code' : 'Codex';
+      const rescore = hub.rows.find((r) => r.status === 'display' && r.metadata?.model_display?.label === label && r.metadata?.agent_display?.label === harness && r.metadata?.reasoning_effort === 'max');
+      const same = rescore && ['n_trials', 'uncached_input_tokens', 'cached_input_tokens', 'output_tokens', 'total_tokens'].every((k) => rescore.metrics?.[k] === entry.board[k]);
+      if (same) Object.assign(entry.board, { version: hub.version, accuracy: rescore.metrics.accuracy, hub_row: rescore.id });
+      else if (rescore) manual.push(`Read by hand: tbench.ai lists ${label} (${harness}, max) on Terminal-Bench ${hub.version} with tokens other than ${run.name}, so it scores on ${run.version}.`);
+    }
+    versions.add(entry.board.version);
+    log.push(`board: ${agent} ${id}: ${run.name} (Terminal-Bench ${run.version})${run.regrade ? `, minutes from ${entry.board.minutes_file}` : ''}${entry.board.hub_row ? `; accuracy ${entry.board.accuracy} on Terminal-Bench ${hub.version} from tbench.ai row ${entry.board.hub_row}` : ''}`);
     if (agent === 'codex' && old?.file !== run.name) manual.push(`Read OpenAI effort results by hand for new board run ${run.name}; ${entry.sweep ? 'retained the committed sweep' : `no sweep yet, so its ladder comes from ${model.like}`}.`);
   }
   const version = [...versions, baseVersion].sort(newer).at(-1);
   inputs.benchmarks['terminal-bench'].version = version;
   for (const [url, mapping] of CHARTS) {
     const html = await fetchText(url);
-    const charted = [version, baseVersion].find((v, i, all) => all.indexOf(v) === i && html.includes(`Terminal-Bench ${v}`)) ?? version;
+    // The newest version the page charts: the board's, else the one its sweeps were last read at.
+    const carried = Object.values(mapping).map(([agent, id]) => inputs.models[agent][id]['terminal-bench'].sweep?.version);
+    const tried = [...new Set([version, ...carried, baseVersion].filter(Boolean))].sort(newer).reverse();
+    const charted = tried.find((v) => html.includes(`Terminal-Bench ${v}`)) ?? version;
     const sweeps = anthropicSweeps(html, charted, Object.keys(mapping));
     for (const [series, [agent, id]] of Object.entries(mapping)) inputs.models[agent][id]['terminal-bench'].sweep = { source: 'anthropic', version: charted, efforts: sweeps[series] };
     log.push(`anthropic: ${url}: Terminal-Bench ${charted} CSV (${Object.keys(mapping).join(', ')})`);
@@ -118,6 +164,13 @@ export async function readSources({ base, prices, catalog, github, fetchText, to
     }
     if (!inputs.models.codex[m.slug]?.['terminal-bench']?.sweep) manual.push(`Read OpenAI effort results by hand: catalog model ${m.slug} has no sweep; no quality is invented.`);
   }
+  const { board, ...others } = inputs.sources;
+  inputs.sources = { board: { ...board, name: 'Terminal-Bench official leaderboard, GitHub submissions' }, hub: undefined, ...others };
+  inputs.sources.hub = {
+    name: `Terminal-Bench ${hub.version} leaderboard on tbench.ai (Harbor Hub ${hub.name})`, by: 'Stanford, Laude Institute and Harbor',
+    licence: 'Published by the maintainers of the Apache-2.0 board above; tbench.ai states no terms restricting reuse. Cite Terminal-Bench.', url: HUB,
+    gives: `Terminal-Bench ${hub.version} accuracy at max for runs the GitHub board has only at an older version, re-scored on the same trajectories (same tokens); tokens and minutes stay from the GitHub run`,
+  };
   inputs.sources.prices = {
     name: 'LiteLLM model price catalog, standard tier', by: 'LiteLLM', licence: 'MIT; published list-price facts',
     url: prices.source, gives: 'server/price-catalog.snapshot.json: cacheWrite5m, cacheRead and output per million tokens for both vendors; refreshed with npm run gen:catalog',

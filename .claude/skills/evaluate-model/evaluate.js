@@ -50,6 +50,7 @@ export function inputErrors(inputs) {
       for (const [kind, y] of [['board', board], ['sweep', sweep]]) if (y?.version != null && !versionOf(y.version)) err(`${at} ${b} ${kind}`, 'version is not major.minor');
       if (board) {
         if (!board.file) err(`${at} ${b} board`, 'no file');
+        if (board.hub_row != null && !sources.hub) err(`${at} ${b} board`, 'hub_row without a hub source');
         for (const f of BOARD) if (!isNum(board[f])) err(`${at} ${b} board`, `${f} is not a number`);
         if (!(board.accuracy <= 100) || !(board.n_trials > 0)) err(`${at} ${b} board`, 'accuracy over 100 or no trials');
         if (board.cached_input_tokens > board.uncached_input_tokens) err(`${at} ${b} board`, 'more cached input than input');
@@ -114,7 +115,7 @@ function benchRows(inputs, bench) {
       rows[agent][id] = Object.fromEntries(EFFORTS.map((e, j) => [e, [Q * P[j], C * R[j], T * (0.25 + 0.75 * R[j])]]));
       const swept = EFFORTS.filter((e) => own.sweep?.efforts?.[e]);
       anchors.push({ bench, agent, model: id, Q, C, T,
-        quality: own.board ? `board${own.board.version ? ` ${own.board.version}` : ''}` : `vendor max ${vmax[0]}`, cost, minutes: timed === id ? 'board' : `like ${timed}`,
+        quality: own.board ? `board${own.board.version ? ` ${own.board.version}` : ''}${own.board.hub_row ? ' (tbench.ai; tokens and minutes from its GitHub run)' : ''}` : `vendor max ${vmax[0]}`, cost, minutes: timed === id ? 'board' : `like ${timed}`,
         donor: m.supersededBy, ladder: swept.length ? `${own.sweep.source}${own.sweep.version ? ` ${own.sweep.version}` : ''}: ${swept.join(', ')}${swept.length < EFFORTS.length || swept.some((e) => own.sweep.efforts[e][1] == null) ? ` (rest from ${m.like})` : ''}` : `from ${m.like}` });
     }
   }
@@ -202,7 +203,7 @@ export function diffInputs(base, fresh) {
     for (const bench of keysOf(a, b).filter((k) => !['like', 'price', 'supersededBy'].includes(k))) {
       const x = a[bench] || {}, y = b[bench] || {};
       if (!x.board !== !y.board) changed.push(`  ${y.board ? 'NEW      ' : 'GONE     '}${at} ${bench} board ${y.board ? '(newly on the board)' : '(off the board)'}`);
-      else if (x.board) for (const f of ['file', 'version', 'minutes_file', ...BOARD]) if (x.board[f] !== y.board[f]) changed.push(`  CHANGED  ${at} ${bench} board ${f} ${x.board[f]} -> ${y.board[f]}`);
+      else if (x.board) for (const f of ['file', 'version', 'minutes_file', 'hub_row', ...BOARD]) if (x.board[f] !== y.board[f]) changed.push(`  CHANGED  ${at} ${bench} board ${f} ${x.board[f]} -> ${y.board[f]}`);
       for (const f of ['source', 'version']) if ((x.sweep?.[f] ?? null) !== (y.sweep?.[f] ?? null)) changed.push(`  CHANGED  ${at} ${bench} sweep ${f} ${x.sweep?.[f] ?? 'none'} -> ${y.sweep?.[f] ?? 'none'}`);
       for (const e of keysOf(x.sweep?.efforts, y.sweep?.efforts)) {
         const p = x.sweep?.efforts?.[e], q = y.sweep?.efforts?.[e];

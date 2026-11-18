@@ -1,13 +1,20 @@
 {
   "read": "2026-11-18",
-  "credit": "Scores: Terminal-Bench 4.1 or 4.0, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic and OpenAI on Terminal-Bench 4.0. Prices: Anthropic and OpenAI list prices from the LiteLLM catalog (MIT), read 2026-11-18.",
+  "credit": "Scores: Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic and OpenAI on Terminal-Bench 4.0. Prices: Anthropic and OpenAI list prices from the LiteLLM catalog (MIT), read 2026-11-18.",
   "sources": {
     "board": {
-      "name": "Terminal-Bench 4.0 official leaderboard",
+      "name": "Terminal-Bench official leaderboard, GitHub submissions",
       "by": "Stanford, Laude Institute and Harbor",
       "licence": "Apache-2.0 (https://github.com/harbor-framework/terminal-bench/blob/main/LICENSE)",
       "url": "https://github.com/harbor-framework/terminal-bench/tree/main/leaderboard/submissions",
       "gives": "Accuracy, tokens and mean trial time at max effort, maintainer-run in each vendor's own harness (Claude Code, Codex), 66 tasks x 5 trials"
+    },
+    "hub": {
+      "name": "Terminal-Bench 4.1 leaderboard on tbench.ai (Harbor Hub 4-1-0)",
+      "by": "Stanford, Laude Institute and Harbor",
+      "licence": "Published by the maintainers of the Apache-2.0 board above; tbench.ai states no terms restricting reuse. Cite Terminal-Bench.",
+      "url": "https://www.tbench.ai/",
+      "gives": "Terminal-Bench 4.1 accuracy at max for runs the GitHub board has only at an older version, re-scored on the same trajectories (same tokens); tokens and minutes stay from the GitHub run"
     },
     "anthropic": {
       "name": "Anthropic model pages, Terminal-Bench 4.0 accuracy against cost per attempt",
@@ -91,14 +98,15 @@
           },
           "board": {
             "file": "2026-09-30-anthropic-claude-opus-5-5-max-claude-code.json",
-            "version": "4.0",
-            "accuracy": 64.85,
+            "version": "4.1",
+            "accuracy": 65.76,
             "n_trials": 330,
             "uncached_input_tokens": 7945267860,
             "cached_input_tokens": 7699681320,
             "output_tokens": 88814607,
             "total_tokens": 8034082467,
-            "avg_trial_duration_sec": 4790.4
+            "avg_trial_duration_sec": 4790.4,
+            "hub_row": "24f711aa-b0cc-4f09-8627-b5f70a27b73b"
           }
         }
       },
@@ -137,14 +145,15 @@
           },
           "board": {
             "file": "2026-09-30-anthropic-claude-sonnet-5-5-max-claude-code.json",
-            "version": "4.0",
-            "accuracy": 61.82,
+            "version": "4.1",
+            "accuracy": 63.94,
             "n_trials": 330,
             "uncached_input_tokens": 19226469499,
             "cached_input_tokens": 18580542667,
             "output_tokens": 186577885,
             "total_tokens": 19413047384,
-            "avg_trial_duration_sec": 7431.6
+            "avg_trial_duration_sec": 7431.6,
+            "hub_row": "cf669033-4634-484b-ba50-b6b09963231e"
           }
         }
       },
@@ -168,14 +177,15 @@
           },
           "board": {
             "file": "2026-11-10-anthropic-claude-fable-5-2-max-claude-code.json",
-            "version": "4.0",
+            "version": "4.1",
             "accuracy": 65.76,
             "n_trials": 330,
             "uncached_input_tokens": 15564257872,
             "cached_input_tokens": 14858870781,
             "output_tokens": 162146230,
             "total_tokens": 15726404102,
-            "avg_trial_duration_sec": 7333
+            "avg_trial_duration_sec": 7333,
+            "hub_row": "a8c62ada-1715-4553-bd4b-87cbf2527290"
           }
         }
       },
@@ -332,14 +342,15 @@
           },
           "board": {
             "file": "2026-09-30-openai-gpt-6-1-sol-max-codex.json",
-            "version": "4.0",
-            "accuracy": 58.18,
+            "version": "4.1",
+            "accuracy": 60.91,
             "n_trials": 330,
             "uncached_input_tokens": 1428621998,
             "cached_input_tokens": 1354187811,
             "output_tokens": 31314516,
             "total_tokens": 1459936514,
-            "avg_trial_duration_sec": 3176.7
+            "avg_trial_duration_sec": 3176.7,
+            "hub_row": "bc484c38-72d1-4b66-b85f-f7353d0d374c"
           }
         },
         "supersededBy": "gpt-6.2-sol"
@@ -394,14 +405,15 @@
         "terminal-bench": {
           "board": {
             "file": "2026-09-30-openai-gpt-6-luna-max-codex.json",
-            "version": "4.0",
-            "accuracy": 16.36,
+            "version": "4.1",
+            "accuracy": 15.15,
             "n_trials": 330,
             "uncached_input_tokens": 3863633999,
             "cached_input_tokens": 3778954219,
             "output_tokens": 45490894,
             "total_tokens": 3909124893,
-            "avg_trial_duration_sec": 2284.1
+            "avg_trial_duration_sec": 2284.1,
+            "hub_row": "d717d657-6675-44a3-bda8-13e0bae434d2"
           }
         }
       }

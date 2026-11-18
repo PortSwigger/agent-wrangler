@@ -15,6 +15,7 @@ alone. UI, presets and defaults belong to their callers.
 | Key | Source | Licence | Gives |
 | --- | --- | --- | --- |
 | `board` | [Terminal-Bench leaderboard](https://github.com/harbor-framework/terminal-bench/tree/main/leaderboard/submissions) | Apache-2.0 | Max-effort accuracy, tokens and trial time in each vendor's harness, on the newest Terminal-Bench version run for each model |
+| `hub` | [tbench.ai](https://www.tbench.ai/) (Harbor Hub leaderboard the page embeds) | Published by the board's maintainers, cited | Accuracy on the newest Terminal-Bench version for max runs the GitHub board has only at an older version, re-scored on the same trajectories |
 | `anthropic` | [Opus](https://www.anthropic.com/claude-opus-5-5), [Sonnet](https://www.anthropic.com/claude-sonnet-5-5), [Haiku](https://www.anthropic.com/claude-haiku-5-5) | Published results, cited | Terminal-Bench accuracy/cost CSVs by effort |
 | `anthropic-card` | [Fable 5.2 system card](https://assets.claude.com/27d60918d218125e7504bc7354c4b4626ec56b11.pdf), section 8.5 | Published results, read by hand and cited | Fable 5.2 accuracy at max only; cost, other efforts and minutes come from `like` |
 | `openai` | [Terra launch](https://openai.com/index/introducing-gpt-6-1-terra/), [Sol launch](https://openai.com/index/introducing-gpt-6-1-sol/) | Published results, read by hand and cited | Accuracy by effort; costs are null |
@@ -35,7 +36,11 @@ Artificial Analysis data is used. Review terms before adding any source.
    inputs as its base. Through the GitHub API it selects, for each model, the max
    run in Claude Code/Codex on the newest Terminal-Bench version the board has
    run it on (the version in `leaderboard.yaml`, or `4-1-0` in a submission name),
-   then the newest by date. It reads the Anthropic chart titled with the newest
+   then the newest by date. When tbench.ai's leaderboard (the Harbor Hub data its
+   home page embeds) is on a newer version and lists the same model at max in the
+   same harness with the same tokens, it is a re-score of that run: accuracy comes
+   from the Hub row (`hub_row`), tokens and minutes from the GitHub run. Other
+   tokens mean another run, so the reader flags it for a person instead. It reads the Anthropic chart titled with the newest
    version the page charts. It writes
    `.claude/skills/evaluate-model/inputs-<today>.json`. `--base FILE` and
    `--out FILE` allow an explicit baseline and scratch output.
@@ -74,7 +79,9 @@ Board fields are copied verbatim from metrics, plus the run's `version`;
 `uncached_input_tokens` counts all input, including the cached share. Total must
 equal input plus output. A `-regrade` run re-scores an earlier run's trajectories
 against newer tests, so its trial time is the regrading's: `minutes_file` names
-the newest original run, whose `avg_trial_duration_sec` it takes instead.
+the newest original run, whose `avg_trial_duration_sec` it takes instead. A
+`hub_row` names the tbench.ai row whose accuracy and `version` replace the GitHub
+run's; every other field is still the GitHub run's.
 
 The evaluator preserves the established derivation:
 

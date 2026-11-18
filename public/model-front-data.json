@@ -1,6 +1,6 @@
 {
   "read": "2026-11-18",
-  "credit": "Scores: Terminal-Bench 4.1 or 4.0, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic and OpenAI on Terminal-Bench 4.0. Prices: Anthropic and OpenAI list prices from the LiteLLM catalog (MIT), read 2026-11-18.",
+  "credit": "Scores: Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic and OpenAI on Terminal-Bench 4.0. Prices: Anthropic and OpenAI list prices from the LiteLLM catalog (MIT), read 2026-11-18.",
   "benchmarks": {
     "terminal-bench": {
       "name": "Terminal-Bench",
@@ -22,17 +22,17 @@
           35.6
         ],
         "high": [
-          64,
+          65,
           4.76,
           40.6
         ],
         "xhigh": [
-          66,
+          67,
           9.01,
           59.1
         ],
         "max": [
-          65,
+          66,
           13.77,
           79.8
         ]
@@ -44,22 +44,22 @@
           36.5
         ],
         "medium": [
-          25,
+          26,
           1.05,
           37
         ],
         "high": [
-          38,
+          39,
           2.27,
           44
         ],
         "xhigh": [
-          54,
+          56,
           6.72,
           69.5
         ],
         "max": [
-          62,
+          64,
           16.18,
           123.9
         ]
@@ -203,27 +203,27 @@
       },
       "gpt-6-luna": {
         "low": [
-          8,
+          7,
           0.1,
           23.2
         ],
         "medium": [
-          12,
+          11,
           0.13,
           26.5
         ],
         "high": [
-          13,
+          12,
           0.15,
           29.4
         ],
         "xhigh": [
-          15,
+          14,
           0.16,
           30.2
         ],
         "max": [
-          16,
+          15,
           0.22,
           38.1
         ]

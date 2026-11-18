@@ -15,7 +15,7 @@ test('the newest inputs reproduce every row and the credit in model-front-data.j
 });
 
 test('every source the inputs read is in SKILL.md’s licence table, with its links, and the credit names each', () => {
-  for (const [id, s] of Object.entries(inputs.sources)) {
+  for (const [id, s] of [inputs, JSON.parse(readFileSync(newestInputs(), 'utf8'))].flatMap((i) => Object.entries(i.sources))) {
     assert.match(skill, new RegExp(`^\\| \`${id}\` \\|`, 'm'), `${id} has a licence row`);
     for (const url of [s.url].flat()) assert.ok(skill.includes(url), `${id}: ${url} is in SKILL.md`);
   }
@@ -174,13 +174,23 @@ test('a superseded model lends its ladder to its successor and has no rows of it
 
 test('a model moving to a newer board version, or being superseded, is a changed number', () => {
   const fresh = structuredClone(inputs);
-  Object.assign(tb('claude', 'opus', fresh).board, { version: '4.1', minutes_file: 'original.json' });
+  Object.assign(tb('claude', 'opus', fresh).board, { version: '4.1', minutes_file: 'original.json', hub_row: 'row-id' });
+  fresh.sources.hub = { name: 'hub', by: 'hub', licence: 'cited', url: 'https://www.tbench.ai/' };
   tb('claude', 'opus', fresh).sweep.version = '4.0';
   fresh.models.codex['gpt-6-astra'].supersededBy = 'gpt-6.1-sol';
   const { status, text } = diffInputs(inputs, fresh);
   assert.equal(status, 'numbers changed');
-  for (const re of [/claude opus terminal-bench board version undefined -> 4\.1/, /claude opus terminal-bench board minutes_file undefined -> original\.json/,
+  for (const re of [/claude opus terminal-bench board version undefined -> 4\.1/, /claude opus terminal-bench board minutes_file undefined -> original\.json/, /claude opus terminal-bench board hub_row undefined -> row-id/,
     /claude opus terminal-bench sweep version none -> 4\.0/, /codex gpt-6-astra supersededBy none -> gpt-6\.1-sol/]) assert.match(text, re);
+});
+
+test('a tbench.ai re-score names its row in the report and needs the hub source', () => {
+  const i = structuredClone(inputs);
+  Object.assign(tb('claude', 'opus', i).board, { version: '4.1', accuracy: 66, hub_row: 'row-id' });
+  assert.match(inputErrors(i).join('\n'), /claude opus terminal-bench board: hub_row without a hub source/);
+  i.sources.hub = { name: 'hub', by: 'hub', licence: 'cited', url: 'https://www.tbench.ai/' };
+  assert.deepEqual(inputErrors(i), []);
+  assert.match(report(i, dataOf(inputs)).text, /claude opus +Q 66\.00 board 4\.1 \(tbench\.ai; tokens and minutes from its GitHub run\); C \$\d+\.\d+ board tokens/);
 });
 
 test('a patch release keeps the scale; a missing version is a bump', () => {
