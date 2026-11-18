@@ -41,6 +41,7 @@ import {
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createBoardTargets } from './board-targets.js';
+import { createDialogReporter } from './dialog-reporter.js';
 import { createSessionPanel } from './session-panel.js';
 import { createRailButtons } from './rail-buttons.js';
 import { MODEL_FRONT } from './model-front-api.js';
@@ -8163,9 +8164,12 @@ const deck = createDeckClient({
   // A #view=search deep link runs setView before this socket exists, so its
   // index-status request is dropped. Re-issue it on open — which also refreshes
   // the view after a reconnect.
-  onOpen: () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); },
+  onOpen: () => { slots.connected(); dialogReporter.resend(); if (currentView === 'search') onEnterSearchView(); },
   onClose: () => chatView.onConnectionClosed(),
 });
+// Tells the server how many dialogs are open, so an unattended restart waits
+// for them to close instead of reloading over what the human is typing.
+const dialogReporter = createDialogReporter({ doc: document, send: (frame) => deck.signal(frame) });
 // An extension's use of a board adapter, reported to the deck as telemetry.
 setLegacyReporter((surface, ext) => deck.act('deck.deprecation', { args: { surface, ext } }).then((r) => r.ok || r.error?.code === 'unsupported' || r.error?.code === 'invalid'));
 const DECK_CACHE_PREFIX = 'aw-deck-cache-';
