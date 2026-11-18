@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { agentError } from '../agents/index.js';
 import path from 'node:path';
 import { deepFreeze, projectSession, projectTask, worktreeSummary } from './project.js';
@@ -699,6 +700,7 @@ const telemetryEmit = ({ id, telemetry }) => ({
 });
 
 export const V1_BUILDERS = {
+  'schema:zod': () => ({ schema: { z } }),
   'sessions:read': sessionsRead,
   'sessions:wake': sessionsWake,
   'sessions:archive': sessionsArchive,

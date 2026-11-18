@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -1115,12 +1116,12 @@ test('without core telemetry wired, host.telemetry is inert', () => {
   assert.equal(host.telemetry.emit('a', {}), false);
 });
 
-test('a ^1 manifest boots on the v1 shim and its host.version says so; a ^2 one gets 2.0.0', () => {
+test('a ^1 manifest boots on the v1 shim and its host.version says so; a ^2 one gets the current version', () => {
   assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0' }).version, '1.96.0');
   assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0', boardApi: '^1.74.0' }).version, '1.96.0');
-  assert.equal(buildHostApi({ id: 'new-ext', range: '^2.0.0', boardApi: '^2.0.0' }).version, '2.0.0');
-  assert.equal(buildHostApi({ id: 'any-ext' }).version, '2.0.0');
-  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.97.0' }), /needs host API \^1\.97\.0, this server serves 2\.0\.0/);
+  assert.equal(buildHostApi({ id: 'new-ext', range: '^2.0.0', boardApi: '^2.0.0' }).version, HOST_API_VERSION);
+  assert.equal(buildHostApi({ id: 'any-ext' }).version, HOST_API_VERSION);
+  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.97.0' }), /needs host API \^1\.97\.0, this server serves 2\.1\.0/);
 });
 
 test('spawn validates Codex approvalPolicy and forwards only the approval selection', async () => {
@@ -1168,4 +1169,15 @@ test('an extension can read only its own live install receipt', () => {
   const receipt = host.extension.receipt();
   receipt.runningSha = 'changed';
   assert.equal(host.extension.receipt().runningSha, runningSha);
+});
+
+test('schema:zod serves the core zod instance only when declared', () => {
+  assert.equal(buildHostApi({ id: 'x' }).schema, undefined);
+  const host = buildHostApi({ id: 'x', requires: ['schema:zod'], range: '^2.1.0' });
+  assert.equal(host.schema.z, z);
+  assert.ok(Object.isFrozen(host.schema));
+  const schema = host.schema.z.object({ name: host.schema.z.string() });
+  assert.equal(schema instanceof z.ZodObject, true);
+  assert.equal(z.toJSONSchema(schema).properties.name.type, 'string');
+  assert.deepEqual(schema.parse({ name: 'example' }), { name: 'example' });
 });

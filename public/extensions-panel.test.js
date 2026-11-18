@@ -1153,3 +1153,13 @@ test('installs on (the default): install, update and uninstall stay enabled', ()
     assert.equal(byClass(adding, 'ext-btn-primary').find((b) => b._text === 'Install…').disabled, false);
   });
 });
+
+test('install and update consent show dependency warnings as text', () => {
+  withDom(() => {
+    for (const update of [false, true]) {
+      const warning = 'This extension bundles zod; use host.schema.z.';
+      const body = consentBodyEl({ id: 'x', update, warnings: [warning] });
+      assert.ok(texts(body).includes(warning));
+    }
+  });
+});

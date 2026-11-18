@@ -81,6 +81,7 @@ export const RESERVED_GRAPH_KEYS = new Set([
 // directions — that test is what keeps the two in step without an import, so a
 // new capability is a two-file change by design.
 export const CAPABILITIES = new Set([
+  'schema:zod',
   'sessions:read', 'sessions:wake', 'sessions:archive', 'sessions:spawn', 'sessions:env', 'sessions:kill',
   'tasks:read', 'tasks:write', 'tasks:archive',
   'memory:read', 'memory:append',

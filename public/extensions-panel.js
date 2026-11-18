@@ -73,6 +73,7 @@ function el(tag, className, text) {
 // Plain-language descriptions for capabilities a name alone does not explain,
 // shown as the chip's tooltip, and as a line under the chips in the consent dialog.
 export const CAPABILITY_DESCRIPTIONS = {
+  'schema:zod': 'Build tool schemas with the host’s Zod instance.',
   'links:read': 'Read the links attached to session cards, including pull requests.',
   'files:view': 'Open local files the extension names (markdown and images) in a viewer panel when you click them. Only files it registers can be opened, and nothing is changed.',
   'files:open': 'Open the file links you click in a session\'s chat or terminal itself, instead of the board\'s preview.',
@@ -1047,6 +1048,7 @@ export function consentButtonLabels(payload, canRestart) {
 // an update is what changed, and the full list is noise that hides it.
 export function consentBodyEl(payload) {
   const body = payload.update ? updateConsentEl(payload) : installConsentEl(payload);
+  for (const warning of payload.warnings || []) body.append(el('div', 'ext-consent-note', warning));
   if (payload.downgrade || payload.requiresDowngradeConfirmation) {
     const reason = payload.downgrade ? 'Downgrade' : 'Possible downgrade (history could not establish a forward update)';
     body.append(el('div', 'ext-consent-note', `${reason}: replace ${(payload.previousSha || '').slice(0, 8)} with ${(payload.sha || '').slice(0, 8)}. Confirm explicitly to install this version.`));

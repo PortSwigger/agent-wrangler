@@ -26,7 +26,7 @@ export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
   const visible = hide ? tools.filter((t) => !hide(caller, t.name)) : tools;
   const advertised = [];
   for (const tool of visible) {
-    const converted = toolInputSchema(tool);
+    const converted = toolInputSchema(tool, deps?.hostApiFor);
     if (!converted) continue;
     server.registerTool(
       tool.name,

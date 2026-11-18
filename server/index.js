@@ -298,7 +298,7 @@ const storesFor = (id) => Object.fromEntries(
 // Per-launch skill gating (the _extLaunchSkills seam): consulted by
 // dispatch/resume/fork before the adapter builds the command, so an extension
 // can answer "not this session" for a skill its manifest declares.
-sessionManager._extensionToolFingerprint = () => extensionToolFingerprint(ext.tools);
+sessionManager._extensionToolFingerprint = () => extensionToolFingerprint(ext.tools, hostApiFor);
 sessionManager._extLaunchSkills = createSkillGate(ext, hostApiFor, logError);
 // Per-launch Codex sandbox/approval policy (the _extCodexPolicy seam).
 sessionManager._extCodexPolicy = createCodexPolicyResolver(ext, hostApiFor, logError);
@@ -1390,7 +1390,7 @@ async function rebuildOnce() {
   // rather than the connect announcement so the banner survives a reconnect the
   // same way fdWarning's re-send does. A handful of short ids at most.
   graph.quarantinedBuiltins = quarantinedBuiltinIds();
-  graph.toolSchemaFailures = extensionToolSchemaFailures(ext.tools);
+  graph.toolSchemaFailures = extensionToolSchemaFailures(ext.tools, hostApiFor);
   graph.missingExtensionFiles = missingExtensionFiles;
   // Boot-fixed too, and carried the same way for the same reason.
   graph.staleGuiSession = staleGuiSession;
