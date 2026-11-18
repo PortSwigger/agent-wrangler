@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSources, anthropicSweeps } from './read-front-sources.mjs';
+import { readSources, anthropicSweeps, boardFile } from './read-front-sources.mjs';
 
 const base = JSON.parse(readFileSync(new URL('../.claude/skills/evaluate-model/inputs-2026-10-28.json', import.meta.url)));
 const prices = JSON.parse(readFileSync(new URL('../server/price-catalog.snapshot.json', import.meta.url)));
@@ -29,8 +29,9 @@ const options = () => ({ base, prices, catalog: { models: [] }, github, fetchTex
 test('reader uses board version, precise Anthropic CSVs and LiteLLM, retaining OpenAI sweeps', async () => {
   const { inputs, log } = await readSources(options());
   assert.equal(inputs.benchmarks['terminal-bench'].version, '4.0');
-  assert.deepEqual(inputs.models.codex['gpt-6.1-sol']['terminal-bench'].sweep, base.models.codex['gpt-6.1-sol']['terminal-bench'].sweep);
-  assert.deepEqual(inputs.models.claude.fable['terminal-bench'].sweep, base.models.claude.fable['terminal-bench'].sweep, 'Fable has no chart, so its sweep is carried');
+  assert.deepEqual(inputs.models.codex['gpt-6.1-sol']['terminal-bench'].sweep, { ...base.models.codex['gpt-6.1-sol']['terminal-bench'].sweep, version: '4.0' });
+  assert.deepEqual(inputs.models.claude.fable['terminal-bench'].sweep, { ...base.models.claude.fable['terminal-bench'].sweep, version: '4.0' }, 'Fable has no chart, so its sweep is carried');
+  assert.equal(inputs.models.claude.opus['terminal-bench'].board.version, '4.0');
   assert.equal(inputs.models.claude.fable.price.write, prices.anthropic['claude-fable-5-2'].cacheWrite5m);
   assert.deepEqual(inputs.models.claude.sonnet['terminal-bench'].sweep.efforts.medium, [21, 2]);
   assert.equal(inputs.models.claude.opus.price.write, prices.anthropic['claude-opus-5-5'].cacheWrite5m);
@@ -67,8 +68,31 @@ test('a new Codex board run and missing catalog sweeps are flagged for a person'
   assert.equal(inputs.models.codex['gpt-6.1-sol']['terminal-bench'].board.file, newFile);
 });
 
-test('a benchmark version change never carries old vendor sweeps onto the new scale', async () => {
-  await assert.rejects(readSources({ ...options(), github: async (p) => p.endsWith('leaderboard.yaml') ? 'title: Terminal-Bench 4.1' : github(p) }), /version.*4.0.*4.1.*manual/i);
+test('board files are matched in every naming the board uses, and never across models or harnesses', () => {
+  assert.deepEqual(boardFile('2026-09-30-anthropic-claude-opus-5-5-max-claude-code.json', 'claude', 'claude-opus-5-5'), { name: '2026-09-30-anthropic-claude-opus-5-5-max-claude-code.json', date: '2026-09-30', version: null, regrade: false });
+  assert.equal(boardFile('2026-11-06-haiku-5-5-max-claude-code.json', 'claude', 'claude-haiku-5-5')?.version, null);
+  assert.deepEqual(boardFile('2026-11-12-4-1-0-haiku-5-5-max-claude-code-regrade.json', 'claude', 'claude-haiku-5-5'), { name: '2026-11-12-4-1-0-haiku-5-5-max-claude-code-regrade.json', date: '2026-11-12', version: '4.1', regrade: true });
+  assert.equal(boardFile('2026-11-17-4-1-0-gpt-6-2-sol-max-codex.json', 'codex', 'gpt-6.2-sol')?.version, '4.1');
+  for (const [name, agent, id] of [['2026-11-17-4-1-0-gpt-6-2-sol-max-codex.json', 'codex', 'gpt-6.2-astra'], ['2026-11-10-openrouter-moonshotai-kimi-k3-max-claude-code.json', 'claude', 'claude-k3'],
+    ['2026-09-30-anthropic-claude-opus-5-5-max-claude-code.json', 'codex', 'claude-opus-5-5'], ['2026-08-26-anthropic-claude-fable-5-max-claude-code.json', 'claude', 'claude-fable-5-2']]) assert.equal(boardFile(name, agent, id), null, name);
+});
+
+test('each model scores on its newest board version, a regrade keeps its original run\'s minutes, and sweeps keep the newest charted version', async () => {
+  const sol41 = '2026-11-17-4-1-0-gpt-6-1-sol-max-codex.json', opus41 = '2026-11-12-4-1-0-opus-5-5-max-claude-code-regrade.json';
+  const opus = base.models.claude.opus['terminal-bench'].board, sol = base.models.codex['gpt-6.1-sol']['terminal-bench'].board;
+  const { inputs } = await readSources({ ...options(), github: async (p) => {
+    if (p.endsWith('/submissions')) return [...await github(p), { name: sol41 }, { name: opus41 }];
+    if (p.endsWith(sol41)) return { metadata: { reasoning_effort: 'max', agent_display: { label: 'Codex' } }, metrics: { ...sol, accuracy: 60 } };
+    if (p.endsWith(opus41)) return { metadata: { reasoning_effort: 'max', agent_display: { label: 'Claude Code' } }, metrics: { ...opus, accuracy: 70, avg_trial_duration_sec: 12 } };
+    return github(p);
+  } });
+  assert.equal(inputs.benchmarks['terminal-bench'].version, '4.1');
+  assert.deepEqual(inputs.models.codex['gpt-6.1-sol']['terminal-bench'].board, { ...sol, file: sol41, version: '4.1', accuracy: 60 });
+  assert.deepEqual(inputs.models.claude.opus['terminal-bench'].board, { ...opus, file: opus41, version: '4.1', accuracy: 70, minutes_file: opus.file });
+  assert.equal(inputs.models.claude.sonnet['terminal-bench'].board.version, '4.0');
+  assert.equal(inputs.models.claude.sonnet['terminal-bench'].sweep.version, '4.0', 'Anthropic charts only 4.0, so the ladder keeps it');
+  assert.match(inputs.credit, /Terminal-Bench 4\.1 or 4\.0, each model on the newest version/);
+  assert.ok(inputs.manual.some((s) => s.includes(sol41)));
 });
 
 test('a newly measured catalog model gets a board-run flag without invented ladders', async () => {

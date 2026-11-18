@@ -41,11 +41,13 @@ export function inputErrors(inputs) {
   for (const [agent, models] of Object.entries(inputs?.models || {})) for (const [id, m] of Object.entries(models)) {
     const at = `${agent} ${id}`;
     if (m.like != null && (m.like === id || !models[m.like])) err(at, `like names no other ${agent} model`);
+    if (m.supersededBy != null && (m.supersededBy === id || !models[m.supersededBy])) err(at, `supersededBy names no other ${agent} model`);
     if (!PRICES.every((p) => isNum(m.price?.[p]) && m.price[p] > 0)) err(at, `price needs ${PRICES.join(', ')} per million tokens`);
     for (const [b, x] of Object.entries(m)) {
-      if (b === 'like' || b === 'price') continue;
+      if (['like', 'price', 'supersededBy'].includes(b)) continue;
       if (!benches[b]) { err(at, `${b} is not a benchmark`); continue; }
       const { board, sweep } = x || {};
+      for (const [kind, y] of [['board', board], ['sweep', sweep]]) if (y?.version != null && !versionOf(y.version)) err(`${at} ${b} ${kind}`, 'version is not major.minor');
       if (board) {
         if (!board.file) err(`${at} ${b} board`, 'no file');
         for (const f of BOARD) if (!isNum(board[f])) err(`${at} ${b} board`, `${f} is not a number`);
@@ -112,8 +114,8 @@ function benchRows(inputs, bench) {
       rows[agent][id] = Object.fromEntries(EFFORTS.map((e, j) => [e, [Q * P[j], C * R[j], T * (0.25 + 0.75 * R[j])]]));
       const swept = EFFORTS.filter((e) => own.sweep?.efforts?.[e]);
       anchors.push({ bench, agent, model: id, Q, C, T,
-        quality: own.board ? 'board' : `vendor max ${vmax[0]}`, cost, minutes: timed === id ? 'board' : `like ${timed}`,
-        ladder: swept.length ? `${own.sweep.source}: ${swept.join(', ')}${swept.length < EFFORTS.length || swept.some((e) => own.sweep.efforts[e][1] == null) ? ` (rest from ${m.like})` : ''}` : `from ${m.like}` });
+        quality: own.board ? `board${own.board.version ? ` ${own.board.version}` : ''}` : `vendor max ${vmax[0]}`, cost, minutes: timed === id ? 'board' : `like ${timed}`,
+        donor: m.supersededBy, ladder: swept.length ? `${own.sweep.source}${own.sweep.version ? ` ${own.sweep.version}` : ''}: ${swept.join(', ')}${swept.length < EFFORTS.length || swept.some((e) => own.sweep.efforts[e][1] == null) ? ` (rest from ${m.like})` : ''}` : `from ${m.like}` });
     }
   }
   return { rows, anchors, calibration };
@@ -126,7 +128,8 @@ export function derive(inputs) {
   if (errs.length) throw new Error(`invalid inputs:\n  ${errs.join('\n  ')}`);
   const weighted = Object.entries(inputs.benchmarks).filter(([, b]) => b.weight > 0), total = weighted.reduce((s, [, b]) => s + b.weight, 0);
   const each = weighted.map(([id, b]) => ({ w: b.weight, ...benchRows(inputs, id) }));
-  const rows = Object.fromEntries(Object.entries(inputs.models).map(([agent, models]) => [agent, Object.fromEntries(Object.keys(models).map((model) => [model,
+  // A superseded model stays in the inputs only as a ladder or timing donor for its like chain.
+  const rows = Object.fromEntries(Object.entries(inputs.models).map(([agent, models]) => [agent, Object.fromEntries(Object.keys(models).filter((model) => !models[model].supersededBy).map((model) => [model,
     Object.fromEntries(EFFORTS.map((e) => {
       const [q, c, t] = [0, 1, 2].map((i) => each.reduce((s, x) => s + x.w * x.rows[agent][model][e][i], 0) / total);
       return [e, [round(q, 0), round(c, 2), round(t, 1)]];
@@ -160,7 +163,7 @@ export function report(inputs, data = committedData()) {
   out.push(...(inputs.manual || []).map((s) => `MANUAL: ${s}`));
   out.push('', 'Anchors at max (Q points, C dollars, T minutes) and ladders:');
   for (const c of calibration) out.push(`  ${c.bench} ${c.agent}: ×${c.k.toFixed(3)} cost (from ${c.priced.join(', ') || 'none'})`);
-  for (const a of anchors) out.push(`  ${`${a.agent} ${a.model}`.padEnd(20)} Q ${a.Q.toFixed(2).padStart(5)} ${a.quality}; C $${a.C.toFixed(2)} ${a.cost}; T ${a.T.toFixed(1)} ${a.minutes}; ladder ${a.ladder}`);
+  for (const a of anchors) out.push(`  ${`${a.agent} ${a.model}`.padEnd(20)} ${a.donor ? `donor only, superseded by ${a.donor}; ladder ${a.ladder}` : `Q ${a.Q.toFixed(2).padStart(5)} ${a.quality}; C $${a.C.toFixed(2)} ${a.cost}; T ${a.T.toFixed(1)} ${a.minutes}; ladder ${a.ladder}`}`);
   out.push('', `Rows from inputs read ${inputs.read}, for public/model-front-data.json:`);
   for (const [agent, ms] of Object.entries(rows)) out.push(`    ${agent}: {`, ...Object.entries(ms).map(([m, es]) => line(m, es)), '    },');
   out.push('', 'Against the file:', `  ${data.credit === inputs.credit ? 'same' : 'CHANGED'}  credit ${JSON.stringify(inputs.credit)}${data.credit === inputs.credit ? '' : ` (file ${JSON.stringify(data.credit ?? null)})`}`);
@@ -194,12 +197,13 @@ export function diffInputs(base, fresh) {
     if (!a) { changed.push(`  NEW      ${at} (newly measured)`); continue; }
     if (!b) { changed.push(`  GONE     ${at} (not in the fresh reading)`); continue; }
     if ((a.like ?? null) !== (b.like ?? null)) changed.push(`  CHANGED  ${at} like ${a.like ?? 'none'} -> ${b.like ?? 'none'}`);
+    if ((a.supersededBy ?? null) !== (b.supersededBy ?? null)) changed.push(`  CHANGED  ${at} supersededBy ${a.supersededBy ?? 'none'} -> ${b.supersededBy ?? 'none'}`);
     if (priceText(a.price) !== priceText(b.price)) changed.push(`  CHANGED  ${at} price ${priceText(a.price)} -> ${priceText(b.price)}`);
-    for (const bench of keysOf(a, b).filter((k) => k !== 'like' && k !== 'price')) {
+    for (const bench of keysOf(a, b).filter((k) => !['like', 'price', 'supersededBy'].includes(k))) {
       const x = a[bench] || {}, y = b[bench] || {};
       if (!x.board !== !y.board) changed.push(`  ${y.board ? 'NEW      ' : 'GONE     '}${at} ${bench} board ${y.board ? '(newly on the board)' : '(off the board)'}`);
-      else if (x.board) for (const f of ['file', ...BOARD]) if (x.board[f] !== y.board[f]) changed.push(`  CHANGED  ${at} ${bench} board ${f} ${x.board[f]} -> ${y.board[f]}`);
-      if ((x.sweep?.source ?? null) !== (y.sweep?.source ?? null)) changed.push(`  CHANGED  ${at} ${bench} sweep source ${x.sweep?.source ?? 'none'} -> ${y.sweep?.source ?? 'none'}`);
+      else if (x.board) for (const f of ['file', 'version', 'minutes_file', ...BOARD]) if (x.board[f] !== y.board[f]) changed.push(`  CHANGED  ${at} ${bench} board ${f} ${x.board[f]} -> ${y.board[f]}`);
+      for (const f of ['source', 'version']) if ((x.sweep?.[f] ?? null) !== (y.sweep?.[f] ?? null)) changed.push(`  CHANGED  ${at} ${bench} sweep ${f} ${x.sweep?.[f] ?? 'none'} -> ${y.sweep?.[f] ?? 'none'}`);
       for (const e of keysOf(x.sweep?.efforts, y.sweep?.efforts)) {
         const p = x.sweep?.efforts?.[e], q = y.sweep?.efforts?.[e];
         if (!p || !q || cell(p) !== cell(q)) changed.push(`  CHANGED  ${at} ${bench} sweep ${e} ${p ? cell(p) : 'none'} -> ${q ? cell(q) : 'none'}`);
@@ -212,7 +216,7 @@ export function diffInputs(base, fresh) {
   const head = {
     'up to date': `up to date: the reading of ${fresh.read} matches the inputs read ${base.read} (${Object.values(fresh.benchmarks || {}).map((b) => `${b.name} v${versionOf(b.version)}`).join(', ')}).`,
     'numbers changed': `numbers changed since the inputs read ${base.read} (${changed.length}): rescore from the fresh reading.`,
-    'version bumped': `version bumped since the inputs read ${base.read}: ${bumped.join(', ')}. Rows from two versions never mix: re-read every model at the new version, not only the changes below.`,
+    'version bumped': `version bumped since the inputs read ${base.read}: ${bumped.join(', ')}. Score each model on the newest version the board has run it on, and re-read every vendor sweep for a chart at the new version.`,
   }[status];
   return { status, bumped, changed, text: [head, ...changed].join('\n') };
 }

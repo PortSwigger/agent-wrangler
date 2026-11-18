@@ -148,8 +148,39 @@ test('a version bump outranks changed numbers and lists both', () => {
   const { status, bumped, text } = diffInputs(inputs, fresh);
   assert.equal(status, 'version bumped');
   assert.deepEqual(bumped, ['Terminal-Bench v4.0 -> v4.1']);
-  assert.match(text, /re-read every model/);
+  assert.match(text, /newest version the board has run it on/);
+  assert.match(text, /re-read every vendor sweep/);
   assert.match(text, /CHANGED {2}claude opus terminal-bench board accuracy 64\.85 -> 66/);
+});
+
+test('a superseded model lends its ladder to its successor and has no rows of its own', () => {
+  const i = structuredClone(inputs);
+  i.models.codex['gpt-new'] = { like: 'gpt-6-astra', price: i.models.codex['gpt-6-astra'].price, 'terminal-bench': { board: { ...tb('codex', 'gpt-6.1-sol', i).board, version: '4.1' } } };
+  i.models.codex['gpt-6-astra'].supersededBy = 'gpt-new';
+  const { rows } = derive(i), astra = tb('codex', 'gpt-6-astra', i).sweep.efforts, board = tb('codex', 'gpt-new', i).board;
+  assert.equal(rows.codex['gpt-6-astra'], undefined);
+  assert.equal(rows.codex['gpt-new'].low[0], round(board.accuracy * astra.low[0] / astra.max[0], 0));
+  assert.equal(rows.codex['gpt-new'].max[2], round(board.avg_trial_duration_sec / 60, 1));
+  const { text } = report(i, dataOf(inputs));
+  assert.match(text, /codex gpt-6-astra +donor only, superseded by gpt-new/);
+  assert.match(text, /codex gpt-new +Q \d+\.\d+ board 4\.1;/);
+  assert.match(text, /GONE  codex gpt-6-astra/);
+  i.models.codex['gpt-6-astra'].supersededBy = 'gpt-6-astra';
+  tb('codex', 'gpt-new', i).board.version = 'next';
+  const errs = inputErrors(i).join('\n');
+  assert.match(errs, /codex gpt-6-astra: supersededBy names no other codex model/);
+  assert.match(errs, /codex gpt-new terminal-bench board: version is not major.minor/);
+});
+
+test('a model moving to a newer board version, or being superseded, is a changed number', () => {
+  const fresh = structuredClone(inputs);
+  Object.assign(tb('claude', 'opus', fresh).board, { version: '4.1', minutes_file: 'original.json' });
+  tb('claude', 'opus', fresh).sweep.version = '4.0';
+  fresh.models.codex['gpt-6-astra'].supersededBy = 'gpt-6.1-sol';
+  const { status, text } = diffInputs(inputs, fresh);
+  assert.equal(status, 'numbers changed');
+  for (const re of [/claude opus terminal-bench board version undefined -> 4\.1/, /claude opus terminal-bench board minutes_file undefined -> original\.json/,
+    /claude opus terminal-bench sweep version none -> 4\.0/, /codex gpt-6-astra supersededBy none -> gpt-6\.1-sol/]) assert.match(text, re);
 });
 
 test('a patch release keeps the scale; a missing version is a bump', () => {
