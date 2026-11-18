@@ -9,7 +9,7 @@ const standingBanner = source.match(/function syncStandingBanner\(\) \{[\s\S]*?\
 test('missing extension banner names extensions, persists and yields to urgent alerts', () => {
   const shown = [];
   const context = vm.createContext({
-    deckStatus: 'ready', fdBannerActive: false, quarantinedBuiltins: [],
+    deckStatus: 'ready', fdBannerActive: false, quarantinedBuiltins: [], toolSchemaFailures: [],
     missingExtensionFiles: [{ id: 'demo', label: 'Demo' }, { id: 'other', label: 'Other' }],
     staleGuiSession: null, restartPendingExts: ['Pending'], rolledBackUpdate: null,
     rolledBackText: () => null,

@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { z } from 'zod/v4';
+import { extensionToolFingerprint } from '../extensions/tool-fingerprint.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer, createMcpRequestHandler } from './server.js';
@@ -354,4 +356,71 @@ test('a pending MCP tool call still leaves an unforced restart pending beside an
       assert.equal((await pending).result.structuredContent.sessionId, 'NEW');
     } finally { stream.close(); }
   });
+});
+
+test('throwing extension schemas leave tools/list and healthy calls working and log once', async (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (...args) => warnings.push(args.join(' ')));
+  const broken = z.object({ title: z.string() });
+  broken._zod.toJSONSchema = () => { throw new TypeError("Cannot read properties of undefined (reading 'ref')"); };
+  const tools = [
+    { name: 'broken_probe', extId: 'broken-extension', description: 'Broken', inputSchema: broken, handler: () => { throw new Error('must not run'); } },
+    { name: 'healthy_probe', extId: 'healthy-extension', description: 'Healthy', inputSchema: { title: z.string() }, handler: (_, args) => ({ content: [{ type: 'text', text: args.title }] }) },
+    ...activeTools({ ext: NO_EXT }),
+  ];
+  for (let i = 0; i < 2; i++) {
+    const { client, server } = await connect(fakeDeps(), 'CARD1', { tools });
+    try {
+      const listed = (await client.listTools()).tools;
+      assert.equal(listed.length, tools.length - 1);
+      assert.ok(!listed.some((tool) => tool.name === 'broken_probe'));
+      assert.equal(listed.find((tool) => tool.name === 'healthy_probe').inputSchema.properties.title.type, 'string');
+      assert.equal((await client.callTool({ name: 'healthy_probe', arguments: { title: 'ok' } })).content[0].text, 'ok');
+      assert.equal((await client.callTool({ name: 'healthy_probe', arguments: {} })).isError, true);
+      assert.equal((await client.callTool({ name: 'list_sessions', arguments: {} })).isError, undefined);
+      const omitted = await client.callTool({ name: 'broken_probe', arguments: {} });
+      assert.equal(omitted.isError, true);
+      assert.match(omitted.content[0].text, /not found/);
+    } finally { await client.close(); await server.close(); }
+  }
+  assert.equal(extensionToolFingerprint(tools.slice(0, 2)), extensionToolFingerprint(tools.slice(1, 2)));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /broken-extension.*broken_probe/);
+});
+
+test('tools/list isolates raw shapes, normalization errors and non-JSON conversion results', async () => {
+  const field = z.string();
+  field._zod.toJSONSchema = () => { throw new Error('broken field'); };
+  const bigint = z.object({});
+  bigint._zod.toJSONSchema = () => ({ type: 'object', value: 1n });
+  const circular = z.object({});
+  const cycle = {}; cycle.self = cycle;
+  circular._zod.toJSONSchema = () => ({ type: 'object', value: cycle });
+  const normalization = Object.defineProperty({}, '_zod', { get() { throw new Error('normalization'); } });
+  const tools = [{ field }, normalization, bigint, circular].map((inputSchema, i) => ({
+    name: `bad_${i}`, extId: 'invalid-schemas', inputSchema, handler: () => ({ content: [] }),
+  }));
+  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools });
+  try {
+    assert.deepEqual((await client.listTools()).tools, []);
+  } finally { await client.close(); await server.close(); }
+});
+
+test('tools/list uses the checked conversion without invoking an extension converter again', async () => {
+  let conversions = 0;
+  const schema = z.object({});
+  schema._zod.toJSONSchema = () => {
+    if (++conversions > 1) throw new Error('converted twice');
+    return { type: 'object', properties: { title: { type: 'string' } } };
+  };
+  const { client, server } = await connect(fakeDeps(), 'CARD1', { tools: [{
+    name: 'once_probe', extId: 'once', inputSchema: schema, handler: () => ({ content: [] }),
+  }] });
+  try {
+    for (let i = 0; i < 2; i++) {
+      const listed = (await client.listTools()).tools;
+      assert.equal(listed[0].inputSchema.properties.title.type, 'string');
+    }
+    assert.equal(conversions, 1);
+  } finally { await client.close(); await server.close(); }
 });

@@ -50,6 +50,12 @@ This reminder is advisory: re-running ToolSearch does not guarantee that a resum
 or uses the current schema. Check the tool's current parameters when a resumed agent reports that a
 new parameter is unavailable.
 
+If an extension tool's input schema cannot be converted, that tool is unavailable; session launches
+and other tools keep working. A persistent board banner names the affected extensions and points to
+`wrangler.log`. The log records the extension, tool name and conversion error once per tool per
+server process. The board refresh retries conversion and clears the notice when the affected tools
+recover. The notice survives browser reloads and reconnects.
+
 The server checks loaded installed extensions' directories and `index.js` manifests once a minute.
 If either disappears, it logs an error once per incident and shows a persistent board banner naming
 the affected extensions. Restore the files or reinstall the extension; the banner clears after the
