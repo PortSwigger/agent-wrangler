@@ -1379,6 +1379,9 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .task-new-sess { display: inline-flex; align-items: center; background: transparent; border: none; color: var(--task-action, var(--fg-subtle)); padding: 0 2px; cursor: pointer; }
 .task-new-sess .icon { width: 15px; height: 15px; }
 .task-new-sess:hover { color: var(--blue-fg); background: transparent; }
+.task-ext-btn { display: inline-flex; align-items: center; background: transparent; border: none; color: var(--task-action, var(--fg-subtle)); padding: 0 2px; cursor: pointer; }
+.task-ext-btn svg { width: 15px; height: 15px; }
+.task-ext-btn:hover { color: var(--blue-fg); background: transparent; }
 .task-name-input { flex: 1; font-size: 13px; font-weight: 700; background: var(--bg); border: 1px solid var(--blue); border-radius: 5px; color: var(--fg); padding: 1px 5px; font-family: inherit; outline: none; }
 
 .task-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }

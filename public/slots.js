@@ -53,6 +53,13 @@ import { actingAs, warnLegacy } from './legacy-surface.js';
 // session — `{ id, name, adhoc }`, the no-task tile being `adhoc` with the
 // reserved id — which is also what `api.minimiseTask` takes.
 //
+// `task.button` (2.2.0) is a VALUE slot for a task tile's title bar: one icon
+// button per contribution, drawn by core beside the New session robot
+// (taskButtons()). `button(task, graph, api)` answers `{ title, icon, run }` or
+// null for that tile, with the same subject as `task.action`. Core draws the
+// markup, so `title` stays text and `icon` passes the link-chip SVG check; a
+// click looks the contribution up again by its key and runs it (runTaskButton).
+//
 // `link.chip` (1.18.0) is a VALUE slot too: the chip a board link of the
 // extension's own type draws (linkChip()). `chip(link, graph, api)` answers
 // `{ label, href?, icon? }` for its type and null for any other; core draws the
@@ -73,7 +80,7 @@ import { actingAs, warnLegacy } from './legacy-surface.js';
 // A contribution may carry `weight(taskId, graph)`: the px of tile height its
 // content wants, summed by taskBodyWeight() into tile sizing so a tile grows for
 // it. It must be cheap and synchronous; a throwing weight counts as 0.
-// Another deck's task tile (1.81.0) gets only the `task.body` and `task.action`
+// Another deck's task tile (1.81.0) gets only the `task.body`, `task.action` and `task.button`
 // contributions registered with `decks: true`; its subject also carries
 // `deckId` and `deckTaskId`, the task's id on its own deck (see deckTask()).
 // `session.inputGate` (1.52.0) is a VALUE slot that can stop the human typing
@@ -83,7 +90,7 @@ import { actingAs, warnLegacy } from './legacy-surface.js';
 // `reason` — because both are core input paths no mounted element can reach.
 // It is asked on every graph and whenever an extension calls
 // `api.refreshInputGates()`, so a time-based gate needs only a timer.
-export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate', 'board.tray'];
+export const SLOT_NAMES = ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate', 'board.tray', 'task.button'];
 
 
 // The capability a client-only `api.cards` call is gated on (server/extensions
@@ -115,7 +122,7 @@ export const SESSION_TYPE_CAPABILITY = 'session:type';
 
 // The value slots and the one function each contribution must carry in place
 // of mount().
-const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue', 'file.open': 'open', 'session.inputGate': 'gate' };
+const VALUE_SLOTS = { 'card.action': 'items', 'card.cost': 'cost', 'task.action': 'items', 'link.chip': 'chip', 'notification.cue': 'cue', 'file.open': 'open', 'session.inputGate': 'gate', 'task.button': 'button' };
 
 // The only icon markup a `link.chip` may carry: one <svg> of <path>s with plain
 // presentation attributes. Anything else (scripts, handlers, urls, foreign
@@ -1362,6 +1369,29 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     return out;
   }
 
+  function taskButtonEntries(task, graph, baseApi) {
+    const out = [];
+    const remote = deckTask(task);
+    for (const c of [...slotList('task.button')]) {
+      if (remote && c.decks !== true) continue;
+      let got;
+      try {
+        got = c.button(task, graphFor(c.extId, graph), apiFor(c.extId, baseApi));
+      } catch (err) {
+        onError(`[ext:${c.extId}] ${c.id} button failed — contribution removed`, err);
+        drop('task.button', c);
+        continue;
+      }
+      if (got == null) continue;
+      if (typeof got.title !== 'string' || !got.title || typeof got.run !== 'function') {
+        onError(`[ext:${c.extId}] ${c.id} returned a task button without a title and run()`);
+        continue;
+      }
+      out.push({ key: `${c.extId}:${c.id}`, extId: c.extId, id: c.id, title: got.title, icon: safeChipIcon(got.icon), run: got.run });
+    }
+    return out;
+  }
+
   function trayMenuItem(method, args, baseApi) {
     const c = slotList('board.tray').find((entry) => entry.mounts.size > 0);
     if (!c || !c[method]) return null;
@@ -1855,6 +1885,27 @@ export function createSlots({ document, storage, onError = (...a) => console.err
     // `deckId`/`deckTaskId` for another deck's task (1.81.0).
     taskMenuItems(task, graph, baseApi) {
       return valueMenuItems('task.action', task, graph, baseApi);
+    },
+
+    // The title-bar buttons for one task tile: `{ key, title, icon }` per
+    // `task.button` contribution that answers, in registration order. `key` is
+    // `<extId>:<id>`, which runTaskButton() takes back on click. Another deck's
+    // task offers only contributions registered with `decks: true`. A throwing
+    // `button()` removes the contribution; one without a title is skipped and
+    // reported. An icon that fails the SVG check is left empty for core's glyph.
+    taskButtons(task, graph, baseApi) {
+      return taskButtonEntries(task, graph, baseApi).map(({ key, title, icon }) => ({ key, title, icon }));
+    },
+
+    // Run the `task.button` whose key a click carried, for that tile. Asks the
+    // contribution afresh, so a button that has since answered null does
+    // nothing. A throwing run() is reported and never escapes into the board's
+    // click handler. True when a button ran.
+    runTaskButton(key, task, graph, baseApi, event) {
+      const hit = taskButtonEntries(task, graph, baseApi).find((b) => b.key === key);
+      if (!hit) return false;
+      try { hit.run(event); } catch (err) { onError(`[ext:${hit.extId}] ${hit.id} task button failed`, err); }
+      return true;
     },
 
     // The spend ceiling for one card's cost tag: `{ usd, reached }` from the

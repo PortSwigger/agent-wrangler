@@ -110,7 +110,7 @@ for (const adhoc of [false, true]) test(`both task menus preserve extension acti
     clearStatusesMenuItems: (taskId) => [{ label: 'Clear statuses', run: () => taskId }],
   };
   const menus = new Function(...Object.keys(scope), `
-    ${['extTaskMenuItems', 'taskMinimiseMenuItem', 'openTaskActionsMenu', 'openTaskMenu'].map(declaration).join('\n')}
+    ${['taskSubject', 'extTaskMenuItems', 'taskMinimiseMenuItem', 'openTaskActionsMenu', 'openTaskMenu'].map(declaration).join('\n')}
     return { openTaskActionsMenu, openTaskMenu };
   `)(...Object.values(scope));
   const open = [() => menus.openTaskActionsMenu(id, 0, 0), () => menus.openTaskMenu({ dataset: { taskid: id, entity: adhoc ? 'no-task' : 'task' } }, 0, 0)];
