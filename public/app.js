@@ -2196,6 +2196,7 @@ function cardCtx() {
     isChildFullView,
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
     linkChip: (l) => slots.linkChip(l, latestGraph, extApi),
+    taskButtons: (tileKey) => slots.taskButtons(taskSubject(tileKey), latestGraph, extApi),
     hiddenChips: slots.hiddenChips(),
   };
 }
@@ -2928,15 +2929,22 @@ function extMenuItems(s) {
   }));
 }
 
+// The subject a task tile hands its `task.action` and `task.button`
+// contributions: `{ id, name, adhoc }`, the no-task tile carrying ADHOC_ID, plus
+// deckId/deckTaskId for another deck's task.
+function taskSubject(tileKey) {
+  const isNoTask = tileKey === ADHOC_ID;
+  const task = isNoTask ? null : findTask(tileKey);
+  return { id: tileKey, name: task?.name ?? null, adhoc: isNoTask, ...deckTaskFields(task) };
+}
+
 // `task.action` extension items for one task tile's right-click menu, in the
 // same item shape as extMenuItems. The subject is the tile — `{ id, name,
 // adhoc }`, the no-task tile carrying ADHOC_ID — not the DOM cell.
 function extTaskMenuItems(taskId, isNoTask) {
-  const id = isNoTask ? ADHOC_ID : taskId;
-  const task = isNoTask ? null : findTask(taskId);
   // Core carries Minimise in both task menus, so the legacy minimise-task
   // extension's own item is dropped rather than shown twice.
-  return slots.taskMenuItems({ id, name: task?.name ?? null, adhoc: isNoTask, ...deckTaskFields(task) }, latestGraph, extApi)
+  return slots.taskMenuItems(taskSubject(isNoTask ? ADHOC_ID : taskId), latestGraph, extApi)
     .filter((it) => !(it.extId === 'minimise-task' && it.label === 'Minimise'))
     .map((it) => ({
       label: it.label,
@@ -3854,6 +3862,14 @@ function wireTaskControls(el) {
       e.stopPropagation();
       const cell = b.closest('.task-cell');
       openDispatch(cell.dataset.entity === 'no-task' ? null : cell.dataset.taskid);
+    })
+  );
+  el.querySelectorAll('.task-ext-btn').forEach((b) =>
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const cell = b.closest('.task-cell');
+      const tileKey = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
+      slots.runTaskButton(b.dataset.taskButton, taskSubject(tileKey), latestGraph, extApi, e);
     })
   );
   el.querySelectorAll('.task-actions-btn').forEach((b) =>

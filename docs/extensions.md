@@ -193,7 +193,7 @@ Supported manifest contributions are:
 | Runtimes | `runtimes`: where a session's agent runs, offered in the dispatch dialog's Runtime select and `spawn_session`. See [Runtimes](#runtimes) |
 | Agent skills | `skills/<name>/SKILL.md` plus the manifest's `skills` list |
 | Extension settings | `settings` (`text`, `textarea`, `number`, `toggle`, `select`, `list`), read through `host.settings` |
-| Browser UI | `board: { client, styles }` beside `boardApi`, and slots from `public/slots.js`. See [Deck and board halves](#deck-and-board-halves) |
+| Browser UI | `board: { client, styles }` beside `boardApi`, and slots from `public/slots.js` (for example `task.button`, an icon button on each task tile's title bar). See [Deck and board halves](#deck-and-board-halves) |
 | Themes | `board: { themes }`: a directory of `<id>/theme.json` + assets, offered in Settings › Appearance. See [Themes](#themes) |
 | Core access | `requires`, served through the versioned host API in `server/host-api/` |
 | Telemetry | `telemetry.events` to emit typed usage events, which core sends to its built-in collector. See [Telemetry](#telemetry) |
@@ -1591,6 +1591,28 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   route, so an extension can reopen whatever the reader left. It never fires if
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
+- **`task.button` (2.2.0) is a value slot for a task tile's title bar.** A
+  contribution carries `button(task, graph, api)`, which gets the same subject as
+  `task.action` and returns `{ title, icon, run }` or `null` for that tile. Core
+  draws the button (`cards.js taskButtonsHtml`) just before the New session robot,
+  on named tasks and on Unassigned. `title` is text and is also the button's
+  tooltip and accessible name. `icon` passes the same SVG allow-list as a
+  `link.chip` icon, and an icon that is missing or refused is drawn as a plus. A
+  click finds the contribution again by its `<extId>:<id>` key
+  (`slots.runTaskButton`) and calls `run(event)`, so a button whose `button()`
+  now answers `null` does nothing. A throwing `run` is reported and never breaks
+  the board. A throwing `button()` removes the contribution, and an answer without
+  a `title` and `run` is skipped and reported. Another deck's task offers only
+  contributions registered with `decks: true`, and none while that deck is
+  unreachable, the same rule as core's robot button. A board half using it
+  declares `^2.2.0`:
+
+  ```js
+  slots.register('task.button', {
+    id: 'quick',
+    button: (task) => ({ title: 'Quick session', icon: BOLT_SVG, run: () => api.act('start', { taskId: task.adhoc ? null : task.id }) }),
+  });
+  ```
 - **`board.tray` (1.53.0)** is an exclusive mount-style slot for the bottom strip.
   Register `{ id, mount(el, api, ctx), update?(el, ctx, graph), unmount?(el),
   minimiseItem?(task, graph, api), backgroundItem?(graph, api) }`.

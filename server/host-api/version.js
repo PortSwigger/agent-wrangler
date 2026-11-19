@@ -655,7 +655,11 @@ import semver from 'semver';
 // telemetry, kept until 3.0 removes them. A `^1` manifest boots on the shim
 // and its `host.version` reads V1_SHIM_VERSION. No façade key was reshaped, so
 // both majors build from V1_BUILDERS and no v2.js exists yet.
-export const HOST_API_VERSION = '2.1.0';
+//
+// 2.1.0 adds the `schema:zod` capability (host.schema.z).
+// 2.2.0 adds the board's `task.button` slot: an icon button in a task tile's
+// title bar, beside New session. Board halves using it declare `^2.2.0`.
+export const HOST_API_VERSION = '2.2.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
 export const V1_SHIM_VERSION = '1.96.0';

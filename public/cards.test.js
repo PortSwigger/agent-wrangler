@@ -637,6 +637,20 @@ test('tileHtml: with several decks a task tile names its deck; another deck\'s t
   assert.match(reachable, /empty-new-sess/);
 });
 
+test('tileHtml: task.button contributions draw before the New session robot, escaped, with a plus for a missing icon', () => {
+  const asked = [];
+  const taskButtons = (key) => { asked.push(key); return [{ key: 'qs:go', title: 'Quick <session>', icon: '' }, { key: 'x:"y"', title: 'Other', icon: '<svg><path d="M1 1"/></svg>' }]; };
+  const html = tileHtml({ kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } }, ctx({ taskButtons }));
+  assert.match(html, /<button class="task-ext-btn" data-task-button="qs:go" title="Quick &lt;session&gt;" aria-label="Quick &lt;session&gt;"><svg/);
+  assert.match(html, /data-task-button="x:&quot;y&quot;"[^>]*><svg><path d="M1 1"\/><\/svg><\/button><button class="task-new-sess"/);
+  const notask = tileHtml({ kind: 'notask', col: 0, rowStart: 0, span: 1, sessions: [] }, ctx({ taskButtons }));
+  assert.match(notask, /<span class="task-name">Unassigned<\/span>\s*<button class="task-ext-btn"/);
+  const remote = tileHtml({ kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'deck-b/T1', name: 'T', links: [], deckId: 'deck-b', deckName: 'B', deckUnreachable: true } }, ctx({ ownDeckId: 'deck-a', taskButtons }));
+  assert.doesNotMatch(remote, /task-ext-btn/, 'an unreachable deck offers no new session, extension buttons included');
+  assert.equal(asked[0], 'T1');
+  assert.doesNotMatch(tileHtml({ kind: 'task', col: 0, rowStart: 0, span: 1, sessions: [], task: { id: 'T1', name: 'T', links: [] } }, ctx()), /task-ext-btn/);
+});
+
 test('visibleTaskLinkCount: keeps every link that fits and reserves the overflow badge only when needed', () => {
   assert.equal(visibleTaskLinkCount([30, 40, 50], 132, 20, 6), 3);
   assert.equal(visibleTaskLinkCount([30, 40, 50], 104, 20, 6), 2);
