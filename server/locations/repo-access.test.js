@@ -30,7 +30,7 @@ test('adding repos mails the session where to clone each one, from Agent Wrangle
   assert.deepEqual([f.mail[0].to, f.mail[0].from, f.mail[0].fromLabel], ['S1', null, 'Agent Wrangler']);
   assert.match(f.mail[0].body, /^The human added acme\/gadgets to this session/);
   assert.match(f.mail[0].body, /git clone --filter=blob:none https:\/\/github.com\/acme\/gadgets.git \/home\/agent\/sessions\/1\/gadgets/);
-  assert.match(f.mail[0].body, /`job-1-api`.*the only branch you can push/);
+  assert.match(f.mail[0].body, /git switch -c job-1-api/);
   assert.doesNotMatch(f.mail[0].body, /widgets\.git/, 'only the new repo is named');
   await addRepos(f, 'S1', ['acme/gadgets']);
   assert.equal(f.mail.length, 1);
