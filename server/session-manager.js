@@ -11,7 +11,7 @@ import { adapterFor, adapterForTmux, agentError, isOwnedTmux, discoveryFloor, su
 import { runtimeFor, findRuntime, relaunchRefusal, runtimeAgentError, takesStatusEvents, DEFAULT_RUNTIME } from './runtimes/index.js';
 import { launchRefusal } from './runtimes/offer.js';
 import { hasLocation, atLocation, sameLocation, checkRef, openLocation, withLocationReads, locationIdleMs, locationCodexId } from './locations/index.js';
-import { normaliseRepos, reposBrief, checkLocationBranch, childRepos, prLinkRefusal, renameLocationBranchText, reposToAdd, holdsRepo, withheldReposBrief } from './locations/repos.js';
+import { checkLocationBranch, renameLocationBranchText } from './locations/repos.js';
 import { containerIdFor, launchDirDest } from './runtimes/devcontainer.js';
 import { createWorktree, slugFromIntent, renameBranch, WorktreeError, gitDirs, repoRootOf, isValidBranchName, sanitizeBranch } from './worktree.js';
 import { launchCwd, findTranscript } from './transcript-reader.js';
@@ -37,8 +37,6 @@ import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
 import { checkGuiSession } from './gui-session.js';
 import { gentleKill } from './tmux-gentle-kill.js';
 
-export const MAX_REPO_REQUESTS = 5;
-export const MAX_REPO_REQUEST_WHY = 500;
 
 const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
@@ -263,7 +261,6 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     runtimeExt: parentEntry?.runtimeExt,
     ...(parentEntry?.addDirs ? { addDirs: [...parentEntry.addDirs] } : {}),
     ...(parentEntry?.location === undefined ? {} : { location: parentEntry.location }),
-    ...(parentEntry?.repos ? { repos: [...parentEntry.repos] } : {}),
     ...(parentEntry?.branch ? { branch: parentEntry.branch } : {}),
     ...(parentEntry?.branchBase ? { branchBase: parentEntry.branchBase } : {}),
     // Unlike remoteControl (one phone name, one session), a removed tool is a
@@ -403,7 +400,6 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     worktree: prev?.worktree,
     addDirs: prev?.addDirs,
     ...(prev?.location === undefined ? {} : { location: prev.location }),
-    repos: prev?.repos,
     branch: prev?.branch,
     branchBase: prev?.branchBase,
     workflow: prev?.workflow,
@@ -1175,78 +1171,7 @@ export class SessionManager {
     if (!branch || !isValidBranchName(branch)) throw new Error(`"${desired}" is not a usable git branch name.`);
     entry.branch = branch;
     this._save();
-    return { branch, from, text: branch === from ? null : renameLocationBranchText(entry, from, branch) };
-  }
-
-  _locationEntry(sessionId) {
-    const entry = this.map.get(sessionId);
-    if (!entry) throw new Error('Unknown session.');
-    if (!atLocation(entry)) throw new Error('This session runs on this machine, where it can already reach your checkouts; only a session at a location takes GitHub repos.');
-    if (entry.archivedAt) throw new Error('This session is archived.');
-    return entry;
-  }
-
-  // Give a location card more GitHub repos (`owner/name`). Every card sharing its
-  // location (a fork shares its parent's) gets them too. The runtime's `open` is
-  // handed the new list (phase 'repos') before this returns, so the repos are
-  // reachable before the session is told; if it refuses, nothing is added. A
-  // suspended card's runtime hears at resume, whose `open` carries the list.
-  async addLocationRepos(sessionId, repos) {
-    const entry = this._locationEntry(sessionId);
-    const added = reposToAdd(entry.repos, repos);
-    if (!added.length) return { added, repos: [...(entry.repos || [])] };
-    const cards = [...this.map.values()].filter((e) => e === entry || sameLocation(e, entry));
-    const before = new Map(cards.map((e) => [e, e.repos]));
-    for (const e of cards) e.repos = [...(e.repos || []), ...added.filter((r) => !holdsRepo(e.repos, r))];
-    if (!entry.suspendedAt) {
-      const rt = runtimeFor(entry.runtime);
-      try {
-        if (!hasLocation(rt)) throw new Error('its runtime is not available');
-        await openLocation(rt, entry, 'repos');
-      } catch (err) {
-        for (const [e, r] of before) { if (r === undefined) delete e.repos; else e.repos = r; }
-        throw new Error(`Could not give this session ${added.join(', ')}: ${err?.message || err}`);
-      }
-    }
-    this._save();
-    return { added, repos: [...entry.repos] };
-  }
-
-  // A location session asking the human for GitHub repos it cannot reach yet.
-  // Repos it holds or has already asked for are left out; `request` is null when
-  // nothing is left to ask for.
-  requestLocationRepos(sessionId, repos, why) {
-    const entry = this._locationEntry(sessionId);
-    const pending = entry.repoRequests || [];
-    const asked = pending.flatMap((r) => r.repos);
-    const ask = reposToAdd(entry.repos, repos).filter((r) => !holdsRepo(asked, r));
-    if (!ask.length) return { request: null };
-    if (pending.length >= MAX_REPO_REQUESTS) throw new Error(`This session already has ${pending.length} requests waiting for the human; wait for an answer before asking again.`);
-    const request = { id: `rr_${crypto.randomBytes(4).toString('hex')}`, repos: ask, why: String(why || '').trim().slice(0, MAX_REPO_REQUEST_WHY), at: Date.now() };
-    entry.repoRequests = [...pending, request];
-    this._save();
-    return { request };
-  }
-
-  // The human's answer to a request: allowed, its repos are added (any it got
-  // meanwhile are skipped); declined, it is dropped. A request whose repos the
-  // runtime refuses stays waiting, so the human can try again.
-  async answerRepoRequest(sessionId, requestId, allow) {
-    const entry = this._locationEntry(sessionId);
-    const request = (entry.repoRequests || []).find((r) => r.id === requestId);
-    this._answering ??= new Set();
-    if (!request || this._answering.has(request.id)) throw new Error('That request has already been answered.');
-    this._answering.add(request.id);
-    let added = [];
-    try {
-      if (allow) added = (await this.addLocationRepos(sessionId, request.repos)).added;
-    } finally {
-      this._answering.delete(request.id);
-    }
-    entry.repoRequests = (entry.repoRequests || []).filter((r) => r !== request);
-    if (!entry.repoRequests.length) delete entry.repoRequests;
-    this._save();
-    return { request, added };
+    return { branch, from, text: branch === from ? null : renameLocationBranchText(from, branch) };
   }
 
   // Read a session's links (by card id). Empty for an unmapped session.
@@ -1272,22 +1197,9 @@ export class SessionManager {
       this.map.set(sessionId, entry);
     }
     const next = Array.isArray(links) ? [...links] : [];
-    const refusal = this.prLinkRefusal(sessionId, next);
-    if (refusal) throw new Error(refusal);
     entry.links = next;
     this._save();
     return true;
-  }
-
-  // Null when the card may hold every pr link in `links`, else why not: a
-  // location card links only pull requests in its own repos.
-  prLinkRefusal(sessionId, links) {
-    const entry = this.map.get(sessionId);
-    for (const l of links || []) {
-      const why = prLinkRefusal(entry, l);
-      if (why) return why;
-    }
-    return null;
   }
 
   // Every pr link across all mapped sessions, as
@@ -1298,7 +1210,7 @@ export class SessionManager {
     const out = [];
     for (const [sessionId, entry] of this.map)
       for (const l of entry.links || [])
-        if (l.type === 'pr' && l.url && !prLinkRefusal(entry, l))
+        if (l.type === 'pr' && l.url)
           out.push({ ownerId: sessionId, url: l.url, number: l.number, checkStatus: l.checkStatus, headSha: l.headSha, dirty: l.dirty, unresolvedCount: l.unresolvedCount });
     return out;
   }
@@ -2296,7 +2208,7 @@ export class SessionManager {
   async _doDispatch({ cwd, intent = '', model, effort, permissionMode, autoCompactTokens, agent = 'claude', runtime, addDirs = [], taskId, launchReason = 'dispatch',
                    worktree = false, worktreeBranch = '', worktreeFolderName = '', worktreeAuto = false, worktreeBase = '',
                    autoMergeOnPass, workflow: workflowOpt, spawnedBy, parentSession, statusNotify, ext, deferIntent = false, offBoard, remoteControl, disallowedTools, approvalPolicy, codexPolicy: pickedCodexPolicy,
-                   launchSource, spawner, scheduledBy, repos: reposOpt, branch: branchOpt, base: baseOpt } = {}, pending = {}) {
+                   launchSource, spawner, scheduledBy, branch: branchOpt, base: baseOpt } = {}, pending = {}) {
     const approvalError = codexApprovalPolicyError(approvalPolicy, agent);
     if (approvalError) throw new Error(approvalError);
     const modeError = permissionModeError(permissionMode, agent);
@@ -2319,13 +2231,9 @@ export class SessionManager {
     // machine's folders, worktrees and grants name nothing where it runs.
     const remoteRt = runtimeFor(runtime);
     const remote = hasLocation(remoteRt);
-    if (remote && addDirs.length) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime runs sessions elsewhere, where this machine's folders can't be granted; give it GitHub repos instead.`);
-    if (remote && worktree) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime takes GitHub repos instead of a worktree; the session branches in its own clones.`);
-    let repos = normaliseRepos(reposOpt);
-    if (repos.length && !remote) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime runs on this machine; give it a folder instead of GitHub repos.`);
-    let withheldRepos = [];
-    if (remote && callerEntry) ({ repos, withheld: withheldRepos } = childRepos(callerEntry, repos));
-    const locationBranch = checkLocationBranch({ branch: branchOpt, base: baseOpt, repos });
+    if (remote && addDirs.length) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime runs sessions elsewhere, where this machine's folders can't be granted.`);
+    if (remote && worktree) throw new Error(`The "${remoteRt.label || remoteRt.id}" runtime runs sessions elsewhere and cannot create a worktree on this machine.`);
+    const locationBranch = checkLocationBranch({ branch: branchOpt, base: baseOpt });
     const remoteCwd = remote && cwd != null && String(cwd).trim() ? String(cwd).trim() : null;
     if (remoteCwd && (!remoteCwd.startsWith('/') || /[\0\n\r]/.test(remoteCwd))) throw new Error('A folder at a location must be an absolute path there.');
     addDirs = [...new Set(addDirs.map((raw) => {
@@ -2356,7 +2264,7 @@ export class SessionManager {
     const agentErr = runtimeAgentError(rt, agent);
     if (agentErr) throw new Error(agentErr);
     const preflightErr = rt.preflight
-      ? await rt.preflight({ cwd: remote ? remoteCwd : trimmed, agent, workflow: Boolean(workflowOpt), worktree: Boolean(worktree), ext: ext || null, ...(remote ? { repos } : {}) })
+      ? await rt.preflight({ cwd: remote ? remoteCwd : trimmed, agent, workflow: Boolean(workflowOpt), worktree: Boolean(worktree), ext: ext || null })
       : null;
     if (preflightErr) throw new Error(preflightErr);
     const spawnPayload = {
@@ -2372,9 +2280,9 @@ export class SessionManager {
     let locationRef;
     let opened = {};
     if (remote) {
-      locationRef = checkRef(await rt.location.provision({ sessionId, cwd: remoteCwd, agent, ext: ext || null, repos, branch: locationBranch.branch || null, base: locationBranch.branchBase || null }), rt);
+      locationRef = checkRef(await rt.location.provision({ sessionId, cwd: remoteCwd, agent, ext: ext || null, branch: locationBranch.branch || null, base: locationBranch.branchBase || null }), rt);
       Object.assign(pending, { sessionId, entry: { runtime, location: locationRef } });
-      opened = await openLocation(rt, { runtime, location: locationRef, cwd: remoteCwd, agent, repos, ...locationBranch }, 'dispatch');
+      opened = await openLocation(rt, { runtime, location: locationRef, cwd: remoteCwd, agent, ...locationBranch }, 'dispatch');
       if (!opened.cwd && !remoteCwd) throw new Error(`The "${rt.label || rt.id}" runtime named no folder for this session at its location.`);
     }
     // Blank → a fresh timestamped scratch dir; a scratch path the client proposed
@@ -2476,7 +2384,10 @@ export class SessionManager {
     // as the card's: the caller pastes it into the booted composer itself, which is
     // the only way a first prompt can carry images (dispatch-runner.js). A launch
     // argument has no composer for an image path to be absorbed into.
-    const launchIntent = [remote ? reposBrief(cwd, repos, { branch: locationBranch.branch, base: locationBranch.branchBase }) : '', withheldReposBrief(withheldRepos), deferIntent ? '' : (intent ?? '')].filter(Boolean).join('\n\n');
+    const branchBrief = remote && locationBranch.branch
+      ? `Work on branch \`${locationBranch.branch}\`${locationBranch.branchBase ? ` starting from origin/${locationBranch.branchBase}` : ''}.`
+      : '';
+    const launchIntent = [branchBrief, deferIntent ? '' : intent].filter(Boolean).join('\n\n');
     // Asked on both paths so a buildLaunch runtime logs the secrets it skips.
     const secretEnvFile = this._secretEnvFileFor(rt, tmux, launchContext);
     const toolFingerprint = this._extensionToolFingerprint();
@@ -2491,7 +2402,7 @@ export class SessionManager {
     const launchedAt = Date.now();
     const paneId = await this._newSession(tmux, remote ? os.homedir() : cwd, inner, this.socket);
 
-    const liveSessionId = builds ? undefined : presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt, at: remote ? { rt, entry: { runtime, location: locationRef, cwd, agent, repos } } : null });
+    const liveSessionId = builds ? undefined : presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt, at: remote ? { rt, entry: { runtime, location: locationRef, cwd, agent } } : null });
 
     // Merge onto any entry an early setWorkflowPhase already adopted (the process is
     // alive before this map.set, so the skill can report a phase first). The launch
@@ -2506,7 +2417,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, ...(remote ? { location: locationRef } : {}), ...(repos.length ? { repos } : {}), ...locationBranch, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined, launchedToolFingerprint: toolFingerprint };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, ...(remote ? { location: locationRef } : {}), ...locationBranch, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined, launchedToolFingerprint: toolFingerprint };
     this.map.set(sessionId, entry);
     delete pending.entry;
     this._save();
@@ -2514,7 +2425,7 @@ export class SessionManager {
     await this._fireExtHooks('onDispatch', { sessionId, entry });
     this._launched({ sessionId, entry, source: launchSource || (spawnedBy ? 'agent' : 'board'), spawner: spawner || null });
     await this.refreshAlive();
-    return { sessionId, tmux, cwd, ...(withheldRepos.length ? { withheldRepos } : {}) };
+    return { sessionId, tmux, cwd };
   }
 }
 

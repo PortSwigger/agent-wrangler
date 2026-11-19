@@ -12,7 +12,7 @@ import {
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
 import { taskContentHeight, watchTaskScrollEdges } from './task-scroll.js';
 import { createAdditionalFolders } from './additional-folders.js';
-import { parseRepoInput, runtimeHasLocation } from './dispatch-repos.js';
+import { runtimeHasLocation } from './dispatch-repos.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import { focusReturnTarget } from './terminal-dialog.js';
 import {
@@ -58,7 +58,7 @@ import {
 import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
-import { toast, dismissToast, setToastPosition } from './toast.js';
+import { toast, setToastPosition } from './toast.js';
 import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
@@ -72,7 +72,6 @@ import { createInputGates } from './input-gate.js';
 import { prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
-import { createRepoAccess } from './repo-access.js';
 import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
 import { createExtFileViewer } from './ext-file-viewer.js';
@@ -286,7 +285,6 @@ function noteExtClientFacts(list) {
 // slots.apiFor, which is the only place the extension id is known.
 const notifications = createNotifications({ document });
 setToastPosition(getSetting('toastPosition'));
-const repoAccess = createRepoAccess({ document, send: (m) => send(m), toast, dismissToast });
 // Back api.targets / api.front and api.rail (slots binds the extension id).
 const boardTargets = createBoardTargets({
   doc: document,
@@ -1025,7 +1023,6 @@ function barWord(s) {
 
 function applyGraph(graph) {
   latestSessions = graph.sessions || [];
-  repoAccess.onGraph(latestSessions);
   // history is the one key the server may leave OUT: it's the archive of every
   // session ever set aside and it changes a handful of times a day against a ~2s
   // broadcast, so it rides only the ticks that change it (server/deck/state.js).
@@ -3115,7 +3112,6 @@ function openCardMenu(card, x, y) {
     ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', run: () => peerReviewSession(sessionId) }] : []),
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => openDiffPanel(card) },
     { label: 'Copy reference', icon: COPY_ICON, run: () => copySessionReference(s) },
-    ...reposMenuItems(s),
     ...(s.exitOutput ? [{ label: 'Show last output', icon: ROBOT_ICON, run: () => selectSession(card) }] : []),
     { sep: true },
     ...(snoozed ? [
@@ -3149,13 +3145,6 @@ function openCardMenu(card, x, y) {
   mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
 }
 
-// A location card's repos dialog, named for what is waiting in it.
-function reposMenuItems(s) {
-  if (!Array.isArray(s.repos)) return [];
-  const waiting = s.repoRequests?.length || 0;
-  return [{ label: waiting ? `GitHub repos (${waiting} waiting)…` : 'GitHub repos…', icon: GITHUB_ICON, run: () => repoAccess.open(s.sessionId) }];
-}
-
 // A line to paste into another agent's chat: the id is what read_session_transcript
 // takes, and naming the tool saves the reader a list_sessions lookup.
 function copySessionReference(s) {
@@ -3180,7 +3169,6 @@ function openActionsMenu(card, x, y) {
     { label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
     // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => { openDiffPanel(card); if (sessionEmbed.active()) renderPanel(card); } },
-    ...reposMenuItems(s),
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
@@ -6238,6 +6226,7 @@ function applyRuntimeOffer() {
   const reasons = [];
   for (const opt of rt.options) {
     const found = offer.find((r) => r.id === opt.value);
+    opt.dataset.location = String(Boolean(found?.location));
     const reason = found?.unavailable || '';
     const base = opt.dataset.label || opt.textContent.replace(/ — unavailable$/, '');
     opt.dataset.label = base;
@@ -6493,26 +6482,16 @@ function syncRuntimeToggle() {
   document.getElementById('m-add-dirs-note').classList.toggle('hidden', foldersEnabled);
   const remote = selectedRuntimeHasLocation();
   document.getElementById('m-folder-row').classList.toggle('hidden', remote);
-  document.getElementById('m-repos-row').classList.toggle('hidden', !remote);
   if (remote) document.getElementById('m-worktree').checked = false;
   syncCodexPolicyRow(agent);
 }
 
-// Whether the picked runtime runs its sessions elsewhere, so the dialog asks for
-// GitHub repos instead of a folder.
+// A remote session starts in the working directory provided by its runtime.
 function selectedRuntimeHasLocation() {
   const rt = document.getElementById('m-runtime');
   const opt = rt?.options[rt.selectedIndex];
+  if (opt?.dataset.location === 'true') return true;
   return Boolean(opt) && runtimeHasLocation(latestExtensions, opt.dataset.ext, opt.value);
-}
-
-function renderReposState() {
-  const el = document.getElementById('m-repos-msg');
-  const { error } = parseRepoInput(document.getElementById('m-repos').value);
-  el.textContent = error || 'The session clones these from GitHub and branches off each default branch.';
-  el.className = error ? 'worktree-msg error' : 'worktree-msg';
-  document.getElementById('m-repos').classList.toggle('input-error', Boolean(error));
-  return error;
 }
 
 // Whether this provider takes the Codex sandbox/approval policy (its adapter's
@@ -6723,7 +6702,6 @@ function readCoreDispatchFields() {
   return {
     cwd: remote ? undefined : cwdField() || proposedCwd,
     addDirs: remote ? [] : additionalFolders.values(),
-    repos: remote ? parseRepoInput(document.getElementById('m-repos').value).repos : undefined,
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
@@ -6870,8 +6848,6 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   setDispatchCwdDefaults();
   if (schedule) document.getElementById('m-cwd').value = d.cwd || '';
   additionalFolders.reset(d.addDirs || []);
-  document.getElementById('m-repos').value = Array.isArray(d.repos) ? d.repos.join(', ') : '';
-  renderReposState();
   document.getElementById('m-intent').value = d.intent || '';
   // Images an openDispatch is about to adopt keep their previews through the reset.
   intentImages.reset({ keep: keepImages });
@@ -7063,9 +7039,7 @@ function submitDispatch(over) {
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
-  if (fields.repos) {
-    if (renderReposState()) return false;
-  } else if (cwdBlocked()) { renderCwdState(); return false; }
+  if (!selectedRuntimeHasLocation() && cwdBlocked()) { renderCwdState(); return false; }
   if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return false; }
   if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return false; }
   if (intentImages.busy()) { toast('Still attaching images — launch again in a moment.'); return false; }
@@ -7995,7 +7969,6 @@ document.getElementById('m-runtime').addEventListener('change', () => {
   renderWorktreeState();
 });
 document.getElementById('m-runtime').addEventListener('change', syncRuntimeToggle);
-document.getElementById('m-repos').addEventListener('input', renderReposState);
 document.getElementById('m-runtime').addEventListener('change', syncDispatchExtFields);
 for (const id of ['m-codex-approve-for-me', 'm-codex-bypass']) {
   document.getElementById(id).addEventListener('change', () => syncCodexPolicyControls(document.getElementById('m-codex-policy-row')));
@@ -8384,7 +8357,7 @@ export function deckAct(action, { card = null, ...opts } = {}) {
 // settings, extensions and updates are its own and stay off this board.
 const REMOTE_DECK_MESSAGES = new Set([
   'notify', 'diff', 'diff-comments-result', 'pr-checks', 'pr-merge', 'pr-dirty', 'pr-unresolved',
-  'auto-archived', 'archived', 'archive-unpushed', 'repos-added', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
+  'auto-archived', 'archived', 'archive-unpushed', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
   'forked', 'resume-needs-dir', 'open-terminal', 'subagent-detail', 'chat', 'message-result',
   'paste-image-result', 'interrupt-restore', 'model-set', 'error',
   'schedule-fired', 'schedule-error', 'schedule-missed',
@@ -8574,7 +8547,6 @@ function onDeckMessage(msg) {
     }
   }
   else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);
-  else if (msg.type === 'repos-added') repoAccess.onAdded(msg);
   // The "Kill jobs & archive" outcome — the immediate toast in archiveSession()
   // already fired; this replaces it once the nudge/wait/teardown actually finish.
   else if (msg.type === 'archive-unpushed') {
