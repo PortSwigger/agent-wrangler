@@ -157,7 +157,7 @@ const rank = (level) => LEVELS.indexOf(level);
 // then the highest settings file that sets a level for the model, then the
 // model's default; then the lowest maxEffortLevel cap from any source. The
 // variable only counts from a settings `env` block: launches strip every
-// CLAUDE_CODE_* from the wrangler's own environment (withCleanClaudeEnv).
+// CLAUDE_CODE_* from Agent Wrangler's own environment (withCleanClaudeEnv).
 // Project settings depend on the session's directory, so they are not read.
 export function resolveClaudeAutoEffort(value, { admin = [], user = null } = {}) {
   const id = claudeModelId(value);

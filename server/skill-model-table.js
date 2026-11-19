@@ -18,7 +18,7 @@ export const END = '<!-- END GENERATED MODELS -->';
 
 // The adapters' lists are live (Codex's own catalog, the price catalog's newest
 // Claude versions); this table is their bundled snapshot, so it can lag.
-const LIVE_NOTE = 'The running wrangler\'s lists can be newer than this table. An unknown `model` '
+const LIVE_NOTE = 'The running Agent Wrangler server\'s lists can be newer than this table. An unknown `model` '
   + 'is rejected with the current valid list, so an error there is the source of truth.';
 
 // Replace whatever sits between the markers with the current table. Throws if the

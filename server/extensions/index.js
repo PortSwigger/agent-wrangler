@@ -199,7 +199,7 @@ function fail(ext, reason) {
   throw new Error(`Extension ${id}: ${reason}`);
 }
 
-// The wrangler's own skill names, read once: this is on the boot path for every
+// Agent Wrangler's own skill names, read once: this is on the boot path for every
 // manifest. SKILLS_ROOT may sit behind AW_INSTALL_ROOT's symlink, which an
 // upgrade repoints under a running process, so the set is the boot version's;
 // manifests are validated once at boot too, against that same version.
@@ -228,9 +228,9 @@ function shipsSkill(dir, name) {
 export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkillNames() } = {}) {
   if (!ext || typeof ext !== 'object') throw new Error('Extension <no id>: manifest is not an object');
   if (typeof ext.id !== 'string' || !ID_RE.test(ext.id)) fail(ext, `id must match ${ID_RE} (got ${JSON.stringify(ext.id)})`);
-  // `core` is the wrangler's own telemetry emitter (`core.*` events), so no
+  // `core` is Agent Wrangler's own telemetry emitter (`core.*` events), so no
   // extension may take the id and emit as it.
-  if (ext.id === 'core') fail(ext, 'id "core" is reserved for the wrangler itself');
+  if (ext.id === 'core') fail(ext, 'id "core" is reserved for Agent Wrangler itself');
   if (typeof ext.label !== 'string' || !ext.label) fail(ext, 'label must be a non-empty string');
   if (ext.board != null) {
     if (typeof ext.board !== 'object' || Array.isArray(ext.board)) fail(ext, `board must be an object of ${BOARD_FIELDS.join(', ')}`);
@@ -374,7 +374,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
     if (repoSkills.has(s)) {
       if (shipsSkill(dir, s)) fail(ext, `skill "${s}" collides with the in-repo skill of the same name`);
     } else if (!shipsSkill(dir, s)) {
-      fail(ext, `unknown skill "${s}" — neither agent-skills/skills/${s} in the wrangler nor skills/${s}/SKILL.md declaring \`name: ${s}\` under this extension`);
+      fail(ext, `unknown skill "${s}" — neither agent-skills/skills/${s} in Agent Wrangler nor skills/${s}/SKILL.md declaring \`name: ${s}\` under this extension`);
     }
   }
   if (ext.skillsFor != null && typeof ext.skillsFor !== 'function') fail(ext, 'skillsFor must be a function');

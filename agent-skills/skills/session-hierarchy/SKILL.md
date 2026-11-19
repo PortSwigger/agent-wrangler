@@ -111,8 +111,8 @@ needs; only DISPLAYED text truncates it.
 
 ## Known limitations
 
-- `parentChain`/`spawnerChain` only include sessions still known to the
-  wrangler (mapped, live or archived). A chain link pointing at a session no
+- `parentChain`/`spawnerChain` only include sessions still known to
+  Agent Wrangler (mapped, live or archived). A chain link pointing at a session no
   longer tracked stops there rather than erroring.
 - Neither chain is deduplicated against the other — a session can appear in
   both if `parent` and `spawnedBy` happen to trace through the same ids.

@@ -268,7 +268,7 @@ test('an in-repo skill wins a name clash with an extension that ships the same n
   const { row } = extFixture('jobs', 'alpha');
   const entries = allSkillEntries(root, registry(row)).filter((e) => e.name === 'alpha');
   assert.equal(entries.length, 1);
-  assert.equal(entries[0].extId, null, 'the wrangler\'s own copy is the one an agent gets');
+  assert.equal(entries[0].extId, null, 'Agent Wrangler\'s own copy is the one an agent gets');
   assert.match(entries[0].path, new RegExp(`^${root}/alpha/SKILL\\.md$`));
 });
 

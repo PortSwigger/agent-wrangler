@@ -5,8 +5,8 @@
 // `from` field), so there's nothing to gain from paying for it here.
 //
 // `[Agent Wrangler]` is the established prefix for a server-originated pane
-// paste (see notifier.js's PR nudges) — it marks this as coming from the
-// wrangler itself, the trust framing that distinguishes it from a peer's own
+// paste (see notifier.js's PR nudges) — it marks this as coming from
+// Agent Wrangler itself, the trust framing that distinguishes it from a peer's own
 // text. The notification starts a turn when idle, or arrives during work through
 // Codex input or Claude's socket, and asks the session to read its mailbox.
 export function composeMailNotification(messages) {

@@ -7,7 +7,7 @@ const CMD = "'/usr/local/bin/node' '/opt/aw/scripts/codex-pr-footer-hook.mjs'";
 // Pinned against codex-cli 0.165.0: launched with postToolHookOverrides(CMD),
 // Codex went straight to its composer; with the trust override left out it
 // stopped on "Hooks need review". A Codex change to the key or hash shows up
-// as that prompt in every wrangler-launched Codex session, so re-verify there.
+// as that prompt in every Codex session launched by Agent Wrangler, so re-verify there.
 test('the trust hash is the one Codex computes for the hook', () => {
   assert.equal(hookTrustHash(CMD), 'sha256:116620b8443d014e8f52af175c2354e32b3e0f7caabddff67d15b901a0946fc7');
 });

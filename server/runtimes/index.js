@@ -98,7 +98,7 @@ import { devcontainer } from './devcontainer.js';
 //                card whose agent has no local pane to paste into. `from` is the
 //                sender's card id and `text` the BEGIN/END-fenced body the pane
 //                paste would get, minus its "reply with send_message" line (the
-//                agent has no wrangler MCP to reply with). A runtime with `deliver` stores its cards as
+//                agent has no Agent Wrangler MCP to reply with). A runtime with `deliver` stores its cards as
 //                `mailCapable: false`, so send_message routes them here (see
 //                mcp/tools/send-message.js).
 //   launchStatus (optional) ({ entry }) → { state, error?, url? } or null —

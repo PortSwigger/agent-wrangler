@@ -42,7 +42,7 @@ export async function runSessionAction(action, deps) {
   // Resume from the launch dir (resolveResumeDir prefers the persisted entry cwd).
   // Look it up by the LIVE id — a modern Claude transcript is bucketed under
   // entry.liveSessionId, not the card id (legacy entries fall back to the card id,
-  // which is their live id). A wrangler-created worktree dir may have been cleaned
+  // which is their live id). A worktree dir created by Agent Wrangler may have been cleaned
   // up after archive — there is no interactive recreate prompt here, so recreate it
   // (the transcript lives under ~/.claude, so the conversation resumes; only working
   // files are gone), falling back to home if even that fails.

@@ -40,10 +40,10 @@ test('name_branch errors (no rename, no rebuild) when the request carries no cal
 
 test('name_branch surfaces a manager error (e.g. no worktree) as a tool error, not a throw', async () => {
   const captured = {};
-  const failing = deps(captured, () => { throw new Error('This session has no wrangler-created worktree, so there is no branch to rename.'); });
+  const failing = deps(captured, () => { throw new Error('This session has no worktree created by Agent Wrangler, so there is no branch to rename.'); });
   const out = await nameBranchTool.handler({ deps: failing, caller: 'CARD1' }, { name: 'x' });
   assert.equal(out.isError, true);
-  assert.match(out.content[0].text, /no wrangler-created worktree/);
+  assert.match(out.content[0].text, /no worktree created by Agent Wrangler/);
   assert.equal(captured.rebuilt, undefined);
 });
 

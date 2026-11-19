@@ -34,7 +34,7 @@ import semver from 'semver';
 //
 // 1.4.0 is `sessions:spawn` growing the options a real extension needed to
 // launch work the way core launches it: `worktree` (branch/base/auto/
-// folderName, so the wrangler cuts it and stamps the card's record), `addDirs`,
+// folderName, so Agent Wrangler cuts it and stamps the card's record), `addDirs`,
 // `taskId` (bound BEFORE launch), `autoMergeOnPass`/`autoFixPrChecks`, and the
 // resolved worktree summary on the result. Every one is additive on one
 // existing method, so v1.js keeps its builders and no v2.js is needed — but an

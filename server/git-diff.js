@@ -278,7 +278,7 @@ export async function workingTreeDiff(cwd, { lineCap } = {}) {
 //    remote branch exists under the same name;
 // 3. origin's default branch, however it's discoverable. `refs/remotes/origin/HEAD`
 //    only exists after a `git clone` (or an explicit `git remote set-head`) — a repo
-//    set up via init+remote-add+fetch (every wrangler worktree: freshly cut off main
+//    set up via init+remote-add+fetch (every Agent Wrangler worktree: freshly cut off main
 //    and NOT pushed until PR creation, so this is the common path, not a corner case)
 //    never gets it. Probing `origin/main`/`origin/master` directly covers that.
 // Returns null when nothing resolves (no remote at all, or a default branch under

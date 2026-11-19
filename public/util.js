@@ -78,7 +78,7 @@ export function fmtDuration(ms) {
 
 const WORKTREE_MARKER = '/.claude/worktrees/';
 const NOINDEX_MARKER = '/worktrees.noindex/';
-// Collapse a worktree path (<repo>/.claude/worktrees/<branch>, a wrangler
+// Collapse a worktree path (<repo>/.claude/worktrees/<branch>, an Agent Wrangler
 // `<parent>/worktrees.noindex/<repo>-<branch>` dir or a legacy
 // `<repo>-worktree-<branch>` sibling) to its repo root; non-worktree paths pass
 // through. A noindex dir name can't be split into repo and branch by itself, so
@@ -118,8 +118,8 @@ export function locationLabel(cwd) {
   return `📁 ${esc(repo)}`;
 }
 
-// Whether a session runs inside a git worktree (cwd is a wrangler-created
-// `worktrees.noindex/` dir, a legacy `<repo>-worktree-<branch>` sibling or a
+// Whether a session runs inside a git worktree (cwd is a
+// `worktrees.noindex/` dir created by Agent Wrangler, a legacy `<repo>-worktree-<branch>` sibling or a
 // `.claude/worktrees/` dir). Surfaced as the `⌥ wt` pill on the card meta line.
 export function isWorktree(s) {
   const cwd = s.cwd || '';

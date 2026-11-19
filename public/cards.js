@@ -614,7 +614,7 @@ function agentAccentVar(color) {
   return AGENT_COLOR_VARS[String(color || '').toLowerCase()] || '--border';
 }
 
-// One live "agent team" member on the lead's spine. NOT a wrangler session: it
+// One live "agent team" member on the lead's spine. NOT an Agent Wrangler session: it
 // shares the lead's tmux (its own pane), has no card id, and isn't attachable —
 // so it carries data-lead-card (a click focuses the lead, attaching the shared
 // session) rather than data-sid. The dot is tinted by the member's Claude colour

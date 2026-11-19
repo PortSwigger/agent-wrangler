@@ -97,7 +97,7 @@ export async function deliverMessage(id, text, deps, { imagePaths = [], clearCom
 
   // Resolve the launch dir by the LIVE id — a modern transcript is bucketed under
   // entry.liveSessionId, not the card id (legacy entries fall back to the card id,
-  // which is their live id). A wrangler-created worktree dir may have been cleaned up
+  // which is their live id). A worktree dir created by Agent Wrangler may have been cleaned up
   // post-archive; recreate it since there's no interactive prompt here (the transcript
   // lives under ~/.claude, so the conversation still resumes), falling back to home.
   const dir = await wakeDir(entry, id);

@@ -5,7 +5,7 @@
 // The env-inheritance rule (docs/install-signals.md): each signal is read once,
 // here, and then deleted from process.env. That matters because a tmux server
 // takes its global environment from whichever process first starts it and keeps
-// it across wrangler restarts, and every pane inherits that environment. Left in
+// it across Agent Wrangler restarts, and every pane inherits that environment. Left in
 // place, a dev instance started from a pane would inherit the board's identity:
 // its Restart button, its Git-update capability, Homebrew's install root.
 // Deleting them here, at import, comes before any tmux spawn; the copies already

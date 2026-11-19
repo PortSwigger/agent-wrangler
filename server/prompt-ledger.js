@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import { stripPastedContentWrapper } from './pasted-content.js';
 
-// Where each prompt the wrangler itself put in front of an agent came from, so
-// core telemetry can tell a transcript's user turn the wrangler sent (a chat
+// Where each prompt Agent Wrangler itself put in front of an agent came from, so
+// core telemetry can tell a transcript's user turn Agent Wrangler sent (a chat
 // composer send, a dispatch, mail, an extension's delivery) from one a human
 // typed straight into the terminal. Every send notes the text's hash and its
 // source here; when the transcript later shows a user turn, `take` returns the
@@ -41,7 +41,7 @@ export function notePrompt(text, source, { now = Date.now(), fallback = false } 
 }
 
 // The source of the oldest unclaimed send of this text, consumed so the same
-// text sent twice matches twice. Null when the wrangler did not send it.
+// text sent twice matches twice. Null when Agent Wrangler did not send it.
 export function takePrompt(text, { now = Date.now() } = {}) {
   const hash = keyOf(text);
   if (!hash) return null;
@@ -61,7 +61,7 @@ export function takePrompt(text, { now = Date.now() } = {}) {
 
 // A delivery's `reason` (deliverMessage, resume) to a prompt source: a human
 // pressing send is `composer`, an extension's delivery `extension`, a schedule
-// `schedule`, and every other wrangler notice (mail, status notices, PR nudges)
+// `schedule`, and every other Agent Wrangler notice (mail, status notices, PR nudges)
 // `mail`.
 export function promptSourceForReason(reason) {
   if (reason === 'message') return 'composer';

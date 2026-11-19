@@ -62,7 +62,7 @@ test('a landed upgrade asks for a restart, offering the button only where the se
     const notice = installDriftNotice({ drift, canRestart });
     assert.equal(notice.restart, restart, `canRestart=${canRestart}`);
     assert.equal(notice.hint, hint, `canRestart=${canRestart}`);
-    assert.match(notice.text, /An upgrade has landed \(0\.1\.0 → 0\.2\.0\).*restart the wrangler to finish/);
+    assert.match(notice.text, /An upgrade has landed \(0\.1\.0 → 0\.2\.0\).*restart Agent Wrangler to finish/);
   }
 });
 

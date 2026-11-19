@@ -78,7 +78,7 @@ export async function fetchPrStatus(url, run = defaultRun) {
 // because the merge runs non-interactively (no TTY to pick a method) and a
 // squash is the sensible default for an autopilot feature branch (matches this
 // repo's own single-commit-per-PR history). We deliberately do NOT pass
-// --delete-branch: the branch is checked out in the wrangler-created worktree
+// --delete-branch: the branch is checked out in the worktree created by Agent Wrangler
 // (so a local delete would fail), and the existing archive-time cleanup flow
 // owns branch/worktree removal. Resolves { code, stderr }.
 function defaultMerge(url) {

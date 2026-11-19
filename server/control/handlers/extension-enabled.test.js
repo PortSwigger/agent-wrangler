@@ -23,7 +23,7 @@ async function withConfig(initial, fn) {
 }
 
 // A declared skill has to RESOLVE now (loader validateManifest), so each
-// fixture names one of the wrangler's own rather than inventing a directory —
+// fixture names one of Agent Wrangler's own rather than inventing a directory —
 // and a distinct one per id, since two manifests gating the same in-repo skill
 // would make `disabledSkillIds` ambiguous about which row suppressed it.
 const SKILL_FOR = { notes: 'links', other: 'mail', checklist: 'checklist' };

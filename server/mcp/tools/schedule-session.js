@@ -2,12 +2,12 @@ import { z } from 'zod';
 import { launchTargetError, knownAgentIds, modelChoicesText } from '../../agents/index.js';
 import { autoCompactTokensError } from '../../session-manager.js';
 
-// Create a schedule from inside a session: a saved action + a when, fired by the
-// wrangler's tick (the single-instance-per-DATA_DIR owner). Two action kinds,
+// Create a schedule from inside a session: a saved action + a when, fired by
+// Agent Wrangler's tick (the single-instance-per-DATA_DIR owner). Two action kinds,
 // mirroring the UI: `dispatch` (launch a brand-new session at the time) and
 // `session` (act on an EXISTING session — by default YOURSELF — resuming it if it's
 // dormant, with `message` as the relaunch prompt, or injecting `message` into its
-// terminal if it's live; the wrangler decides by liveness at fire time). The kind is
+// terminal if it's live; Agent Wrangler decides by liveness at fire time). The kind is
 // inferred when omitted: an `intent` means dispatch, otherwise session. The target
 // for a session action defaults to the caller, so an agent can schedule its own
 // wake-up ("resume me at 3pm to check CI"). Writes through the same ScheduleStore

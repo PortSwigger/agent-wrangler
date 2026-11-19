@@ -8,7 +8,7 @@ Choose a review flow based on what you need reviewed:
 | --- | --- | --- | --- |
 | **Diff review** | While you are supervising the current session | Uncommitted changes, the full branch, or an attached PR | Your line comments are sent to the owning session as one structured message |
 | **Peer review session** | Before a PR exists, or when uncommitted work matters | The selected session's current working directory | A new session opens on the board; it uses the other provider when available |
-| **Adversarial PR review** | Before merging a specific pull request, when another provider is installed | The PR as published on GitHub | An independent provider reviewer sends findings through Wrangler mail |
+| **Adversarial PR review** | Before merging a specific pull request, when another provider is installed | The PR as published on GitHub | An independent provider reviewer sends findings through Agent Wrangler mail |
 
 ## Review a diff yourself
 
@@ -86,7 +86,7 @@ The reviewer follows a written-out review process. The built-in process has four
    where available, and dropped if it does not survive.
 
 A clean review is a valid result. The reviewer stays read-only, treats everything in the PR as
-evidence rather than instructions, and sends one Wrangler mail back to the session that asked. The
+evidence rather than instructions, and sends one Agent Wrangler mail back to the session that asked. The
 mail starts with `Verdict: approve`, `Verdict: changes requested` or `Verdict: incomplete` (it could
 not finish), then the head commit it reviewed. Findings follow, most severe first, each with a
 severity (`blocker`, `major`, `minor` or `nit`), a file and line, a failure scenario, a suggested fix
@@ -115,7 +115,7 @@ unresolved review threads.
 
 ## Model footer on new pull requests
 
-When a Claude or Codex session creates a pull request with `gh pr create`, the wrangler adds a footer to
+When a Claude or Codex session creates a pull request with `gh pr create`, Agent Wrangler adds a footer to
 its description naming the exact model the session was running, with no effort level:
 
 ```text
@@ -139,8 +139,8 @@ card, and works with automatic attaching off. It runs after the `gh pr create` c
 it never delays or fails it, and it uses the session's own `gh` login, including inside a
 devcontainer.
 
-Codex runs it as a hook the wrangler passes at launch, resume and fork. Codex asks you to review a
-new hook before running it; the wrangler marks this one trusted in the same launch flags, so no
+Codex runs it as a hook Agent Wrangler passes at launch, resume and fork. Codex asks you to review a
+new hook before running it; Agent Wrangler marks this one trusted in the same launch flags, so no
 prompt appears and nothing is written to `~/.codex/config.toml`. The hook runs outside Codex's
 sandbox, so it works whichever sandbox the session runs under.
 

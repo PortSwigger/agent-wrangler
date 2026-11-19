@@ -5,7 +5,7 @@ import { codex as codexAdapter } from '../../agents/codex.js';
 import { resumeSession } from './resume.js';
 
 // Put a conversation that has no card onto the board and resume it. Search reads
-// every transcript on disk, so it routinely surfaces conversations the wrangler
+// every transcript on disk, so it routinely surfaces conversations Agent Wrangler
 // never launched — an ad-hoc CLI run, or one whose mapping was long ago forgotten
 // — and without this they were read-only text with no way back into a terminal.
 //

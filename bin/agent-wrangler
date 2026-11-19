@@ -49,7 +49,7 @@ fi
 # Devcontainer sessions run `devcontainer up`/`exec` in a pane, and
 # @devcontainers/cli installs to node_modules/.bin. Appended (not prepended) so
 # system binaries still win. Built from AW_INSTALL_ROOT when set: the tmux server
-# keeps the environment it was started with across wrangler restarts, so a
+# keeps the environment it was started with across Agent Wrangler restarts, so a
 # versioned install path here would go stale after an upgrade removes it.
 # Honoured on the server's terms (server/install-root.js resolveInstallRoot):
 # never in a dev instance, only as an absolute path with no `.` or `..`

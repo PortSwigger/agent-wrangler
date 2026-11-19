@@ -116,7 +116,7 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
           if (!send({ type: 'paste-image', staged: true, token, ...frame })) {
             pending.delete(token);
             blobs.delete(token);
-            toast('Not connected to the wrangler — try again in a moment.', true);
+            toast('Not connected to Agent Wrangler — try again in a moment.', true);
           }
         },
         (err) => { if (pending.delete(token)) toast(err?.message || 'Could not read that image.', true); },

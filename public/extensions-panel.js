@@ -25,7 +25,7 @@ import { changesText } from './update-panel.js';
 // exactly as much as the server half; `npm ci --ignore-scripts` is a mitigation,
 // not a sandbox. Nothing in this file may imply otherwise.
 
-export const TRUST_STATEMENT = 'An extension runs inside the wrangler with full access to this machine — your files, your repositories and your agent sessions. The capability list below is disclosure, not a sandbox: it says what the extension asked the wrangler for, and nothing prevents its code (or any of its dependencies) from doing more. Install this only if you trust whoever wrote it, exactly as you would trust a package you npm install into the server.';
+export const TRUST_STATEMENT = 'An extension runs inside Agent Wrangler with full access to this machine — your files, your repositories and your agent sessions. The capability list below is disclosure, not a sandbox: it says what the extension asked Agent Wrangler for, and nothing prevents its code (or any of its dependencies) from doing more. Install this only if you trust whoever wrote it, exactly as you would trust a package you npm install into the server.';
 
 // The two things a live registry still cannot do in process. An UNINSTALL
 // deregisters the extension but cannot reclaim the module Node has already
@@ -41,19 +41,19 @@ export const TRUST_STATEMENT = 'An extension runs inside the wrangler with full 
 // mirrored so the field stops at it rather than the write failing.
 export const MAX_TEXTAREA_LENGTH = 20000;
 
-export const RESTART_NOTE = 'Restart the wrangler to finish.';
-export const RESTART_PENDING_NOTE = 'restart the wrangler to load it';
+export const RESTART_NOTE = 'Restart Agent Wrangler to finish.';
+export const RESTART_PENDING_NOTE = 'restart Agent Wrangler to load it';
 
-// An auto-applied update's toast where the wrangler can restart itself: it
+// An auto-applied update's toast where Agent Wrangler can restart itself: it
 // does, once idle (update-service.js), so asking for a restart would be wrong.
-export const AUTO_RESTART_NOTE = 'The wrangler restarts to load it once it is idle.';
+export const AUTO_RESTART_NOTE = 'Agent Wrangler restarts to load it once it is idle.';
 
 // What turning auto-update on gives away, shown in the confirm before it is
 // on. Like TRUST_STATEMENT, not to be softened: the repository's owner, or
 // whoever compromises it, decides what runs next, and nobody reads it first.
-export const AUTO_UPDATE_WARNING = 'New commits pushed to this extension\'s repository — by its owner, or by anyone who gains control of it — will be installed and run inside the wrangler with this extension\'s capabilities and full access to this machine, without you reviewing the code first. Only an update that asks for no new capabilities and passes the lockfile and host API checks is applied; anything else still waits for you. The wrangler restarts itself to load updated code once it is idle, where it can restart; otherwise the code loads at the next restart.';
+export const AUTO_UPDATE_WARNING = 'New commits pushed to this extension\'s repository — by its owner, or by anyone who gains control of it — will be installed and run inside Agent Wrangler with this extension\'s capabilities and full access to this machine, without you reviewing the code first. Only an update that asks for no new capabilities and passes the lockfile and host API checks is applied; anything else still waits for you. Agent Wrangler restarts itself to load updated code once it is idle, where it can restart; otherwise the code loads at the next restart.';
 
-export const AUTO_UPDATE_HELP = 'Install new commits at the update check when they ask for no new capabilities. Runs only while Settings › Updates is on Notify or Auto; the wrangler restarts to load it once idle, or, where it cannot restart itself, at the next restart.';
+export const AUTO_UPDATE_HELP = 'Install new commits at the update check when they ask for no new capabilities. Runs only while Settings › Updates is on Notify or Auto; Agent Wrangler restarts to load it once idle, or, where it cannot restart itself, at the next restart.';
 
 // An uninstall gets its OWN note, because "to finish" would be a lie there: the
 // row, tools, handlers, stores, sweeps and client asset are all gone already and
@@ -61,7 +61,7 @@ export const AUTO_UPDATE_HELP = 'Install new commits at the update check when th
 // and whatever its top-level code started, so the note says exactly that rather
 // than implying the uninstall is half-done.
 export const INSTALLS_OFF_NOTE = 'Extension installs are off on this deck. Its extensions can be turned on or off and their settings changed, but not installed, updated or uninstalled.';
-export const UNINSTALL_RESTART_NOTE = 'Its code stays in memory until the wrangler restarts.';
+export const UNINSTALL_RESTART_NOTE = 'Its code stays in memory until Agent Wrangler restarts.';
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -126,7 +126,7 @@ function originNode(origin) {
 }
 
 // The restart affordance, drawn ONCE at the top of the detail pane rather than
-// per extension: a restart is a whole-wrangler action, and several pending
+// per extension: restarting affects the whole Agent Wrangler server, and several pending
 // extensions would otherwise each draw a button that does exactly the same thing.
 //
 // Absent when the server did not say it can restart itself: under `npm start`
@@ -155,7 +155,7 @@ const nameOf = (entry) => entry.label || entry.id;
 // Only an extension whose last check found a newer commit, and that is still
 // here to update.
 // `incompatible` is the server's refusal of that update (ext-install-incompatible):
-// the newer commit needs a host API this wrangler does not serve, so offering
+// the newer commit needs a host API this Agent Wrangler server does not serve, so offering
 // the button again would only clone it to be refused a second time.
 const hasUpdate = (entry, status, removing) => Boolean(entry.external && entry.origin && status?.behind && !status.incompatible && !removing);
 
@@ -271,7 +271,7 @@ export function extensionDetailEl(entry, {
   else if (status) pane.append(noteEl('ext-row-note', updateStatusText(status)));
 
   // Only an extension with a recorded origin has anything to update from: a
-  // builtin ships with the wrangler and a hand-placed one has no record.
+  // builtin ships with Agent Wrangler and a hand-placed one has no record.
   if (entry.external && entry.origin && !pendingRemoval) section(pane, 'Updates', autoUpdateRowEl(entry, onAutoUpdate, installsOff));
   section(pane, 'Source', sourceEl(entry));
   if (settings && !pendingRemoval) section(pane, 'Settings', settings);
@@ -314,7 +314,7 @@ function addExtensionEl({ busy, onInstall, browse, installedOrigins, onBrowse, a
   const head = el('div', 'ext-detail-head');
   const copy = el('div', 'setting-copy');
   copy.append(el('div', 'ext-detail-name', 'Add extension'));
-  copy.append(el('div', 'setting-help', 'Pick a tagged repository from GitHub, or install from any git URL. The wrangler fetches it and shows you what it asks for before anything is installed.'));
+  copy.append(el('div', 'setting-help', 'Pick a tagged repository from GitHub, or install from any git URL. Agent Wrangler fetches it and shows you what it asks for before anything is installed.'));
   head.append(copy);
   pane.append(head);
   const browsing = addMode !== 'url';
@@ -974,7 +974,7 @@ export function extensionsPanelEl({
 
   // ── Detail pane ──
   const detail = el('div', 'ext-detail');
-  // Whole-wrangler notices, above whichever extension is shown. An update of an
+  // Notices for Agent Wrangler, above whichever extension is shown. An update of an
   // already-registered id sets `pendingInstall`, and its entry shows the version
   // still running rather than the one on disk, so its "restart to finish" line
   // lives here rather than on the entry.
@@ -1027,7 +1027,7 @@ export function updateStatusText(status) {
 }
 
 // The consent modal's approve buttons. Updated code only loads on a restart,
-// so where the wrangler can restart itself an update's primary button does both
+// so where Agent Wrangler can restart itself an update's primary button does both
 // and `later` keeps the plain update; an install goes live without one.
 export function consentButtonLabels(payload, canRestart) {
   if (payload.downgrade || payload.requiresDowngradeConfirmation) {
@@ -1064,7 +1064,7 @@ function trustEl(lead) {
   return trust;
 }
 
-const NPM_SCRIPTS_NOTE = 'Dependencies are installed with npm install scripts disabled. That stops install-time hooks only — every dependency\'s code still runs inside the wrangler once the extension loads.';
+const NPM_SCRIPTS_NOTE = 'Dependencies are installed with npm install scripts disabled. That stops install-time hooks only — every dependency\'s code still runs inside Agent Wrangler once the extension loads.';
 
 function installConsentEl(payload) {
   const wrap = el('div', 'ext-consent');
@@ -1081,7 +1081,7 @@ function installConsentEl(payload) {
   if (payload.description) wrap.append(el('div', 'ext-row-desc', payload.description));
   section(wrap, 'Capabilities requested', (payload.capabilities || []).length
     ? capabilitiesEl(payload.capabilities)
-    : el('div', 'ext-consent-none', 'None — it asks the wrangler for nothing.'));
+    : el('div', 'ext-consent-none', 'None — it asks Agent Wrangler for nothing.'));
   const deps = el('div');
   if ((payload.dependencies || []).length) deps.append(chipsEl(payload.dependencies, 'ext-chip ext-chip-dep'));
   deps.append(el('div', 'ext-consent-note', dependencyCountText(payload)));
@@ -1165,7 +1165,7 @@ function dependencyDiffEl(payload) {
 }
 
 // What an uninstall actually does, as the confirm dialog says it. It no longer
-// advertises data retention as a feature: the wrangler removes the extension's
+// advertises data retention as a feature: Agent Wrangler removes the extension's
 // own directory and its provenance record, and cannot remove whatever the
 // extension itself wrote elsewhere because only the extension knows where that
 // is (a store's file is chosen by its own factory). An explicit purge is
@@ -1174,9 +1174,9 @@ export function uninstallBodyText(entry) {
   const live = entry.enabled && !entry.quarantine;
   return [
     'Its files are removed from the extensions folder.',
-    'Anything it saved elsewhere in the wrangler\'s data folder stays — the wrangler does not know where an extension keeps its own data.',
+    'Anything it saved elsewhere in Agent Wrangler\'s data folder stays — Agent Wrangler does not know where an extension keeps its own data.',
     live
-      ? 'Its code keeps running until the wrangler restarts; you can restart from here once it is gone.'
+      ? 'Its code keeps running until Agent Wrangler restarts; you can restart from here once it is gone.'
       : 'It is not running, so nothing changes on the board.',
   ].join(' ');
 }

@@ -1,14 +1,14 @@
 ---
 name: setup-wrangler-service
 description: Use when the user wants to install, reinstall, or repair the
-  agent-wrangler background service on macOS (launchd) or Linux (systemd) —
-  e.g. "set up the wrangler as a service", "make it always-on", "the service
+  Agent Wrangler background service on macOS (launchd) or Linux (systemd) —
+  e.g. "set up Agent Wrangler as a service", "make it always-on", "the service
   won't start". Fills the unit/plist template from scripts/, loads it via
   launchctl or systemctl, and verifies the server is actually serving before
   claiming success.
 ---
 
-Installs agent-wrangler as a per-user background service — launchd on macOS,
+Installs Agent Wrangler as a per-user background service — launchd on macOS,
 a systemd user unit on Linux (including WSL2, which is a real Linux kernel and
 uses this same flow). Detect the platform first (`uname -s`: `Darwin` →
 macOS flow below, `Linux` → Linux flow) and follow the matching section.
@@ -33,7 +33,7 @@ Three things must be correct or the service silently fails:
   load-bearing: without it `dispatch`/`resume` exit 127 because `claude` isn't
   found. Don't drop it when substituting.
 - **`AW_BIND_HOST=0.0.0.0` (only if you use devcontainer sessions)** — required so an
-  in-container agent can reach the wrangler's `/mcp` over `host.docker.internal`; also
+  in-container agent can reach Agent Wrangler's `/mcp` over `host.docker.internal`; also
   needs `@devcontainers/cli` (a bundled dep, on `node_modules/.bin`). Note the
   shared-machine exposure trade-off (the control/MCP posture is localhost-advisory).
 
@@ -133,7 +133,7 @@ edit:
   exit 127 because `claude` isn't found. The template's `%h/.local/bin` covers
   this already; don't drop it when substituting.
 - **`AW_BIND_HOST=0.0.0.0` (only if you use devcontainer sessions)** — required so
-  an in-container agent can reach the wrangler's own `/mcp`. The server binds
+  an in-container agent can reach Agent Wrangler's own `/mcp`. The server binds
   loopback-only by default (`bindHost()`), so a container dialing out to
   `AW_DEVCONTAINER_HOST_ADDR` (the host-gateway address on native Docker Engine)
   can't reach it otherwise — uncomment the `Environment=AW_BIND_HOST=0.0.0.0` line
@@ -198,7 +198,7 @@ unit is active but curl fails, the server crashed on boot — read the journal:
   doesn't resolve `host.docker.internal` on its own — either run the Docker
   daemon with `--add-host=host.docker.internal:host-gateway` available to
   containers, or set `AW_DEVCONTAINER_HOST_ADDR` (an `Environment=` line in the
-  unit) to a host address the container can reach; **and** (2) the wrangler
+  unit) to a host address the container can reach; **and** (2) the Agent Wrangler
   server itself must be listening on that address, not just loopback — it binds
   `127.0.0.1` by default, so uncomment `Environment=AW_BIND_HOST=0.0.0.0` in the
   unit (see Step 1). Fixing only the address the container dials without also
