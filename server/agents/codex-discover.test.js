@@ -63,8 +63,8 @@ test('matches a symlinked cwd against the rollout\'s already-resolved cwd (macOS
   const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cxs-link-'));
   const link = path.join(linkDir, 'proj');
   fs.symlinkSync(realTarget, link);
-  // Codex resolves the cwd it actually launched in before recording it — the
-  // wrangler's stored entry.cwd (what's queried here) is the raw, unresolved path.
+  // Codex resolves the cwd it actually launched in before recording it —
+  // Agent Wrangler's stored entry.cwd (what's queried here) is the raw, unresolved path.
   writeRollout(day, '66666666-6666-6666-6666-666666666666', fs.realpathSync(realTarget), 5000);
   const id = await discoverCodexLiveId({ cwd: link, launchedAt: 900, sessionsDir: root });
   assert.equal(id, '66666666-6666-6666-6666-666666666666');

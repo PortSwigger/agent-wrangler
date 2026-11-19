@@ -289,7 +289,7 @@ test('ext-uninstall removes the directory and the record, keeps store data, and 
   assert.deepEqual(c.calls.deactivated, ['notes']);
   assert.equal(c.calls.changed, 1);
   assert.equal(c.calls.rebuild, 1);
-  await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'shipped' }, c), /ships with the wrangler/);
+  await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'shipped' }, c), /ships with Agent Wrangler/);
   await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'nope' }, c), /Unknown extension/);
   reset();
 });
@@ -631,7 +631,7 @@ function updateTick(c, remoteSha) {
   return { svc, applied };
 }
 
-test('an auto-applied update restarts the wrangler once; a human update does not', async () => {
+test('an auto-applied update restarts Agent Wrangler once; a human update does not', async () => {
   reset();
   const c = await installOptedIn();
   useFakes({ requires: ['tasks:read'], sha: 'd'.repeat(40) });
@@ -661,7 +661,7 @@ test('ext-set-auto-update persists the opt-in for a git install and refuses buil
   assert.equal(readProvenance().notes.autoUpdate, true);
   assert.deepEqual(reply(c, 'ext-auto-update'), { type: 'ext-auto-update', id: 'notes', on: true });
   assert.equal(c.calls.rebuild, 1);
-  await assert.rejects(extSetAutoUpdateHandler.handler({ id: 'core', on: true }, c), /ships with the wrangler/);
+  await assert.rejects(extSetAutoUpdateHandler.handler({ id: 'core', on: true }, c), /ships with Agent Wrangler/);
   await assert.rejects(extSetAutoUpdateHandler.handler({ id: 'by-hand', on: true }, c), /not installed from a git URL/);
   await extSetAutoUpdateHandler.handler({ id: 'notes', on: false }, c);
   assert.equal(readProvenance().notes.autoUpdate, false);
@@ -752,7 +752,7 @@ test('ext-set-early-adopter replies a refusal on its reqId, and refuses builtin 
   const refused = reply(c, 'ext-early-adopter-result');
   assert.equal(refused.ok, false);
   assert.match(refused.error, /not installed from a git URL/);
-  await assert.rejects(extSetEarlyAdopterHandler.handler({ id: 'core', on: true }, c), /ships with the wrangler/);
+  await assert.rejects(extSetEarlyAdopterHandler.handler({ id: 'core', on: true }, c), /ships with Agent Wrangler/);
   assert.equal(c.calls.rebuild, 0);
   reset();
 });

@@ -7,7 +7,7 @@
 # owns the rest of the process environment (locale, fd limit, PATH).
 
 # Both supervisors above (launchd KeepAlive, systemd Restart=always) bring the
-# process straight back, which is what makes the board's "Restart the wrangler"
+# process straight back, which is what makes the board's "Restart Agent Wrangler"
 # button — the one that finishes an extension install or uninstall — safe to
 # offer. Nothing exports this on the `npm start` or bare-launcher paths, so there
 # the button is simply absent rather than a way to kill the board.

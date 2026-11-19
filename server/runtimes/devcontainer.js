@@ -36,7 +36,7 @@ export function hasDevcontainerConfig(cwd) {
     || fs.existsSync(path.join(cwd, '.devcontainer.json'));
 }
 
-// Stop the container the wrangler brought up for this workspace dir (the one
+// Stop the container Agent Wrangler brought up for this workspace dir (the one
 // containerIdFor resolves by the devcontainer.local_folder label) — offered on
 // archive so a dormant devcontainer session stops leaving its container `Up`
 // indefinitely. Returns the stopped container id, or null when there was nothing

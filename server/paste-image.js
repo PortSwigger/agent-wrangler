@@ -39,7 +39,7 @@ const CONVERT_BY_MIME = new Map([
   ['image/tiff', 'tiff'],
 ]);
 
-// Generous, because the agent — not the wrangler — decides what is too big to
+// Generous, because the agent — not Agent Wrangler — decides what is too big to
 // send (Claude Code downscales oversized images itself). This cap exists to stop
 // a runaway or hostile frame filling the disk, not to second-guess the model.
 export const MAX_PASTE_BYTES = 10 * 1024 * 1024;

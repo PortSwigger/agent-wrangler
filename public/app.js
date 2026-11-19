@@ -1080,7 +1080,7 @@ function applyGraph(graph) {
   // opens Settings to find out why something they never turned off is gone.
   // Deliberately NO "dismiss for today": an installed extension's quarantine
   // stays on its own row (and raises nothing here), so anything that reaches
-  // this banner is the wrangler's own fault and must stay visible until fixed.
+  // this banner is Agent Wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
   const hadToolSchemaFailures = toolSchemaFailures.length > 0;
@@ -3224,7 +3224,7 @@ function openModelMenu(sessionId, x, y) {
     // Said once, up front, because it is genuinely surprising: /model is not
     // scoped to this session. Verified — it writes "model" into
     // ~/.claude/settings.json, so it becomes the default for every new Claude
-    // session, wrangler-launched or not.
+    // session, launched by Agent Wrangler or not.
     ...(provider.controls?.modelSwitchNote ? [{ header: provider.controls.modelSwitchNote }] : []),
     ...models.map((m) => ({
       label: m.label,
@@ -7200,7 +7200,7 @@ applyChatFontSize(chatFontSize());
 // row carries the reason, but nobody opens Settings to ask why something they
 // never turned off is missing. Deliberately with NO "dismiss for today": an
 // INSTALLED extension's quarantine stays on its own row and raises nothing
-// here, so anything reaching this banner is the wrangler's own fault and must
+// here, so anything reaching this banner is Agent Wrangler's own fault and must
 // stay visible until it is fixed. That is also why it needs no dismiss-key
 // namespace of its own, though system-banner.js now has one for the producers
 // that do.
@@ -7263,7 +7263,7 @@ function syncStandingBanner() {
     return;
   }
   if (restartPendingExts.length) {
-    showSystemBanner(`⚠ Extension update installed but not loaded (${restartPendingExts.join(', ')}) — restart the wrangler so sessions see its new tools`);
+    showSystemBanner(`⚠ Extension update installed but not loaded (${restartPendingExts.join(', ')}) — restart Agent Wrangler so sessions see its new tools`);
     return;
   }
   const rollback = rolledBackText(rolledBackUpdate);
@@ -7668,7 +7668,7 @@ function mountExtensionsPanel(host) {
 }
 
 // The consent step. The modal is opened by the server's DISCLOSURE reply, never
-// by the click that asked for it: nothing may be approved before the wrangler
+// by the click that asked for it: nothing may be approved before Agent Wrangler
 // has actually read the manifest and lockfile it is describing.
 function openExtConsent(payload) {
   const modal = document.getElementById('ext-consent-modal');
@@ -8379,7 +8379,7 @@ function onDeckMessage(msg) {
     if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) runNextExtUpdate();
   }
   else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
-  // The server refused it — the extension needs a host API this wrangler does
+  // The server refused it — the extension needs a host API this Agent Wrangler server does
   // not serve. Nothing changed on disk. An update's reason replaces its update
   // button (hasUpdate) and sits on its row until the next check; the `failed`
   // progress broadcast already carries the same line for a fresh install.
@@ -8676,7 +8676,7 @@ function onPrChecks(msg) {
   if (isErr) flashPr(msg.url);
 }
 
-// The wrangler auto-merged (or tried to) a session's PR on the passing
+// Agent Wrangler auto-merged (or tried to) a session's PR on the passing
 // transition, because that session opted into "Auto-merge when checks pass".
 // Success → accent toast; failure → red .err toast + a one-shot dot flash, so a
 // blocked merge (branch protection, conflicts) is visible rather than silent.

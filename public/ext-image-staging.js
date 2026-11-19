@@ -34,11 +34,11 @@ export function createExtImageStaging({ send, frameOf = sourceToFrame, timeoutMs
       const frame = await frameOf({ kind: 'file', file, mime });
       const token = `ext#${++seq}`;
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { if (settle(token)) reject(new Error('The wrangler did not answer the upload.')); }, timeoutMs);
+        const timer = setTimeout(() => { if (settle(token)) reject(new Error('Agent Wrangler did not answer the upload.')); }, timeoutMs);
         pending.set(token, { resolve, reject, timer, blob: frameToBlob(frame) });
         if (!send({ type: 'paste-image', staged: true, token, ...frame })) {
           settle(token);
-          reject(new Error('Not connected to the wrangler — try again in a moment.'));
+          reject(new Error('Not connected to Agent Wrangler — try again in a moment.'));
         }
       });
     },

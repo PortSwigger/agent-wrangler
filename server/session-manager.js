@@ -44,9 +44,9 @@ const exec = promisify(execFile);
 const MAP_FILE = path.join(DATA_DIR, 'mappings.json');
 
 // Scratch dirs for sessions dispatched without a folder live under DATA_DIR,
-// NOT inside the wrangler checkout. A scratch dir has no .git of its own, and
+// NOT inside the Agent Wrangler checkout. A scratch dir has no .git of its own, and
 // readBranch walks up to the nearest enclosing repo — so keeping these inside
-// the source tree made every blank-cwd session report the wrangler's own branch
+// the source tree made every blank-cwd session report Agent Wrangler's own branch
 // (the "branch bleeding between sessions" bug). DATA_DIR isn't a git repo.
 export const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 
@@ -469,7 +469,7 @@ export async function resolveWorktree({ cwd, intent = '', branch = '', folderNam
 // addDirs so its sandbox can write index.lock, objects and refs. Codex marks
 // git metadata read-only inside workspace-write roots, including the linked
 // worktree's private git-dir where index.lock is created. Keyed off cwd, not
-// off a wrangler-made worktree entry: a pre-existing worktree handed over as
+// off a worktree entry made by Agent Wrangler: a pre-existing worktree handed over as
 // plain `cwd` has the same problem. No-op for any other agent (no OS sandbox)
 // or a cwd outside a repository.
 async function withGitDirAddDirs(agent, cwd, addDirs) {
@@ -893,7 +893,7 @@ export class SessionManager {
     return Boolean(this.map.get(sessionId)?.archivedAt);
   }
 
-  // Bill a headless conversation (a one-shot the wrangler or an extension ran on
+  // Bill a headless conversation (a one-shot Agent Wrangler or an extension ran on
   // this card's behalf, server/headless.js) to the card: `priorLiveSessionIds`
   // is what the cost scanners walk, and is deliberately excluded from
   // `cardForLive`, so nothing will ever try to resume it. `agent` names the
@@ -1145,13 +1145,13 @@ export class SessionManager {
   // dispatch-time slug is just a placeholder). Does the git rename in the worktree
   // and syncs `entry.worktree.branch` (+ repoRoot) so cleanup/status target the
   // right ref; the card's branch badge already follows HEAD on its own. Throws on
-  // a session with no wrangler-created worktree (the only place a rename is safe).
+  // a session with no worktree created by Agent Wrangler (the only place a rename is safe).
   // Keyed on the card id.
   async renameWorktreeBranch(sessionId, desired) {
     const entry = this.map.get(sessionId);
     if (!entry) throw new Error('Unknown session.');
     if (!entry.worktree?.path) {
-      throw new Error('This session has no wrangler-created worktree, so there is no branch to rename.');
+      throw new Error('This session has no worktree created by Agent Wrangler, so there is no branch to rename.');
     }
     const { branch, repoRoot } = await renameBranch({
       worktreePath: entry.worktree.path,
@@ -1882,7 +1882,7 @@ export class SessionManager {
     await this.refreshAlive();
   }
 
-  // A tmux server outlives the wrangler and keeps the PATH it started with, so
+  // A tmux server outlives Agent Wrangler and keeps the PATH it started with, so
   // panes created after a restart or source update would inherit a stale one.
   // Bring this install's own server into line with the PATH the launcher built
   // (bin/agent-wrangler exports it before exec). Call after init(), which has
@@ -1909,7 +1909,7 @@ export class SessionManager {
   }
 
   // The second half of the env-inheritance rule (install-env.js): a tmux server
-  // started before this process, by an older wrangler or before the rule
+  // started before this process, by an older Agent Wrangler or before the rule
   // existed, still holds the install-scoped signals in its global environment
   // and would hand them to every new pane. Remove them from this install's own
   // server, in one tmux call (unsetting an absent variable is not an error).
@@ -2005,7 +2005,7 @@ export class SessionManager {
   // Create a detached tmux session for `inner` on `socket`, keeping the pane
   // visible if the command exits immediately so its error message is readable.
   // The redundant-looking `cd` is load-bearing: `-c dir` alone is NOT enough. A tmux
-  // SERVER whose own cwd has been deleted (the wrangler's install dir renamed after
+  // SERVER whose own cwd has been deleted (Agent Wrangler's install dir renamed after
   // the server started, say) stops honouring `-c` and hands every new pane that dead
   // directory instead — `pwd` prints literally ".". Claude limps along there; the
   // devcontainer CLI calls process.cwd() at module load and dies before doing anything

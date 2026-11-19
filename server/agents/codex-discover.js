@@ -39,7 +39,7 @@ function rolloutCwd(file) {
 }
 
 // Codex resolves its own cwd (e.g. macOS /tmp -> /private/tmp) before recording
-// it in SessionMeta, but the wrangler's stored entry.cwd is whatever raw path it
+// it in SessionMeta, but Agent Wrangler's stored entry.cwd is whatever raw path it
 // was launched with — an exact string compare between the two silently fails to
 // discover a live-but-symlinked session (falls back to `p` when it doesn't exist
 // on disk, e.g. a fixture path in tests or a since-removed worktree).

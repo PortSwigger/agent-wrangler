@@ -273,7 +273,7 @@ test('an interrupt is its own event with how long the agent had worked, and is n
   assert.equal(evs.filter((e) => e.type === 'core.prompt').length, 0);
 });
 
-test('a Stop the wrangler sends counts once while the card works, and the transcript marker for it is not counted again', async () => {
+test('a Stop Agent Wrangler sends counts once while the card works, and the transcript marker for it is not counted again', async () => {
   const turns = new Map();
   const { core, sent, clock } = setup({ turns });
   await core.sessionStarted({ sessionId: 's', entry: entry({ createdAt: clock.t }), source: 'board' });

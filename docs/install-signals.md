@@ -9,7 +9,7 @@ Agent Wrangler, for example a Homebrew formula.
 
 | Variable | Value | Default | Set by | Effect |
 | --- | --- | --- | --- | --- |
-| `AW_SUPERVISED` | `1` | unset | `scripts/wrangler-start.sh` (launchd plist, systemd unit), a Homebrew service | Something restarts the process when it exits. Enables the board's **Restart the wrangler** button, except in a dev instance (`AW_DEV`), and trims service logs at startup. It does **not** allow Git updates. |
+| `AW_SUPERVISED` | `1` | unset | `scripts/wrangler-start.sh` (launchd plist, systemd unit), a Homebrew service | Something restarts the process when it exits. Enables the board's **Restart Agent Wrangler** button, except in a dev instance (`AW_DEV`), and trims service logs at startup. It does **not** allow Git updates. |
 | `AW_GIT_UPDATES` | `1` | unset | `scripts/wrangler-start.sh` only | The start path rolls back an update that fails to start (`update-rollback.sh`) and installs changed dependencies (`sync-deps.sh`) before the launcher runs. Required, together with `AW_SUPERVISED=1`, before **Update and restart** or **Auto** can apply a Git update. |
 | `AW_INSTALL_MANAGER` | a package manager's name, e.g. `homebrew` | unset | a package wrapper (the Homebrew formula) | A package manager owns the install. The board's Git updater is disabled: no checks, no applies, and Settings › Updates says how to update instead (`brew upgrade agent-wrangler` for `homebrew`). The app reports its package version. Restart stays available when `AW_SUPERVISED=1`. |
 | `AW_NODE` | path to `node` | `node` on `PATH` | a package wrapper | The interpreter the launcher execs. Use a path that stays stable across upgrades, such as Homebrew's `opt/node/bin/node`. |
@@ -97,7 +97,7 @@ update** compares each session's launch identity with the current app identity.
 ## Child-process inheritance
 
 Panes must not inherit these signals. A tmux server keeps the environment of the process that
-started it, across wrangler restarts, and every pane inherits that environment. A dev instance
+started it, across Agent Wrangler restarts, and every pane inherits that environment. A dev instance
 started from a pane would otherwise take on the board's identity: its Restart button (which would
 kill a process nothing restarts), its permission to apply Git updates, and its install root.
 
@@ -107,9 +107,9 @@ The rule, for every signal in the table above:
    `server/index.js` imports) and removes it from `process.env` before any tmux server or child
    process can start. Code reads the captured value, never `process.env`.
 2. Once it holds the instance lock, the server runs `tmux set-environment -g -u` for each signal on
-   its own tmux socket. This removes the signals from a tmux server that an older wrangler started.
+   its own tmux socket. This removes the signals from a tmux server that an older Agent Wrangler started.
 3. Panes that already exist keep their environment until they're relaunched. A dev instance (`AW_DEV`)
-   never applies a Git update, offers **Restart the wrangler** or uses `AW_INSTALL_ROOT`, even when
+   never applies a Git update, offers **Restart Agent Wrangler** or uses `AW_INSTALL_ROOT`, even when
    it was started from a pane that still carries the signals.
 
 A new install-scoped signal must be added to `INSTALL_SCOPED_ENV` in `server/install-env.js`.
@@ -118,8 +118,8 @@ A new install-scoped signal must be added to `INSTALL_SCOPED_ENV` in `server/ins
 
 - Set `AW_INSTALL_MANAGER` in the wrapper, so foreground and service starts both get it.
 - Set `AW_SUPERVISED=1` only in the service definition.
-- Make the service restart the process after any exit, including a clean one. **Restart the
-  wrangler** exits with status 0, so a service that restarts only after a crash (Homebrew's
+- Make the service restart the process after any exit, including a clean one. **Restart
+  Agent Wrangler** exits with status 0, so a service that restarts only after a crash (Homebrew's
   `keep_alive crashed: true`) would leave the board stopped. Use `keep_alive true`.
 - On macOS, give the service an interactive process type (`process_type :interactive` in a Homebrew
   `service` block, `ProcessType` `Interactive` in a launchd plist). Without one, launchd runs it as

@@ -61,7 +61,7 @@ const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 const TEST_DIRS = /^(test|tests|__tests__|spec|__mocks__)$/;
 const TEST_FILES = /\.(test|spec)\.js$/;
 
-// `<root>/skills/` is agent-facing CONTENT, not modules: the wrangler reads
+// `<root>/skills/` is agent-facing CONTENT, not modules: Agent Wrangler reads
 // SKILL.md out of it and hands the directory to an agent, and nothing in the
 // server's import graph can reach a script a skill ships for its agent to run.
 // Skipped at the root only — a `skills/` directory nested inside the

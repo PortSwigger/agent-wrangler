@@ -148,7 +148,7 @@ function commandRefsSession(command, ownerId) {
   return new RegExp(`(?:--(?:session-id|resume)[=\\s]+|\\b(?:resume|fork)\\s+)${id}(?:\\s|$)`).test(command);
 }
 
-// Every wrangler-owned (`cc_`) tmux currently running this session — the
+// Every tmux owned by Agent Wrangler (`cc_`) currently running this session — the
 // original *and* any resume forks of it. The reliable kill target: the recorded
 // mapping name can drift from the tmux actually hosting the process, so teardown
 // scans by what's running rather than trusting the record. Foreign (non-`cc_`)
@@ -661,7 +661,7 @@ export async function killSession(name, socket = '') {
 // submitted (verified against a live pane). A trailing space defuses it without
 // altering the message.
 export async function sendText(name, text, socket = '', run = tmux, { wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
-  // Telemetry: whatever the wrangler pastes is not a human typing in the pane.
+  // Telemetry: whatever Agent Wrangler pastes is not a human typing in the pane.
   // A caller that knows the source (a chat send, a schedule) noted it already.
   notePrompt(text, 'mail', { fallback: true });
   await pasteBlock(name, text.endsWith('\\') ? `${text} ` : text, socket, run);

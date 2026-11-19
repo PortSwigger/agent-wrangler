@@ -91,7 +91,7 @@ function flagValue(command, flag) {
 // lead is linked by `parentLiveId` (the lead's LIVE session id) — but grouping
 // is primarily by shared tmux session, since a member pane lives in the lead's.
 // A team member writes NO ~/.claude/sessions/<pid>.json, so this command-line
-// parse is the only signal the wrangler has for it.
+// parse is the only signal Agent Wrangler has for it.
 function parseTeamMember(command) {
   const teamName = flagValue(command, '--team-name');
   const parentLiveId = flagValue(command, '--parent-session-id');
@@ -110,7 +110,7 @@ const NESTED_CLAUDE_ENV = [
   'CLAUDE_CODE_EXECPATH', 'CLAUDE_CODE_TMPDIR', 'CLAUDE_JOB_DIR',
 ];
 
-// A wrangler first started from inside a Claude session keeps CLAUDECODE /
+// An Agent Wrangler first started from inside a Claude session keeps CLAUDECODE /
 // CLAUDE_CODE_* in its env; spawned panes inherit them and the launched claude
 // looks nested, so (CLI 2.1.169+) it drops its transcript and can't be resumed or
 // forked. Strip the non-prefixed markers (static list) PLUS every inherited

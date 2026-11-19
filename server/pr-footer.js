@@ -37,7 +37,7 @@ export function withModelFooter(body, model) {
   return [text, ...lines].filter(Boolean).join('\n\n');
 }
 
-// Asks the wrangler which model to tag this session's PRs with. Null when the
+// Asks Agent Wrangler which model to tag this session's PRs with. Null when the
 // footer setting is off, the session is unknown or the server is unreachable.
 export async function fetchFooterModel({ url, headers, fetchImpl = fetch }) {
   if (!url || !headers) return null;
@@ -70,7 +70,7 @@ export async function tagPrWithModel({ prUrl, model, gh = runGh }) {
   return 'tagged';
 }
 
-// The whole footer step for a PR just created: model from the wrangler, then
+// The whole footer step for a PR just created: model from Agent Wrangler, then
 // the body edit. Env carries the session token (AW_SESSION_TOKEN) and the
 // lookup url (AW_PR_MODEL_URL), both set at launch.
 export async function runModelFooter({ prUrl, env = process.env, fetchImpl = fetch, gh = runGh }) {

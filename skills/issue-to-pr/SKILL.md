@@ -10,7 +10,7 @@ no human watching — work to completion and only stop to ask a question when yo
 a *genuine* block (see "Surfacing a block"). The bar for success is "a PR exists and
 its CI is green"; a human reviews the PR afterwards, so ship rather than gold-plate.
 
-The Agent Wrangler launched you in a fresh git worktree on a branch that is **already
+Agent Wrangler launched you in a fresh git worktree on a branch that is **already
 checked out**, and granted you a set of MCP tools with no approval prompt:
 `workflow_phase` (phase reporting), plus `spawn_session`, `send_message`,
 `list_sessions`, and `archive_session` for splitting work across sessions when an
@@ -81,7 +81,7 @@ git rev-parse --abbrev-ref HEAD
 ```
 
 **Never `git checkout -b` / `git switch -c` a new branch, and never create another
-worktree.** The wrangler owns the worktree and branch; a new branch here would
+worktree.** Agent Wrangler owns the worktree and branch; a new branch here would
 strand your commits where the PR machinery can't find them.
 
 **Give the branch a descriptive name.** The branch you start on is an
@@ -190,7 +190,7 @@ dead worker if you abandon it.
 3. Open the PR: `gh pr create --fill` (or with an explicit `--title`/`--body`),
    referencing the issue (`Closes #N` for GitHub issues; name the Jira key in the
    body for Jira).
-4. **Do NOT call `set_links` for the PR.** The wrangler's 60-second `detectNewPrs`
+4. **Do NOT call `set_links` for the PR.** Agent Wrangler's 60-second `detectNewPrs`
    poll finds and attaches it automatically (single source of truth — a manual link
    would double up and fight the poller).
 5. **Do call `set_links` for the Jira key** when the issue was a Jira key, so the
@@ -217,7 +217,7 @@ credential, an issue so ambiguous you cannot responsibly resolve it — do **bot
 
 ## Deployment (maintainer note)
 
-This skill ships with the wrangler at `skills/issue-to-pr/` — **no symlink or
+This skill ships with Agent Wrangler at `skills/issue-to-pr/` — **no symlink or
 install step.** Every Workflow launch loads it (and its bundled `brainstorm/` copy)
 via `--plugin-dir`, resolved from the running install's own path (`agents/claude.js`
 `ISSUE_TO_PR_SKILL_DIR`), so it's discoverable from any worktree cwd and against any

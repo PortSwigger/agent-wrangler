@@ -213,5 +213,5 @@ and `agent-skills/.claude-plugin/plugin.json`'s description.
 
 - A generic `read_skill` tool and settings-rendered skills for any extension.
 - Configurable reviewer provider or model, number of rounds, or report format.
-- The Codex trust-seeding mismatch the experiment exposed (the wrangler seeds `/tmp/…`, Codex
+- The Codex trust-seeding mismatch the experiment exposed (Agent Wrangler seeds `/tmp/…`, Codex
   checks the resolved `/private/tmp/…`); a separate follow-up, dev instances only.

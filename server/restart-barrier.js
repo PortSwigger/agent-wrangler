@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export class RestartPendingError extends Error {
   constructor() {
-    super('The wrangler is preparing to restart. Retry this request shortly.');
+    super('Agent Wrangler is preparing to restart. Retry this request shortly.');
     this.code = 'restarting';
     this.retryable = true;
   }

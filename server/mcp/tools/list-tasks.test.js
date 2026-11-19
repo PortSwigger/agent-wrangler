@@ -41,7 +41,7 @@ test('list_tasks resolves bestFolder to the shared repo when all sessions sit in
   assert.equal(out.content[0].type, 'text');
 });
 
-test('list_tasks collapses wrangler `-worktree-` cwds back to the base repo', async () => {
+test('list_tasks collapses Agent Wrangler `-worktree-` cwds back to the base repo', async () => {
   const out = await listTasksTool.handler({
     deps: deps({
       tasks: [{ id: 'T1', name: 'Agent Wrangler' }],

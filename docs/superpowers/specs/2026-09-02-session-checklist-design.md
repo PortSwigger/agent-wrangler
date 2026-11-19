@@ -13,7 +13,7 @@ internal planning tool.
 |---|---|---|---|
 | **task TODO** (existing) | one board *task* (`t_...`/`adhoc`), shared across every session under it | human only, via the UI | `task-store.js`, `taskStore.snapshot().todos` |
 | **checklist** (this design) | one *session* (card id) | human (UI) **and** agent (new MCP tools) | new `checklist-store.js` |
-| **native plan** (`TaskCreate`/`TaskUpdate` for Claude, `update_plan` for Codex) | one agent turn/session, private | agent only, for itself | the agent's own transcript/rollout — never read by the wrangler |
+| **native plan** (`TaskCreate`/`TaskUpdate` for Claude, `update_plan` for Codex) | one agent turn/session, private | agent only, for itself | the agent's own transcript/rollout — never read by Agent Wrangler |
 
 The three must stay visually and terminologically distinct. In particular:
 **"todo" and "task" are both already taken** — "todo" by the task-level feature, "task" by
@@ -52,7 +52,7 @@ Investigated and rejected. Findings, from real local transcripts on this machine
   warning — this repo's CLAUDE.md is already full of "verified against the live binary, could
   change any time" landmines for exactly this class of undocumented internal-tool shape.
 
-**Decision: the wrangler owns its own checklist, populated only through its own MCP tools.**
+**Decision: Agent Wrangler owns its own checklist, populated only through its own MCP tools.**
 It is not synced with, and does not attempt to reconcile with, either agent's native planning
 tool — they serve different audiences (private scratch work vs. a shared, visible list) and
 are kept explicitly separate rather than merged.
@@ -82,7 +82,7 @@ instance lock.
 ### MCP tools
 
 Four new tools, resolved from **the caller's own identity** (`extractCaller`, the same
-`X-AW-Session` header / Codex Bearer token every other wrangler tool uses) — **no `session`
+`X-AW-Session` header / Codex Bearer token every other Agent Wrangler tool uses) — **no `session`
 parameter**. This is deliberate and load-bearing: if the tool took an explicit session id, a
 launched agent could write into a sibling session's checklist, either by hallucinating an id or
 by picking one off `list_sessions`. A session can only ever touch its own checklist.

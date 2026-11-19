@@ -87,7 +87,7 @@ Optional launch controls include:
   what a launch without the dialog (`spawn_session`, an extension) gets. A session keeps its choice across resume
   and fork, and a scheduled launch saves it. An extension that answers `codexPolicy` (see
   [extensions](extensions.md)) overrides it for the sessions it answers for. This replaces the separate
-  `aw-codex-policy` extension, which Wrangler no longer loads: uninstall it from Settings → Extensions.
+  `aw-codex-policy` extension, which Agent Wrangler no longer loads: uninstall it from Settings → Extensions.
 - **Workflow:** run the issue-to-PR autopilot in a fresh worktree.
 - **Quick launch:** use a model button or `Command+1` through `Command+3`. An extension can replace these with its own quick launches (see [extensions](extensions.md)); its buttons and shortcuts then take their place.
 
@@ -179,7 +179,7 @@ limit: a child's own children sit indented beneath it on the same spine, steppin
 until the indent stops growing after four. Attaching a session moves its children with it.
 
 A Codex card's working or idle status comes from Codex's own turn-end notification plus its session log,
-with the terminal screen as a tie-breaker. Wrangler sets `notify` when it launches Codex and forwards the
+with the terminal screen as a tie-breaker. Agent Wrangler sets `notify` when it launches Codex and forwards the
 event to any `notify` command already in `~/.codex/config.toml`. The latest turn end for each thread is
 kept under `~/.agent-wrangler/codex-turns/`.
 
@@ -298,13 +298,13 @@ only if that site allows it; otherwise use Copy Image instead.
 In the new-session dialog, each attached image's chip shows a thumbnail; hover over it or focus it
 for a larger preview. While a preview is open, Escape closes the preview rather than the dialog.
 
-When a message resumes a dormant Codex session, Wrangler waits for its terminal
+When a message resumes a dormant Codex session, Agent Wrangler waits for its terminal
 input to be ready, including during an active turn. If a draft, dialog or unreadable
 terminal prevents delivery, the chat reports the uncertainty and keeps your message
 available to retry.
 
 Automated terminal notifications (mail and PR/check nudges) wait while the composer holds an unsent
-draft, including multiline text. Once it is clear, Wrangler submits the notification automatically.
+draft, including multiline text. Once it is clear, Agent Wrangler submits the notification automatically.
 Claude mail delivered through its messaging socket does not touch the terminal composer.
 Newly launched terminal agents get up to 15 seconds to connect to MCP before notifications can
 proceed through the composer and dialog checks. After five minutes of waiting behind unsent text,

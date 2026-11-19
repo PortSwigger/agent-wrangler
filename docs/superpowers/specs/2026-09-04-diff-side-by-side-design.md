@@ -9,7 +9,7 @@ The session diff view renders every file as a single column of unified-diff
 lines. For a change that rewrites a line rather than adding or removing one,
 that means reading a `−` row and a `+` row several lines apart and diffing them
 by eye. Every other review surface the team uses (GitHub, the IDE) offers a
-side-by-side layout for exactly this; the wrangler's diff view does not.
+side-by-side layout for exactly this; Agent Wrangler's diff view does not.
 
 Add a layout toggle at the top of the panel: **Inline** (today's behaviour) or
 **Side-by-side**.

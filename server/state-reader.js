@@ -117,7 +117,7 @@ function extractAddDirs(args) {
 // write no ~/.claude/sessions/<pid>.json, so there's no hook status — scrape the
 // member's specific pane (paneId is server-unique, so `-t %N` targets it) for the
 // working/idle signal, exactly like a pane-scraped agent (no needs-you). Purely
-// descriptive: teammates are not wrangler sessions (no card id, no attach, no cost).
+// descriptive: teammates are not Agent Wrangler sessions (no card id, no attach, no cost).
 async function buildTeammates(entries) {
   const out = [];
   for (const e of entries) {
@@ -506,7 +506,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     const forkOwner = discTmux && sessionManager?.tmuxOwner ? sessionManager.tmuxOwner(discTmux) : null;
     if (forkOwner && forkOwner !== s.sessionId) continue;
 
-    // The board is a curated view of wrangler-managed sessions only. A live
+    // The board is a curated view of sessions managed by Agent Wrangler only. A live
     // Claude is managed iff it has a mapping entry (launched/adopted by us) or
     // runs inside a tmux we own. Bare sessions started elsewhere are not shown
     // automatically — they're brought in deliberately via Search's Adopt.
@@ -680,11 +680,11 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
     }
   }
 
-  // Synthesize nodes for wrangler-owned tmux sessions that have no live session
+  // Synthesize nodes for tmux sessions owned by Agent Wrangler that have no live session
   // file under their owner id — chiefly a Resume fork, which runs under a new id
   // inside a tmux we own, so the main loop filters the fork out and the owned
   // tmux would otherwise go unrepresented. Only tmuxes we own qualify; foreign
-  // tmuxes started outside the wrangler stay off the board (Search's Adopt
+  // tmuxes started outside Agent Wrangler stay off the board (Search's Adopt
   // brings one in by resuming it into a tmux of our own).
   // Iterate PRIMARY panes only (team-member panes are folded into their lead's
   // `teammates` below, never their own node). `synthesized` dedupes by realSid so
@@ -1004,7 +1004,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
 // **`~/.codex/sessions` is deliberately NOT watched.** chokidar 4 has no fsevents, so
 // it opens one fd per watched entry; `~/.codex/sessions` is a deep tree with one
 // rollout `.jsonl` per Codex CLI run (hundreds, growing forever — including runs
-// that never touched the wrangler), so watching it recursively blows past the
+// that never touched Agent Wrangler), so watching it recursively blows past the
 // process fd limit → EMFILE on every terminal attach and a crash-loop under
 // launchd (same fd-per-entry trap documented for the memory watcher). Codex
 // freshness is instead carried by the 4 s `rebuild` poll in index.js — good

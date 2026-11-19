@@ -2,7 +2,7 @@ export { isTestProcess } from './test-environment.js';
 import os from 'node:os';
 import path from 'node:path';
 
-// Base directory for all wrangler state — mappings.json, tasks.json, memory/,
+// Base directory for all Agent Wrangler state — mappings.json, tasks.json, memory/,
 // scratch sessions/, and the per-session symlinks. Overridable via AW_DATA_DIR so
 // a dev instance can run against fully isolated state without touching the live
 // board's ~/.agent-wrangler. Unset → the legacy default, so existing installs are

@@ -4,7 +4,7 @@ import { paneComposerIsEmpty } from '../../ghost-suggestion.js';
 
 // Switch a live session's model mid-conversation, the way `/model <name>` does in
 // the pane — because that IS what this does. Claude Code has no other interface
-// for it: the model is session-scoped runtime state, not something the wrangler
+// for it: the model is session-scoped runtime state, not something Agent Wrangler
 // owns, so there is nothing to write and nothing to ask over a socket.
 //
 // This is a deliberate, narrow exception to "slash commands stay in the pane".
@@ -15,13 +15,13 @@ import { paneComposerIsEmpty } from '../../ghost-suggestion.js';
 // own help says "/model <name> — session-scoped, not persisted" and whose accepted
 // alias list is ["sonnet","opus","haiku","fable","best","sonnet[1m]","opus[1m]",
 // "fable[1m]","opusplan"] — a superset of every value the Claude adapter offers,
-// so the wrangler's existing model vocabulary maps onto it exactly and no second
+// so Agent Wrangler's existing model vocabulary maps onto it exactly and no second
 // list is introduced here.
 //
 // Nothing is recorded on the entry. `entry.model` is the LAUNCH model and must
 // stay that: it is what a resume re-launches with, and Claude Code does not
 // persist a /model change either ("not persisted"), so writing it here would make
-// the wrangler claim a durability the agent does not have. The board reflects the
+// Agent Wrangler claim a durability the agent does not have. The board reflects the
 // change through `modelPill`, which is derived from the transcript's own
 // `message.model` on the next turn — real confirmation, rather than this handler's
 // optimism.

@@ -25,8 +25,8 @@ export const messageHandler = {
     // `[Image #1]`), so empty text is only an error when nothing is attached
     // either.
     if (!msg.text && !imagePaths.length) { replyResult(false, 'No message text given.'); return; }
-    // clearComposer is set only by the chat view's Esc-then-edit flow, where the
-    // wrangler's own interrupt is what put a restored prompt in the pane.
+    // clearComposer is set only by the chat view's Esc-then-edit flow, where
+    // Agent Wrangler's own interrupt is what put a restored prompt in the pane.
     let result;
     try { result = await deliverMessage(msg.sessionId, msg.text || '', ctx, { imagePaths, clearComposer: msg.clearComposer === true }); }
     catch (err) { replyResult(false, err?.message || String(err), null, 'unknown'); return; }
