@@ -186,11 +186,10 @@ function runtimeHarness(agent = 'claude') {
   const note = { hidden: true, classList: { toggle: (_name, hidden) => { note.hidden = hidden; } } };
   const toggled = (hidden) => { const el = { hidden, classList: { toggle: (_name, h) => { el.hidden = h; } } }; return el; };
   const folderRow = toggled(false);
-  const reposRow = toggled(true);
   const worktree = { checked: false };
   const runtimeNote = { textContent: '', hidden: true, classList: { toggle: (_name, h) => { runtimeNote.hidden = h; } } };
   const document = {
-    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': note, 'm-folder-row': folderRow, 'm-repos-row': reposRow, 'm-worktree': worktree, 'm-runtime-note': runtimeNote })[id],
+    getElementById: (id) => ({ 'm-runtime': rt, 'm-model': model, 'm-add-dirs-note': note, 'm-folder-row': folderRow, 'm-worktree': worktree, 'm-runtime-note': runtimeNote })[id],
     createElement: () => stubOption(),
   };
   const app = loadApp(
@@ -199,7 +198,7 @@ function runtimeHarness(agent = 'claude') {
     'const availableAgents = [{ id: \'claude\' }]; let latestExtensions = []; let dispatchDeck = null; let ownRuntimeOffer = []; const remoteDecks = { entryFor: () => null }; const deckRuntimes = () => []; const setExtensions = (v) => { latestExtensions = v; }; const setOffer = (v) => { ownRuntimeOffer = v; };',
     { document, additionalFolders, runtimeHasLocation },
   );
-  return { rt, add, note, runtimeNote, folderRow, reposRow, worktree, ...app };
+  return { rt, add, note, runtimeNote, folderRow, worktree, ...app };
 }
 const ext = (over = {}) => ({ id: 'sbx', enabled: true, quarantine: null, runtimes: [{ id: 'sandbox', label: 'Sandbox <b>' }], ...over });
 
@@ -473,24 +472,21 @@ test('extension runtimes disable additional folder grants until Local is selecte
   assert.equal(note.hidden, true);
 });
 
-test('a runtime with a location swaps the folder and worktree for the GitHub repos field', () => {
-  const { rt, folderRow, reposRow, worktree, syncRuntimeToggle, syncExtRuntimeOptions, setExtensions } = runtimeHarness();
+test('a runtime with a location hides the host folder and clears worktree mode', () => {
+  const { rt, folderRow, worktree, syncRuntimeToggle, syncExtRuntimeOptions, setExtensions } = runtimeHarness();
   setExtensions([ext({ runtimes: [{ id: 'sandbox', label: 'Sandbox', location: true }, { id: 'box', label: 'Box' }] })]);
   syncExtRuntimeOptions();
   worktree.checked = true;
   rt.value = 'sandbox';
   syncRuntimeToggle();
   assert.equal(folderRow.hidden, true);
-  assert.equal(reposRow.hidden, false);
   assert.equal(worktree.checked, false);
   rt.value = 'box';
   syncRuntimeToggle();
   assert.equal(folderRow.hidden, false);
-  assert.equal(reposRow.hidden, true);
   rt.value = 'local';
   syncRuntimeToggle();
   assert.equal(folderRow.hidden, false);
-  assert.equal(reposRow.hidden, true);
 });
 
 // The provider metadata the browser gets, built from the real adapters.
@@ -1059,7 +1055,7 @@ function extSubmitHarness({ mode = 'launch', hidden = false, images = [], images
       document, stubOption, calls, state,
       modal: { classList: { contains: (c) => modalClasses.has(c), add: (c) => modalClasses.add(c) } },
       slots: slotRegistry || { dispatchFields: () => (state.extSlices ? { extra: 1, ext: state.extSlices } : { extra: 1 }), validateDispatch: () => null },
-      cwdBlocked: () => state.cwdBlocked, renderCwdState() {},
+      selectedRuntimeHasLocation: () => false, cwdBlocked: () => state.cwdBlocked, renderCwdState() {},
       additionalFolders: { invalid: () => false },
       send: (m) => !state.refuseSend && sent.push(m), dispatchWaiter: { submit() {} }, toast: (message) => notices.push(message),
       submitSchedule: () => calls.push('submitSchedule'), worktreeStatusMsg: () => null, setDispatchPending() {},

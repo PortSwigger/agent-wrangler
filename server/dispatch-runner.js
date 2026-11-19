@@ -81,7 +81,6 @@ export async function runDispatch(opts, { sessionManager, taskStore, deliverFirs
     agent: opts.agent ?? 'claude',
     runtime: opts.runtime || undefined,
     addDirs: opts.addDirs || [],
-    repos: Array.isArray(opts.repos) && opts.repos.length ? opts.repos : undefined,
     branch: typeof opts.branch === 'string' && opts.branch ? opts.branch : undefined,
     base: typeof opts.base === 'string' && opts.base ? opts.base : undefined,
     worktree: workflow ? true : Boolean(opts.worktree),

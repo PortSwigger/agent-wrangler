@@ -333,10 +333,6 @@ export async function applyRuntimeCost(runtime, args, enr) {
   return { ...(enr || {}), usd };
 }
 
-export function reposOf(entry) {
-  return entry?.location !== undefined ? [...(entry.repos || [])] : null;
-}
-
 export const resolveRuntimeForGraph = (id) => withLocationReads(findRuntime(id) || runtimeFor(undefined));
 
 // The live blob for a card whose status comes from events (`statusEvents`, the
@@ -486,7 +482,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
   // A location card's folder is a path where it runs, not here: its branch and
   // repo come from the card.
   const placeOf = async (entry, cwd) => (entry?.location !== undefined
-    ? { branch: entry.branch || null, repoSlug: entry.repos?.length === 1 ? entry.repos[0] : null }
+    ? { branch: entry.branch || null, repoSlug: null }
     : { branch: await branchFor(cwd), repoSlug: await repoSlugFor(cwd) });
   const seen = new Set();
 
@@ -628,8 +624,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoMergeOnPass: mapEntry?.autoMergeOnPass ?? false,
       childFullView: mapEntry?.childFullView ?? null,
       offBoard: mapEntry?.offBoard || null,
-      repos: reposOf(mapEntry),
-      repoRequests: mapEntry?.repoRequests || [],
       launchedCodeVersion: mapEntry?.launchedCodeVersion || null,
       links: mapEntry?.links || [],
       worktree: await worktreeStatus(mapEntry?.worktree),
@@ -815,8 +809,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoMergeOnPass: appEntry?.autoMergeOnPass ?? false,
       childFullView: appEntry?.childFullView ?? null,
       offBoard: appEntry?.offBoard || null,
-      repos: reposOf(appEntry),
-      repoRequests: appEntry?.repoRequests || [],
       launchedCodeVersion: appEntry?.launchedCodeVersion || null,
       links: appEntry?.links || [],
       worktree: await worktreeStatus(appEntry?.worktree),
@@ -915,8 +907,6 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       autoMergeOnPass: entry.autoMergeOnPass ?? false,
       childFullView: entry.childFullView ?? null,
       offBoard: entry.offBoard || null,
-      repos: reposOf(entry),
-      repoRequests: entry?.repoRequests || [],
       links: entry.links || [],
       suspendedAt: entry.suspendedAt || null,
       worktree: await worktreeStatus(entry.worktree),

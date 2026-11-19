@@ -16,7 +16,7 @@ import { modelFront } from '../agents/model-front.js';
 import { runHeadless } from '../headless.js';
 import { codexApprovalPolicyError } from '../extensions/codex-policy.js';
 import { findRuntime } from '../runtimes/index.js';
-import { normaliseRepos, checkLocationBranch } from '../locations/repos.js';
+import { checkLocationBranch } from '../locations/repos.js';
 
 // One builder per v1 capability. A builder receives the wiring bag index.js
 // composed (the core singletons plus the board primitives) and returns the
@@ -119,19 +119,10 @@ function checkRuntime(runtime) {
   return { runtime };
 }
 
-function checkRepos(repos) {
-  if (repos === undefined) return {};
-  try {
-    return { repos: normaliseRepos(repos) };
-  } catch (err) {
-    return spawnError(err.message);
-  }
-}
-
-function checkBranch(branch, base, { repos } = {}) {
+function checkBranch(branch, base) {
   if (branch === undefined && base === undefined) return {};
   try {
-    checkLocationBranch({ branch, base, repos });
+    checkLocationBranch({ branch, base });
   } catch (err) {
     return spawnError(err.message);
   }
@@ -250,7 +241,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
     // outbound value (`ext:<id>` on wake, kill, mail and broadcast).
     spawn: async ({
       cwd, intent, agent, model, effort, autoCompactTokens, parentSession,
-      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext, remoteControl, disallowedTools, approvalPolicy, runtime, repos, branch, base,
+      worktree, addDirs, taskId, autoMergeOnPass, autoFixPrChecks, images, offBoard, ext, remoteControl, disallowedTools, approvalPolicy, runtime, branch, base,
     } = {}) => {
       const approvalError = codexApprovalPolicyError(approvalPolicy, agent);
       if (approvalError) spawnError(approvalError);
@@ -259,8 +250,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
       const disallowedToolsOpt = checkDisallowedTools(disallowedTools, agent);
       const addDirsOpt = checkAddDirs(addDirs);
       const runtimeOpt = checkRuntime(runtime);
-      const reposOpt = checkRepos(repos);
-      const branchOpt = checkBranch(branch, base, reposOpt);
+      const branchOpt = checkBranch(branch, base);
       const extOpt = checkExt(ext);
       const imageNames = checkImages(id, images);
       if (taskId !== undefined && taskId !== null && (typeof taskId !== 'string' || !taskId)) spawnError('taskId must be a non-empty task id');
@@ -281,7 +271,6 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
         ...worktreeOpts,
         ...addDirsOpt,
         ...runtimeOpt,
-        ...reposOpt,
         ...branchOpt,
         ...extOpt,
         ...remoteControlOpt,

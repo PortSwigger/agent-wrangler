@@ -328,8 +328,6 @@
            app.js's syncDispatchExtFields. `display: contents`, so an
            extension's control lays out as a .modal-card child. -->
       <div class="ext-dispatch-slot" data-at="top"></div>
-      <!-- Swapped for #m-repos-row by syncRuntimeToggle when the runtime runs
-           sessions elsewhere; the worktree row's veto stays on its own element. -->
       <div class="dispatch-field" id="m-folder-row">
       <label>Folder (cwd)</label>
       <div class="folder-picker-row">
@@ -359,11 +357,6 @@
           </div>
         </div>
       </div>
-      </div>
-      <div class="dispatch-field hidden" id="m-repos-row">
-        <label for="m-repos">GitHub repos</label>
-        <input id="m-repos" autocomplete="off" spellcheck="false" placeholder="owner/name, owner/other" />
-        <div id="m-repos-msg" class="worktree-msg">The session clones these from GitHub and branches off each default branch.</div>
       </div>
       <div class="wf-worktree-note hidden" id="m-wf-worktree-note">
         <span class="wf-worktree-check" id="m-wf-worktree-check">✓</span>
@@ -484,22 +477,6 @@
       <div class="modal-actions">
         <button id="fk-cancel" class="ghost">Cancel</button>
         <button id="fk-go" class="primary">Fork</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="repos-modal" class="hidden">
-    <div class="modal-card repos-card">
-      <h3>GitHub repos</h3>
-      <p class="fork-note">This session runs away from this machine and can clone only the repos listed here. Adding one lets it in at once, and the session is told where to clone it.</p>
-      <ul id="rp-have" class="repos-list"></ul>
-      <div id="rp-requests" class="repos-requests"></div>
-      <label for="rp-add">Add repos</label>
-      <input id="rp-add" placeholder="owner/name, owner/name" autocomplete="off" spellcheck="false" />
-      <div id="rp-msg" class="worktree-msg"></div>
-      <div class="modal-actions">
-        <button id="rp-cancel" class="ghost">Close</button>
-        <button id="rp-go" class="primary" disabled>Add</button>
       </div>
     </div>
   </div>

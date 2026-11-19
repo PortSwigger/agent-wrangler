@@ -87,13 +87,7 @@ export const spawnSessionTool = {
     get runtime() {
       return z.string().optional().describe(`Where the new session runs. Valid values — ${runtimeChoicesText()}.`);
     },
-    repos: z.array(z.string()).optional().describe(
-      'GitHub repos (owner/name) for a runtime that runs sessions at a location, in place of a folder: '
-      + 'the session clones them there. A session spawned by a session at a location gets only those '
-      + 'of that session\'s own repos it names (all of them when it names none); any other repo named is '
-      + 'withheld (returned as `withheldRepos`) and reaches it only by request_repo and the human\'s approval.',
-    ),
-    branch: z.string().optional().describe('With repos: the branch the session creates in each clone and pushes to.'),
+    branch: z.string().optional().describe('Branch to use when working at a remote location.'),
     base: z.string().optional().describe('With branch: the remote branch it starts from (default: each repo\'s default branch).'),
     wait: z.boolean().optional().describe(
       'Wait for the runtime to report whether the launch worked (default true; only runtimes that '
@@ -169,7 +163,6 @@ export const spawnSessionTool = {
         permissionMode: args.permission_mode,
         ...(args.approval_policy === undefined ? {} : { approvalPolicy: args.approval_policy }),
         runtime: args.runtime || undefined,
-        ...(args.repos?.length ? { repos: args.repos } : {}),
         ...(args.branch ? { branch: args.branch } : {}),
         ...(args.base ? { base: args.base } : {}),
         worktree: Boolean(args.worktree),

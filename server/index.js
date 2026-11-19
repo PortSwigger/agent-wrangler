@@ -1087,7 +1087,6 @@ async function prAttachHandler(req, res, caller) {
     try { link = normalisePr({ url }); } catch { res.writeHead(400).end('bad url'); return; }
     const existing = sessionManager.getLinks(caller);
     if (existing.some((l) => linkMatches(l, link))) { res.writeHead(200).end('ok'); return; }
-    if (sessionManager.prLinkRefusal(caller, [link])) { res.writeHead(403).end('not one of this session\'s repos'); return; }
     sessionManager.setLinks(caller, [...existing, link]);
     res.writeHead(200).end('ok');
     pollPrStatuses({ scope: 'session', ownerId: caller }).catch(() => {}); // immediate status

@@ -29,7 +29,7 @@ function spawnDeps(sm) {
 const MIXED = { picked: null };
 
 async function locationParent(sm) {
-  const { sessionId } = await sm.dispatch({ intent: 'parent', runtime: 'testloc', repos: ['acme/widgets'] });
+  const { sessionId } = await sm.dispatch({ intent: 'parent', runtime: 'testloc' });
   return sessionId;
 }
 
@@ -42,7 +42,6 @@ test('a location session spawning with no runtime gets its parent\'s, through sp
     const child = sm.map.get(res.structuredContent.sessionId);
     assert.equal(child.runtime, 'testloc');
     assert.deepEqual(child.location, { box: 'box-2' });
-    assert.deepEqual(child.repos, ['acme/widgets']);
 
     const { sessionId } = await sm.dispatch({ intent: 'scheduled child', launchSource: 'schedule', scheduledBy: parent });
     assert.equal(sm.map.get(sessionId).runtime, 'testloc', 'a schedule a location session saved fires at a location');
@@ -83,9 +82,9 @@ test('a deck with local and a location runtime refuses location dispatch, and sa
     assert.match(loc.unavailable, /"Test location" runs sessions at a location, which a deck offers only when every runtime it offers does; this one also offers "Local \(host\)", "Devcontainer"/);
     assert.equal(offer.find((r) => r.id === 'local').unavailable, undefined);
     assert.equal(runsNothingHere(), false);
-    await assert.rejects(sm.dispatch({ intent: 'x', runtime: 'testloc', repos: ['acme/widgets'] }), /runs sessions at a location, which a deck offers only/);
+    await assert.rejects(sm.dispatch({ intent: 'x', runtime: 'testloc' }), /runs sessions at a location, which a deck offers only/);
     assert.deepEqual(calls, [], 'nothing was provisioned');
-    const res = await spawnSessionTool.handler({ deps: spawnDeps(sm), caller: null }, { intent: 'x', runtime: 'testloc', repos: ['acme/widgets'], wait: false });
+    const res = await spawnSessionTool.handler({ deps: spawnDeps(sm), caller: null }, { intent: 'x', runtime: 'testloc', wait: false });
     assert.equal(res.isError, true);
     assert.match(spawnSessionTool.inputSchema.runtime.description, /`testloc` is unavailable: "Test location" runs sessions at a location/);
   }, MIXED);
@@ -113,7 +112,7 @@ test('a location-only deck dispatches, and refuses local launches and create_ter
   await withRuntime(testLocationRuntime(calls), async () => {
     assert.equal(launchRefusal('testloc'), null);
     assert.equal(runsNothingHere(), true);
-    const { sessionId } = await sm.dispatch({ intent: 'x', runtime: 'testloc', repos: ['acme/widgets'] });
+    const { sessionId } = await sm.dispatch({ intent: 'x', runtime: 'testloc' });
     assert.equal(sm.map.get(sessionId).runtime, 'testloc');
 
     await assert.rejects(sm.dispatch({ intent: 'x' }), /This deck doesn't offer the "Local \(host\)" runtime/);

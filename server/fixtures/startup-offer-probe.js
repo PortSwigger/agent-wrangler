@@ -17,7 +17,7 @@ const out = {
   offer: before,
   offerAfterConfigWrite: snapshot(),
   local: await outcome(sm.dispatch({ intent: 'x' })),
-  testloc: await outcome(sm.dispatch({ intent: 'x', runtime: 'testloc', repos: ['acme/widgets'] })),
+  testloc: await outcome(sm.dispatch({ intent: 'x', runtime: 'testloc' })),
   terminalRefusal: localProcessRefusal(),
   terminal: await outcome(createShellSession('/', 'aw-probe-socket', '/nonexistent/tmux')),
 };

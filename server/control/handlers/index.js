@@ -8,7 +8,6 @@ import { archiveHandler, stopContainerHandler } from './archive.js';
 import { worktreeRemoveHandler, branchDeleteHandler } from './worktree.js';
 import { removeHandler } from './remove.js';
 import { renameHandler } from './rename.js';
-import { addReposHandler, repoRequestHandler } from './repos.js';
 import { detachHandler } from './detach.js';
 import { attachHandler } from './attach.js';
 import { snoozeSetHandler, snoozeClearHandler } from './snooze.js';
@@ -81,8 +80,6 @@ export const CONTROL_HANDLERS = [
   branchDeleteHandler,
   removeHandler,
   renameHandler,
-  addReposHandler,
-  repoRequestHandler,
   detachHandler,
   attachHandler,
   snoozeSetHandler,

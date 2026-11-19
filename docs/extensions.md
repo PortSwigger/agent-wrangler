@@ -2666,13 +2666,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `host.sessions.archive(sid, { allowUnpushed })` works the same way, resolving
   `{ archived: [], unpushed }`. `unpushed` is `[{ sessionId, label, repos: [{ repo, dir,
   commits: [{ sha, subject }], error? }] }]`.
-- **`host.sessions.spawn({ runtime, repos, branch, base })`** (1.85.0) dispatches on a
-  runtime by id (an unknown id is refused by name). A runtime with a `location` takes
-  GitHub `repos` (`owner/name` or a GitHub URL, at most 20) instead of a folder; `branch`
-  (with `base`, its starting remote branch) is the branch the session creates in each
-  clone and pushes to. The agent is briefed to clone each repo; a projection's `repos`
-  lists a location card's repos (including any added after dispatch, 1.88.0) and is null
-  for a card on this machine.
+- **`host.sessions.spawn({ runtime, branch, base })`** dispatches on a runtime by id. At a remote location, the brief can name a repository and the optional branch and base specify where to start work.
 - **`host.usage.byCard()`** (capability `usage:read`, 1.6.0) resolves every card's
   spend recomputed from transcripts, through the same cached scan as the Usage
   panel: one frozen row per card, `{ cardId, usd, estimatedUsd, days }`. A card's
@@ -3126,8 +3120,8 @@ Maintainer notes:
 
   | Hook | When | Answer |
   | --- | --- | --- |
-  | `provision({ sessionId, cwd, agent, ext, repos, branch, base })` (required) | dispatch, after the last refusal | a JSON-able ref of at most 16 KiB, stored as `entry.location` |
-  | `open({ ref, entry, phase })` | before each launch (`dispatch`, `resume`, `fork`), and with `repos` when a running card's `entry.repos` grows (1.88.0) | `{ cwd? }`, the absolute path there the agent starts in; dispatch needs one or a `cwd` |
+  | `provision({ sessionId, cwd, agent, ext, branch, base })` (required) | dispatch, after the last refusal | a JSON-able ref of at most 16 KiB, stored as `entry.location` |
+  | `open({ ref, entry, phase })` | before each launch (`dispatch`, `resume`, `fork`) | `{ cwd? }`, the absolute path there the agent starts in; dispatch needs one or a `cwd` |
   | `suspend` | idle suspend after the pane is killed, and a clean exit | — |
   | `resume` | before every resume or fork; a quick no-op when running | — |
   | `delete` | archive (after the unpushed check), forget, a failed dispatch | — |
@@ -3153,8 +3147,7 @@ Maintainer notes:
   another card holds the same ref (a fork shares its parent's), and a location deleted on
   archive refuses a later resume. While suspended a card shows the cost, activity, title
   and summary read when it was suspended. Location cards are kept live by tmux liveness,
-  like `liveByTmux`; a location card refuses `addDirs` and `worktree`, links only pull
-  requests in its own `repos` (others are refused and never polled), and an unattended
+  like `liveByTmux`; a location card refuses `addDirs` and `worktree`, and an unattended
   wake resumes it in its stored `cwd` without creating anything on this machine.
   `name_branch` records the new branch name and tells
   the agent the `git branch -m` to run in its clones. Validation quarantines a `location`
@@ -3162,23 +3155,6 @@ Maintainer notes:
   hook or an unknown key, or an off-shape `suspendIdleHours`. While the extension is
   inactive the bound copy throws from `provision`, `open`, `resume`, `unpushed` and
   `diff`, and reads nothing.
-- **A location card's repos (1.88.0).** A session spawned by a location session gets
-  only the repos it names that its spawner holds (all of them when it names none). A
-  repo it names that the spawner does not hold is withheld: the runtime's `provision`
-  never sees it, the dispatch result and `spawn_session` carry it as `withheldRepos`,
-  and the child is briefed to ask for it with `request_repo`. Only the human widens
-  what a card reaches, by adding repos from the card's **GitHub repos…** dialog or by
-  allowing a session's `request_repo` (a toast with Allow and Decline, and the same
-  dialog); a request alone adds nothing. Either way core appends the repos to
-  `entry.repos` on the card and every card sharing its ref, then calls
-  `open({ ref, entry, phase: 'repos' })` before the session is mailed where to clone
-  them, so a runtime that limits what a card reaches (a credential proxy, say) reads
-  `entry.repos` there as well as in `provision`. A throw from that `open` adds nothing
-  and is shown to the human, and an allowed request it refused stays waiting. A
-  suspended card takes the repos without an `open`; its runtime sees them in the
-  `resume` open. A repo whose name matches one the card holds is refused, since its
-  clone dir would move. Every session on a deck is offered `request_repo`; a card on
-  this machine is refused it, since it already reaches the human's checkouts.
 - **The deck's runtime offer (1.87.0).** The deck's `--runtimes <ids>` startup
   option (env `AW_RUNTIMES`, comma-separated runtime ids) picks the runtimes it
   offers. It is read once at start: no setting, control message, deck action or

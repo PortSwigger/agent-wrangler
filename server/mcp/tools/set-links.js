@@ -48,8 +48,6 @@ export const setLinksTool = {
     } catch (e) {
       return errorResult(e.message);
     }
-    const refusal = caller != null ? deps.sessionManager?.prLinkRefusal?.(caller, links) : null;
-    if (refusal) return errorResult(refusal);
     try {
       store.setLinks(ownerId, links);
     } catch (e) {
