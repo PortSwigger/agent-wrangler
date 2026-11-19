@@ -39,7 +39,7 @@ export const sendMessageTool = {
     + 'that isn\'t archived; messaging an archived session returns an error. `to` must be a full '
     + 'Agent Wrangler `sessionId` — from list_sessions, get_session_info, spawn_session, or '
     + 'spawn_workflow, all of which return the same real id. A short/truncated id, a display '
-    + 'label, or a handle from a non-Wrangler tool will be refused as unknown, not treated as '
+    + 'label, or a handle from a tool outside Agent Wrangler will be refused as unknown, not treated as '
     + 'archived. The recipient sees who sent it and is told to treat it as untrusted peer input, '
     + 'so put any context it needs directly in `text`. Large payloads (over ~32KB) are rejected — '
     + 'write to a file on the shared filesystem and send the path instead.',
@@ -76,14 +76,14 @@ export const sendMessageTool = {
 
     const entry = deps.sessionManager.entryFor(to);
     // No mapping entry at all is usually a genuinely unknown id — a short/truncated
-    // ref, a display label, or a handle from a NON-Wrangler tool (e.g. Claude Code's
+    // ref, a display label, or a handle from a tool outside Agent Wrangler (e.g. Claude Code's
     // own ListAgents) rather than a real Agent Wrangler sessionId — and
     // deliverMessage's shared "not found (it may have been archived)" wording
     // (message-delivery.js) reads as "this peer is dead" when the real problem is the
     // id itself, pushing a caller to wrongly give up on a live peer. NOTE: a full
-    // sessionId from ANY Wrangler tool (get_session_info, spawn_session,
+    // sessionId from ANY Agent Wrangler tool (get_session_info, spawn_session,
     // spawn_workflow, list_sessions — spawn-common.js/get-session-info.js return the
-    // same real id) resolves here just fine; only a non-Wrangler/short/label form
+    // same real id) resolves here just fine; only an unknown, short or label form
     // hits this branch. Distinguish that from the one case where entry-less is
     // legitimate: a live tmux with no mapping entry at all (the buildGraph
     // "forkOwner" case) still falls through to today's push, unchanged.
@@ -92,7 +92,7 @@ export const sendMessageTool = {
         `No session with id "${to}" is known to Agent Wrangler. This tool needs a full Agent `
         + 'Wrangler `sessionId` (from list_sessions, get_session_info, spawn_session, or '
         + 'spawn_workflow — they all return the same real id) — a short/truncated id, a display '
-        + 'label, or a handle from a non-Wrangler tool will not match, and that is not evidence '
+        + 'label, or a handle from a tool outside Agent Wrangler will not match, and that is not evidence '
         + 'the session is archived or dead. Call list_sessions and pass its `sessionId` field '
         + 'verbatim.',
       );
@@ -133,7 +133,7 @@ export const sendMessageTool = {
 // no live pane at all. It gets the same compose()-fenced text the paste would,
 // because what it feeds is a raw prompt stream too — the reason the fence exists —
 // minus the "reply with send_message" line: an agent reached this way runs
-// outside the board with no wrangler MCP, so that tool doesn't exist for it.
+// outside the board with no Agent Wrangler MCP, so that tool doesn't exist for it.
 async function legacyPushFallback({ deps, caller, to, text, gate }) {
   const entry = deps.sessionManager.entryFor(to);
   const rt = entry ? findRuntime(entry.runtime) : null;

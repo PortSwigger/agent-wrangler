@@ -61,7 +61,7 @@ export function allowedToolName(tool) {
   return `mcp__${MCP_SERVER_NAME}__${tool}`;
 }
 
-// The CORE wrangler MCP tools a launched session is granted without a per-call
+// The CORE Agent Wrangler MCP tools a launched session is granted without a per-call
 // prompt. Lives here (the leaf the agents import) rather than in the tools
 // registry, since that registry pulls in session-manager and would cycle back
 // through the agents layer. Keep in sync when a new always-on core tool is

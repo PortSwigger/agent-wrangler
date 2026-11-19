@@ -3,7 +3,7 @@ import { execFile as defaultExecFile } from 'node:child_process';
 import { adapterFor, registeredAgents, effortError } from './agents/index.js';
 import { backgroundModelConfig } from './config-store.js';
 
-// A tool-less, one-shot model call for the wrangler's own small jobs (archive
+// A tool-less, one-shot model call for Agent Wrangler's own small jobs (archive
 // memory review) and for extensions (`host.agents.headless`, capability
 // `agents:headless`). Any adapter with a `headless` capability can run one:
 //

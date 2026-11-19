@@ -3,7 +3,7 @@
 Managed Agent Wrangler sessions connect to the board through a local MCP server. These tools are the
 primitives behind the higher-level workflows in [Agent capabilities](agent-capabilities.md).
 
-Tools act on the local Wrangler instance and identify the calling card automatically. Extensions may
+Tools act on the local Agent Wrangler instance and identify the calling card automatically. Extensions may
 add more tools. A running session receives tool-registry changes after its next resume.
 
 ## Discover sessions, tasks, activity, and spend
@@ -32,7 +32,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | `archive_session` | Archive a session, optionally cascading to descendants. Archiving the caller requires `allow_self: true`. A session at a location with commits on no remote branch is refused with the list unless `allow_unpushed: true`. |
 | `restore_session` | Resume an archived or dormant session onto the board. Refuses a live session; `recreate_dir: true` recreates a deleted launch dir. |
 | `restore_task` | Restore an archived task (ids from `list_tasks` with `archived: true`), and by default resume the sessions archived with it (`restore_sessions: false` for the empty tile). |
-| `name_branch` | Rename the caller's Wrangler-managed worktree branch, or record a location session's new branch name and return the `git branch -m` to run in its clones. |
+| `name_branch` | Rename the caller's worktree branch managed by Agent Wrangler, or record a location session's new branch name and return the `git branch -m` to run in its clones. |
 | `request_repo` | At a remote location, ask the human to let the caller reach more GitHub repos (`repos` as `owner/name`, and a one-sentence `why`), including one withheld when it was spawned. The answer comes as mail; an allowed request's mail says where to clone. Refused on this machine, where the session already reaches your checkouts. |
 | `workflow_phase` | Update a Workflow card's phase chip. |
 
@@ -104,7 +104,7 @@ The MCP call is:
 }
 ```
 
-`remote_control` is an optional name string. Wrangler trims surrounding whitespace;
+`remote_control` is an optional name string. Agent Wrangler trims surrounding whitespace;
 it must be non-empty, single-line, contain no control characters, and not start with `-`.
 Omit it to leave Remote Control off. A new spawn never inherits the caller's name.
 

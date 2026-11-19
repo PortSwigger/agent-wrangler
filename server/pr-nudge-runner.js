@@ -43,8 +43,8 @@ export async function deliverPrNudge(ev, entry, deps) {
   // snoozed card never runs resolveResumeDir/resume below — a PR transition must not touch a card the user has snoozed.
   if (!entry || entry.archivedAt || entry.snooze) return 'skip';
 
-  // Resolve the launch dir — the LAST await before resume(). A wrangler-created
-  // worktree dir may have been cleaned up post-archive; recreate it (the transcript
+  // Resolve the launch dir — the LAST await before resume(). A worktree dir created by
+  // Agent Wrangler may have been cleaned up post-archive; recreate it (the transcript
   // lives under ~/.claude, so the conversation resumes), falling back to home.
   const dir = await wakeDir(entry, id);
 

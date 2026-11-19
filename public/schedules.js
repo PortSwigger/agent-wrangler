@@ -12,7 +12,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const WEEKDAYS = [1, 2, 3, 4, 5];
 
 // The browser's IANA zone, stored alongside a cron so "09:00" stays 09:00 across
-// DST (the wrangler is loopback-only, so this is also the server's zone in practice).
+// DST (Agent Wrangler is loopback-only, so this is also the server's zone in practice).
 function resolveTz() {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';

@@ -1,8 +1,8 @@
 import { removeWorktree, deleteBranch, repoRootForWorktree, branchExists } from '../../worktree.js';
 import { removeWorktreeContainers } from '../../runtimes/devcontainer.js';
 
-// Cleanup offered after archiving a session that ran in a wrangler-created
-// worktree. The mapping entry survives archive, so entry.worktree is still
+// Cleanup offered after archiving a session that ran in a
+// worktree created by Agent Wrangler. The mapping entry survives archive, so entry.worktree is still
 // resolvable here. Removal discards uncommitted files outright (see
 // removeWorktree); branch deletion surfaces a "blocked" reply for an unmerged
 // branch so the client can re-send with force on explicit confirmation.

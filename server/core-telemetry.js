@@ -7,7 +7,7 @@ import { takePrompt as defaultTakePrompt, notePrompt as defaultNotePrompt } from
 import { MAX_MS, normaliseCatalogue } from './extensions/telemetry-schema.js';
 import { DEPRECATED_SURFACES } from './deck/surfaces.js';
 
-// The wrangler's own telemetry (`core.*` events, docs/extensions.md#core-events):
+// Agent Wrangler's own telemetry (`core.*` events, docs/extensions.md#core-events):
 // session lifecycle, working and needs-you stretches, every prompt that reaches
 // an agent (who sent it and, for a human's, what type it is), interrupts, and a
 // daily roll-up. Emitted through server/telemetry.js like any extension's events,
@@ -296,7 +296,7 @@ export function createCoreTelemetry({
   const open = new Map(); // card id -> { state, reason, since }
   const history = new Map(); // card id -> [{ at, state, reason }], newest last
   const workEnds = new Map(); // card id -> end times of its recent working stretches
-  const interruptedAt = new Map(); // card id -> when the wrangler last sent it an interrupt
+  const interruptedAt = new Map(); // card id -> when Agent Wrangler last sent it an interrupt
   const pendingPrompts = []; // { sid, data, text }
   const pendingWork = []; // { sid, text }
   let lastSeen = null;
@@ -410,7 +410,7 @@ export function createCoreTelemetry({
     lastNodes = nodes || [];
   }
 
-  // A card launched by the wrangler. `source` is one of START_SOURCES;
+  // A card launched by Agent Wrangler. `source` is one of START_SOURCES;
   // `spawner` the extension id for an extension's spawn (or null).
   // Registers (or refreshes) core's catalogue: `spawner`'s list follows the
   // extensions present, so it is registered again when that changes.
@@ -523,7 +523,7 @@ export function createCoreTelemetry({
     });
   }
 
-  // The wrangler sent a card its interrupt key (the chat view's Stop, an
+  // Agent Wrangler sent a card its interrupt key (the chat view's Stop, an
   // extension's sessions.interrupt). Counted only while it was working: the
   // key does nothing to an idle agent. Claude does not always write a marker
   // for a stopped turn, so this is the count; a marker for the same stop is

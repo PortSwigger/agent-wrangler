@@ -73,7 +73,7 @@ export const SETTINGS = [
     type: 'toggle',
     scope: 'server',
     label: 'Skip Codex\'s trust-folder prompt',
-    help: 'Codex launches/resumes/forks already run sandboxed with approvals off — this persists the folder as trusted in Codex\'s own ~/.codex/config.toml before launch (a per-invocation flag doesn\'t work; Codex ignores it), so its trust prompt never appears. For a worktree session this trusts the repo\'s main checkout, not just that worktree, so every other worktree of the same repo — and any other Codex use of it, wrangler or not — is trusted from then on too. Off restores Codex\'s normal prompt.',
+    help: 'Codex launches/resumes/forks already run sandboxed with approvals off — this persists the folder as trusted in Codex\'s own ~/.codex/config.toml before launch (a per-invocation flag doesn\'t work; Codex ignores it), so its trust prompt never appears. For a worktree session this trusts the repo\'s main checkout, not just that worktree, so every other worktree of the same repo — and any other Codex use of it, Agent Wrangler or not — is trusted from then on too. Off restores Codex\'s normal prompt.',
     default: true,
   },
   {
@@ -181,7 +181,7 @@ export const SETTINGS = [
     scope: 'server',
     groups: [],
     label: 'Background model',
-    help: 'The agent and model the wrangler and its extensions use for small one-shot jobs that name no model of their own, such as the archive memory review. Each run has every tool off and is billed to the card it ran for.',
+    help: 'The agent and model Agent Wrangler and its extensions use for small one-shot jobs that name no model of their own, such as the archive memory review. Each run has every tool off and is billed to the card it ran for.',
     default: 'claude:haiku',
   },
   {
@@ -206,7 +206,7 @@ export const SETTINGS = [
     scope: 'server',
     options: [{ value: 'off', label: 'Off' }, { value: 'notify', label: 'Notify' }, { value: 'auto', label: 'Auto' }],
     label: 'Automatic updates',
-    help: 'Notify checks origin/main and your installed extensions hourly and puts a dot on Settings when an update is ready. Auto also installs wrangler updates and restarts, if the checkout is clean and no session is launching or about to start on a schedule. Extensions are never updated automatically; update them from Extensions. If an update fails to start, the wrangler rolls back and skips that commit.',
+    help: 'Notify checks origin/main and your installed extensions hourly and puts a dot on Settings when an update is ready. Auto also installs Agent Wrangler updates and restarts, if the checkout is clean and no session is launching or about to start on a schedule. Extensions are never updated automatically; update them from Extensions. If an update fails to start, Agent Wrangler rolls back and skips that commit.',
     default: 'notify',
   },
   {
@@ -302,7 +302,7 @@ export function extensionFlipNote({ enabled } = {}) {
 // open, so the rows are always current. Returns the defs for tests.
 //
 // `help` is passed through UNTOUCHED — an earlier version appended a blanket
-// "Takes effect after the wrangler restarts." to any help that did not mention
+// "Takes effect after Agent Wrangler restarts." to any help that did not mention
 // one, which is now simply false for the half of a flip that lands on the next
 // tick. Timing is the flip note's job, and it can be exact because it knows
 // which direction was taken; a static sentence cannot.

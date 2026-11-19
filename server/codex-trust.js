@@ -16,7 +16,7 @@ import path from 'node:path';
 //
 // TOML forbids two `[table]` headers for the same key — verified: a duplicate
 // `[projects."X"]` block makes Codex refuse to load config.toml AT ALL, which
-// breaks every Codex session on the machine (wrangler-launched or not, past or
+// breaks every Codex session on the machine (launched by Agent Wrangler or not, past or
 // future) until a human edits the file by hand. So this writer is deliberately
 // paranoid: idempotent (never touches the file if the key is already trusted,
 // checked synchronously with no `await` between check and write — same

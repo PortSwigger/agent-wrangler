@@ -114,7 +114,7 @@ test('install-scoped signals are unset on the own socket in one tmux call', asyn
   assert.equal(await recordingManager('aw-own', { fail: true }).clearInstallEnv(), false, 'no server is harmless');
 });
 
-// The already-running case: a tmux server started by an older wrangler (or any
+// The already-running case: a tmux server started by an older Agent Wrangler (or any
 // process with the board's env) holds the signals in its global environment and
 // hands them to every new pane. After the clear, a new pane sees none of them,
 // a pane that already existed keeps its own copy, and other sockets are untouched.

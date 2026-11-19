@@ -23,7 +23,7 @@ function tempRepo({ commit = true } = {}) {
 }
 
 // A repo with a bare "origin" remote, set up via init+remote-add+fetch — the
-// wrangler worktree pattern, which deliberately does NOT create
+// Agent Wrangler worktree pattern, which deliberately does NOT create
 // refs/remotes/origin/HEAD (that's only ever written by `git clone`). Pushes the
 // initial commit as origin/main, then lets the caller add local-only commits/edits
 // on top without pushing, mirroring an unpushed autopilot branch.

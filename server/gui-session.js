@@ -1,20 +1,20 @@
 // macOS only: is this install's tmux server stuck in an old login session?
 //
 // The tmux server outlives a logout. Logging out stops the launchd service but
-// not the daemonised tmux server, so after logging back in the restarted wrangler
+// not the daemonised tmux server, so after logging back in the restarted Agent Wrangler
 // reattaches to a server still in the PREVIOUS login session — and every agent,
 // and every GUI app an agent starts, inherits it. Windows from that session still
 // draw on screen, but the Dock and app activation belong to the new session: a
 // Playwright Chrome gets no Dock icon, never comes to the front, and keystrokes
-// typed into it go to whichever app is really active. Restarting the wrangler
+// typed into it go to whichever app is really active. Restarting Agent Wrangler
 // doesn't help; only a fresh tmux server does.
 //
 // The probe: `lsappinfo` lists only the apps in the caller's own login session,
 // so finding the Dock means "this process is in the session the user is logged
-// in to". It runs once in the wrangler itself and once inside the tmux server
+// in to". It runs once in Agent Wrangler itself and once inside the tmux server
 // (`run-shell` executes as a child of the server, so it inherits the server's
-// session). Only "the wrangler sees the Dock but tmux doesn't" is reported: if
-// the wrangler can't see it either (a dev instance started from a stale pane,
+// session). Only "Agent Wrangler sees the Dock but tmux doesn't" is reported: if
+// Agent Wrangler can't see it either (a dev instance started from a stale pane,
 // say), a tmux restart from here would land in the same session and fix nothing.
 
 const DOCK_PROBE = 'lsappinfo find bundleid=com.apple.dock';

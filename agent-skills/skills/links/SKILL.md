@@ -49,7 +49,7 @@ the current `set_links` schema for what it accepts.)
 ## Wait for a PR without polling
 
 After creating or updating a PR, attach it at session scope, finish useful
-independent work, then **end your turn** so Wrangler can notify you. Do not run
+independent work, then **end your turn** so Agent Wrangler can notify you. Do not run
 `gh pr checks --watch`, `gh run watch`, sleep loops, or repeated `gh`/MCP status
 queries just to wait. One-off diagnostics such as `gh pr checks`,
 `gh pr view`, and `gh run view --log-failed` remain available to investigate a

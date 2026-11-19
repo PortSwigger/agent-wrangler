@@ -62,7 +62,7 @@ test('a landed upgrade asks for a restart, offering the button only where the se
     const notice = installDriftNotice({ drift, canRestart });
     assert.equal(notice.restart, restart, `canRestart=${canRestart}`);
     assert.equal(notice.hint, hint, `canRestart=${canRestart}`);
-    assert.match(notice.text, /An upgrade has landed \(0\.1\.0 → 0\.2\.0\).*restart the wrangler to finish/);
+    assert.match(notice.text, /An upgrade has landed \(0\.1\.0 → 0\.2\.0\).*restart Agent Wrangler to finish/);
   }
 });
 
@@ -74,7 +74,7 @@ test('the drift notice leaves out versions it cannot tell apart, and says when t
 });
 
 const ext = (id, label, commits, extra = {}) => ({ id, label, sha: `${id}0`, remoteSha: `${id}1`, behind: true, commits, ...extra });
-const many = { extensions: [ext('jira', 'Jira links', 7), ext('w2', 'Wrangler squared', 4), ext('slack', 'Slack digest', 1), { id: 'usage', behind: false }, { id: 'down', error: 'offline' }] };
+const many = { extensions: [ext('jira', 'Jira links', 7), ext('w2', 'Agent Wrangler squared', 4), ext('slack', 'Slack digest', 1), { id: 'usage', behind: false }, { id: 'down', error: 'offline' }] };
 
 test('extension notices count only outdated extensions that were reached', () => {
   assert.deepEqual(outdatedExtensions(many).map((e) => e.id), ['jira', 'w2', 'slack']);

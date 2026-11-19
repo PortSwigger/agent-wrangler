@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withCleanClaudeEnv } from './session-manager.js';
 
-// A wrangler tmux server first started from inside a Claude session keeps
+// An Agent Wrangler tmux server first started from inside a Claude session keeps
 // CLAUDECODE / CLAUDE_CODE_* in its global env; every spawned pane inherits
 // them, so the launched claude looks nested and (CLI 2.1.169+) drops its
 // transcript — the session then can't be resumed. withCleanClaudeEnv must
@@ -20,7 +20,7 @@ test('withCleanClaudeEnv strips CLAUDECODE and the CLAUDE_CODE_* markers', () =>
 
 // The static allowlist goes stale as the CLI adds env vars — CLAUDE_CODE_CHILD_SESSION
 // (a newer marker) also suppresses transcript persistence. Strip every inherited
-// CLAUDE_CODE_* so a wrangler launched inside a Claude session can't leak any of them.
+// CLAUDE_CODE_* so an Agent Wrangler launched inside a Claude session can't leak any of them.
 test('withCleanClaudeEnv strips inherited CLAUDE_CODE_* beyond the static list', () => {
   process.env.CLAUDE_CODE_CHILD_SESSION = '1';
   process.env.CLAUDE_CODE_FUTURE_FLAG = '1';

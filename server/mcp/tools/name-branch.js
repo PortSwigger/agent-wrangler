@@ -5,7 +5,7 @@ import { z } from 'zod';
 // dispatch-time branch is just a slug of the raw issue (often the framing, or a
 // bare issue number), so this is how a run ends up with a name that says what the
 // change does. Keyed on the caller's card id; only works for a session in a
-// wrangler-created worktree. Mirrors workflow-phase.js shape.
+// worktree created by Agent Wrangler. Mirrors workflow-phase.js shape.
 export const nameBranchTool = {
   name: 'name_branch',
   description:
@@ -13,7 +13,7 @@ export const nameBranchTool = {
     + 'you\'re building. The dispatch-time branch is a placeholder slug of the raw issue — rename it '
     + 'to 2–4 kebab-case words that say what the change does, e.g. "fix-login-redirect" or '
     + '"add-csv-export". Call it once, early (in the plan phase, before pushing). Only works for a '
-    + 'session running in a wrangler-created git worktree, or at a location that was given a '
+    + 'session running in a git worktree created by Agent Wrangler, or at a location that was given a '
     + 'branch, where it records the new name and tells you the `git branch -m` to run in your clones. '
     + 'Returns the final branch name '
     + '(auto-suffixed with -2, -3… if that name already existed).',

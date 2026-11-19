@@ -74,8 +74,8 @@ test('sessionLabel uses the intent when no explicit name is set (was falling to 
 
 test('sessionLabel prefers the live Claude title over intent and summary', () => {
   assert.equal(
-    sessionLabel({ names: [], liveTitle: 'Auto-set wrangler title', intent: 'dispatched intent', summary: 'a summary', cwd: CWD }),
-    'Auto-set wrangler title',
+    sessionLabel({ names: [], liveTitle: 'Auto-set Agent Wrangler title', intent: 'dispatched intent', summary: 'a summary', cwd: CWD }),
+    'Auto-set Agent Wrangler title',
   );
 });
 
@@ -195,7 +195,7 @@ test('sessionLabel ignores a poisoned cached lastLabel (auto agent-name) in the 
 
 test('sessionLabel still lets an explicit human name win over the live Claude title', () => {
   assert.equal(
-    sessionLabel({ names: ['My renamed session'], liveTitle: 'Auto-set wrangler title', intent: 'x', cwd: CWD }),
+    sessionLabel({ names: ['My renamed session'], liveTitle: 'Auto-set Agent Wrangler title', intent: 'x', cwd: CWD }),
     'My renamed session',
   );
 });

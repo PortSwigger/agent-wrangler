@@ -27,7 +27,7 @@ and `pick` to check a candidate against the whole installed-agent front. Auto
 uses the model's reported effort; `scored: false` means there is no benchmark
 verdict. Apply the task's capability needs and the user's model exclusions.
 
-**Choose `model` deliberately for the task — don't just accept whatever inherits or defaults.** Match the model to what the work actually needs: bounded, mechanical work (a rebase, reading logs, a small fix with a clear spec) doesn't need a frontier model; a genuinely hard, ambiguous, or high-stakes problem does. The `(default)` markers in the generated table below are just the wrangler's fallback when `model` is left unset — not a recommendation — so pick explicitly rather than relying on them.
+**Choose `model` deliberately for the task — don't just accept whatever inherits or defaults.** Match the model to what the work actually needs: bounded, mechanical work (a rebase, reading logs, a small fix with a clear spec) doesn't need a frontier model; a genuinely hard, ambiguous, or high-stakes problem does. The `(default)` markers in the generated table below are just Agent Wrangler's fallback when `model` is left unset — not a recommendation — so pick explicitly rather than relying on them.
 
 **Pass `model` explicitly whenever you spawn the *other* agent.** The "inherit
 your own model" default only fires when the new session runs the same agent as
@@ -40,7 +40,7 @@ only within the same agent), or pass one of the levels listed below for that
 agent. The levels differ per provider, so an inherited one is never carried
 across a cross-agent spawn.
 
-The table below is **generated from the wrangler's agent adapters**, so it is the
+The table below is **generated from Agent Wrangler's agent adapters**, so it is the
 same list the tool validates against; an invalid `model` or `agent` is rejected
 before launch with an error naming the valid options. Don't hand-edit it — change
 `server/agents/*.js` and run `npm run gen:models`.
@@ -76,7 +76,7 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `gemini-3.1-flash-lite` — Gemini 3.1 Flash-Lite
 - `gemini-3.5-flash` — Gemini 3.5 Flash
 
-The running wrangler's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
+The running Agent Wrangler server's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
 
 <!-- END GENERATED MODELS -->
 
@@ -100,11 +100,11 @@ have no Remote Control option.
 
 A Codex session runs under Codex's own OS sandbox (`--sandbox workspace-write`,
 approvals off). It can read anywhere, but it can only **write** to: its cwd, `/tmp`
-and `$TMPDIR`, its wrangler memory dir, and each `add_dirs` entry. A blocked write
+and `$TMPDIR`, its Agent Wrangler memory dir, and each `add_dirs` entry. A blocked write
 fails on the spot with `Operation not permitted` — there is no approval prompt to
 fall back on. Claude sessions have no such sandbox; none of this applies to them.
 
-The wrangler grants the repo's git-dir automatically — the main checkout's `.git`,
+Agent Wrangler grants the repo's git-dir automatically — the main checkout's `.git`,
 whether cwd is a plain checkout or a linked worktree (pre-existing or created via
 `worktree: true`) — so `git commit`/`push` work without any `add_dirs`.
 

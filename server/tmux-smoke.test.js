@@ -36,7 +36,7 @@ async function waitForMarkerInPane(tmuxArgs, session, marker, deadlineMs = 5000)
 // suite mocks tmux, so this is the only test that would catch tmux itself being
 // absent/broken, or node-pty failing to spawn against it, on a given platform.
 // Runs on a test-scoped socket so it can never collide with (or leak into) a real
-// wrangler instance's sessions.
+// Agent Wrangler instance's sessions.
 test('tmux + node-pty: paste-buffer lands in the pane, and a real pty attach observes it', async () => {
   const socket = `aw-smoke-${crypto.randomBytes(4).toString('hex')}`;
   const session = 'smoke';

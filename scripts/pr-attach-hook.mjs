@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// PostToolUse hook (matcher: Bash) injected into wrangler-launched Claude
-// sessions via `claude --settings`. A pure passive observer: it reads the hook
+// PostToolUse hook (matcher: Bash) injected into Claude sessions launched by
+// Agent Wrangler via `claude --settings`. A pure passive observer: it reads the hook
 // payload on stdin, and if the agent just ran `gh pr create` and a PR url is in
 // the output, it
-//   - POSTs it to the wrangler so the PR attaches to THIS session's card
+//   - POSTs it to Agent Wrangler so the PR attaches to THIS session's card
 //     (identity from $AW_SESSION_TOKEN, inherited from the launch env);
 //   - starts scripts/pr-model-footer.mjs detached, which tags the PR body with
 //     the session's model. Detached so the gh round trips never delay the tool

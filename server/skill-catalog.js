@@ -25,7 +25,7 @@ export const SKILLS_ROOT = path.join(AGENT_SKILLS_PLUGIN_DIR, 'skills');
 // lines. Avoids a YAML dependency — the only fields we need are simple scalars on
 // their own line. Returns null when there is no parseable name. Deliberately
 // reads only the two fields Anthropic's skill format defines — SKILL.md stays a
-// portable, standard skill definition; wrangler-specific config never lives here
+// portable, standard skill definition; config specific to Agent Wrangler never lives here
 // (see readNudge below).
 function readFrontmatter(file) {
   let text;
@@ -42,9 +42,9 @@ function readFrontmatter(file) {
   return { name, description: field('description') };
 }
 
-// Wrangler-specific per-skill config lives in a sidecar WRANGLER.md next to
+// Per-skill config specific to Agent Wrangler lives in a sidecar WRANGLER.md next to
 // SKILL.md, never inside the skill's own frontmatter — "must be force-injected
-// at launch" is a wrangler orchestration decision, not skill content, and a
+// at launch" is an Agent Wrangler orchestration decision, not skill content, and a
 // sidecar keeps it colocated with the skill it modifies (renaming a skill dir
 // can't drift it out of sync, unlike a name-keyed registry elsewhere). Its raw
 // (trimmed) content IS the nudge text; the file's mere presence marks a skill

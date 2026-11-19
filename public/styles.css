@@ -1690,8 +1690,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 }
 /* Live "agent team" spine: the lead's team members, each a full Claude in its own
    pane of the lead's tmux session. Same connector layout/language as .child-spine
-   (neutral --border line, reuses .worker-row rows) — a team member is NOT a
-   wrangler session, so its row (.worker-row.team-row) carries no data-sid, isn't
+   (neutral --border line, reuses .worker-row rows) — a team member is NOT an
+   Agent Wrangler session, so its row (.worker-row.team-row) carries no data-sid, isn't
    draggable, and opens no card menu (see cards.js teammateRowHtml, app.js). */
 .team-spine {
   --line-color: var(--border);

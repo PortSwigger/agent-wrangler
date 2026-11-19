@@ -535,7 +535,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
       ...extWiring,
     }));
     // What it declared under `telemetry`, checked and normalised by the loader.
-    // A builtin's events carry the wrangler's version; an installed one's its own.
+    // A builtin's events carry Agent Wrangler's version; an installed one's its own.
     if (e.telemetry?.events) telemetry.registerEmitter(id, { version: e.version || (e.external ? '0.0.0' : VERSION), events: e.telemetry.events });
     // Core's `spawner` list follows the extensions present.
     coreTelemetry.register();
@@ -1509,7 +1509,7 @@ async function refreshNextStaleSession() {
 
 controlWss.on('connection', (ws) => {
   lastControlActivity = Date.now();
-  // `canRestart` gates the board's own "Restart the wrangler" button: a restart
+  // `canRestart` gates the board's own "Restart Agent Wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
   // Announcements reach the board as events, then the state stream follows. A
@@ -1603,7 +1603,7 @@ async function main() {
     }
     throw err;
   }
-  // Refuse to start if another wrangler already owns this DATA_DIR — a second
+  // Refuse to start if another Agent Wrangler already owns this DATA_DIR — a second
   // instance would clobber tasks.json/mappings.json with its own stale snapshot
   // (the "sessions unassigned / deleted tasks reappear on restart" bug). Acquired
   // before any store write (init/rebuild) so a duplicate never gets a save in.

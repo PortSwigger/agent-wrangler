@@ -22,9 +22,9 @@ const clean = { tmux: 'cc_abc', sessionId: 's1', status: 0, archived: false };
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 // Scratch dirs for folderless dispatches must live under the data dir, NOT inside
-// the wrangler checkout. readBranch walks up to the nearest enclosing repo, so a
-// scratch dir inside the source tree made every blank-cwd session report the
-// wrangler's own branch — the "branch bleeding between sessions" bug.
+// Agent Wrangler checkout. readBranch walks up to the nearest enclosing repo, so a
+// scratch dir inside the source tree made every blank-cwd session report
+// Agent Wrangler's own branch — the "branch bleeding between sessions" bug.
 test('scratch SESSIONS_DIR follows DATA_DIR (defaulting to ~/.agent-wrangler)', () => {
   assert.equal(SESSIONS_DIR, path.join(DATA_DIR, 'sessions'));
   if (!process.env.AW_DATA_DIR) {
@@ -1862,12 +1862,12 @@ test('renameWorktreeBranch renames the git branch and syncs entry.worktree.branc
   assert.ok(saved >= 1);
 });
 
-test('renameWorktreeBranch throws for a session with no wrangler-created worktree', async () => {
+test('renameWorktreeBranch throws for a session with no worktree created by Agent Wrangler', async () => {
   const sm = new SessionManager();
   sm.map.clear();
   sm._save = () => {};
   sm.map.set('CARD2', { short: 'b', tmux: 'cc_b', createdAt: 1 });
-  await assert.rejects(() => sm.renameWorktreeBranch('CARD2', 'whatever'), /no wrangler-created worktree/);
+  await assert.rejects(() => sm.renameWorktreeBranch('CARD2', 'whatever'), /no worktree created by Agent Wrangler/);
   await assert.rejects(() => sm.renameWorktreeBranch('nope', 'whatever'), /Unknown session/);
 });
 
@@ -3258,7 +3258,7 @@ test('syncNotesToContainer: docker cp -L notes for a live devcontainer session; 
   assert.ok(cps[0].join(' ').includes('/host/notes cid1:/tmp/aw-d/launch-dirs/0')); // into the same place launch put it
 });
 
-// The git-dir grant keys off the LAUNCH CWD, not off a wrangler-made worktree
+// The git-dir grant keys off the LAUNCH CWD, not off a worktree made by Agent Wrangler
 // entry: a Codex worker handed a pre-existing linked worktree as plain `cwd`
 // (no `worktree` field on its entry) has exactly the same sandbox problem, and
 // so does a plain checkout — Codex keeps `<root>/.git` read-only inside every

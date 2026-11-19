@@ -1,12 +1,12 @@
 ---
 name: session-activity
-description: Use when asked "what did I actually work on on date X" (standup notes, a weekly summary, "what did I do yesterday") and Agent Wrangler sessions are in scope — how to call the get_session_activity MCP tool, the source of truth for wrangler activity, for precise transcript-backed per-day detail instead of hand-parsing mappings.json/transcripts.
+description: Use when asked "what did I actually work on on date X" (standup notes, a weekly summary, "what did I do yesterday") and Agent Wrangler sessions are in scope — how to call the get_session_activity MCP tool, the source of truth for Agent Wrangler activity, for precise transcript-backed per-day detail instead of hand-parsing mappings.json/transcripts.
 ---
 
 # Session activity
 
 Use the `get_session_activity` MCP tool to answer "what did I work on on date X"
-for **Agent Wrangler sessions** — directly from the wrangler's own records, no
+for **Agent Wrangler sessions** — directly from Agent Wrangler's own records, no
 manual `mappings.json`/transcript spelunking required.
 
 ## Calling the tool
@@ -17,7 +17,7 @@ get_session_activity({ date: "2026-07-01", endDate: "2026-07-03" })
 ```
 
 `date`/`endDate` are `YYYY-MM-DD`, inclusive, interpreted in this machine's local
-timezone (the wrangler runs on your own Mac, so that's the timezone you mean).
+timezone (Agent Wrangler runs on your own Mac, so that's the timezone you mean).
 For each session with any transcript activity in range it returns session id,
 label, task, cwd, agent, whether it's archived, message count that day, and the
 first/last activity timestamp. Sessions are sorted newest-activity-first.
@@ -32,12 +32,12 @@ each is read via its own transcript format.
 This is the source of truth for **Agent Wrangler session activity only** — it
 won't tell you about anything else that day (docs, Slack, unrelated coding).
 For a full "what did I do" picture, other sources (e.g. browser history) still
-matter for everything outside the wrangler.
+matter for everything outside Agent Wrangler.
 
 If you're also looking at browser history for the same day, `localhost:<port>`
-entries (`AW_PORT`, default `7878`) are wrangler board URLs
+entries (`AW_PORT`, default `7878`) are Agent Wrangler board URLs
 (`localhost:<port>/#session=<id>`) — they're already covered by this tool, so
-there's no need to resolve them individually from history; for wrangler
+there's no need to resolve them individually from history; for Agent Wrangler
 sessions specifically this tool is also more complete than a browser tab ever
 could be, since it captures headless/API-driven work and autopilot runs where
 no tab was ever open.

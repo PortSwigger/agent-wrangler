@@ -4,7 +4,7 @@ import { adapterFor } from '../../agents/index.js';
 const DAY_MS = 86_400_000;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-// Local-day boundaries (this machine's timezone — the wrangler runs on the
+// Local-day boundaries (this machine's timezone — Agent Wrangler runs on the
 // user's own Mac, so that's the timezone the user means by "date X").
 function dayRangeMs(date, endDate) {
   const startMs = new Date(`${date}T00:00:00`).getTime();

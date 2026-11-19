@@ -45,7 +45,7 @@ export function createTerminalImagePaste({ send, toast, frameOf = sourceToFrame,
         });
         if (!send({ type: 'paste-image', sessionId, token, intoPane: true, ...frame, ...(card ? { card } : {}) })) {
           pending.delete(token);
-          toast('Not connected to the wrangler — try again in a moment.', true);
+          toast('Not connected to Agent Wrangler — try again in a moment.', true);
           return;
         }
         await replied;

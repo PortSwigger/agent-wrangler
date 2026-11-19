@@ -229,7 +229,7 @@ test('an installed extension whose on-disk commit differs from the running one s
     const stale = { ...INSTALLED, restartPending: true, installedSha: '99999999aaaa' };
     const all = texts(detailOf(showing(stale)));
     assert.ok(all.includes('Running') && all.includes('abcdef01'));
-    assert.ok(all.some((t) => t.includes('99999999') && t.includes('restart the wrangler to load it')));
+    assert.ok(all.some((t) => t.includes('99999999') && t.includes('restart Agent Wrangler to load it')));
     assert.ok(texts(showing(stale)).some((t) => t.includes('installed version differs from the running one')));
     assert.equal(texts(showing(INSTALLED)).some((t) => t.includes('differs from the running one')), false);
   });
@@ -275,7 +275,7 @@ test('hostile third-party strings are inert text, not markup', () => {
 test('an uninstalled extension says so in its detail, with nothing left to toggle or uninstall', () => {
   withDom(() => {
     const detail = detailOf(showing(WITH_SETTINGS, { pendingRemoval: ['notes'] }));
-    assert.ok(texts(detail).some((t) => /Uninstalled\. .*stays in memory until the wrangler restarts/.test(t)));
+    assert.ok(texts(detail).some((t) => /Uninstalled\. .*stays in memory until Agent Wrangler restarts/.test(t)));
     assert.equal(byClass(detail, 'setting-toggle').length, 0);
     assert.equal(byClass(detail, 'ext-btn-danger').length, 0);
     assert.equal(byClass(detail, 'ext-setting-row').length, 0, 'nothing left to configure');
@@ -618,10 +618,10 @@ test('a quarantined control sends nothing even if something manages to click it'
 test('a finished update that waits on a restart says so above the detail pane', () => {
   withDom(() => {
     const panel = extensionsPanelEl({
-      entries: [], pendingInstall: 'notes', progress: 'Installed notes. Restart the wrangler to finish.',
+      entries: [], pendingInstall: 'notes', progress: 'Installed notes. Restart Agent Wrangler to finish.',
       canRestart: true,
     });
-    assert.ok(texts(panel).includes('Installed notes. Restart the wrangler to finish.'));
+    assert.ok(texts(panel).includes('Installed notes. Restart Agent Wrangler to finish.'));
   });
 });
 
@@ -657,7 +657,7 @@ test('the uninstall confirmation promises no data retention and only claims live
   // boot snapshot left to consult.
   const live = uninstallBodyText({ ...INSTALLED, enabled: true });
   assert.match(live, /files are removed/);
-  assert.match(live, /keeps running until the wrangler restarts/);
+  assert.match(live, /keeps running until Agent Wrangler restarts/);
   assert.doesNotMatch(live, /reinstalling picks it back up/);
   // Turned off or quarantined: there is no running code for a restart to clear,
   // and saying there is was simply wrong.
@@ -686,7 +686,7 @@ test('the consent modal leads with the trust statement, then capabilities, then 
     assert.ok(all.includes('tasks:read'));
     assert.ok(all.some((t) => /1 direct, plus 11 further packages/.test(t)));
     // `--ignore-scripts` is stated as a mitigation, never as a boundary.
-    assert.ok(all.some((t) => /install scripts disabled/.test(t) && /still runs inside the wrangler/.test(t)));
+    assert.ok(all.some((t) => /install scripts disabled/.test(t) && /still runs inside Agent Wrangler/.test(t)));
     for (const node of walk(body)) assert.equal(node._html, null);
   });
 });
@@ -765,7 +765,7 @@ test('updateStatusText distinguishes behind, current, unreachable and provenance
   assert.equal(updateStatusText(null), '');
 });
 
-test('an update offers Update & restart first only where the wrangler can restart itself', () => {
+test('an update offers Update & restart first only where Agent Wrangler can restart itself', () => {
   const update = { update: true };
   assert.deepEqual(consentButtonLabels(update, true), { ok: 'Update & restart', later: 'Update without restarting' });
   assert.deepEqual(consentButtonLabels({ ...update, reconsentNeeded: true }, true), { ok: 'Approve, update & restart', later: 'Update without restarting' });
@@ -787,7 +787,7 @@ test('progress never claims an install happened before consent ran', () => {
   assert.match(progressText('done', { id: 'notes' }), /Installed notes and live\./);
   assert.match(progressText('done', { id: 'notes' }), /pick up its tools when they next resume/);
   assert.doesNotMatch(progressText('done', { id: 'notes' }), /Restart/);
-  assert.match(progressText('done', { id: 'notes', restartRequired: true }), /Installed notes\. Restart the wrangler to finish\./);
+  assert.match(progressText('done', { id: 'notes', restartRequired: true }), /Installed notes\. Restart Agent Wrangler to finish\./);
   assert.match(progressText('cancelled'), /Nothing was installed/);
   assert.match(progressText('failed', { message: 'no lockfile' }), /Failed: no lockfile/);
   assert.equal(progressText('disclosed'), '', 'the modal speaks for this phase');

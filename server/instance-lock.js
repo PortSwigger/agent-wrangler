@@ -4,7 +4,7 @@ import path from 'node:path';
 import { DATA_DIR } from './data-dir.js';
 import { logWarn } from './log.js';
 
-// Exactly one wrangler may write a given DATA_DIR. Two instances sharing
+// Exactly one Agent Wrangler may write a given DATA_DIR. Two instances sharing
 // ~/.agent-wrangler each hold an independent in-memory TaskStore/SessionManager
 // loaded once at startup, and each persists its WHOLE snapshot on every save
 // (control actions, the PR poll's updateLinkStatus, reconcileSuspend,

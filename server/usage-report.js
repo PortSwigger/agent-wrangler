@@ -416,7 +416,7 @@ function resolveClaudeTranscript(cardId, entry, index, projectsDir) {
 
 // Every transcript this card has owned, current conversation first. A card owns more
 // than one as soon as its agent runs `/clear`: that abandons the running conversation
-// and starts a fresh id in the same pane, and the wrangler records the outgoing id in
+// and starts a fresh id in the same pane, and Agent Wrangler records the outgoing id in
 // `priorLiveSessionIds` (session-manager `noteLiveSessionId`). An abandoned transcript
 // still holds every dollar spent before the clear, so cost them all — omitting one
 // doesn't merely under-report the dashboard, it keeps the file out of seenClaudeFiles

@@ -107,7 +107,7 @@ function spawnWorktree(worktree) {
 }
 
 // Absolute only, because that is all `--add-dir` means: a relative grant would
-// resolve against the wrangler's cwd, never the session's, so it would grant
+// resolve against Agent Wrangler's cwd, never the session's, so it would grant
 // something nobody asked for. Existence is dispatch's business (and the
 // adapter's), not the façade's.
 // A runtime id, checked for existence here so a typo is refused by name;
@@ -330,7 +330,7 @@ const sessionsSpawn = ({ id, core, deliverFirstPrompt: deliver = deliverFirstPro
       // worktree record is READ BACK off the entry rather than returned by
       // dispatch, in the same shape `sessions:read` reports it — without it an
       // extension that asked for a worktree has no way to learn the branch and
-      // path the wrangler settled on.
+      // path Agent Wrangler settled on.
       return { ...result, worktree: deepFreeze(worktreeSummary(core.sessionManager.entryFor(result.sessionId)?.worktree)) };
     },
   },
