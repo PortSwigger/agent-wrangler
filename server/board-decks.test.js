@@ -58,3 +58,22 @@ test('a hand-edited file is read back into a valid list', () => {
   assert.equal(decks[1].name.length, 40);
   assert.match(decks[1].colour, /^#[0-9a-f]{6}$/);
 });
+
+test('cloud registration is restricted to the configured gateway and reuses the saved entry', () => {
+  const file = tmpFile();
+  const cloudGateway = 'https://decks.example.com';
+  const op = { op: 'register-cloud', gateway: cloudGateway };
+  assert.ok(createBoardDecks({ file }).apply(op).error);
+  const store = createBoardDecks({ file, cloudGateway });
+  assert.ok(store.apply({ ...op, gateway: 'https://other.example.com' }).error);
+  const manual = store.apply({ op: 'add', url: cloudGateway, name: 'My deck' });
+  assert.equal(manual.decks[1].cloud, true);
+  assert.deepEqual(store.apply(op), manual);
+  const restored = createBoardDecks({ file, cloudGateway });
+  assert.deepEqual(restored.apply(op).decks, manual.decks);
+  restored.apply({ op: 'remove', id: manual.decks[1].id });
+  const first = restored.apply(op);
+  assert.equal(first.decks.length, 2);
+  assert.deepEqual(restored.apply(op), first);
+  assert.throws(() => createBoardDecks({ file, cloudGateway: cloudGateway + '/user' }), /origin/);
+});

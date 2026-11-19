@@ -335,3 +335,22 @@ test('deckOfferSummary: the startup pick, else every runtime, each with why it c
   assert.equal(picked.runtimes[1].id, 'gone');
   assert.match(picked.runtimes[1].unavailable, /Not registered/);
 });
+
+test('reopening a saved cloud deck reads the current identity and drops disconnected session data', async () => {
+  const url = 'https://decks.example.com';
+  const descriptors = { [url]: desc('first', 'First') };
+  const net = network(descriptors);
+  const remotes = createRemoteDecks({ makeClient: net.makeClient, cache: { get: assert.fail, set: assert.fail } });
+  remotes.sync([{ id: 'saved', url, cloud: true }]);
+  await flush();
+  net.socketOf(url).receive(stateFrame([{ sessionId: 'example' }]));
+  assert.equal(remotes.list()[0].graph.sessions.length, 1);
+  net.socketOf(url).close();
+  assert.equal(remotes.list()[0].graph, null);
+  descriptors[url] = desc('second', 'Second');
+  remotes.reopen('saved');
+  await flush();
+  await net.runTimers();
+  assert.deepEqual(remotes.list().map((d) => [d.id, d.deckId]), [['saved', 'second']]);
+  assert.equal(net.sockets.filter((s) => s.readyState === 1).length, 1);
+});

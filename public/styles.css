@@ -3947,6 +3947,8 @@ a.ext-row-origin { color: var(--blue-fg); }
 .deck-status { flex: 0 0 auto; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-muted); }
 .deck-status.ready { color: #3fae6a; border-color: #3fae6a; }
 .deck-status.incompatible, .deck-status.unreachable { color: #d64f6a; border-color: #d64f6a; }
+.deck-cloud { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--border-muted); }
+.deck-cloud .setting-help { margin: 0; }
 .deck-add { display: flex; gap: 8px; align-items: center; }
 .deck-add input[type="text"] { flex: 1 1 auto; min-width: 0; }
 .deck-add button, .deck-row button { flex: 0 0 auto; white-space: nowrap; }

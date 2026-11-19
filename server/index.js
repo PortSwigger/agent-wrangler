@@ -1241,6 +1241,7 @@ const deckServer = createDeckServer({
 // extensions alone — so a disabled extension's client is a 404, never served.
 const boardDecks = createBoardDecks({
   file: path.join(DATA_DIR, 'board-decks.json'),
+  cloudGateway: process.env.AW_CLOUD_DECK_GATEWAY,
   onChange: (snapshot) => boardServer.announceDecks(snapshot),
 });
 const boardServer = createBoardServer({
