@@ -1,9 +1,9 @@
 ---
 name: cost-report
-description: Use when asked to report, audit, or break down agent-wrangler token/cost spend — per calendar month, by task, by model, or to find the most expensive sessions. Recomputes from on-disk transcripts, not the board's cached numbers.
+description: Use when asked to report, audit, or break down Agent Wrangler token/cost spend — per calendar month, by task, by model, or to find the most expensive sessions. Recomputes from on-disk transcripts, not the board's cached numbers.
 ---
 
-# Agent-wrangler cost report
+# Agent Wrangler cost report
 
 ## Overview
 
@@ -40,7 +40,7 @@ for further processing (including a `byType` block).
   stamped to `createdAt`. (Codex rollouts are the exception: they're attributed
   whole to their `createdAt` month, with estimated ChatGPT-plan pricing, marked
   `~`.)
-- **Transcript resolution mirrors the board, plus a fallback.** Agent-wrangler's
+- **Transcript resolution mirrors the board, plus a fallback.** Agent Wrangler's
   card id is decoupled from Claude's conversation uuid, so the transcript is
   found by `entry.liveSessionId` first, then the card id (legacy, when they
   coincide), then — if neither file exists — the lone `.jsonl` in the launch

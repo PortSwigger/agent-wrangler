@@ -676,7 +676,7 @@ dropped, because a sender was told it was queued.
 
 Shipped 2026-08-07 in Claude Code v2.1.224, i.e. **after this spec was drafted and on the
 version we already run**. Two tools, `ListAgents` and `SendMessage`. Verified directly:
-calling `ListAgents` from a wrangler-launched session lists our own `cc_*` sessions with
+calling `ListAgents` from a session launched by Agent Wrangler lists our own `cc_*` sessions with
 their tmux panes and live status. Docs: <https://code.claude.com/docs/en/cross-session-messaging>
 
 **Verdict: the mailbox concept survives intact; only the delivery leg is affected, and only
@@ -698,16 +698,16 @@ for one of three cases.** Do not adopt it as a replacement for `send_message`.
 
 | gap | consequence |
 |---|---|
-| **Claude-only** | Codex sessions can neither send nor receive. The wrangler supports both, so a fallback path is mandatory, not optional. |
+| **Claude-only** | Codex sessions can neither send nor receive. Agent Wrangler supports both, so a fallback path is mandatory, not optional. |
 | **Cannot reach a dormant session** | A dormant session has no process. Mail stays queued until it is explicitly resumed; this is the intended delivery contract. |
 | **Plain text only** | No structured payload, so mailbox metadata (id, size, read state) cannot ride the channel. Fine for a notification, useless for the mailbox itself. |
 | **Queue capped at 50, loop-throttled** | Its own semantics, overlapping ours; not a durable store. |
-| **Addressed by name, not card id** | The wrangler keys everything on card id. Needs `--name` at launch or a mapping. |
+| **Addressed by name, not card id** | Agent Wrangler keys everything on card id. Needs `--name` at launch or a mapping. |
 | **Platform/provider gated** | macOS + Linux only; unavailable on Bedrock/Vertex/Foundry; disabled outright if any of `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` / `DISABLE_TELEMETRY` / `DO_NOT_TRACK` / `DISABLE_GROWTHBOOK` turns off flag evaluation. |
 
 ### The inbound-approval trap — and its fix
 
-Wrangler sessions launch with **bypassed permissions**. The documented default for a
+Agent Wrangler sessions launch with **bypassed permissions**. The documented default for a
 receiving session that bypasses permission prompts is to **hold every message for the user's
 approval**, delivering only when the *sender* also identifies as bypassing. An external
 process (our Node server) asserts no permission class at all, so its messages would be held —
@@ -740,7 +740,7 @@ be paid once, with the loss-mode fix as the justification, not bundled into Phas
 
 The docs point to a separate feature, **[channels](https://code.claude.com/docs/en/channels)**,
 described as the way *"to push external events, such as CI results or chat messages, into a
-session"*. That is a closer description of the wrangler's actual role than session-to-session
+session"*. That is a closer description of Agent Wrangler's actual role than session-to-session
 messaging is. It was not investigated here and may be a better fit than `SendMessage` for
 server→agent delivery. **Investigate before implementing the transport swap.**
 

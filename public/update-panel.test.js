@@ -74,7 +74,7 @@ test('the drift notice leaves out versions it cannot tell apart, and says when t
 });
 
 const ext = (id, label, commits, extra = {}) => ({ id, label, sha: `${id}0`, remoteSha: `${id}1`, behind: true, commits, ...extra });
-const many = { extensions: [ext('jira', 'Jira links', 7), ext('w2', 'Agent Wrangler squared', 4), ext('slack', 'Slack digest', 1), { id: 'usage', behind: false }, { id: 'down', error: 'offline' }] };
+const many = { extensions: [ext('jira', 'Jira links', 7), ext('w2', 'Wrangler squared', 4), ext('slack', 'Slack digest', 1), { id: 'usage', behind: false }, { id: 'down', error: 'offline' }] };
 
 test('extension notices count only outdated extensions that were reached', () => {
   assert.deepEqual(outdatedExtensions(many).map((e) => e.id), ['jira', 'w2', 'slack']);

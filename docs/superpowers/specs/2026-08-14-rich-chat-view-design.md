@@ -12,7 +12,7 @@ anything that requires driving the agent's interactive TUI.
 ## Problem
 
 The only way to read a session today is `tmux attach` in an xterm. That is exactly
-right when you are *driving* an agent, and a poor fit for the wrangler's actual
+right when you are *driving* an agent, and a poor fit for Agent Wrangler's actual
 premise — that you were **not** watching. Terminal scrollback gives every byte equal
 weight: a 400-line `npm test` dump and the one paragraph explaining what the agent
 concluded are the same size, in the same font, in the same colour. Catching up on a

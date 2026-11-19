@@ -7,7 +7,7 @@ description: Use when implementing any agent-facing feature, adding launch flags
 
 ## Overview
 
-The wrangler supports three agents — **Claude**, **Codex** and **Gemini** (Google's Gemini CLI) —
+Agent Wrangler supports three agents — **Claude**, **Codex** and **Gemini** (Google's Gemini CLI) —
 behind a shared adapter registry (`server/agents/index.js`). Each agent has its own adapter file
 (`server/agents/claude.js`, `server/agents/codex.js`, `server/agents/gemini.js`) that owns
 command-building, process detection, live-state reading, and cost parsing. The shared machinery (graph reconciliation, card-id handling, tmux, `classify()`)
@@ -24,7 +24,7 @@ These are stable conceptual differences. For current mechanisms, read the adapte
 | Capability | Claude | Codex | Gemini |
 |---|---|---|---|
 | Hooks | PostToolUse/Bash hooks injected at launch | None — status is pane-scraped (working/idle only; no needs-you) | AfterTool (PR attach) and SessionStart hooks in the board's Gemini home settings; status is pane-scraped (working, needs-you, idle) |
-| Session ID | Preset before launch; wrangler knows it immediately | Discovered post-launch by polling the Codex sessions directory | Preset (`--session-id`) |
+| Session ID | Preset before launch; Agent Wrangler knows it immediately | Discovered post-launch by polling the Codex sessions directory | Preset (`--session-id`) |
 | MCP identity | Can send a custom header per request | Cannot set arbitrary headers; uses a bearer token from an env var | Custom header from settings, `$AW_SESSION_ID` expanded by Gemini |
 | System prompt injection | Dedicated CLI flag | Config key injected as a developer-role message | None: a SessionStart hook adds the instructions as `<hook_context>` (Gemini treats it as context, and the first turn of a launch with an intent can run before it lands) |
 | Skills delivery | Per-launch plugin dir (cwd-independent) | Text catalog injected at launch; skill files read on demand via absolute path | Text catalog in the SessionStart context, as Codex |

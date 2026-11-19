@@ -1,9 +1,9 @@
 ---
 name: run-dev
-description: Use when running agent-wrangler locally for debugging or feature work — spinning up an isolated instance, driving it (dispatch/fork/archive/resume), or testing changes without touching the live board.
+description: Use when running Agent Wrangler locally for debugging or feature work — spinning up an isolated instance, driving it (dispatch/fork/archive/resume), or testing changes without touching the live board.
 ---
 
-# Run an isolated agent-wrangler dev instance
+# Run an isolated Agent Wrangler dev instance
 
 ## Overview
 
