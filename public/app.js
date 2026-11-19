@@ -63,6 +63,7 @@ import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
 import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, deckPickerOptions, deckRuntimes, deckRunsAgent, sessionsOnDeck, scheduleActionForDeck, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
+import { connectCloudDeck } from './cloud-deck.js';
 import { mountDecksPanel } from './decks-panel.js';
 import { setLegacyReporter, withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
@@ -8258,8 +8259,10 @@ const remoteDecks = createRemoteDecks({
   onChange: () => { applyDecks(); remountDecksPanel(); refreshDeckPicker(); },
   onEvent: (deckId, frame) => onRemoteDeckMessage(deckId, frame.data),
 });
+let cloudConnection = null;
 const deckList = createDeckList({
-  onList: (list) => {
+  onList: (list, gateway) => {
+    if (gateway !== (cloudConnection?.gateway ?? null)) cloudConnection = gateway ? { gateway } : null;
     deckEntries = list;
     remoteDecks.sync(list);
     applyDecks();
@@ -8395,8 +8398,31 @@ function remountDecksPanel() {
   const el = document.getElementById('settings-decks');
   if (el) mountDecksPanel(el, decksPanelBridge);
 }
+async function connectConfiguredDeck() {
+  const attempt = cloudConnection;
+  if (!attempt || attempt.busy) return;
+  const saved = deckEntries.find((entry) => entry.cloud);
+  attempt.busy = true;
+  attempt.error = '';
+  const progress = (message) => { attempt.message = message; remountDecksPanel(); };
+  progress('Checking cloud deck access…');
+  try {
+    await connectCloudDeck(attempt.gateway, progress);
+    if (attempt === cloudConnection) await deckList.change({ op: 'register-cloud', gateway: attempt.gateway });
+  } catch (err) {
+    attempt.error = err.message;
+  } finally {
+    // A new gateway sign-in may represent a different developer at this URL.
+    if (saved && cloudConnection === attempt) remoteDecks.reopen(saved.id);
+    attempt.busy = false;
+    attempt.message = '';
+    remountDecksPanel();
+  }
+}
 const decksPanelBridge = {
   decks: boardDecks,
+  cloud: () => cloudConnection,
+  connectCloud: connectConfiguredDeck,
   change: (op) => deckList.change(op),
   toast,
 };

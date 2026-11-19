@@ -338,6 +338,14 @@ and decks never talk to each other.
 2. Open **Settings › Decks**, enter the deck's URL (for example `http://127.0.0.1:7890`) and an
    optional name, and press **Add deck**.
 
+For a managed cloud deck, start the board with `AW_CLOUD_DECK_GATEWAY` set to the gateway
+origin. The gateway must allow credentialed requests and WebSocket connections from the board's
+exact origin. Sign in to the gateway in the same browser, then choose **Settings › Decks →
+Connect cloud deck**. The gateway checks access and prepares the signed-in developer's namespace.
+Settings shows provisioning progress, then adds the ready deck to the board. **Retry cloud deck**
+checks access again after a refusal or service interruption. Reconnecting reuses the saved row,
+including its name and colour.
+
 The deck list is kept by the board server, so every browser on this board shows the same decks.
 The board's own deck is always first: you can rename and recolour it, but not remove it. Each row
 shows its connection: **Connecting**, **Ready**, **Incompatible** (its deck API version is one this

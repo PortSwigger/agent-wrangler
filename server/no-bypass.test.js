@@ -14,8 +14,11 @@ import { REPO_ROOT, browserTestSkipReason, findChrome, waitFor, startInstance, o
 // per-deck fixture's board half (server/multi-deck-extensions.test.js).
 const DECK_ROUTE = /^`\$\{(?:deckOrigin\(\)|origin\(\)|originForDeck\([\w.]+\))\.(http|ws)\}\/(deck|ws|pty)[?`]/;
 const BOARD_ROUTES = new Set(["'/api/styles'", "'/api/decks'", "'/api/decks/stream'"]);
-// Calls that never reach a deck, by file: a pasted image's own URL.
-const NOT_DECK = { [join('public', 'clipboard-images.js')]: ['source.url'] };
+// Calls outside the deck API: a pasted image and the configured provisioning gateway.
+const NOT_DECK = {
+  [join('public', 'clipboard-images.js')]: ['source.url'],
+  [join('public', 'cloud-deck.js')]: ["gateway + '/connect'", "gateway + '/status'"],
+};
 const CALL = /\b(fetch|fetchImpl|WebSocket|WebSocketImpl|EventSource|EventSourceImpl|sendBeacon|\.open)\(\s*/g;
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|^\s*import\s*)(['"])([^'"]+)\1/gm;
 

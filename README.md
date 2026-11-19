@@ -159,6 +159,7 @@ Environment variables:
 
 - `AW_PORT` (or legacy `PORT`) — port the board listens on, the address you open (default `7878`).
   `0` lets the OS pick it, and the deck's and session API's ports too unless set; the server logs the ports it bound
+- `AW_CLOUD_DECK_GATEWAY` — authenticated gateway origin, for example `https://decks.example.com`. Enables **Connect cloud deck** in **Settings › Decks**.
 - `AW_DECK_PORT` — loopback port the deck, which runs sessions, listens on (default `AW_PORT` + 1).
   `0` lets the OS pick it, and the session API's port too unless set
 - `AW_SESSION_API_PORT` — port launched sessions reach `/mcp` and the PR hooks on, each with its own

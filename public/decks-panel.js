@@ -94,17 +94,33 @@ function addForm(bridge) {
   return el('div', {}, el('div', { className: 'deck-add' }, url, name, add), error);
 }
 
+function cloudControls(cloud, bridge, decks) {
+  const saved = decks.some((deck) => deck.entry.cloud);
+  const button = el('button', { type: 'button', className: 'primary', disabled: Boolean(cloud.busy),
+    textContent: cloud.error ? 'Retry cloud deck' : saved ? 'Reconnect cloud deck' : 'Connect cloud deck' });
+  button.addEventListener('click', bridge.connectCloud);
+  return el('div', { className: 'deck-cloud' }, button, el('span', {
+    role: 'status', className: cloud.error ? 'deck-add-error' : 'setting-help',
+    textContent: cloud.error || cloud.message || new URL(cloud.gateway).host,
+  }));
+}
+
 // Rebuilds the panel, unless someone is typing in it: then only the status
 // chips move, so a half-typed name or URL is never wiped by a status change.
 export function mountDecksPanel(root, bridge) {
   if (!root) return;
   const decks = bridge.decks();
+  const cloud = bridge.cloud?.();
   const typing = root.contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
   const rows = [...root.querySelectorAll('.deck-row')];
   if (typing && rows.length === decks.length && rows.every((r, i) => r.dataset.id === decks[i].id)) {
     rows.forEach((r, i) => r.querySelector('.deck-status').replaceWith(statusChip(decks[i])));
+    const controls = root.querySelector('.deck-cloud');
+    if (cloud && controls) controls.replaceWith(cloudControls(cloud, bridge, decks));
+    else if (cloud) root.prepend(cloudControls(cloud, bridge, decks));
+    else controls?.remove();
     return;
   }
   const help = el('div', { className: 'setting-help', textContent: `Every deck here shows its sessions on this board, and each card\'s actions, terminal and files go to the deck it is on. A deck lets a board in only from an origin it allows: start it with --allowed-origins ${location.origin}.` });
-  root.replaceChildren(help, ...decks.map((d) => deckRow(d, bridge)), addForm(bridge));
+  root.replaceChildren(...(cloud ? [cloudControls(cloud, bridge, decks)] : []), help, ...decks.map((d) => deckRow(d, bridge)), addForm(bridge));
 }
