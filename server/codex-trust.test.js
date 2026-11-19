@@ -161,3 +161,26 @@ test('ensureCodexTrust: an unresolvable directory throws without writing config'
     assert.equal(fs.existsSync(file), false);
   });
 });
+
+// Codex rewrites the whole config.toml with literal-string keys, so a path this
+// module trusted as `[projects."/x"]` comes back as `[projects.'/x']`. Treating
+// those as different keys appended a duplicate that stopped codex loading.
+for (const spelling of [
+  (p) => `[projects.'${p}']`,
+  (p) => `[ projects . "${p}" ]  # trusted by codex`,
+  (p) => `  [projects.${JSON.stringify(p).replace(/\//g, '\\u002F')}]`,
+]) {
+  test(`ensureCodexTrust: an existing entry spelled ${JSON.stringify(spelling('/x'))} counts as trusted`, () => {
+    withCodexHome((home, file, repo) => {
+      const before = `model = 'example'\n\n${spelling(repo)}\ntrust_level = 'trusted'\n`;
+      fs.writeFileSync(file, before);
+      ensureCodexTrust(repo);
+      assert.equal(fs.readFileSync(file, 'utf8'), before);
+    });
+  });
+}
+
+test('hasDuplicateHeader: the same key spelled with literal and basic strings is a duplicate', () => {
+  assert.equal(hasDuplicateHeader(`[projects.'/a']\ntrust_level = 'trusted'\n\n[projects."/a"]\ntrust_level = "trusted"\n`), true);
+  assert.equal(hasDuplicateHeader(`[projects.'/a']\n[projects."/b"]\n[[skills.config]]\n[[skills.config]]\n`), false);
+});
