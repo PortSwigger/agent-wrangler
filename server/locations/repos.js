@@ -78,7 +78,7 @@ export function reposBrief(cwd, repos, { branch, base } = {}) {
   const lines = repoDirs(cwd, repos).map(({ repo, dir }) => `- ${repo}: git clone --filter=blob:none https://github.com/${repo}.git ${dir}`);
   const switchCmd = ['git switch -c', branch, base && `origin/${base}`].filter(Boolean).join(' ');
   const branching = branch
-    ? `In each clone, create and check out the branch \`${branch}\` off ${base ? `\`origin/${base}\`` : 'the default branch'} (\`${switchCmd}\`) before changing anything, and push only to that branch.`
+    ? `In each clone, create and check out the branch \`${branch}\` off ${base ? `\`origin/${base}\`` : 'the default branch'} (\`${switchCmd}\`) before changing anything.`
     : 'In each clone, create a new branch off the default branch before changing anything. Push and open pull requests as you normally would.';
   return [
     `Work in ${repos.length === 1 ? 'this GitHub repository' : 'these GitHub repositories'}. Clone ${repos.length === 1 ? 'it' : 'each one'} from GitHub first:`,
@@ -102,14 +102,14 @@ export function reposToAdd(have, added) {
 }
 
 // The mail telling a location session it can now reach `added`: where to clone
-// each one, and, on a card with a branch, that the branch is the only push.
+// each one and which working branch the card requested.
 export function addedReposMail(cwd, repos, added, { branch, lead = 'The human added' } = {}) {
   const one = added.length === 1;
   const dirs = repoDirs(cwd, repos).filter((r) => added.includes(r.repo));
   return [
     `${lead} ${added.join(', ')} to this session, and you can reach ${one ? 'it' : 'them'} from where you run now. Clone ${one ? 'it' : 'each one'} when you need ${one ? 'it' : 'them'}:`,
     ...dirs.map(({ repo, dir }) => `- ${repo}: git clone --filter=blob:none https://github.com/${repo}.git ${dir}`),
-    ...(branch ? [`To change one, create and check out \`${branch}\` in its clone (\`git switch -c ${branch}\`): it is the only branch you can push.`] : []),
+    ...(branch ? [`To change one, create and check out \`${branch}\` in its clone (\`git switch -c ${branch}\`).`] : []),
   ].join('\n');
 }
 

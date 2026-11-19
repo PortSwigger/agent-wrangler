@@ -47,7 +47,7 @@ test('the human adding a repo to a running card reaches the runtime before the s
     assert.deepEqual([b.mail[0].to, b.mail[0].from, b.mail[0].fromLabel], [sessionId, null, 'Agent Wrangler']);
     assert.match(b.mail[0].body, /^The human added acme\/gadgets to this session/);
     assert.match(b.mail[0].body, /git clone --filter=blob:none https:\/\/github\.com\/acme\/gadgets\.git \/srv\/location-only\/work\/box-1\/gadgets/);
-    assert.match(b.mail[0].body, /`fix-widget`.*the only branch you can push/);
+    assert.match(b.mail[0].body, /git switch -c fix-widget/);
     assert.deepEqual((await graphCard(sm, sessionId)).repos, ['acme/widgets', 'acme/gadgets']);
     assert.equal(b.rebuilt(), 1);
   });
