@@ -30,6 +30,11 @@ The dialog places task controls on the left and the model picker on the right, s
 narrow screens. **Intent / first prompt** starts at twelve rows and can be resized vertically.
 **Schedule a session** uses the same layout, with timing and action controls on the task side.
 Choose **Existing session** to show the target session and optional message instead of launch controls.
+To copy something off the board mid-draft, click **Minimise** (the − at the dialog's top right). The
+dialog collapses to a small card in the bottom left showing its title, the chosen task and the start
+of the prompt, and the board stays usable. Click the card, or **New session** again for the same task
+or no task, to reopen the draft exactly as you left it; the card's × discards it. Opening the dialog
+for a different task, or from a review or extension, starts a fresh draft instead.
 When a schedule starts, its notification shows the schedule name. For an unnamed schedule, it shows
 the target session's title, falling back to its short session id if no title is available.
 

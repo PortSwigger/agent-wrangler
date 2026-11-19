@@ -241,7 +241,12 @@
 
   <div id="modal" class="hidden">
     <div class="modal-card">
-      <h3 id="m-title">Dispatch a new session</h3>
+      <div class="modal-title-row">
+        <h3 id="m-title">Dispatch a new session</h3>
+        <!-- Collapses the dialog to #dispatch-minimized, keeping the draft, so the
+             human can go copy something off the board and come back. -->
+        <button type="button" id="m-minimize" class="modal-minimize" title="Minimise (keeps your draft)" aria-label="Minimise dialog"></button>
+      </div>
       <div id="m-dispatch-fields">
       <div class="dispatch-task-column">
       <!-- Scheduling-only "When" section, hidden in launch mode. The picker compiles
@@ -624,6 +629,17 @@
         <button id="settings-close" class="primary">Done</button>
       </div>
     </div>
+  </div>
+
+  <!-- The minimised dispatch dialog (#m-minimize): a small card in the bottom
+       left; clicking it reopens the dialog with the draft as it was left. -->
+  <div id="dispatch-minimized" hidden>
+    <button type="button" id="dm-restore" class="dm-restore" title="Reopen dialog">
+      <span class="dm-title" id="dm-title"></span>
+      <span class="dm-task" id="dm-task"></span>
+      <span class="dm-intent" id="dm-intent"></span>
+    </button>
+    <button type="button" id="dm-discard" class="dm-discard" title="Discard draft" aria-label="Discard draft"></button>
   </div>
 
   <div id="confirm-modal" class="hidden">
