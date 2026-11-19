@@ -100,6 +100,7 @@ import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } fro
 import { keybindings } from './keybindings.js';
 import { registerCoreBindings } from './core-keybindings.js';
 import { createSessionEmbed } from './session-embed.js';
+import { minimizedSummary, shouldRestoreMinimized } from './dispatch-minimize.js';
 
 let currentView = 'grid';
 
@@ -770,6 +771,9 @@ let autoCompactAgent = 'claude';
 let editingScheduleId = null; // the schedule being edited in 'schedule-edit' mode
 let subagentModalReq = null; // { sessionId, subagentId } — the in-flight fetch, to correlate its async reply
 let scheduleAction = 'dispatch'; // 'dispatch' | 'session' — a schedule's action kind
+// The dialog is minimised to #dispatch-minimized (see minimizeDispatch).
+let dispatchMinimized = false;
+const minimizedEl = document.getElementById('dispatch-minimized');
 let latestSchedules = { schedules: [] };
 let wtBranchEdited = false;
 let wtFolderEdited = false;
@@ -6588,6 +6592,7 @@ function syncModalChrome() {
   document.getElementById('m-dispatch-fields').classList.toggle('hidden', isSub);
   document.getElementById('m-session-fields').classList.add('hidden');
   document.getElementById('m-go').classList.toggle('hidden', isSub);
+  document.getElementById('m-minimize').classList.toggle('hidden', isSub);
   document.getElementById('m-quick-launch')?.classList.toggle('hidden', isSub);
   if (isSub) { document.getElementById('m-when').classList.add('hidden'); return; }
   const sched = scheduleMode();
@@ -6844,6 +6849,7 @@ function openDispatchExtFields(saved) {
 // field from the saved dispatch + picker; otherwise the form defaults as for a
 // launch, with the cwd defaulted from the target task's sessions.
 function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
+  hideMinimizedCard();
   modalMode = mode;
   editingScheduleId = schedule?.id || null;
   // The action kind (and its dispatch bag) come off schedule.action; a launch is
@@ -6955,6 +6961,10 @@ function taskDeckUnpickable(taskId) {
   return remoteDecks.entryFor(task.deckId)?.status === 'ready' ? null : (task.deckName || deckNameOf(task.deckId));
 }
 function openDispatch(taskId = null, opts = {}) {
+  if (shouldRestoreMinimized({ minimized: dispatchMinimized, mode: modalMode, draftTaskId: document.getElementById('m-task').value || null, taskId, opts })) {
+    restoreDispatch();
+    return;
+  }
   const unpickable = taskDeckUnpickable(taskId);
   if (unpickable) { toast(`${unpickable} is unreachable`, true); return; }
   const taskSel = document.getElementById('m-task');
@@ -7001,6 +7011,7 @@ function openScheduleEditor(schedule = null) {
 // field population — it's a distinct mode of the same #modal shell.
 function openSubagentModal(sessionId, subagentId) {
   if (!sessionId || !subagentId) return;
+  hideMinimizedCard();
   modalMode = 'subagent';
   subagentModalReq = { sessionId, subagentId };
   syncModalChrome();
@@ -7182,6 +7193,7 @@ function submitSchedule() {
 // Close #modal and reset to launch mode. If we were editing/creating a schedule,
 // the caller decides whether to reopen the panel.
 function closeModal() {
+  hideMinimizedCard();
   modal.classList.add('hidden');
   dispatchWaiter.close({ wasPending: wtPending });
   wtPending = false; setDispatchPending(false);
@@ -7197,6 +7209,52 @@ function cancelModal() {
   closeModal();
   if (reopen) openSchedulesPanel();
 }
+
+// Minimise: collapse the dialog to a small card (#dispatch-minimized) bottom-left
+// so the human can copy something off the board and come back. The form is only
+// hidden, never reset, so restoring shows it exactly as it was left. While
+// minimised #modal is .hidden, so every "is the dialog open" check (shortcuts,
+// board nav, submitDispatch) treats it as closed.
+function hideMinimizedCard() {
+  dispatchMinimized = false;
+  minimizedEl.hidden = true;
+}
+function minimizeDispatch() {
+  if (modal.classList.contains('hidden') || modalMode === 'subagent') return;
+  // A worktree/workflow launch awaiting its ack closes the dialog itself.
+  if (wtPending) return;
+  const taskSel = document.getElementById('m-task');
+  const s = minimizedSummary({
+    title: document.getElementById('m-title').textContent,
+    taskId: taskSel.value,
+    taskName: taskSel.options[taskSel.selectedIndex]?.textContent,
+    intent: scheduleMode() && scheduleAction === 'session'
+      ? document.getElementById('m-sch-message').value
+      : document.getElementById('m-intent').value,
+  });
+  document.getElementById('dm-title').textContent = s.title;
+  document.getElementById('dm-task').textContent = s.task || '';
+  const intentEl = document.getElementById('dm-intent');
+  intentEl.textContent = s.intent || 'No prompt yet';
+  intentEl.classList.toggle('empty', !s.intent);
+  modal.classList.add('hidden');
+  dispatchMinimized = true;
+  minimizedEl.hidden = false;
+}
+function restoreDispatch() {
+  if (!dispatchMinimized) return;
+  hideMinimizedCard();
+  modal.classList.remove('hidden');
+  const focus = scheduleMode()
+    ? document.getElementById(scheduleAction === 'session' ? 'm-sch-message' : 'm-intent')
+    : document.getElementById('m-intent');
+  focus?.focus();
+}
+document.getElementById('m-minimize').innerHTML = MINIMISE_ICON;
+document.getElementById('m-minimize').addEventListener('click', minimizeDispatch);
+document.getElementById('dm-discard').innerHTML = X_ICON;
+document.getElementById('dm-restore').addEventListener('click', restoreDispatch);
+document.getElementById('dm-discard').addEventListener('click', cancelModal);
 
 document.getElementById('new-session').addEventListener('click', () => openDispatch());
 // Seed --chat-font-size from the stored preference at startup. The terminal's

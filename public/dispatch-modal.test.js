@@ -1209,6 +1209,7 @@ function openDispatchHarness() {
     `const openModal = ({ taskId }) => { log.push(['openModal', taskId]); document.getElementById('m-cwd').value = '/task/default'; intentImages.reset(); };
      const additionalFolders = { reset: () => {} };
      const taskDeckUnpickable = () => null;
+     const shouldRestoreMinimized = () => false; const dispatchMinimized = false; const modalMode = 'launch';
      let parentSessionId = null; let reviewMode = false;
      const refreshWorktreeDefaults = () => log.push('refreshWorktreeDefaults');
      const syncWorktreeFields = () => log.push('syncWorktreeFields');
