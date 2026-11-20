@@ -6,7 +6,8 @@ It's also the channel agents use to coordinate with each other: spawning other a
 multi-agent workflows, handing off work, and messaging one another directly — so a fleet of agents can
 get on with it without you relaying every message by hand. It runs entirely on your own machine, under
 your control. Codex is offered as an agent automatically when the `codex` binary is on your `PATH`, and
-Google's Gemini CLI when `gemini` is (see [Gemini CLI sessions](docs/board-and-sessions.md#gemini-cli-sessions));
+Google's Gemini CLI when `gemini` is (see [Gemini CLI sessions](docs/board-and-sessions.md#gemini-cli-sessions)),
+and Google's Antigravity CLI when `agy` is (see [agy sessions](docs/board-and-sessions.md#agy-sessions));
 otherwise it behaves exactly as a Claude-only board.
 
 ## Highlights
@@ -363,9 +364,10 @@ Each of these stops every live session, but their cards survive, so resume them.
 
 - **State** is read through an adapter for each supported agent. Claude state and transcripts come
   from `~/.claude`; Codex rollouts come from `~/.codex/sessions`; Gemini conversations come from the
-  board's own Gemini home and `~/.gemini/tmp`. Agent Wrangler enriches them with live status, cost,
+  board's own Gemini home and `~/.gemini/tmp`; agy conversations come from
+  `~/.gemini/antigravity-cli/conversations`. Agent Wrangler enriches them with live status, cost,
   model, context-window, and sub-agent information.
-- **Dispatch** ("+ New session") starts the selected `claude`, `codex` or `gemini` command inside a detached
+- **Dispatch** ("+ New session") starts the selected `claude`, `codex`, `gemini` or `agy` command inside a detached
   tmux session. The app records the board-session, agent-conversation, and tmux mapping in
   `~/.agent-wrangler/mappings.json`.
 - **Jump in** attaches that tmux session in-browser via xterm.js over a WebSocket (`node-pty`

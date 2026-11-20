@@ -1440,7 +1440,7 @@ export class SessionManager {
     } else if (remote) {
       resumeId = await locationCodexId(runtime, prev, { since: discoveryFloor(prev), excludeIds: this._ownedLiveIds() });
     } else {
-      resumeId = await adapter.discoverLiveId({ cwd: dir, launchedAt: 0, mintedAfter: discoveryFloor(prev) });
+      resumeId = await adapter.discoverLiveId({ sessionId, cwd: dir, launchedAt: 0, mintedAfter: discoveryFloor(prev) });
     }
     if (!freshAfterUpdate && !resumeId) {
       throw new Error(remote
@@ -1569,6 +1569,7 @@ export class SessionManager {
     const refusal = relaunchRefusal(parentEntry) || launchRefusal(parentEntry?.runtime);
     if (refusal) throw new Error(refusal);
     const agent = parentEntry?.agent ?? 'claude';
+    if (typeof adapterFor(agent).buildFork !== 'function') throw new Error(`${adapterFor(agent).label} sessions can't be forked.`);
     if (parentEntry?.disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
     const spawnPayload = {
       spawnedBy: null, parentSession: parentId || null, spawner: null, agent,
@@ -1896,7 +1897,7 @@ export class SessionManager {
       const excludeIds = this._ownedLiveIds();
       const id = at
         ? await locationCodexId(at.rt, at.entry, { since: mintedAfter, excludeIds })
-        : await adapter.discoverLiveId({ cwd, launchedAt, mintedAfter, excludeIds });
+        : await adapter.discoverLiveId({ sessionId, cwd, launchedAt, mintedAfter, excludeIds });
       if (id) return id;
       await new Promise((r) => setTimeout(r, 150));
     }
