@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { agy, agyClassify, agyComposer, agyFooterModel, agyModeArgs, agyModelArgs, agySessionSettings } from './agy.js';
 import { adapterFor, effortError, launchTargetError, modelPillFor, providerMetadata, supportsRemoteControl } from './index.js';
@@ -17,16 +17,6 @@ import { sessionStart } from './agy-hook.js';
 import { messagesOf } from './agy-mcp-bridge.js';
 import { resolveHeadlessTarget } from '../headless.js';
 import { agyCostUsd } from '../pricing.js';
-
-// node:sqlite is built in from Node 22.5. On an older Node the tests that build a
-// conversation database skip, unless AW_REQUIRE_SQLITE says they must run.
-let DatabaseSync = null;
-try { ({ DatabaseSync } = createRequire(import.meta.url)('node:sqlite')); } catch { /* Node < 22.5 */ }
-const needsSqlite = DatabaseSync ? {} : { skip: 'node:sqlite needs Node 22.5+' };
-
-test('node:sqlite is present when AW_REQUIRE_SQLITE is set', () => {
-  assert.ok(DatabaseSync || !process.env.AW_REQUIRE_SQLITE, 'AW_REQUIRE_SQLITE is set but this Node has no node:sqlite');
-});
 
 const ID = '0c0cd5a7-f7aa-4713-9aca-ff89cba0cfb5';
 const T0 = Date.UTC(2026, 10, 20, 10, 0, 0);
@@ -154,7 +144,7 @@ test('the MCP bridge reads JSON and SSE replies', () => {
   assert.deepEqual(messagesOf('application/json', ''), []);
 });
 
-test('the database reads as settled steps, and the mirror only grows', needsSqlite, () => {
+test('the database reads as settled steps, and the mirror only grows', () => {
   const agyDir = tmp();
   const mirrorDir = tmp();
   const file = makeDb(agyDir, ID, [...CONVERSATION, step(15, { at: T0 + 5000, status: 2, reply: { text: 'still writing' } })]);
@@ -176,7 +166,7 @@ test('the database reads as settled steps, and the mirror only grows', needsSqli
   assert.match(fs.readFileSync(out, 'utf8').trim().split('\n').at(-1), /"rewindTo":1/);
 });
 
-test('chat view, search and usage read the mirror', needsSqlite, async () => {
+test('chat view, search and usage read the mirror', async () => {
   const agyDir = tmp();
   const mirrorDir = tmp();
   makeDb(agyDir, ID, CONVERSATION);
@@ -201,7 +191,7 @@ test('chat view, search and usage read the mirror', needsSqlite, async () => {
   assert.deepEqual(candidates.map((c) => [c.sessionId, c.cwd, c.agent]), [[ID, '/work/repo', 'agy']]);
 });
 
-test('without a board record the launch folder comes from agy\'s history, not the sorted workspaces', needsSqlite, () => {
+test('without a board record the launch folder comes from agy\'s history, not the sorted workspaces', () => {
   const agyDir = tmp();
   const memory = path.join(DATA_DIR, 'memory', 'scratch', 'card');
   makeDb(agyDir, ID, CONVERSATION, { workspaces: [BOARD_ROOT, memory, '/work/repo'] });
@@ -210,7 +200,7 @@ test('without a board record the launch folder comes from agy\'s history, not th
   assert.equal(conversationCwd(ID, { agyDir, idsDir: tmp() }), '/work/other');
 });
 
-test('discovery takes the hook record, else the newest conversation begun in the folder', needsSqlite, () => {
+test('discovery takes the hook record, else the newest conversation begun in the folder', () => {
   const agyDir = tmp();
   const idsDir = tmp();
   const cwd = tmp();
@@ -222,14 +212,6 @@ test('discovery takes the hook record, else the newest conversation begun in the
   assert.equal(discoverAgyLiveId({ sessionId: 'card', cwd, agyDir, idsDir, mintedAfter: Date.now() + 60_000 }), null);
   fs.writeFileSync(path.join(idsDir, 'card.json'), JSON.stringify({ conversationId: other, at: Date.now() }));
   assert.equal(discoverAgyLiveId({ sessionId: 'card', cwd, agyDir, idsDir }), other);
-});
-
-test('without node:sqlite a conversation reads as nothing rather than throwing', { skip: DatabaseSync ? 'node:sqlite is present' : false }, () => {
-  const agyDir = tmp();
-  fs.mkdirSync(path.join(agyDir, 'conversations'), { recursive: true });
-  const file = path.join(agyDir, 'conversations', `${ID}.db`);
-  fs.writeFileSync(file, '');
-  assert.equal(readConversation(file), null);
 });
 
 // Panes captured from agy 1.5.13 (paths shortened).

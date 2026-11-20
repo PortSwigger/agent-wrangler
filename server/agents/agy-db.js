@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { DATA_DIR } from '../data-dir.js';
 import { decode, msgAt, msgsAt, numAt, strAt, strsAt, timeAt } from './agy-proto.js';
@@ -44,22 +44,9 @@ export const BOARD_ROOT = path.join(AGY_DATA, 'root');
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isConversationId = (id) => ID_RE.test(String(id || ''));
 
-// node:sqlite is built in from Node 22.5. Loaded on first use with its
-// experimental warning silenced; null on an older Node, where agy's
-// conversations are simply not read.
-let sqlite;
-function databaseSync() {
-  if (sqlite !== undefined) return sqlite;
-  const emit = process.emitWarning;
-  process.emitWarning = (w, ...rest) => (/SQLite/i.test(String(w?.message ?? w)) ? undefined : emit.call(process, w, ...rest));
-  try { sqlite = createRequire(import.meta.url)('node:sqlite').DatabaseSync; } catch { sqlite = null; } finally { process.emitWarning = emit; }
-  return sqlite;
-}
-
 export function openDb(file) {
-  const Db = databaseSync();
-  if (!Db || !fs.existsSync(file)) return null;
-  try { return new Db(file, { readOnly: true }); } catch { return null; }
+  if (!fs.existsSync(file)) return null;
+  try { return new DatabaseSync(file, { readOnly: true }); } catch { return null; }
 }
 
 function withDb(file, fn) {

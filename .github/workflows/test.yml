@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 26
           cache: npm
 
       - run: sudo apt-get update && sudo apt-get install -y tmux
@@ -36,16 +36,6 @@ jobs:
         env:
           AW_BROWSER_TESTS: '1'
           AW_REQUIRE_BROWSER: '1'
-
-      # agy's conversation reader needs node:sqlite (Node 22.5+), so its tests skip on
-      # the Node 20 run above. Run them again on Node 22, where skipping fails.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - run: node --test --import ./server/test-setup.js server/agents/agy.test.js
-        env:
-          AW_REQUIRE_SQLITE: '1'
 
       - name: Verify systemd unit
         run: |

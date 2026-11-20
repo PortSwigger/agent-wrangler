@@ -102,7 +102,7 @@ includes example prompts for every built-in Agent Wrangler skill.
 
 ## Requirements
 
-- macOS or Linux, Node.js >= 20
+- macOS or Linux, Node.js >= 26
 - `tmux` (sessions launched through the app run inside named tmux sessions) — `brew install tmux`
   on macOS, `apt-get install tmux` (or your distro's equivalent) on Linux
 - `gh` (optional — PR auto-attach, check-watching, and auto-merge shell out to it; run
