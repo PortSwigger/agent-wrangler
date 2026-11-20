@@ -3,18 +3,25 @@ import assert from 'node:assert/strict';
 import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount, fetchPrDiff, fetchPrObservation, fetchUnresolvedThreads } from './pr-status.js';
 
 const runner = (stdout, code = 0) => async () => ({ code, stdout });
-const prRunner = (text) => {
+const prRunner = (text, isDraft = false) => {
   const [state, rollup, mergeStateStatus, reviewDecision, headRefOid] = text.replace(/\r?\n$/, '').split('\t');
   const statusCheckRollup = { passing: [{ conclusion: 'SUCCESS' }], failing: [{ conclusion: 'FAILURE' }],
     pending: [{ conclusion: '', status: 'IN_PROGRESS' }], none: [] }[rollup];
   return runner(JSON.stringify({ state, statusCheckRollup, mergeStateStatus, reviewDecision, headRefOid,
-    id: 'PR_42', createdAt: '2026-11-15T10:00:00Z', title: 'A change', number: 42, isDraft: false }));
+    id: 'PR_42', createdAt: '2026-11-15T10:00:00Z', title: 'A change', number: 42, isDraft }));
 };
 const metadata = { nodeId: 'PR_42', createdAt: '2026-11-15T10:00:00Z', title: 'A change', number: 42, isDraft: false };
 
 test('mergeStateStatus CLEAN with an all-green rollup is passing', async () => {
   assert.deepEqual(await fetchPrStatus('u', prRunner('OPEN\tpassing\tCLEAN\tAPPROVED\t293558cba987\n')),
     { ...metadata, mergeStateStatus: 'CLEAN', statusCheckRollup: [{ conclusion: 'SUCCESS' }], state: 'OPEN', checkStatus: 'passing', reviewDecision: 'APPROVED', dirty: false, headSha: '293558cba987' });
+});
+
+test('a draft remains unmergeable even with a green rollup and CLEAN merge state', async () => {
+  const draft = await fetchPrStatus('u', prRunner('OPEN\tpassing\tCLEAN\t\tsha\n', true));
+  assert.equal(draft.checkStatus, 'draft');
+  assert.equal((await fetchPrStatus('u', prRunner('OPEN\tpassing\tDRAFT\t\tsha\n'))).checkStatus, 'draft');
+  assert.equal((await fetchPrStatus('u', prRunner('OPEN\tfailing\tCLEAN\t\tsha\n', true))).checkStatus, 'failing');
 });
 
 test('REGRESSION: an all-green rollup but BLOCKED merge state is pending, not passing', async () => {
@@ -194,7 +201,7 @@ test('PR JSON preserves the complete observation and raw check rollup', async ()
   assert.equal(result.status.title, raw.title);
   assert.equal(result.status.isDraft, true);
   assert.equal(result.status.headSha, 'head');
-  assert.equal(result.status.checkStatus, 'pending');
+  assert.equal(result.status.checkStatus, 'draft');
   assert.equal(result.status.mergeStateStatus, 'BLOCKED');
   assert.deepEqual(result.status.statusCheckRollup, raw.statusCheckRollup);
 });

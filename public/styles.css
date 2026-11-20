@@ -2336,6 +2336,7 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .pr-passing { background: var(--green); }
 .pr-failing { background: var(--red); }
 .pr-pending { background: var(--snooze); }
+.pr-draft { background: var(--fg-subtle); }
 /* CI green but blocked on a review (informational, --blue) vs changes requested
    — an action item like a failure, given its own hue (--purple) so it reads
    distinct from a red check failure. */

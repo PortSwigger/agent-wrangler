@@ -40,8 +40,8 @@ let checksSeeded = false;
 
 // A checkStatus is *notifiable* when it's a state worth nudging the agent/board
 // about: mergeable (`passing`), broken (`failing`), or review-blocked
-// (`awaiting-review`/`changes-requested`). `pending`/`none` are in-flight and
-// stay silent — so we never fire a premature "passed".
+// (`awaiting-review`/`changes-requested`). Pending checks, absent checks and
+// drafts stay silent until there is a result to report.
 const NOTIFY = new Set(['passing', 'failing', 'awaiting-review', 'changes-requested']);
 
 // Rebuild the map from the current link set so removing and later re-attaching a

@@ -19,6 +19,7 @@ const VALID_REVIEW = new Set(['', 'APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUI
 // readiness word, in strict precedence:
 //  - a genuine FAILURE conclusion in the rollup is `failing` immediately, even
 //    before mergeStateStatus settles — real failures must notify promptly;
+//  - an open draft is `draft`, even when GitHub returns CLEAN;
 //  - otherwise `passing` ONLY when mergeStateStatus == CLEAN (the sole signal
 //    that knows about not-yet-reported required checks, reviews and base-ahead).
 //    `passing` therefore means genuinely *mergeable* and is the auto-merge gate;
@@ -29,8 +30,9 @@ const VALID_REVIEW = new Set(['', 'APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUI
 //  - an all-green-but-not-CLEAN PR with no review block (behind base / a required
 //    check not yet reported) stays `pending`, so we never fire a false "passed";
 //  - genuinely no checks stays `none` until a CLEAN state proves it mergeable.
-function deriveCheckStatus(rollup, mergeStateStatus, reviewDecision) {
+function deriveCheckStatus(rollup, mergeStateStatus, reviewDecision, isOpenDraft) {
   if (rollup === 'failing') return 'failing';
+  if (isOpenDraft) return 'draft';
   if (mergeStateStatus === 'CLEAN') return 'passing';
   if (reviewDecision === 'CHANGES_REQUESTED') return 'changes-requested';
   if (reviewDecision === 'REVIEW_REQUIRED' && rollup === 'passing') return 'awaiting-review';
@@ -59,10 +61,11 @@ export async function fetchPrObservation(url, run = defaultRun) {
     }
     const reviewDecision = VALID_REVIEW.has(raw.reviewDecision) ? raw.reviewDecision : '';
     const mergeStateStatus = raw.mergeStateStatus ?? '';
+    const isOpenDraft = raw.state === 'OPEN' && (raw.isDraft || mergeStateStatus === 'DRAFT');
     return { error: null, status: {
       nodeId: raw.id, createdAt: raw.createdAt, state: raw.state, title: raw.title, number: raw.number, isDraft: raw.isDraft,
       statusCheckRollup: raw.statusCheckRollup, mergeStateStatus, reviewDecision,
-      checkStatus: deriveCheckStatus(checkRollup(raw.statusCheckRollup), mergeStateStatus, reviewDecision),
+      checkStatus: deriveCheckStatus(checkRollup(raw.statusCheckRollup), mergeStateStatus, reviewDecision, isOpenDraft),
       dirty: mergeStateStatus === 'DIRTY', headSha: raw.headRefOid,
     } };
   } catch (err) {

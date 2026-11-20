@@ -30,6 +30,13 @@ test('failing→failing does not emit (no net transition)', () => {
   assert.deepEqual(diffCheckStatus([L('failing', { ownerId: 'c' })]), []); // failing→failing
 });
 
+test('a draft stays silent until GitHub reports it mergeable at the same head', () => {
+  const draft = L('draft', { ownerId: 'draft-pr' });
+  assert.deepEqual(diffCheckStatus([draft]), []);
+  const ready = { ...draft, checkStatus: 'passing' };
+  assert.deepEqual(diffCheckStatus([ready]), [ready]);
+});
+
 test('failing→passing (recovery) emits', () => {
   diffCheckStatus([L('failing', { ownerId: 'd' })]);   // baseline failing (first appearance, ignored)
   const events = diffCheckStatus([L('passing', { ownerId: 'd' })]);

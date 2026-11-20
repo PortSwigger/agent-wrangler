@@ -140,6 +140,7 @@ export const PR_DOT_TITLE = {
   passing: 'checks passed — ready to merge',
   failing: 'checks failing',
   pending: 'checks pending',
+  draft: 'draft pull request',
   'awaiting-review': 'checks passed — awaiting review',
   'changes-requested': 'changes requested',
 };
