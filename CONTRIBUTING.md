@@ -19,3 +19,7 @@ local test command.
 The CI Test job runs browser tests and explicitly sets `AW_BROWSER_TESTS=1`
 and `AW_REQUIRE_BROWSER=1` to fail if no
 browser is available.
+
+agy's conversation reader needs `node:sqlite` (Node 22.5+). On older Node its
+tests skip; CI runs `server/agents/agy.test.js` again on Node 22 with
+`AW_REQUIRE_SQLITE=1`, which fails rather than skips.
