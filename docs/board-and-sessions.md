@@ -125,6 +125,34 @@ its system prompt. A fork copies the conversation under a new id and resumes it;
 typed in once the copy has opened. A Gemini conversation started outside the board can be found in
 search but not resumed from a card.
 
+### agy sessions
+
+When Google's `agy` command (Antigravity CLI 1.5.13 or later) is on your `PATH`, **agy** joins the agent
+picker. The board's sessions use agy's own sign-in and your `modelProvider` setting as they are. With
+`"modelProvider": "gemini"` agy needs `GEMINI_API_KEY` in its environment: the board passes its own
+environment through, so the key has to be in the environment the board runs in (for the background
+service, its launchd or systemd unit), not only in your shell. Models are Gemini 4 Neon, Hydrogen, Carbon
+and Argon, Gemini 3.8 Flash and Gemini 3.1 Pro, each with the efforts agy offers it (Low to Extra high),
+or **agy default** to use the model you picked in agy. An agy model can also be the **Background
+model**.
+
+- **Permission mode:** Auto runs agy's own auto mode, whose reviewer approves safe commands. Manual,
+  Accept edits and Plan map to agy's default, accept-edits and plan modes, and Bypass to
+  `--dangerously-skip-permissions`.
+- **Where it runs:** each launch adds the board's plugin folder (`~/.agent-wrangler/agy/root`) as a
+  workspace, which gives the session the board's MCP tools and a start-up hook. The launch folder is
+  trusted, and the board's tools allowed, for that session only; your `~/.gemini` is never written.
+- **History:** agy keeps conversations as SQLite files. The board keeps a JSONL copy of each under
+  `~/.agent-wrangler/agy/transcripts` for the Chat tab, search and usage. A dormant agy card resumes its
+  conversation with `agy --conversation`.
+- **Cost** is an API-equivalent estimate at Google's list prices (shown with `~`).
+
+What agy sessions do not have yet: Fork (agy's own `/fork` switches the running session to the copy, so
+the board offers no Fork for agy cards), phone Remote Control, `disallowedTools`, switching model
+mid-conversation, a context-window figure, mail during a running turn, the PR-attach hook, or sub-agent
+detail. Status comes from the terminal screen. The board's instructions and skill catalogue reach agy as
+a system message when a conversation starts.
+
 ## Organise work with tasks
 
 Tasks are board columns for related sessions. Drag cards between tasks; moving a parent also moves its
@@ -425,7 +453,7 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 - PR auto-fix, Codex and Claude folder trust, and the **Background model**: the agent and model
   (Claude Haiku by default) for small tool-less one-shot jobs that name no model of their own, such
   as the archive memory review. Any installed agent that can run headless is offered, Gemini
-  included (`gemini -p` with every tool denied).
+  and agy included (`gemini -p` and `agy --output-format json`, each with every tool denied).
   Codex folder trust uses the resolved directory path, so a symlink and its target share one trust
   entry. If the directory cannot be resolved or trust cannot be saved, the launch reports an error.
   Claude folder trust covers scratch sessions and worktrees of a repo you already trust in Claude: the

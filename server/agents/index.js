@@ -1,9 +1,10 @@
 import { claude } from './claude.js';
 import { codex } from './codex.js';
 import { gemini } from './gemini.js';
+import { agy } from './agy.js';
 import { logWarn } from '../log.js';
 
-const allAgents = () => [claude, codex, gemini];
+const allAgents = () => [claude, codex, gemini, agy];
 
 export function createAgentRegistry(adapters) {
   const values = typeof adapters === 'function' ? adapters : () => adapters;
@@ -33,6 +34,8 @@ export function providerMetadata(adapter) {
     controls: { ...(adapter.controls || {}), codexPolicy: adapter.launch?.codexPolicy === true },
     supportsRemoteControl: adapter.supportsRemoteControl === true,
     headless: Boolean(adapter.headless),
+    // false when the adapter cannot branch a conversation (no buildFork).
+    fork: typeof adapter.buildFork === 'function',
     forkHelp: adapter.forkHelp || 'Branch this conversation into a new session. The original keeps running independently.',
   };
 }

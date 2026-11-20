@@ -3097,6 +3097,9 @@ function attachMenuItems(sessionId) {
   });
 }
 
+// An agent whose adapter cannot branch a conversation (agy) offers no Fork.
+const canFork = (s) => providerMetadataFor(s?.agent).fork !== false;
+
 function openCardMenu(card, x, y) {
   const s = sessionByCard(card);
   if (!s) return;
@@ -3108,7 +3111,7 @@ function openCardMenu(card, x, y) {
   // what the pencil button assumes. Fork/Archive act on the id directly.
   const items = [
     { label: 'Rename', icon: PENCIL_ICON, action: 'session.rename', run: () => { selectSession(card); beginRename(card); } },
-    ...(!snoozed ? [{ label: 'Fork', icon: FORK_ICON, action: 'session.fork', run: () => openFork(sessionId) }] : []),
+    ...(!snoozed && canFork(s) ? [{ label: 'Fork', icon: FORK_ICON, action: 'session.fork', run: () => openFork(sessionId) }] : []),
     ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', run: () => peerReviewSession(sessionId) }] : []),
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => openDiffPanel(card) },
     { label: 'Copy reference', icon: COPY_ICON, run: () => copySessionReference(s) },
@@ -3165,7 +3168,7 @@ function openActionsMenu(card, x, y) {
   const { sessionId } = s;
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
   const items = [
-    { label: 'Fork session', icon: FORK_ICON, action: 'session.fork', trailing: KBD_FORK, run: () => openFork(sessionId) },
+    ...(canFork(s) ? [{ label: 'Fork session', icon: FORK_ICON, action: 'session.fork', trailing: KBD_FORK, run: () => openFork(sessionId) }] : []),
     { label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
     // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => { openDiffPanel(card); if (sessionEmbed.active()) renderPanel(card); } },
@@ -5006,7 +5009,7 @@ registerCoreBindings(keybindings, {
     if (currentShellTerm && currentShellTerm.card === card) { closeShellTerminal(); return; }
     if (sessionByCard(card)?.cwd) send({ type: 'open-terminal-for-session', sessionId: sessionIdOf(card), card });
   }),
-  'chord.fork': withSelected((card) => openFork(sessionIdOf(card))),
+  'chord.fork': withSelected((card) => { if (canFork(sessionByCard(card))) openFork(sessionIdOf(card)); }),
   // Restart matches its menu gate — only a live (managed) session, since a dormant
   // one already offers Resume. Peer review works on any session, like its menu row.
   'chord.restart': withSelected((card) => {

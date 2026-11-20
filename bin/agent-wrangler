@@ -86,7 +86,7 @@ export PATH
 node_bin="${AW_NODE:-node}"
 node_path="$(command -v "$node_bin")"
 if [ -z "$node_path" ]; then
-  echo "agent-wrangler: Node.js not found (looked for '$node_bin'). Install Node.js >= 20 or set AW_NODE to its path." >&2
+  echo "agent-wrangler: Node.js not found (looked for '$node_bin'). Install Node.js >= 26 or set AW_NODE to its path." >&2
   exit 127
 fi
 
