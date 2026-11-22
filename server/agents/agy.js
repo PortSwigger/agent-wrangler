@@ -113,8 +113,8 @@ export function agySessionSettings({ cwd, user = readUserSettings(), ext } = {})
 }
 
 // The extensions' env first and core's after, so an extension adds variables
-// but never overrides ours. GEMINI_API_KEY and agy's own sign-in pass through
-// untouched: the board sets neither.
+// but never overrides ours. GEMINI_API_KEY is never written here: it reaches
+// the pane through the launch's secret-variable file (agyLaunchSecretEnv).
 function envPrefix({ sessionId, cwd, spawnedBy, launchContext, worktree, disabledSkills }) {
   let env = launchEnvGuard(launchContext, shellQuote) + launchEnvPrefix(launchContext, shellQuote)
     + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `
@@ -123,6 +123,36 @@ function envPrefix({ sessionId, cwd, spawnedBy, launchContext, worktree, disable
     + `AW_AGY_CONTEXT=${shellQuote(agyInstructions({ sessionId, cwd, worktree, disabledSkills }))} `;
   if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
   return env;
+}
+
+// ---- Gemini API key ----------------------------------------------------------
+
+// agy with `"modelProvider": "gemini"` needs GEMINI_API_KEY, which a terminal
+// usually gets from a shell function reading the Keychain item Gemini CLI
+// writes. The board never runs an interactive shell, so it reads that item
+// itself: macOS only, a set GEMINI_API_KEY always wins, and any failure is
+// silent (agy then says the key is missing, as before). The value is never
+// logged, and only reaches agy: a pane launch through the secret-variable file
+// (launch-secrets.js), a headless run through its process env.
+const KEYCHAIN_SERVICE = 'gemini-cli-api-key';
+const KEYCHAIN_ACCOUNT = 'default-api-key';
+
+// The item holds Gemini CLI's JSON: `{ token: { accessToken } }`.
+async function keychainGeminiApiKey() {
+  const { stdout } = await exec('security', ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT, '-w'], { timeout: 5000 });
+  return JSON.parse(stdout)?.token?.accessToken;
+}
+
+// `{ GEMINI_API_KEY }` from the Keychain, or {} when the env already has one,
+// off macOS, or when the lookup fails.
+export async function agyLaunchSecretEnv({ env = process.env, platform = process.platform, lookup = keychainGeminiApiKey } = {}) {
+  if (env.GEMINI_API_KEY || platform !== 'darwin') return {};
+  try {
+    const key = await lookup();
+    return typeof key === 'string' && key.trim() && !key.includes('\0') ? { GEMINI_API_KEY: key.trim() } : {};
+  } catch {
+    return {};
+  }
 }
 
 function command(opts, args) {
@@ -210,10 +240,11 @@ function composerIsEmpty(text, { allowWhileWorking = false } = {}) {
 const DENY_ALL = ['command(*)', 'read_file(*)', 'write_file(*)', 'mcp(*)', 'read_url(*)', 'execute_url(*)'];
 const agyHeadless = {
   defaultModel: () => 'gemini-3.8-flash',
-  command({ prompt, model, effort, stdin = '', env = {} }) {
+  async command({ prompt, model, effort, stdin = '', env = {}, secretEnv = agyLaunchSecretEnv }) {
     const args = ['--output-format', 'json', '--disable-slash-commands', ...agyModelArgs(model, effort || 'low'),
       '--settings', JSON.stringify({ permissions: { deny: DENY_ALL } })];
-    return { file: 'agy', args, env: { ...process.env, ...env }, stdin: stdin ? `${stdin}\n\n${prompt}` : prompt };
+    const base = { ...process.env, ...env };
+    return { file: 'agy', args, env: { ...base, ...(await secretEnv({ env: base })) }, stdin: stdin ? `${stdin}\n\n${prompt}` : prompt };
   },
   // { conversation_id, status, response, error, usage, … }
   parse(stdout) {
@@ -247,6 +278,8 @@ export const agy = {
   supportsDisallowedTools: false,
   headlessArchiveReview: false,
   headless: agyHeadless,
+  // Secret variables for this agent's own launches only (launch-context.js).
+  launchSecretEnv: () => agyLaunchSecretEnv(),
   history: {
     branches: false,
     directory: () => MIRROR_DIR,

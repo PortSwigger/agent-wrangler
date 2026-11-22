@@ -111,9 +111,11 @@ resumed, forked or adopted; start an agy session to carry the work on.
 
 When Google's `agy` command (Antigravity CLI 1.5.13 or later) is on your `PATH`, **agy** joins the agent
 picker. The board's sessions use agy's own sign-in and your `modelProvider` setting as they are. With
-`"modelProvider": "gemini"` agy needs `GEMINI_API_KEY` in its environment: the board passes its own
-environment through, so the key has to be in the environment the board runs in (for the background
-service, its launchd or systemd unit), not only in your shell. Models are Gemini 4 Neon, Hydrogen, Carbon
+`"modelProvider": "gemini"` agy needs `GEMINI_API_KEY` in its environment. A `GEMINI_API_KEY` in the
+environment the board runs in (for the background service, its launchd or systemd unit) is used as it is.
+Without one, on macOS the board reads the key Gemini CLI saved in the Keychain (`gemini-cli-api-key`) and
+hands it to agy sessions only, outside the visible launch command; if that lookup fails, agy says the key is
+missing. Models are Gemini 4 Neon, Hydrogen, Carbon
 and Argon, Gemini 3.8 Flash and Gemini 3.1 Pro, each with the efforts agy offers it (Low to Extra high),
 or **agy default** to use the model you picked in agy. An agy model can also be the **Background
 model**.
