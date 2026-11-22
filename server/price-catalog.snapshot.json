@@ -957,16 +957,16 @@
    }
   },
   "gpt-6-rosalind": {
-   "input": 15,
-   "output": 75,
-   "cacheWrite5m": 18.75,
-   "cacheWrite1h": 30,
-   "cacheRead": 1.5,
+   "input": 10,
+   "output": 50,
+   "cacheWrite5m": 12.5,
+   "cacheWrite1h": 20,
+   "cacheRead": 1,
    "long": {
     "threshold": 272000,
-    "input": 30,
-    "output": 112.5,
-    "cacheRead": 3
+    "input": 20,
+    "output": 75,
+    "cacheRead": 2
    }
   },
   "gpt-6-sol": {
@@ -1414,6 +1414,13 @@
    "cacheWrite1h": 3,
    "cacheRead": 0.075
   },
+  "gemini-4-neon": {
+   "input": 3,
+   "output": 15,
+   "cacheWrite5m": 3.75,
+   "cacheWrite1h": 6,
+   "cacheRead": 0.15
+  },
   "gemini-exp-1114": {
    "input": 0,
    "output": 0,
@@ -1542,6 +1549,13 @@
    "cacheWrite5m": 0,
    "cacheWrite1h": 0,
    "cacheRead": 0
+  },
+  "genie-4": {
+   "input": 1.5,
+   "output": 9,
+   "cacheWrite5m": 1.875,
+   "cacheWrite1h": 3,
+   "cacheRead": 0.15000000000000002
   },
   "learnlm-1.5-pro-experimental": {
    "input": 0,
