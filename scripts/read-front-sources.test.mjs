@@ -140,3 +140,41 @@ test('Anthropic sweeps fall back to the version they were read at when the base 
   assert.equal(inputs.models.claude.opus['terminal-bench'].sweep.version, '4.0');
   assert.deepEqual(inputs.models.claude.opus['terminal-bench'].sweep.efforts.low, [20, 1]);
 });
+
+const geminiBase = JSON.parse(readFileSync(new URL('../.claude/skills/evaluate-model/inputs-2026-11-22.json', import.meta.url)));
+
+test('agy runs are matched in the board\'s Antigravity CLI namings, at their own effort, and never across models', () => {
+  assert.deepEqual(boardFile('2026-11-20-4-1-0-gemini-gemini-4-neon-xhigh-antigravity-cli.json', 'agy', 'gemini-4-neon'), { name: '2026-11-20-4-1-0-gemini-gemini-4-neon-xhigh-antigravity-cli.json', date: '2026-11-20', version: '4.1', regrade: false });
+  assert.deepEqual(boardFile('2026-11-13-4-0-0-gemini-4-argon-high-antigravity-cli-1-5-2.json', 'agy', 'gemini-4-argon'), { name: '2026-11-13-4-0-0-gemini-4-argon-high-antigravity-cli-1-5-2.json', date: '2026-11-13', version: '4.0', regrade: false });
+  assert.equal(boardFile('2026-11-13-4-1-0-gemini-4-argon-high-antigravity-cli-regrade.json', 'agy', 'gemini-4-argon')?.regrade, true);
+  assert.equal(boardFile('2026-11-15-4-1-0-gemini-3-1-pro-regrade.json', 'agy', 'gemini-3.1-pro')?.regrade, true);
+  for (const [name, id] of [['2026-09-01-gemini-gemini-3-8-flash-high-mini-swe-agent.json', 'gemini-3.8-flash'], ['2026-11-20-4-1-0-gemini-gemini-4-neon-xhigh-antigravity-cli.json', 'gemini-4-hydrogen'],
+    ['2026-11-14-4-1-0-gemini-gemini-4-carbon-high-antigravity-cli.json', 'gemini-4']]) assert.equal(boardFile(name, 'agy', id), null, name);
+  assert.equal(boardFile('2026-11-20-4-1-0-gemini-gemini-4-neon-xhigh-antigravity-cli.json', 'codex', 'gemini-4-neon'), null);
+  assert.deepEqual(['gemini-4-neon', 'gemini-3.8-flash', 'gemini-3.1-pro'].map(hubLabel), ['Gemini 4 Neon', 'Gemini 3.8 Flash', 'Gemini 3.1 Pro']);
+});
+
+test('agy models read their Antigravity CLI run at its effort, Gemini input prices, and Google flags', async () => {
+  const runs = Object.values(geminiBase.models).flatMap((ms) => Object.values(ms)).flatMap((m) => m['terminal-bench'].board ? [m['terminal-bench'].board] : []);
+  const all = [...runs, ...runs.filter((b) => b.minutes_file).map((b) => ({ ...b, file: b.minutes_file }))];
+  const seed = structuredClone(geminiBase);
+  for (const ms of Object.values(seed.models)) for (const m of Object.values(ms)) delete m['terminal-bench'].board;
+  delete seed.models.agy['gemini-4-neon'];
+  const geminiGithub = async (path, effortOf = (b) => b.effort ?? 'max') => {
+    if (path.endsWith('leaderboard.yaml')) return 'title: Terminal-Bench 4.0\n';
+    if (path.endsWith('/submissions')) return all.map((b) => ({ name: b.file }));
+    const board = all.find((b) => path.endsWith(b.file));
+    assert.ok(board, path);
+    return { metadata: { reasoning_effort: effortOf(board), agent_display: { label: board.file.includes('antigravity') || board.file.includes('gemini') ? 'Antigravity CLI' : board.file.includes('openai') || board.file.includes('gpt') ? 'Codex' : 'Claude Code' } }, metrics: board };
+  };
+  const run = (github) => readSources({ ...options(), base: seed, github, fetchText: async (url) => (url === 'https://www.tbench.ai/' ? hubPage() : pages[url] ?? page(chart(['gpt6astra', 'opus55', 'haiku55', 'sonnet55'], '4.0'))) });
+  const { inputs } = await run(geminiGithub);
+  const argon = inputs.models.agy['gemini-4-argon']['terminal-bench'].board;
+  assert.deepEqual(argon, geminiBase.models.agy['gemini-4-argon']['terminal-bench'].board, 'the regrade, at high, with its original run\'s minutes');
+  assert.deepEqual(inputs.models.agy['gemini-4-carbon'].price, { write: prices.gemini['gemini-4-carbon'].input, read: prices.gemini['gemini-4-carbon'].cacheRead, output: prices.gemini['gemini-4-carbon'].output });
+  assert.equal(inputs.models.agy['gemini-3.1-pro'].price.output, prices.gemini['gemini-3.1-pro-preview'].output, 'LiteLLM lists 3.1 Pro as a preview');
+  assert.equal(inputs.models.agy['gemini-3.8-flash']['terminal-bench'].board, undefined, 'its only run is in mini-SWE-agent');
+  assert.ok(inputs.manual.some((s) => s.startsWith('Read Google effort results by hand for new board run 2026-11-14-4-1-0-gemini-gemini-4-carbon')));
+  assert.match(inputs.credit, /published by Anthropic, OpenAI and Google/);
+  await assert.rejects(run((p) => geminiGithub(p, (b) => (b.file.includes('carbon') ? 'xhigh' : b.effort ?? 'max'))), /carbon.*not an effort the model takes/);
+});

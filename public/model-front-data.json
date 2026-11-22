@@ -1,6 +1,6 @@
 {
-  "read": "2026-11-18",
-  "credit": "Scores: Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic and OpenAI on Terminal-Bench 4.0. Prices: Anthropic and OpenAI list prices from the LiteLLM catalog (MIT), read 2026-11-18.",
+  "read": "2026-11-22",
+  "credit": "Scores: Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic, OpenAI and Google on Terminal-Bench 4.1 or 4.0. Prices: Anthropic, OpenAI and Google list prices from the LiteLLM catalog (MIT), read 2026-11-22.",
   "benchmarks": {
     "terminal-bench": {
       "name": "Terminal-Bench",
@@ -226,6 +226,115 @@
           15,
           0.22,
           38.1
+        ]
+      }
+    },
+    "agy": {
+      "gemini-4-neon": {
+        "low": [
+          11,
+          0.51,
+          25.9
+        ],
+        "medium": [
+          38,
+          1.84,
+          39.9
+        ],
+        "high": [
+          61,
+          3.54,
+          57.9
+        ],
+        "xhigh": [
+          61,
+          5.82,
+          82
+        ]
+      },
+      "gemini-4-carbon": {
+        "low": [
+          12,
+          0.59,
+          20.8
+        ],
+        "medium": [
+          40,
+          2.13,
+          37.2
+        ],
+        "high": [
+          65,
+          4.12,
+          58.3
+        ]
+      },
+      "gemini-4-hydrogen": {
+        "low": [
+          10,
+          0.34,
+          11.5
+        ],
+        "medium": [
+          35,
+          1.23,
+          20.5
+        ],
+        "high": [
+          56,
+          2.38,
+          32.1
+        ],
+        "xhigh": [
+          56,
+          3.91,
+          47.6
+        ]
+      },
+      "gemini-4-argon": {
+        "low": [
+          10,
+          0.48,
+          23.2
+        ],
+        "medium": [
+          35,
+          1.74,
+          41.5
+        ],
+        "high": [
+          55,
+          3.36,
+          64.9
+        ]
+      },
+      "gemini-3.8-flash": {
+        "low": [
+          3,
+          0.23,
+          11.5
+        ],
+        "medium": [
+          11,
+          0.82,
+          20.5
+        ],
+        "high": [
+          18,
+          1.57,
+          32.1
+        ]
+      },
+      "gemini-3.1-pro": {
+        "low": [
+          0,
+          0.99,
+          27.3
+        ],
+        "high": [
+          3,
+          6.93,
+          76.4
         ]
       }
     }
