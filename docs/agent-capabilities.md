@@ -1,6 +1,6 @@
 # Agent capabilities
 
-Managed Claude, Codex, Gemini and agy sessions receive skills for Agent Wrangler: guidance for using the underlying
+Managed Claude, Codex and agy sessions receive skills for Agent Wrangler: guidance for using the underlying
 [agent tools](agent-tools.md) correctly. Ask in ordinary language or use the examples below.
 
 ## Built-in Agent Wrangler skills

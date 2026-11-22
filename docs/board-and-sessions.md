@@ -101,29 +101,11 @@ attachable terminal only after being resumed through the board.
 
 ### Gemini CLI sessions
 
-When Google's `gemini` command (Gemini CLI 0.66 or later) is on your `PATH`, **Gemini** joins the agent
-picker. Sign Gemini CLI in once yourself (run `gemini` in a terminal and pick a sign-in method); the board's
-sessions use the same sign-in. Models are **Auto** (Gemini routes each turn between Pro and Flash, its
-own default), Gemini 3.1 Pro, Gemini 2.5 Pro, Gemini 3.5 Flash and Gemini 3.1 Flash-Lite. A Gemini model
-can also be the **Background model** in Settings → Automation.
-
-- **Permission mode:** Auto runs Gemini in its YOLO approval mode, because Gemini has no automatic
-  reviewer and a session nobody watches would otherwise stop at every prompt. Manual, Accept edits and
-  Plan map to Gemini's default, auto-edit and plan approval modes.
-- **Where it runs:** the board launches Gemini with its own Gemini home
-  (`~/.agent-wrangler/gemini/home`): your `~/.gemini/settings.json` plus the board's MCP server and
-  hooks, with your sign-in, extensions and skills linked in. Your `~/.gemini` is never written, and the
-  board's Gemini conversations are kept in that home rather than `~/.gemini/tmp`. Folder trust is off
-  there, as the board trusts the folders it launches Claude and Codex in.
-- **Cost** is an API-equivalent estimate at Google's list prices (shown with `~`), as Codex's is.
-
-What Gemini sessions do not have yet: phone Remote Control, `disallowedTools`, an effort control,
-switching model mid-conversation, a context-budget control, mail during a running turn, or sub-agent
-detail. Status comes from the terminal screen (working, needs-you, idle), not from a status file. The
-board's instructions and skill catalogue reach Gemini as context at session start rather than as part of
-its system prompt. A fork copies the conversation under a new id and resumes it; its first message is
-typed in once the copy has opened. A Gemini conversation started outside the board can be found in
-search but not resumed from a card.
+agy replaced Google's Gemini CLI as the board's Gemini agent, so **Gemini CLI** is no longer in the agent
+picker, the Background model list or the agents a session can spawn. Sessions it ran before stay readable:
+their cards keep their Chat tab, model and estimated cost, and their conversations (in
+`~/.agent-wrangler/gemini/home` and `~/.gemini/tmp`) still show in search and usage. They can't be
+resumed, forked or adopted; start an agy session to carry the work on.
 
 ### agy sessions
 
@@ -452,8 +434,8 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
   defaults a new Codex session starts from (workspace-write and never unless you change them).
 - PR auto-fix, Codex and Claude folder trust, and the **Background model**: the agent and model
   (Claude Haiku by default) for small tool-less one-shot jobs that name no model of their own, such
-  as the archive memory review. Any installed agent that can run headless is offered, Gemini
-  and agy included (`gemini -p` and `agy --output-format json`, each with every tool denied).
+  as the archive memory review. Any installed agent that can run headless is offered, agy
+  included (`agy --output-format json`, with every tool denied).
   Codex folder trust uses the resolved directory path, so a symlink and its target share one trust
   entry. If the directory cannot be resolved or trust cannot be saved, the launch reports an error.
   Claude folder trust covers scratch sessions and worktrees of a repo you already trust in Claude: the

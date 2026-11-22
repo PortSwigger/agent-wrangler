@@ -3099,6 +3099,7 @@ function attachMenuItems(sessionId) {
 
 // An agent whose adapter cannot branch a conversation (agy) offers no Fork.
 const canFork = (s) => providerMetadataFor(s?.agent).fork !== false;
+const canResume = (s) => providerMetadataFor(s?.agent).resume !== false;
 
 function openCardMenu(card, x, y) {
   const s = sessionByCard(card);
@@ -3133,7 +3134,7 @@ function openCardMenu(card, x, y) {
     { sep: true },
     // Restart (kill tmux + relaunch with --resume) only makes sense while the
     // session is live; a dormant/snoozed card already offers Resume elsewhere.
-    ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', run: () => restartSession(sessionId) }] : []),
+    ...(s.managed && canResume(s) ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', run: () => restartSession(sessionId) }] : []),
     // Promote is offered only for a nested session, and never for a workflow
     // worker (its orchestrator's autopilot run tracks it — promoting would
     // desync that). Attach is offered whenever there's at least one valid
@@ -3185,7 +3186,7 @@ function openActionsMenu(card, x, y) {
     autoMergeMenuItem(s),
     ...extMenuItems(s),
     { sep: true },
-    ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
+    ...(s.managed && canResume(s) ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, action: 'session.detach', run: () => promoteSession(sessionId) }] : []),
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
     ...(attachCandidates(sessionId, onBoard(latestSessions).filter((x) => x.deckId === s.deckId), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
@@ -4014,7 +4015,7 @@ function trackJustFinished(sessions) {
 function archivedToast(sessionId, text, worktree, archivedIds = [sessionId]) {
   const card = cardOf(sessionId);
   if (selectedCard === card) selectAfterArchive(card);
-  const actions = [{ label: 'Resume', onClick: () => { setPendingSelect(card); send({ type: 'resume', sessionId }); } }];
+  const actions = canResume(sessionByCard(card)) ? [{ label: 'Resume', onClick: () => { setPendingSelect(card); send({ type: 'resume', sessionId }); } }] : [];
   const cleanup = worktreeCleanupAction(sessionId, worktree, archivedIds);
   if (cleanup) actions.push(cleanup);
   const stopContainer = containerStopAction(sessionId, archivedIds);
@@ -4363,7 +4364,8 @@ function selectSession(card) {
 const resuming = new Set();
 let resumeFailTimer = null;
 function resumeDormant(card) {
-  if (cardUnreachable(card)) { selectSession(card); return; }
+  // An agent the board no longer runs (Gemini CLI) opens read-only: Chat still reads it.
+  if (cardUnreachable(card) || !canResume(sessionByCard(card))) { selectSession(card); return; }
   resuming.add(card);
   setPendingSelect(card);
   send({ type: 'resume', sessionId: sessionIdOf(card), card });
@@ -5013,7 +5015,8 @@ registerCoreBindings(keybindings, {
   // Restart matches its menu gate — only a live (managed) session, since a dormant
   // one already offers Resume. Peer review works on any session, like its menu row.
   'chord.restart': withSelected((card) => {
-    if (sessionByCard(card)?.managed) restartSession(sessionIdOf(card));
+    const s = sessionByCard(card);
+    if (s?.managed && canResume(s)) restartSession(sessionIdOf(card));
   }),
   'chord.peerReview': withSelected((card) => peerReviewSession(sessionIdOf(card))),
   'chord.maximize': withSelected(() => toggleMaximize()),
@@ -5235,10 +5238,11 @@ function renderSidebar(s) {
   term.innerHTML = `<div class="term-note">
     <p>This session isn't running in tmux, so its live terminal can't be attached — ${where}.</p>
     ${exitBlock}
-    <button id="resume-btn">▶ Resume a copy in a new terminal</button>
-    <p class="muted">${esc(providerMetadataFor(s?.agent).forkHelp || 'Branch this conversation into a fresh session. The original keeps running independently.')}</p>
+    ${canResume(s) ? `<button id="resume-btn">▶ Resume a copy in a new terminal</button>
+    <p class="muted">${esc(providerMetadataFor(s?.agent).forkHelp || 'Branch this conversation into a fresh session. The original keeps running independently.')}</p>`
+    : `<p class="muted">${esc(providerMetadataFor(s?.agent).label)} sessions can't be resumed any more; the Chat tab still reads this one.</p>`}
   </div>`;
-  term.querySelector('#resume-btn').addEventListener('click', () => {
+  term.querySelector('#resume-btn')?.addEventListener('click', () => {
     send({ type: 'resume', sessionId: s.sessionId, card: s.cardKey });
     toast('Resuming…');
   });

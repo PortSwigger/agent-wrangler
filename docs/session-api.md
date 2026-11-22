@@ -4,7 +4,7 @@ Launched sessions talk back to Agent Wrangler over four HTTP routes, together ca
 
 | Route | Who calls it | What it does |
 | --- | --- | --- |
-| `POST /mcp` | the agent's MCP client (Claude, Codex, Gemini) | the board's MCP tools, acting as the calling session |
+| `POST /mcp` | the agent's MCP client (Claude, Codex, agy) | the board's MCP tools, acting as the calling session |
 | `POST /pr-attach` | the PR-attach hook after `gh pr create` | attaches the new PR to the calling session's card |
 | `POST /pr-model` | the PR model footer | answers which model to tag the calling session's PR with |
 | `POST /status-event` | the status hooks, on a runtime with `statusEvents: true` | sets the calling session's card status (see [Status events](#status-events)) |
@@ -38,8 +38,8 @@ no token. An extension's own `AW_SESSION_TOKEN` variable is dropped. Each agent 
 - **Claude**: `--mcp-config` names the header as `Bearer ${AW_SESSION_TOKEN}`, which Claude expands
   from its environment.
 - **Codex**: `mcp_servers.agent-wrangler.bearer_token_env_var="AW_SESSION_TOKEN"`.
-- **Gemini**: the board's Gemini settings name the header as `Bearer $AW_SESSION_TOKEN`, which
-  Gemini expands.
+- **agy**: the board's stdio MCP bridge (`server/agents/agy-mcp-bridge.js`) relays each message
+  with `Bearer $AW_SESSION_TOKEN`, as agy expands no variables in MCP headers.
 - **PR hooks** (`scripts/pr-attach-hook.mjs`, `scripts/codex-pr-footer-hook.mjs`,
   `server/pr-footer.js`) and the **status hook** (`scripts/status-event-hook.mjs`): read
   `AW_SESSION_TOKEN` and send the same header.

@@ -1391,6 +1391,8 @@ export class SessionManager {
     if (prev?.remoteControl && !supportsRemoteControl(agent)) throw new Error(`Agent "${agent}" does not support Remote Control.`);
     if (prev?.disallowedTools?.length && !supportsDisallowedTools(agent)) throw new Error(`Agent "${agent}" does not support disallowedTools.`);
     const adapter = adapterFor(agent);
+    // An agent kept only to read its old conversations (Gemini CLI) can't relaunch one.
+    if (adapter.dispatchable === false) throw new Error(adapter.unavailableMessage);
     const runtime = runtimeFor(prev?.runtime);
     // At a location the stored cwd is the dir: a caller's was resolved on this
     // machine and names nothing there, and nothing here is created for it.

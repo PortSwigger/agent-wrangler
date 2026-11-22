@@ -103,11 +103,11 @@ test('permission modes and models map to agy flags', () => {
   assert.deepEqual(agyModelArgs('gemini-3.1-pro', 'medium'), ['--model', 'gemini-3.1-pro']);
 });
 
-test('registry: agy is a fourth provider with no fork, remote control or Claude models', () => {
+test('registry: agy is a provider with no fork, remote control or Claude models', () => {
   assert.equal(adapterFor('agy'), agy);
   const meta = providerMetadata(agy);
   assert.equal(meta.fork, false);
-  assert.equal(providerMetadata(adapterFor('gemini')).fork, true);
+  assert.equal(providerMetadata(adapterFor('codex')).fork, true);
   assert.equal(meta.headless, true);
   assert.equal(supportsRemoteControl('agy'), false);
   assert.equal(agy.presetsSessionId, false);
