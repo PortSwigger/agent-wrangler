@@ -69,13 +69,6 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `gpt-5.6-luna` — GPT-5.6-Luna · Legacy fast model for simpler tasks
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
 
-**Gemini** (`agent: "gemini"`):
-- `auto` — Auto · Gemini picks Pro or Flash (default)
-- `gemini-3.1-pro-preview` — Gemini 3.1 Pro (preview)
-- `gemini-2.5-pro` — Gemini 2.5 Pro
-- `gemini-3.1-flash-lite` — Gemini 3.1 Flash-Lite
-- `gemini-3.5-flash` — Gemini 3.5 Flash
-
 **agy** (`agent: "agy"`):
 - `gemini-4-neon` — Gemini 4 Neon (default)
 - `gemini-4-hydrogen` — Gemini 4 Hydrogen

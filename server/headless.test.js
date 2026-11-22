@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile as realExecFile, execFileSync } from 'node:child_process';
 import { CODEX_HEADLESS_DISABLED_FEATURES } from './agents/codex.js';
-import { adapterFor, registeredAgents } from './agents/index.js';
+import { adapterFor, dispatchableAgents } from './agents/index.js';
 
 // The Claude half of these tests predates the generic runner: they pin the
 // `claude -p` argv and env exactly as the archive review always ran it.
@@ -348,5 +348,5 @@ test('the Background model defaults to Claude Haiku and falls back when the stor
   // The default is read off the registry's adapters, not an id: the first that can run headless.
   const fixture = [{ id: 'plain', models: [] }, { id: 'oneshot', models: [{ value: 'small' }], headless: { defaultModel: () => 'small' } }];
   assert.deepEqual(defaultBackgroundModel(fixture), { agent: 'oneshot', model: 'small' });
-  assert.ok(registeredAgents().every((a) => a.headless), 'every built-in adapter can run headless');
+  assert.ok(dispatchableAgents().every((a) => a.headless), 'every built-in adapter a session can start on can run headless');
 });

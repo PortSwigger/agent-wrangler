@@ -20,7 +20,8 @@ export function geminiHome(env = process.env) {
   return path.join(env.GEMINI_CLI_HOME || os.homedir(), '.gemini');
 }
 
-// The Gemini home the board launches its sessions with (gemini-config.js).
+// The Gemini home the board launched its Gemini CLI sessions with, whose
+// conversations stay readable.
 export const BOARD_GEMINI_HOME = path.join(DATA_DIR, 'gemini', 'home');
 
 // The user's own Gemini dir: what this process sees, unless that is the

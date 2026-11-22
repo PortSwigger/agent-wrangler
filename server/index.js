@@ -48,7 +48,7 @@ import { createPrObservationStore, createPrObservationPoller } from './pr-observ
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
-import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
+import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, dispatchableAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
 import { createInstalledAgents } from './agents/installed.js';
 import { createMcpRequestHandler } from './mcp/server.js';
@@ -1171,7 +1171,7 @@ const mcpRequestHandler = createMcpRequestHandler({
   boardClients: () => controlWss.clients.size,
 });
 
-const installedAgents = createInstalledAgents({ adapters: registeredAgents });
+const installedAgents = createInstalledAgents({ adapters: dispatchableAgents });
 
 // GET /deck — the deck API's descriptor. Host-pinned like /file.
 function deckHandler(req, res) {

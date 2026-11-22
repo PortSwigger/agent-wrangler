@@ -3094,7 +3094,7 @@ Maintainer notes:
   one file to the same path (or rewrites the path in `inner`, as devcontainer does for
   the PR hook), and must let the agent reach the session API's URL in
   `AW_STATUS_EVENT_URL`. `launchContext.statusEvents` is `true` on such a launch. A
-  `buildLaunch` runtime and an agent with no status hooks (Gemini) are not affected,
+  `buildLaunch` runtime and an agent with no status hooks (agy) are not affected,
   and every runtime without the flag keeps file-based status. An older server ignores
   the key, so a manifest that needs it declares `^1.83.0`.
 - **`deliver` sits on send_message's legacy push path**, before the tmux check, and gets

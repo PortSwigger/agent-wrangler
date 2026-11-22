@@ -1122,6 +1122,19 @@ for (const agent of ['codex', 'future-agent']) {
   });
 }
 
+test('a Gemini CLI card is refused on resume and dispatch before kill or launch', async () => {
+  const sm = smForDispatch();
+  const prev = { agent: 'gemini', cwd: os.tmpdir(), liveSessionId: '7b0f1c2e-1111-4222-8333-444455556666' };
+  sm.map.set('gm', prev);
+  const effects = [];
+  sm.killForSession = async () => { effects.push('kill'); return []; };
+  sm._newSession = async () => { effects.push('launch'); };
+  await assert.rejects(() => sm._doResume('gm', os.tmpdir(), {}), /no longer runs Gemini CLI/);
+  await assert.rejects(sm.dispatch({ agent: 'gemini', cwd: os.tmpdir(), intent: 'do it' }), /Gemini CLI sessions can no longer be started/);
+  assert.deepEqual(effects, []);
+  assert.equal(sm.map.get('gm'), prev);
+});
+
 test('_doResume relaunches a Remote Control session with --remote-control, and a plain one without', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-rc-resume-'));
   const sm = new SessionManager();
@@ -3943,7 +3956,7 @@ test('secretEnv: an extension runtime gets no file and no values, and the skip n
   assert.ok(warned.every((w) => !w.includes(SECRET_VALUE)));
 });
 
-for (const agent of ['claude', 'codex', 'gemini']) {
+for (const agent of ['claude', 'codex', 'agy']) {
   test(`beforeSpawn refuses ${agent} before creating a directory or launching`, async () => {
     const sm = smForDispatch();
     const target = path.join(os.tmpdir(), `aw-spawn-refused-${agent}-${Date.now()}`);

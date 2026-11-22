@@ -45,13 +45,17 @@ export function defaultBackgroundModel(adapters = registeredAgents()) {
 }
 
 // Settings › Automation › Background model: what a headless run uses when the
-// caller names no model. A stored agent that is gone or cannot run headless,
-// or a model it no longer lists, falls back to the default rather than failing
-// every background job.
+// caller names no model. A stored agent that was replaced (`replacedBy`: Gemini
+// CLI → agy) runs its replacement's headless default. One that is gone or
+// cannot run headless, or a model it no longer lists, falls back to the default
+// rather than failing every background job.
 export function backgroundModel({ cfg, adapters = registeredAgents() } = {}) {
   const stored = backgroundModelConfig(cfg);
   const adapter = stored && adapters.find((a) => a.id === stored.agent && a.headless);
   if (adapter && adapter.models.some((m) => m.value === stored.model)) return { agent: adapter.id, model: stored.model };
+  const replacedBy = stored && adapters.find((a) => a.id === stored.agent)?.replacedBy;
+  const heir = replacedBy && adapters.find((a) => a.id === replacedBy && a.headless);
+  if (heir) return { agent: heir.id, model: heir.headless.defaultModel() };
   return defaultBackgroundModel(adapters);
 }
 
