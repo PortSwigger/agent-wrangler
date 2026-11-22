@@ -31,9 +31,10 @@ phase and switches to **needs-you** if blocked. Launch it from the dialog or wit
 In a checkout of this repository, ask “Are the model benchmarks current?” to use
 [the project-local `evaluate-model` skill](../.claude/skills/evaluate-model/SKILL.md).
 It reads permitted benchmark sources and the bundled LiteLLM prices, preserves
-OpenAI effort results for manual reading, and generates `public/model-front-data.json`.
-The evaluator prints separate fronts for both agents, Claude and Codex without
-requiring the client API. The weekly **Refresh model front** workflow runs the
+OpenAI and Google effort results for manual reading, and generates `public/model-front-data.json`.
+The evaluator prints separate fronts for all agents together, Claude, Codex and
+Gemini (agy) without requiring the client API. agy's Gemini models are scored on
+the board's Antigravity CLI runs, at each model's own top effort rather than max. The weekly **Refresh model front** workflow runs the
 catalog refresh first and opens a reviewable data PR when inputs change; it never
 auto-merges. Slack notices require `SLACK_WEBHOOK_URL`.
 
