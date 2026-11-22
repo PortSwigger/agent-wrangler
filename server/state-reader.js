@@ -714,7 +714,7 @@ export async function buildGraph(sessionManager, enrich, { runtimeResolver = res
       || (remote ? null : adapter.readLive({ pid: d.claudePid, cwd: d.cwd }))
       || (adapter.presetsSessionId
         ? null
-        : { liveSid: appEntry?.liveSessionId || (remote ? null : await adapter.discoverLiveId({ cwd: fcwd, launchedAt: 0, mintedAfter: discoveryFloor(appEntry) })), status: 'unknown', name: null, waitingFor: null });
+        : { liveSid: appEntry?.liveSessionId || (remote ? null : await adapter.discoverLiveId({ sessionId: realSid, cwd: fcwd, launchedAt: 0, mintedAfter: discoveryFloor(appEntry) })), status: 'unknown', name: null, waitingFor: null });
     // The running conversation is the truth, and it can be one the entry has never
     // heard of: `/clear` swaps the live id under us. Persist it — this read is the
     // only place that sees the swap, and left unrecorded the entry keeps pointing at

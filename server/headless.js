@@ -9,9 +9,11 @@ import { backgroundModelConfig } from './config-store.js';
 //
 //   headless.defaultModel()  — the model a call naming only this agent runs.
 //   headless.command({ prompt, model, effort, env, cwd, execFile })
-//                            → { file, args, env, liveSessionId?, cleanup? }, or a
+//                            → { file, args, env, stdin?, liveSessionId?, cleanup? }, or a
 //                              promise of it: the binary and argv for one run
-//                              with every tool off. A liveSessionId fixed at
+//                              with every tool off. `stdin`, when set, is
+//                              written in place of the payload (a CLI that
+//                              reads its prompt there too). A liveSessionId fixed at
 //                              launch is returned here; cleanup runs once the
 //                              run ends. May throw when it cannot guarantee
 //                              no tools, and the run then fails.
@@ -109,7 +111,7 @@ export async function runHeadless({
   let cmd;
   try {
     try {
-      cmd = await target.adapter.headless.command({ prompt, model: target.model, effort: target.effort, env, cwd, execFile });
+      cmd = await target.adapter.headless.command({ prompt, stdin, model: target.model, effort: target.effort, env, cwd, execFile });
     } catch (error) {
       return { text: null, liveSessionId: null, agent: target.agent, model: target.model, error };
     }
@@ -131,7 +133,7 @@ export async function runHeadless({
           error,
         });
       });
-      child.stdin.end(stdin);
+      child.stdin.end(cmd.stdin ?? stdin);
     });
   } finally {
     cmd?.cleanup?.();

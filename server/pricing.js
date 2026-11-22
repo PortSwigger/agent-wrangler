@@ -132,3 +132,39 @@ export function geminiCostUsdByType(totals) {
   }
   return out;
 }
+
+// agy (Antigravity CLI) runs Gemini models and, on some sign-ins, Claude ones,
+// all billed through Google. Each model prices from its own family's catalog
+// table; like Gemini CLI's, the figure is an *estimated* API-equivalent cost.
+// totals: geminiCostUsd's shape, keyed by the model ids agy records.
+const isClaudeModel = (model) => /^claude-/.test(model || '');
+
+function agyModelCost(model, t) {
+  if (!isClaudeModel(model)) return geminiModelCost(model, t);
+  const r = rateFor(model);
+  return { input: ((t.input || 0) * r.input) / 1_000_000, output: ((t.output || 0) * r.output) / 1_000_000, cacheRead: ((t.cacheRead || 0) * r.cacheRead) / 1_000_000 };
+}
+
+export function agyLongThreshold(model) {
+  return isClaudeModel(model) ? Infinity : geminiLongThreshold(model);
+}
+
+export function agyCostUsd(totals) {
+  let usd = 0;
+  for (const [model, t] of Object.entries(totals)) {
+    const c = agyModelCost(model, t);
+    usd += c.input + c.output + c.cacheRead;
+  }
+  return usd;
+}
+
+export function agyCostUsdByType(totals) {
+  const out = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+  for (const [model, t] of Object.entries(totals)) {
+    const c = agyModelCost(model, t);
+    out.input += c.input;
+    out.output += c.output;
+    out.cacheRead += c.cacheRead;
+  }
+  return out;
+}

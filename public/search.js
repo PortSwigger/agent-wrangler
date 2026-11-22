@@ -378,7 +378,7 @@ function appendActions(head, g) {
     fork.innerHTML = FORK_ICON;
     fork.title = 'Fork into a new session';
     fork.addEventListener('click', () => openFork(g.cardId));
-    head.appendChild(fork);
+    if (providerMetadataFor(g.agent).fork !== false) head.appendChild(fork);
     const remove = document.createElement('button');
     remove.className = 'search-act search-act--icon';
     remove.innerHTML = TRASH_ICON;

@@ -188,3 +188,20 @@ test('Gemini declares every capability the shared paths read, and inherits none 
   assert.equal(registry.launchTargetError('gemini', 'auto'), null);
   assert.match(registry.effortError('gemini', 'high', 'auto'), /Unknown effort/);
 });
+
+test('agy declares every capability the shared paths read, and inherits none from Claude', () => {
+  const agy = registry.adapterFor('agy');
+  assert.equal(registry.adapterForTmux('ag_ab12'), agy);
+  assert.ok(!agy.terminal.autoBlock && !agy.terminal.updatesOnExit && !agy.terminal.socketMail);
+  assert.ok(!agy.history.branches && !agy.history.requiresResumeFile);
+  assert.equal(mayExitForUpdate({}, 'ag_ab12'), false);
+  const meta = registry.providerMetadata(agy);
+  assert.equal(meta.controls.codexPolicy, false);
+  assert.equal(meta.supportsRemoteControl, false);
+  assert.equal(meta.headless, true);
+  assert.equal(meta.fork, false);
+  assert.deepEqual(meta.billingProviders, [{ id: 'google', label: 'Google' }]);
+  assert.equal(registry.supportsDisallowedTools('agy'), false);
+  assert.equal(agy.presetsSessionId, false);
+  assert.equal(typeof agy.discoverLiveId, 'function');
+});

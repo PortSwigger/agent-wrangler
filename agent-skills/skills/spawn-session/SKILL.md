@@ -76,6 +76,16 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `gemini-3.1-flash-lite` — Gemini 3.1 Flash-Lite
 - `gemini-3.5-flash` — Gemini 3.5 Flash
 
+**agy** (`agent: "agy"`):
+- `gemini-4-neon` — Gemini 4 Neon (default)
+- `gemini-4-hydrogen` — Gemini 4 Hydrogen
+- `gemini-4-carbon` — Gemini 4 Carbon
+- `gemini-4-argon` — Gemini 4 Argon
+- `gemini-3.8-flash` — Gemini 3.8 Flash
+- `gemini-3.1-pro` — Gemini 3.1 Pro
+- `default` — agy default (your /model choice)
+- `effort`: `low`, `medium`, `high`, `xhigh`
+
 The running Agent Wrangler server's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
 
 <!-- END GENERATED MODELS -->
