@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { agy, agyClassify, agyComposer, agyFooterModel, agyModeArgs, agyModelArgs, agySessionSettings } from './agy.js';
+import { agy, agyClassify, agyComposer, agyFooterModel, agyLaunchSecretEnv, agyModeArgs, agyModelArgs, agySessionSettings } from './agy.js';
+import { collectLaunchContext } from '../launch-context.js';
+import { runtimeFor } from '../runtimes/index.js';
 import { adapterFor, effortError, launchTargetError, modelPillFor, providerMetadata, supportsRemoteControl } from './index.js';
 import { decode, encode, msgAt, strAt, timestamp } from './agy-proto.js';
 import { BOARD_ROOT, conversationCwd, discoverAgyLiveId, readConversation, syncMirror } from './agy-db.js';
@@ -233,10 +235,10 @@ test('pane status, composer and footer model', () => {
   assert.equal(agy.terminal.composerIsEmpty(`${RULE}\n> draft\n${RULE}\n? for shortcuts\n`), false);
 });
 
-test('headless runs a piped prompt with every tool denied and reads its JSON', () => {
+test('headless runs a piped prompt with every tool denied and reads its JSON', async () => {
   const target = resolveHeadlessTarget({ agent: 'agy' }, { background: null });
   assert.equal(target.model, 'gemini-3.8-flash');
-  const cmd = agy.headless.command({ prompt: 'Summarise.', stdin: 'PAYLOAD', model: 'gemini-3.8-flash' });
+  const cmd = await agy.headless.command({ prompt: 'Summarise.', stdin: 'PAYLOAD', model: 'gemini-3.8-flash', secretEnv: async () => ({}) });
   assert.equal(cmd.file, 'agy');
   assert.equal(cmd.stdin, 'PAYLOAD\n\nSummarise.');
   assert.ok(!cmd.args.includes('-p'));
@@ -244,4 +246,66 @@ test('headless runs a piped prompt with every tool denied and reads its JSON', (
   assert.ok(JSON.parse(cmd.args[cmd.args.indexOf('--settings') + 1]).permissions.deny.includes('command(*)'));
   assert.deepEqual(agy.headless.parse('{"conversation_id":"c","status":"SUCCESS","response":" ok ","usage":{}}'), { text: 'ok', liveSessionId: 'c', error: null });
   assert.equal(agy.headless.parse('error: x\n{"conversation_id":"","status":"ERROR","response":"","error":"auth failed"}').error, 'auth failed');
+});
+
+// ---- Gemini API key from the Keychain ----------------------------------------
+
+test('GEMINI_API_KEY: a key already in the env wins and the Keychain is never read', async () => {
+  let looked = 0;
+  const lookup = async () => { looked += 1; return 'from-keychain'; };
+  assert.deepEqual(await agyLaunchSecretEnv({ env: { GEMINI_API_KEY: 'explicit' }, platform: 'darwin', lookup }), {});
+  assert.equal(looked, 0);
+});
+
+test('GEMINI_API_KEY: falls back to the Keychain on macOS only', async () => {
+  const lookup = async () => ' from-keychain\n';
+  assert.deepEqual(await agyLaunchSecretEnv({ env: {}, platform: 'darwin', lookup }), { GEMINI_API_KEY: 'from-keychain' });
+  assert.deepEqual(await agyLaunchSecretEnv({ env: {}, platform: 'linux', lookup }), {});
+});
+
+test('GEMINI_API_KEY: a failed or empty lookup is silent and adds nothing', async () => {
+  const logged = [];
+  const orig = { error: console.error, warn: console.warn, log: console.log };
+  console.error = console.warn = console.log = (...a) => logged.push(a);
+  try {
+    assert.deepEqual(await agyLaunchSecretEnv({ env: {}, platform: 'darwin', lookup: async () => { throw new Error('item not found'); } }), {});
+    assert.deepEqual(await agyLaunchSecretEnv({ env: {}, platform: 'darwin', lookup: async () => undefined }), {});
+    assert.deepEqual(await agyLaunchSecretEnv({ env: {}, platform: 'darwin', lookup: async () => '  ' }), {});
+  } finally {
+    Object.assign(console, orig);
+  }
+  assert.deepEqual(logged, []);
+});
+
+test('GEMINI_API_KEY: a pane launch gets it as a secret, never on the command line', async () => {
+  const orig = agy.launchSecretEnv;
+  agy.launchSecretEnv = async () => ({ GEMINI_API_KEY: 'sk-test-secret' });
+  try {
+    const ctx = await collectLaunchContext({ sid: 'card-1', agent: 'agy' }, { ext: {}, onError: () => {} });
+    assert.deepEqual(ctx.secretEnv, { GEMINI_API_KEY: 'sk-test-secret' });
+    const cmd = agy.buildLaunch({ sessionId: 'card-1', cwd: '/work/repo', launchContext: ctx });
+    const wrapped = await runtimeFor('local').wrapLaunch({ inner: cmd, secretEnvFile: '/data/launch-secrets/ag_x.env' });
+    assert.doesNotMatch(wrapped, /sk-test-secret|GEMINI_API_KEY/);
+    assert.match(wrapped, /^\. '\/data\/launch-secrets\/ag_x\.env' && rm -f/);
+    // Other agents never get it.
+    const claude = await collectLaunchContext({ sid: 'card-2', agent: 'claude' }, { ext: {}, onError: () => {} });
+    assert.equal(claude.secretEnv, undefined);
+    // An extension's own GEMINI_API_KEY is left alone.
+    const ext = { hooks: { 'session.launchContext': [{ extId: 'x', fn: () => ({ secretEnv: { GEMINI_API_KEY: 'from-ext' } }) }] } };
+    assert.equal((await collectLaunchContext({ sid: 'card-3', agent: 'agy' }, { ext, onError: () => {} })).secretEnv.GEMINI_API_KEY, 'from-ext');
+    // A failing lookup leaves the launch as it was.
+    agy.launchSecretEnv = async () => { throw new Error('boom'); };
+    assert.equal((await collectLaunchContext({ sid: 'card-4', agent: 'agy' }, { ext: {}, onError: () => {} })).secretEnv, undefined);
+  } finally {
+    agy.launchSecretEnv = orig;
+  }
+});
+
+test('GEMINI_API_KEY: a headless run gets it in its process env, the caller\'s key winning', async () => {
+  const secretEnv = async ({ env }) => (env.GEMINI_API_KEY ? {} : { GEMINI_API_KEY: 'from-keychain' });
+  const viaKeychain = await agy.headless.command({ prompt: 'P', model: 'gemini-3.8-flash', env: {}, secretEnv });
+  assert.equal(viaKeychain.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY || 'from-keychain');
+  assert.ok(!viaKeychain.args.some((a) => a.includes('from-keychain')));
+  const explicit = await agy.headless.command({ prompt: 'P', model: 'gemini-3.8-flash', env: { GEMINI_API_KEY: 'explicit' }, secretEnv });
+  assert.equal(explicit.env.GEMINI_API_KEY, 'explicit');
 });
