@@ -1694,9 +1694,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
   `data` is `{ read, credit, benchmarks, models }`: `read` is the reading date,
   `credit` cites the benchmark sources and bundled LiteLLM price catalog,
-  `benchmarks` records benchmark names, versions and weights, and
+  `benchmarks` records benchmark names, versions (or publish dates) and weights, and
   `models[agent][model][effort]` is `[quality, usd, minutes]` per coding task.
-  Quality is Terminal-Bench points (higher is better); dollars and wall-clock
+  Quality is Terminal-Bench points, averaged with Arena's agent leaderboard
+  rescaled to those points (higher is better); dollars and wall-clock
   minutes are lower-is-better. These are coding-task measurements, not review
   quality scores. A **pick** is `{ agent, model, effort }`; a scored **point**
   adds `{ quality, usd, minutes, cost, time }`. `cost` and `time` are chart
@@ -2734,8 +2735,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   finite number from 0 to 100, both inclusive output thresholds; invalid values
   reject the promise. `read` is the benchmark snapshot date (`YYYY-MM-DD`), `credit`
   its source attribution, and `units` is
-  `{ quality: 'Terminal-Bench 4.0 points', usd: 'list-price dollars per task',
-  minutes: 'wall-clock minutes per task' }`. These are coding-task measurements,
+  `{ quality, usd, minutes }`: quality in Terminal-Bench points averaged with Arena's
+  agent leaderboard rescaled to them, list-price dollars per task and wall-clock
+  minutes per task, each described in words. These are coding-task measurements,
   not review-specific scores. Unmeasured settings are omitted. A manifest using
   this method declares `^1.92.0`, or `^1.94.0` when using candidate restrictions.
   For example, `host.agents.front({ agents: ['claude'], excludeModels: ['opus'] })`

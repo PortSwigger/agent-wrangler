@@ -38,7 +38,8 @@ export function inputErrors(inputs) {
   if (!Object.keys(sources).length) err('sources', 'none');
   for (const [b, x] of Object.entries(benches)) {
     if (!x?.name) err(`benchmarks.${b}`, 'no name');
-    if (!versionOf(x?.version)) err(`benchmarks.${b}`, 'no major.minor version');
+    if (x?.onto == null ? !versionOf(x?.version) : !/^\d{4}-\d\d-\d\d$/.test(x.published ?? '')) err(`benchmarks.${b}`, x?.onto == null ? 'no major.minor version' : 'published is not a YYYY-MM-DD date');
+    if (x?.onto != null && (!benches[x.onto] || benches[x.onto].onto != null || !(benches[x.onto].weight > 0))) err(`benchmarks.${b}`, `onto names no weighted benchmark with a scale of its own`);
     if (!isNum(x?.weight)) err(`benchmarks.${b}`, 'weight is not a number >= 0');
   }
   if (!Object.values(benches).some((x) => x?.weight > 0)) err('benchmarks', 'no benchmark with a weight above 0');
@@ -53,6 +54,12 @@ export function inputErrors(inputs) {
     for (const [b, x] of Object.entries(m)) {
       if (['like', 'price', 'supersededBy', 'efforts'].includes(b)) continue;
       if (!benches[b]) { err(at, `${b} is not a benchmark`); continue; }
+      if (benches[b].onto != null) {
+        const scores = Object.entries(x?.scores || {});
+        if (!scores.length) err(`${at} ${b}`, 'no scores');
+        for (const [e, v] of scores) if (!effortsOf(m).includes(e) || typeof v !== 'number' || !Number.isFinite(v)) err(`${at} ${b} scores ${e}`, 'not a score at an effort the model takes');
+        continue;
+      }
       const { board, sweep } = x || {};
       for (const [kind, y] of [['board', board], ['sweep', sweep]]) if (y?.version != null && !versionOf(y.version)) err(`${at} ${b} ${kind}`, 'version is not major.minor');
       if (board) {
@@ -137,20 +144,49 @@ function benchRows(inputs, bench) {
   return { rows, anchors, calibration };
 }
 
+// A quality-only benchmark (`onto` another) scores model/efforts on a scale of its own. It is put on
+// the other benchmark's scale by matching mean and spread across every current model/effort both
+// score, so neither is shrunk towards the middle. An effort it has not scored follows the other
+// benchmark's ladder from the nearest effort it has, the higher one on a tie.
+function ontoRows(inputs, bench, base) {
+  const { onto } = inputs.benchmarks[bench], rows = {}, anchors = [], pairs = [];
+  const current = Object.entries(inputs.models).flatMap(([agent, models]) => Object.entries(models).filter(([, m]) => !m.supersededBy && m[bench]).map(([id, m]) => [agent, id, m]));
+  for (const [agent, id, m] of current) for (const [e, score] of Object.entries(m[bench].scores)) pairs.push([score, base[agent][id][e][0]]);
+  const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length, sd = (xs) => { const m = mean(xs); return Math.sqrt(mean(xs.map((x) => (x - m) ** 2))); };
+  const x = pairs.map((p) => p[0]), y = pairs.map((p) => p[1]);
+  const fit = { mx: mean(x), sx: sd(x), my: mean(y), sy: sd(y), n: pairs.length };
+  if (pairs.length < 3 || !(fit.sx > 0) || !(fit.sy > 0)) throw new Error(`${bench}: fewer than 3 model/efforts shared with ${onto}, or no spread, so no scale to map onto`);
+  const map = (score) => fit.my + fit.sy * (score - fit.mx) / fit.sx;
+  for (const [agent, id, m] of current) {
+    const scores = m[bench].scores, at = (e) => EFFORTS.indexOf(e), measured = Object.keys(scores);
+    (rows[agent] ||= {})[id] = Object.fromEntries(effortsOf(m).map((e) => {
+      if (scores[e] != null) return [e, [map(scores[e])]];
+      const f = measured.reduce((a, b) => (Math.abs(at(b) - at(e)) < Math.abs(at(a) - at(e)) || (Math.abs(at(b) - at(e)) === Math.abs(at(a) - at(e)) && at(b) > at(a)) ? b : a));
+      if (!(base[agent][id][f][0] > 0)) throw new Error(`${agent} ${id}: no ${onto} quality at ${f} to ladder ${bench} from`);
+      return [e, [map(scores[f]) * base[agent][id][e][0] / base[agent][id][f][0]]];
+    }));
+    anchors.push({ bench, agent, model: id, scores: Object.fromEntries(EFFORTS.filter((e) => scores[e] != null).map((e) => [e, [scores[e], map(scores[e])]])), onto });
+  }
+  return { rows, anchors, calibration: [{ bench, onto, ...fit }] };
+}
+
 // Each row is the weighted mean of the benchmarks' rows, rounded once: quality to an integer,
-// usd to 2dp, minutes to 1dp.
+// usd to 2dp, minutes to 1dp. A quality-only benchmark joins the quality of the models it scores;
+// cost and minutes come from the benchmarks that measure them.
 export function derive(inputs) {
   const errs = inputErrors(inputs);
   if (errs.length) throw new Error(`invalid inputs:\n  ${errs.join('\n  ')}`);
-  const weighted = Object.entries(inputs.benchmarks).filter(([, b]) => b.weight > 0), total = weighted.reduce((s, [, b]) => s + b.weight, 0);
-  const each = weighted.map(([id, b]) => ({ w: b.weight, ...benchRows(inputs, id) }));
+  const weighted = Object.entries(inputs.benchmarks).filter(([, b]) => b.weight > 0);
+  const each = weighted.filter(([, b]) => b.onto == null).map(([id, b]) => ({ id, w: b.weight, ...benchRows(inputs, id) }));
+  each.push(...weighted.filter(([, b]) => b.onto != null).map(([id, b]) => ({ id, w: b.weight, ...ontoRows(inputs, id, each.find((x) => x.id === b.onto).rows) })));
+  const mean = (xs, i) => xs.reduce((s, x) => s + x.w * x.v[i], 0) / xs.reduce((s, x) => s + x.w, 0);
   // A superseded model stays in the inputs only as a ladder or timing donor for its like chain.
   const rows = Object.fromEntries(Object.entries(inputs.models).map(([agent, models]) => [agent, Object.fromEntries(Object.keys(models).filter((model) => !models[model].supersededBy).map((model) => [model,
     Object.fromEntries(effortsOf(models[model]).map((e) => {
-      const [q, c, t] = [0, 1, 2].map((i) => each.reduce((s, x) => s + x.w * x.rows[agent][model][e][i], 0) / total);
-      return [e, [round(q, 0), round(c, 2), round(t, 1)]];
+      const has = each.map((x) => ({ w: x.w, v: x.rows[agent]?.[model]?.[e] })).filter((x) => x.v), measured = has.filter((x) => x.v.length === 3);
+      return [e, [round(mean(has, 0), 0), round(mean(measured, 1), 2), round(mean(measured, 2), 1)]];
     }))]))]));
-  return { rows, anchors: each.flatMap((x) => x.anchors), calibration: each.flatMap((x, i) => x.calibration.map((c) => ({ bench: weighted[i][0], ...c }))) };
+  return { rows, anchors: each.flatMap((x) => x.anchors), calibration: each.flatMap((x) => x.calibration.map((c) => ({ bench: x.id, ...c }))) };
 }
 export const rowsOf = (inputs) => derive(inputs).rows;
 
@@ -178,8 +214,10 @@ export function report(inputs, data = committedData()) {
   for (const [id, s] of Object.entries(inputs.sources)) out.push(`  ${id.padEnd(14)} ${s.name}, ${s.by}: ${s.licence}`, `  ${''.padEnd(14)} ${urls(s.url)}`, ...(s.unconfirmed ? [`  ${''.padEnd(14)} UNCONFIRMED: ${s.unconfirmed}`] : []));
   out.push(...(inputs.manual || []).map((s) => `MANUAL: ${s}`));
   out.push('', 'Anchors at max, or the effort named (Q points, C dollars, T minutes), and ladders:');
-  for (const c of calibration) out.push(`  ${c.bench} ${c.agent}: ×${c.k.toFixed(3)} cost (from ${c.priced.join(', ') || 'none'})`);
-  for (const a of anchors) out.push(`  ${`${a.agent} ${a.model}`.padEnd(21)} ${a.donor ? `donor only, superseded by ${a.donor}; ladder ${a.ladder}` : `Q ${a.Q.toFixed(2).padStart(5)} ${a.quality}; C $${a.C.toFixed(2)} ${a.cost}; T ${a.T.toFixed(1)} ${a.minutes}; ladder ${a.ladder}`}`);
+  for (const c of calibration) out.push(c.onto ? `  ${c.bench} onto ${c.onto}: Q = ${c.my.toFixed(2)} + ${(c.sy / c.sx).toFixed(2)} × (score − ${c.mx.toFixed(4)}), matching mean and spread over the ${c.n} model/efforts both score`
+    : `  ${c.bench} ${c.agent}: ×${c.k.toFixed(3)} cost (from ${c.priced.join(', ') || 'none'})`);
+  for (const a of anchors) out.push(a.onto ? `  ${`${a.bench} ${a.agent} ${a.model}`.padEnd(27)} ${Object.entries(a.scores).map(([e, [s, q]]) => `${e} ${s.toFixed(4)} → Q ${q.toFixed(2)}`).join(', ')}; other efforts by ${a.onto}'s ladder`
+    : `  ${`${a.agent} ${a.model}`.padEnd(21)} ${a.donor ? `donor only, superseded by ${a.donor}; ladder ${a.ladder}` : `Q ${a.Q.toFixed(2).padStart(5)} ${a.quality}; C $${a.C.toFixed(2)} ${a.cost}; T ${a.T.toFixed(1)} ${a.minutes}; ladder ${a.ladder}`}`);
   out.push('', `Rows from inputs read ${inputs.read}, for public/model-front-data.json:`);
   for (const [agent, ms] of Object.entries(rows)) out.push(`    ${agent}: {`, ...Object.entries(ms).map(([m, es]) => line(m, es)), '    },');
   out.push('', 'Against the file:', `  ${data.credit === inputs.credit ? 'same' : 'CHANGED'}  credit ${JSON.stringify(inputs.credit)}${data.credit === inputs.credit ? '' : ` (file ${JSON.stringify(data.credit ?? null)})`}`);
@@ -205,8 +243,11 @@ export function diffInputs(base, fresh) {
   const bumped = [], changed = [];
   for (const b of keysOf(base.benchmarks, fresh.benchmarks)) {
     const x = base.benchmarks?.[b], y = fresh.benchmarks?.[b], name = y?.name || x?.name || b, was = versionOf(x?.version), now = versionOf(y?.version);
-    if (was !== now) bumped.push(`${name} v${was ?? '?'} -> v${now ?? '?'}`);
+    if (x && y && (x.onto ?? null) !== (y.onto ?? null)) bumped.push(`${name} onto ${x.onto ?? 'none'} -> ${y.onto ?? 'none'}`);
+    else if ((x ?? y)?.onto == null && was !== now) bumped.push(`${name} v${was ?? '?'} -> v${now ?? '?'}`);
+    else if (!x !== !y) changed.push(`  ${y ? 'NEW      ' : 'GONE     '}${name} benchmark`);
     if (x && y && x.weight !== y.weight) changed.push(`  CHANGED  ${name} weight ${x.weight} -> ${y.weight}`);
+    if (x?.onto != null && y?.onto != null && x.published !== y.published) changed.push(`  CHANGED  ${name} published ${x.published} -> ${y.published}`);
   }
   for (const agent of keysOf(base.models, fresh.models)) for (const model of keysOf(base.models[agent], fresh.models[agent])) {
     const a = base.models[agent]?.[model], b = fresh.models[agent]?.[model], at = `${agent} ${model}`;
@@ -218,6 +259,7 @@ export function diffInputs(base, fresh) {
     if (effortsOf(a).join() !== effortsOf(b).join()) changed.push(`  CHANGED  ${at} efforts ${effortsOf(a).join(', ')} -> ${effortsOf(b).join(', ')}`);
     for (const bench of keysOf(a, b).filter((k) => !['like', 'price', 'supersededBy', 'efforts'].includes(k))) {
       const x = a[bench] || {}, y = b[bench] || {};
+      for (const e of keysOf(x.scores, y.scores)) if (x.scores?.[e] !== y.scores?.[e]) changed.push(`  ${x.scores?.[e] == null ? 'NEW      ' : y.scores?.[e] == null ? 'GONE     ' : 'CHANGED  '}${at} ${bench} ${e} ${x.scores?.[e] ?? 'none'} -> ${y.scores?.[e] ?? 'none'}`);
       if (!x.board !== !y.board) changed.push(`  ${y.board ? 'NEW      ' : 'GONE     '}${at} ${bench} board ${y.board ? '(newly on the board)' : '(off the board)'}`);
       else if (x.board) {
         for (const f of ['file', 'version', 'minutes_file', 'hub_row', ...BOARD]) if (x.board[f] !== y.board[f]) changed.push(`  CHANGED  ${at} ${bench} board ${f} ${x.board[f]} -> ${y.board[f]}`);
@@ -234,7 +276,7 @@ export function diffInputs(base, fresh) {
   if (JSON.stringify([...(base.manual ?? [])].sort()) !== JSON.stringify([...(fresh.manual ?? [])].sort())) changed.push(`  CHANGED  manual source flags ${JSON.stringify(fresh.manual ?? [])}`);
   const status = bumped.length ? 'version bumped' : changed.length ? 'numbers changed' : 'up to date';
   const head = {
-    'up to date': `up to date: the reading of ${fresh.read} matches the inputs read ${base.read} (${Object.values(fresh.benchmarks || {}).map((b) => `${b.name} v${versionOf(b.version)}`).join(', ')}).`,
+    'up to date': `up to date: the reading of ${fresh.read} matches the inputs read ${base.read} (${Object.values(fresh.benchmarks || {}).map((b) => (b.onto == null ? `${b.name} v${versionOf(b.version)}` : `${b.name} published ${b.published}`)).join(', ')}).`,
     'numbers changed': `numbers changed since the inputs read ${base.read} (${changed.length}): rescore from the fresh reading.`,
     'version bumped': `version bumped since the inputs read ${base.read}: ${bumped.join(', ')}. Score each model on the newest version the board has run it on, and re-read every vendor sweep for a chart at the new version.`,
   }[status];

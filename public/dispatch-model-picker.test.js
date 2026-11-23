@@ -233,7 +233,7 @@ test('selecting a scored model clears the no-benchmark overlay and restores all 
   assert.match(h.nodes.get('.model-front-readout').innerHTML, /No benchmark data available/);
   h.set({ agent: 'codex', model: 'gpt-6.2-sol', effort: 'medium' });
   const html = h.nodes.get('.model-front-readout').innerHTML;
-  assert.match(html, /58 \/ 100/);
+  assert.match(html, /53 \/ 100/);
   assert.match(html, /\$0\.63 \/ task/);
   assert.match(html, /14\.1 min/);
   assert.doesNotMatch(html, /model-front-benchmark-overlay|Unavailable/);
@@ -366,9 +366,9 @@ test('graph cost range fits visible points and expands for an expensive selected
   const { costRange, costTicks } = await import('./dispatch-model-picker.js');
   const visible = [...MODEL_FRONT.frontOf(agents), ...MODEL_FRONT.unavailableOf(MODEL_FRONT.frontOf(agents))];
   const range = costRange(visible);
-  assert.deepEqual(range, [0.1, 10]);
-  assert.equal(costTicks(range).at(-1).label, '$10');
-  assert.deepEqual(costRange([...visible, { usd: 50.03 }]), [0.1, 100]);
+  assert.deepEqual(range, [0.1, 50]);
+  assert.equal(costTicks(range).at(-1).label, '$50');
+  assert.deepEqual(costRange([...visible, { usd: 150 }]), [0.1, 200]);
   assert.deepEqual(costRange([]), [0.1, 10]);
   const single = costRange([{ usd: 1 }]);
   assert.ok(single[0] <= 1 && single[1] >= 1 && single[1] > single[0]);

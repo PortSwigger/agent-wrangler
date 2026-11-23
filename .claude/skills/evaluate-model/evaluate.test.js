@@ -297,3 +297,76 @@ test('an effort list or board effort the model cannot take is named', () => {
   assert.match(text, /CHANGED {2}agy gemini-4-carbon efforts low, medium, high -> low, high/);
   assert.match(text, /CHANGED {2}agy gemini-4-neon terminal-bench board effort xhigh -> high/);
 });
+
+const arena = JSON.parse(readFileSync(new URL('./inputs-2026-11-23.json', import.meta.url), 'utf8'));
+const tbOnly = () => { const i = structuredClone(arena); delete i.benchmarks.arena; for (const ms of Object.values(i.models)) for (const m of Object.values(ms)) delete m.arena; delete i.sources.arena; return i; };
+
+test('Arena is put on Terminal-Bench points by matching mean and spread, and averaged in for quality only', () => {
+  const tb = derive(tbOnly()), both = derive(arena);
+  const fit = both.calibration.find((c) => c.bench === 'arena');
+  assert.equal(fit.onto, 'terminal-bench');
+  assert.equal(fit.n, 18, 'every current model/effort Arena and Terminal-Bench both score');
+  const opus = both.anchors.find((a) => a.bench === 'arena' && a.model === 'opus'), mapped = opus.scores.max[1];
+  assert.equal(mapped, fit.my + fit.sy * (arena.models.claude.opus.arena.scores.max - fit.mx) / fit.sx);
+  assert.ok(Math.abs(fit.mx - 0.0964) < 1e-4 && Math.abs(fit.my - 46.05) < 0.01, 'the means the report prints');
+  // Quality is the equal-weight mean of both; cost and minutes are Terminal-Bench's alone.
+  const tbAnchor = tb.anchors.find((a) => a.model === 'opus');
+  assert.equal(both.rows.claude.opus.max[0], round((tbAnchor.Q + mapped) / 2, 0));
+  for (const [agent, ms] of Object.entries(both.rows)) for (const [model, es] of Object.entries(ms)) for (const [e, v] of Object.entries(es)) assert.deepEqual(v.slice(1), tb.rows[agent][model][e].slice(1), `${agent} ${model} ${e}`);
+  assert.deepEqual(both.rows.agy['gemini-3.1-pro'], tb.rows.agy['gemini-3.1-pro'], 'a model Arena does not list keeps Terminal-Bench alone');
+});
+
+test('an effort Arena has not scored follows Terminal-Bench\'s ladder from the nearest one it has, the higher on a tie', () => {
+  const i = structuredClone(arena);
+  i.models.claude.opus.arena.scores = { low: 0.05, max: 0.19 };
+  const { rows, anchors, calibration } = derive(i), fit = calibration.find((c) => c.bench === 'arena');
+  const map = (s) => fit.my + fit.sy * (s - fit.mx) / fit.sx;
+  // Rows round once, so rebuild Terminal-Bench's unrounded quality from its anchor and ladder.
+  const tbQ = (e) => { const a = derive(tbOnly()).anchors.find((x) => x.model === 'opus'), s = tb('claude', 'opus', i).sweep.efforts; return a.Q * s[e][0] / s.max[0]; };
+  assert.equal(rows.claude.opus.medium[0], round((tbQ('medium') + map(0.05) * tbQ('medium') / tbQ('low')) / 2, 0), 'medium is nearer low');
+  assert.equal(rows.claude.opus.high[0], round((tbQ('high') + map(0.19) * tbQ('high') / tbQ('max')) / 2, 0), 'high ties low and max, so it takes max');
+  assert.deepEqual(Object.keys(anchors.find((a) => a.bench === 'arena' && a.model === 'opus').scores), ['low', 'max']);
+});
+
+test('an Arena benchmark needs a publish date, a scale to map onto and scores at efforts the model takes', () => {
+  assert.deepEqual(inputErrors(arena), []);
+  const bad = structuredClone(arena);
+  bad.benchmarks.arena.published = 'latest';
+  bad.models.agy['gemini-4-carbon'].arena.scores = { xhigh: 0.2 };
+  bad.models.claude.opus.arena.scores = {};
+  bad.models.claude.haiku.arena.scores.high = 'n/a';
+  let errs = inputErrors(bad).join('\n');
+  for (const re of [/benchmarks\.arena: published is not a YYYY-MM-DD date/, /agy gemini-4-carbon arena scores xhigh: not a score at an effort the model takes/, /claude opus arena: no scores/, /claude haiku arena scores high: not a score/]) assert.match(errs, re);
+  bad.benchmarks.arena.onto = 'arena';
+  assert.match(inputErrors(bad).join('\n'), /benchmarks\.arena: onto names no weighted benchmark with a scale of its own/);
+  const few = structuredClone(arena);
+  for (const [agent, ms] of Object.entries(few.models)) for (const [id, m] of Object.entries(ms)) if (!(agent === 'claude' && id === 'opus')) delete m.arena;
+  assert.throws(() => derive(few), /fewer than 3 model\/efforts shared with terminal-bench/);
+});
+
+test('a new Arena reading is a numbers change; adding Arena is one; remapping it onto another benchmark is a scale change', () => {
+  const fresh = structuredClone(arena);
+  fresh.benchmarks.arena.published = '2026-11-30';
+  fresh.models.claude.opus.arena.scores.max = 0.2;
+  fresh.models.claude.opus.arena.scores.xhigh = 0.18;
+  delete fresh.models.claude.haiku.arena;
+  const { status, text } = diffInputs(arena, fresh);
+  assert.equal(status, 'numbers changed');
+  for (const re of [/CHANGED {2}Arena agent leaderboard published 2026-11-22 -> 2026-11-30/, /CHANGED {2}claude opus arena max 0\.19117186195772867 -> 0\.2/, /NEW {6}claude opus arena xhigh none -> 0\.18/, /GONE {5}claude haiku arena high -0\.004238737455761248 -> none/]) assert.match(text, re);
+  const added = diffInputs(tbOnly(), arena);
+  assert.equal(added.status, 'numbers changed');
+  assert.match(added.text, /NEW {6}Arena agent leaderboard benchmark/);
+  assert.match(diffInputs(arena, { ...structuredClone(arena), read: '2026-11-24' }).text, /^up to date: .*Terminal-Bench v4\.1, Arena agent leaderboard published 2026-11-22/);
+  const moved = structuredClone(arena);
+  moved.benchmarks.arena.onto = 'other';
+  assert.equal(diffInputs(arena, moved).status, 'version bumped');
+});
+
+test('the report prints Arena\'s mapping and each model\'s scores, and credits Arena under CC BY 4.0', () => {
+  const { text } = report(arena, dataOf(arena));
+  assert.match(text, /arena +Arena agent leaderboard, Hugging Face dataset lmarena-ai\/leaderboard-dataset .*, Arena: CC BY 4\.0/);
+  assert.match(text, /arena onto terminal-bench: Q = 46\.05 \+ 242\.89 × \(score − 0\.0964\), matching mean and spread over the 18 model\/efforts both score/);
+  assert.match(text, /arena claude opus +high 0\.1386 → Q 56\.29, max 0\.1912 → Q 69\.06; other efforts by terminal-bench's ladder/);
+  assert.match(arena.credit, /Terminal-Bench 4\.1.*Arena's agent leaderboard published 2026-11-22 \(Arena, lmarena-ai\/leaderboard-dataset, CC BY 4\.0\), rescaled to Terminal-Bench points/);
+  assert.doesNotMatch(text, /CHANGED|NEW|GONE/);
+});

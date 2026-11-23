@@ -1,15 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readSources, anthropicSweeps, boardFile, hubLeaderboard, hubLabel } from './read-front-sources.mjs';
+import { readSources, anthropicSweeps, boardFile, hubLeaderboard, hubLabel, arenaLeaderboard, arenaScores, arenaPage as arenaUrl } from './read-front-sources.mjs';
 
 const base = JSON.parse(readFileSync(new URL('../.claude/skills/evaluate-model/inputs-2026-10-28.json', import.meta.url)));
 const prices = JSON.parse(readFileSync(new URL('../server/price-catalog.snapshot.json', import.meta.url)));
 const chart = (series, version = '4.0') => ({ _type: 'chart', title: `Terminal-Bench ${version}`, data: 'series,x,y,label,labelPlacement\n' + series.flatMap((s) => ['Low', 'Med', 'High', 'Xhigh', 'Max'].map((e, i) => `${s},${i + 1},${20 + i},${e},hidden`)).join('\n') });
 const page = (...charts) => `<script>self.__next_f.push(${JSON.stringify([1, '1:' + JSON.stringify({ body: charts }) + '\n'])})</script>`;
 const hubPage = (rows = [], title = 'Terminal-Bench 4.1') => `<script>self.__next_f.push(${JSON.stringify([1, '1d:' + JSON.stringify({ state: { queries: [{ queryKey: ['leaderboard', 'terminal-bench/terminal-bench', '4-1-0'], state: { data: { leaderboard: { name: '4-1-0', title }, rows } } }] } }) + '\n'])})</script>`;
+const arenaRow = (model_name, score, row = {}) => ({ row: { model_name, organization: 'x', license: 'Proprietary', score, category: 'overall', leaderboard_publish_date: '2026-10-28', ...row } });
+const arenaJson = (rows, total = rows.length) => JSON.stringify({ num_rows_total: total, rows });
+const arenaRows = [arenaRow('Claude Opus 5.5 (Max)', 0.19), arenaRow('Claude Opus 5.5 (High)', 0.14), arenaRow('Claude Opus 5 (Max)', 0.06), arenaRow('Claude Sonnet 5.5 (Max)', 0.15),
+  arenaRow('Claude Haiku 5.5 (High)', -0.004), arenaRow('GPT-6.1 Sol (Medium)', 0.08), arenaRow('GPT-6 Luna (Ultra)', 0.9), arenaRow('Gemini 3.1 Pro Preview', -0.05), arenaRow('Claude Fable 5.2 (Max)', 0.5, { category: 'coding' })];
 const pages = {
   'https://www.tbench.ai/': hubPage(),
+  [arenaUrl(0)]: arenaJson(arenaRows),
   'https://www.anthropic.com/claude-opus-5-5': page(chart(['gpt6astra'])),
   'https://www.anthropic.com/claude-sonnet-5-5': page(chart(['opus55'])),
   'https://www.anthropic.com/claude-haiku-5-5': page(chart(['haiku55', 'sonnet55', 'sonnet55old'])),
@@ -177,4 +182,52 @@ test('agy models read their Antigravity CLI run at its effort, Gemini input pric
   assert.ok(inputs.manual.some((s) => s.startsWith('Read Google effort results by hand for new board run 2026-11-14-4-1-0-gemini-gemini-4-carbon')));
   assert.match(inputs.credit, /published by Anthropic, OpenAI and Google/);
   await assert.rejects(run((p) => geminiGithub(p, (b) => (b.file.includes('carbon') ? 'xhigh' : b.effort ?? 'max'))), /carbon.*not an effort the model takes/);
+});
+
+test('Arena rows join as a quality-only benchmark, matched by model and effort, credited under CC BY 4.0', async () => {
+  const withSuperseded = structuredClone(base);
+  withSuperseded.models.codex['gpt-6.1-sol'].supersededBy = 'gpt-6.1-terra';
+  const { inputs, log } = await readSources({ ...options(), base: withSuperseded });
+  assert.deepEqual(inputs.benchmarks.arena, { name: 'Arena agent leaderboard', published: '2026-10-28', weight: 1, onto: 'terminal-bench' });
+  assert.deepEqual(inputs.models.claude.opus.arena, { scores: { high: 0.14, max: 0.19 } }, 'ascending efforts; Opus 5 is another model');
+  assert.deepEqual(inputs.models.claude.haiku.arena, { scores: { high: -0.004 } });
+  assert.equal(inputs.models.claude.fable.arena, undefined, 'only the overall category counts');
+  assert.equal(inputs.models.codex['gpt-6.1-sol'].arena, undefined, 'a superseded model has no rows to score');
+  assert.equal(inputs.models.codex['gpt-6-luna'].arena, undefined, 'an effort the model does not take is skipped');
+  assert.match(log.join('\n'), /arena: codex gpt-6-luna: skipped GPT-6 Luna \(Ultra\)/);
+  assert.match(log.join('\n'), /published 2026-10-28 \(8 rows\); no row for claude fable/);
+  assert.equal(inputs.sources.arena.url, 'https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset');
+  assert.match(inputs.sources.arena.licence, /^CC BY 4\.0/);
+  assert.match(inputs.credit, /Arena's agent leaderboard published 2026-10-28 \(Arena, lmarena-ai\/leaderboard-dataset, CC BY 4\.0\), rescaled to Terminal-Bench points/);
+  const tuned = structuredClone(base);
+  tuned.benchmarks.arena = { ...inputs.benchmarks.arena, weight: 0.5 };
+  assert.equal((await readSources({ ...options(), base: tuned })).inputs.benchmarks.arena.weight, 0.5, 'a weight set in the inputs is carried');
+});
+
+test('Arena names follow its "Model (Effort)" form for every agent', () => {
+  const rows = [arenaRow('GPT-6.1 Sol (Max)', 0.1).row, arenaRow('Gemini 4 Neon (High)', 0.2).row, arenaRow('Gemini 4 Neon (xHigh)', 0.3).row, arenaRow('Claude Fable 5.2 (Max)', 0.27).row];
+  assert.deepEqual(arenaScores(rows, 'codex', 'gpt-6.1-sol', ['low', 'medium', 'high', 'xhigh', 'max']), { name: 'GPT-6.1 Sol', scores: { max: 0.1 }, skipped: [] });
+  assert.deepEqual(arenaScores(rows, 'agy', 'gemini-4-neon', ['low', 'medium', 'high', 'xhigh']), { name: 'Gemini 4 Neon', scores: { high: 0.2, xhigh: 0.3 }, skipped: [] });
+  assert.deepEqual(arenaScores(rows, 'claude', 'fable', ['low', 'medium', 'high', 'xhigh', 'max']).scores, { max: 0.27 });
+});
+
+test('Arena pages are read to the end, and an unreadable leaderboard fails the reader', async () => {
+  const many = Array.from({ length: 150 }, (_, i) => arenaRow(`Model ${i} (Max)`, i / 1000));
+  const paged = { [arenaUrl(0)]: arenaJson(many.slice(0, 100), 150), [arenaUrl(100)]: arenaJson(many.slice(100), 150) };
+  assert.equal((await arenaLeaderboard(async (url) => paged[url])).rows.length, 150);
+  const failing = async (rows, total) => readSources({ ...options(), fetchText: async (url) => (url === arenaUrl(0) ? arenaJson(rows, total) : options().fetchText(url)) });
+  await assert.rejects(failing([], 0), /Arena: no readable overall rows/);
+  await assert.rejects(failing([arenaRow('A (Max)', 0.1)], 5), /Arena: unreadable rows page/);
+  await assert.rejects(failing([arenaRow('A (Max)', null)]), /Arena: no readable overall rows/);
+  await assert.rejects(failing([arenaRow('A (Max)', 0.1), arenaRow('B (Max)', 0.1, { leaderboard_publish_date: '2026-10-29' })]), /mixes publish dates/);
+  await assert.rejects(failing([arenaRow('A (Max)', 0.1), arenaRow('A (Max)', 0.2)]), /listed twice/);
+  await assert.rejects(readSources({ ...options(), fetchText: async (url) => { if (url === arenaUrl(0)) throw new Error(`${url}: HTTP 502`); return options().fetchText(url); } }), /HTTP 502/);
+  await assert.rejects(readSources({ ...options(), fetchText: async (url) => (url === arenaUrl(0) ? '<html>' : options().fetchText(url)) }), /JSON/);
+});
+
+test('the reader never reads arena.ai, only the Hugging Face dataset', async () => {
+  const seen = [];
+  await readSources({ ...options(), fetchText: async (url) => { seen.push(url); return options().fetchText(url); } });
+  assert.ok(seen.includes(arenaUrl(0)));
+  assert.ok(!seen.some((url) => /arena\.ai|lmarena\.ai/.test(new URL(url).hostname)));
 });

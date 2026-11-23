@@ -38,7 +38,7 @@ add more tools. A running session receives tool-registry changes after its next 
 Call `get_model_front` when choosing a model for a spawn, handoff, advisor, or reviewer.
 Its `agent`, `maxUsd`, and `minQuality` filters shorten only the returned `front`; a `pick`
 is always judged against the whole front for the installed agents. Each point has `quality`
-(Terminal-Bench 4.0 points), `usd` (list-price dollars per task), `minutes` (wall-clock minutes
+(Terminal-Bench points averaged with Arena's agent leaderboard rescaled to them), `usd` (list-price dollars per task), `minutes` (wall-clock minutes
 per task), and `onCurve`. A point with `onCurve: false` remains on the three-dimensional
 front because it is faster. The response includes the data's `read` date and `credit`,
 including prices from core's LiteLLM catalog.
