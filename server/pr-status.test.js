@@ -228,3 +228,38 @@ test('fetchUnresolvedThreads preserves the null-on-failure contract', async () =
   assert.equal(await fetchUnresolvedThreads('u', unresolvedRun('[]', 1)), null);
   assert.equal(await fetchUnresolvedThreads('u', async () => { throw new Error('unavailable'); }), null);
 });
+
+const rollupStatus = async (statusCheckRollup, mergeStateStatus = 'BLOCKED') =>
+  (await fetchPrStatus('u', runner(JSON.stringify({ id: 'PR_42', createdAt: '2026-11-15T10:00:00Z', state: 'OPEN', title: 'A change',
+    number: 42, isDraft: false, headRefOid: 'head', mergeStateStatus, reviewDecision: '', statusCheckRollup })))).checkStatus;
+const titleRun = (conclusion, startedAt, completedAt) => ({ __typename: 'CheckRun', workflowName: 'PR Title Check', name: 'Validate PR title',
+  status: 'COMPLETED', conclusion, startedAt, completedAt });
+
+test('a cancelled run superseded by a later successful run of the same check is not failing', async () => {
+  // A workflow concurrency group cancels the first of two runs started for the same head.
+  const rollup = [titleRun('CANCELLED', '2026-11-20T10:32:19Z', '2026-11-20T10:32:23Z'),
+    titleRun('SUCCESS', '2026-11-20T10:32:22Z', '2026-11-20T10:32:40Z')];
+  assert.equal(await rollupStatus(rollup, 'CLEAN'), 'passing');
+  assert.equal(await rollupStatus([...rollup].reverse(), 'CLEAN'), 'passing');
+});
+
+test('a lone cancelled run that is the latest of its check is still failing', async () => {
+  assert.equal(await rollupStatus([titleRun('CANCELLED', '2026-11-20T10:32:19Z', '2026-11-20T10:32:23Z')]), 'failing');
+  assert.equal(await rollupStatus([titleRun('SUCCESS', '2026-11-20T10:32:19Z', '2026-11-20T10:32:40Z'),
+    titleRun('CANCELLED', '2026-11-20T10:35:00Z', '2026-11-20T10:35:05Z')]), 'failing');
+});
+
+test('a queued rerun not yet started supersedes an earlier cancelled run', async () => {
+  assert.equal(await rollupStatus([titleRun('CANCELLED', '2026-11-20T10:32:19Z', '2026-11-20T10:32:23Z'),
+    { ...titleRun('', '0001-01-01T00:00:00Z', '0001-01-01T00:00:00Z'), status: 'QUEUED' }]), 'pending');
+});
+
+test('runs only collapse within the same workflow, job name or status context', async () => {
+  const cancelled = titleRun('CANCELLED', '2026-11-20T10:32:19Z', '2026-11-20T10:32:23Z');
+  const later = '2026-11-20T10:40:00Z';
+  assert.equal(await rollupStatus([cancelled, { ...titleRun('SUCCESS', later, later), workflowName: 'Other' }]), 'failing');
+  assert.equal(await rollupStatus([cancelled, { ...titleRun('SUCCESS', later, later), name: 'Other job' }]), 'failing');
+  const status = (state, startedAt) => ({ __typename: 'StatusContext', context: 'ci/build', state, startedAt });
+  assert.equal(await rollupStatus([status('ERROR', '2026-11-20T10:00:00Z'), status('SUCCESS', later)], 'CLEAN'), 'passing');
+  assert.equal(await rollupStatus([status('SUCCESS', '2026-11-20T10:00:00Z'), status('ERROR', later)]), 'failing');
+});
