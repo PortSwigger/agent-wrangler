@@ -1,6 +1,6 @@
 {
   "read": "2026-11-23",
-  "credit": "Scores: Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic, OpenAI and Google on Terminal-Bench 4.1 or 4.0, averaged with Arena's agent leaderboard published 2026-11-22 (Arena, lmarena-ai/leaderboard-dataset, CC BY 4.0), rescaled to Terminal-Bench points. Prices: Anthropic, OpenAI and Google list prices from the LiteLLM catalog (MIT), read 2026-11-23.",
+  "credit": "Scores: Wrangler-bench, the equal-weight average of Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic, OpenAI and Google on Terminal-Bench 4.1 or 4.0, and Arena's agent leaderboard published 2026-11-22 (Arena, lmarena-ai/leaderboard-dataset, CC BY 4.0), which Agent Wrangler rescaled onto Terminal-Bench's scale before averaging; cost and minutes are Terminal-Bench's alone. Prices: Anthropic, OpenAI and Google list prices from the LiteLLM catalog (MIT), read 2026-11-23.",
   "sources": {
     "board": {
       "name": "Terminal-Bench official leaderboard, GitHub submissions",
@@ -66,7 +66,7 @@
       "by": "Arena",
       "licence": "CC BY 4.0, per the dataset card; its per-row license column is each model's, not the data's. Never scrape arena.ai, whose terms forbid it.",
       "url": "https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset",
-      "gives": "Each model/effort's IPS score, mapped onto Terminal-Bench points by matching mean and spread over the model/efforts both score; quality only, cost and minutes stay Terminal-Bench's"
+      "gives": "Each model/effort's IPS score, mapped onto Terminal-Bench's scale by matching mean and spread over the model/efforts both score; quality only, cost and minutes stay Terminal-Bench's"
     }
   },
   "benchmarks": {

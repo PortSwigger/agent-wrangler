@@ -38,7 +38,7 @@ add more tools. A running session receives tool-registry changes after its next 
 Call `get_model_front` when choosing a model for a spawn, handoff, advisor, or reviewer.
 Its `agent`, `maxUsd`, and `minQuality` filters shorten only the returned `front`; a `pick`
 is always judged against the whole front for the installed agents. Each point has `quality`
-(Terminal-Bench points averaged with Arena's agent leaderboard rescaled to them), `usd` (list-price dollars per task), `minutes` (wall-clock minutes
+([Wrangler-bench](#wrangler-bench), 0–100), `usd` (list-price dollars per task), `minutes` (wall-clock minutes
 per task), and `onCurve`. A point with `onCurve: false` remains on the three-dimensional
 front because it is faster. The response includes the data's `read` date and `credit`,
 including prices from core's LiteLLM catalog.
@@ -50,6 +50,16 @@ reported `autoEffort`. An unmeasured model or unresolved Auto returns `scored: f
 with no measurements or verdict. Unknown or unavailable agents and unknown models produce
 errors naming valid choices. Text content is the same JSON as `structuredContent`.
 These benchmarks measure doing a coding task; they do not measure review quality.
+
+### Wrangler-bench
+
+Quality scores are **Wrangler-bench**, Agent Wrangler's blend of two public benchmarks at equal
+weight: [Terminal-Bench](https://www.tbench.ai/) (Apache-2.0) and
+[Arena's agent leaderboard](https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset)
+(CC BY 4.0). Arena's scores are rescaled onto Terminal-Bench's 0–100 scale by matching mean and
+spread over the settings both score, then averaged with Terminal-Bench's. A model Arena does not
+list keeps its Terminal-Bench score. Cost and time come from Terminal-Bench alone. The data's
+`credit` names both sources and the rescaling.
 
 ## Status notices from spawned sessions
 

@@ -1696,8 +1696,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `credit` cites the benchmark sources and bundled LiteLLM price catalog,
   `benchmarks` records benchmark names, versions (or publish dates) and weights, and
   `models[agent][model][effort]` is `[quality, usd, minutes]` per coding task.
-  Quality is Terminal-Bench points, averaged with Arena's agent leaderboard
-  rescaled to those points (higher is better); dollars and wall-clock
+  Quality is [Wrangler-bench](agent-tools.md#wrangler-bench), Terminal-Bench
+  and Arena's agent leaderboard blended at equal weight (higher is better); dollars and wall-clock
   minutes are lower-is-better. These are coding-task measurements, not review
   quality scores. A **pick** is `{ agent, model, effort }`; a scored **point**
   adds `{ quality, usd, minutes, cost, time }`. `cost` and `time` are chart
@@ -2735,8 +2735,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   finite number from 0 to 100, both inclusive output thresholds; invalid values
   reject the promise. `read` is the benchmark snapshot date (`YYYY-MM-DD`), `credit`
   its source attribution, and `units` is
-  `{ quality, usd, minutes }`: quality in Terminal-Bench points averaged with Arena's
-  agent leaderboard rescaled to them, list-price dollars per task and wall-clock
+  `{ quality, usd, minutes }`: quality in [Wrangler-bench](agent-tools.md#wrangler-bench),
+  list-price dollars per task and wall-clock
   minutes per task, each described in words. These are coding-task measurements,
   not review-specific scores. Unmeasured settings are omitted. A manifest using
   this method declares `^1.92.0`, or `^1.94.0` when using candidate restrictions.

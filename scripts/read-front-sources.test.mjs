@@ -198,7 +198,7 @@ test('Arena rows join as a quality-only benchmark, matched by model and effort, 
   assert.match(log.join('\n'), /published 2026-10-28 \(8 rows\); no row for claude fable/);
   assert.equal(inputs.sources.arena.url, 'https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset');
   assert.match(inputs.sources.arena.licence, /^CC BY 4\.0/);
-  assert.match(inputs.credit, /Arena's agent leaderboard published 2026-10-28 \(Arena, lmarena-ai\/leaderboard-dataset, CC BY 4\.0\), rescaled to Terminal-Bench points/);
+  assert.match(inputs.credit, /Arena's agent leaderboard published 2026-10-28 \(Arena, lmarena-ai\/leaderboard-dataset, CC BY 4\.0\), which Agent Wrangler rescaled onto Terminal-Bench's scale before averaging/);
   const tuned = structuredClone(base);
   tuned.benchmarks.arena = { ...inputs.benchmarks.arena, weight: 0.5 };
   assert.equal((await readSources({ ...options(), base: tuned })).inputs.benchmarks.arena.weight, 0.5, 'a weight set in the inputs is carried');
