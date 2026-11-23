@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve, relative } from 'node:path';
-import { inputErrors, versionOf, effortsOf } from '../.claude/skills/evaluate-model/evaluate.js';
+import { inputErrors, versionOf, effortsOf, EFFORTS } from '../.claude/skills/evaluate-model/evaluate.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const BOARD_PATH = 'repos/harbor-framework/terminal-bench/contents/leaderboard';
@@ -25,6 +25,9 @@ const CHARTS = [
   ['https://www.anthropic.com/claude-haiku-5-5', { haiku55: ['claude', 'haiku'], sonnet55: ['claude', 'sonnet'] }],
 ];
 const HUB = 'https://www.tbench.ai/';
+// Arena counts as much as Terminal-Bench: both are put on the same scale, and neither alone ranks
+// agents as well as the two together.
+const ARENA_WEIGHT = 1;
 const METRICS = ['accuracy', 'n_trials', 'uncached_input_tokens', 'cached_input_tokens', 'output_tokens', 'total_tokens', 'avg_trial_duration_sec'];
 const EXCLUDED = new Set(['gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5', 'gpt-5.5-sol', 'gpt-5.5-terra']);
 const newer = (a, b) => { const [x, y] = [a, b].map((v) => v.split('.').map(Number)); return x[0] - y[0] || x[1] - y[1]; };
@@ -81,6 +84,44 @@ function flightRecords(html) {
     try { records.push(JSON.parse(value)); } catch { /* Non-JSON flight records are not data. */ }
   }
   return records;
+}
+
+// Arena's agent leaderboard, from its CC BY 4.0 Hugging Face dataset only: arena.ai's own terms
+// forbid scraping the site. Each page of the datasets-server rows API holds at most 100 rows.
+export const ARENA = 'https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset';
+export const arenaPage = (offset) => `https://datasets-server.huggingface.co/rows?dataset=lmarena-ai/leaderboard-dataset&config=agent&split=latest&offset=${offset}&length=100`;
+const ARENA_EFFORTS = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' };
+
+export async function arenaLeaderboard(fetchText) {
+  const rows = [];
+  let total = Infinity;
+  for (let offset = 0; offset < total; offset += 100) {
+    const page = JSON.parse(await fetchText(arenaPage(offset)));
+    if (!Number.isInteger(page?.num_rows_total) || !Array.isArray(page.rows)) throw new Error('Arena: unreadable rows page');
+    total = page.num_rows_total;
+    rows.push(...page.rows.map((r) => r?.row));
+  }
+  if (rows.length !== total) throw new Error(`Arena: unreadable rows page (${rows.length} of ${total} rows)`);
+  const overall = rows.filter((r) => r?.category === 'overall');
+  if (!overall.length || overall.some((r) => typeof r.model_name !== 'string' || !Number.isFinite(r.score) || !/^\d{4}-\d\d-\d\d$/.test(r.leaderboard_publish_date ?? ''))) throw new Error('Arena: no readable overall rows');
+  const published = [...new Set(overall.map((r) => r.leaderboard_publish_date))];
+  if (published.length !== 1) throw new Error(`Arena: latest split mixes publish dates ${published.join(', ')}`);
+  const names = overall.map((r) => r.model_name);
+  if (new Set(names).size !== names.length) throw new Error('Arena: a model is listed twice');
+  return { published: published[0], rows: overall };
+}
+
+// Arena's name for a model at an effort: "Claude Opus 5.5 (Max)", "GPT-6.1 Sol (Medium)", "Gemini 4 Neon (High)".
+export function arenaScores(rows, agent, id, efforts) {
+  const label = hubLabel(agent === 'agy' ? id : AGENTS[agent].priceId(id)), name = label && (agent === 'claude' ? `Claude ${label}` : label);
+  const scores = {}, skipped = [];
+  for (const r of rows) {
+    const m = /^(.*) \(([^)]+)\)$/.exec(r.model_name), effort = ARENA_EFFORTS[m?.[2].toLowerCase()];
+    if (!name || m?.[1] !== name) continue;
+    if (effort && efforts.includes(effort)) scores[effort] = r.score;
+    else skipped.push(r.model_name);
+  }
+  return { name, scores: Object.fromEntries(EFFORTS.filter((e) => scores[e] != null).map((e) => [e, scores[e]])), skipped };
 }
 
 export function anthropicSweeps(html, version, series) {
@@ -185,6 +226,19 @@ export async function readSources({ base, prices, catalog, github, fetchText, to
     }
     if (!inputs.models.codex[m.slug]?.['terminal-bench']?.sweep) manual.push(`Read OpenAI effort results by hand: catalog model ${m.slug} has no sweep; no quality is invented.`);
   }
+  // Arena scores agent sessions on a scale of its own; the evaluator maps it onto Terminal-Bench's.
+  // Superseded models have no rows, so they take no part in that mapping.
+  const arena = await arenaLeaderboard(fetchText), unscored = [];
+  inputs.benchmarks.arena = { name: 'Arena agent leaderboard', published: arena.published, weight: base.benchmarks.arena?.weight ?? ARENA_WEIGHT, onto: 'terminal-bench' };
+  for (const [agent, models] of Object.entries(inputs.models)) for (const [id, model] of Object.entries(models)) {
+    delete model.arena;
+    if (model.supersededBy) continue;
+    const { name, scores, skipped } = arenaScores(arena.rows, agent, id, effortsOf(model));
+    if (Object.keys(scores).length) model.arena = { scores };
+    else unscored.push(`${agent} ${id}${name ? ` ("${name} (effort)")` : ''}`);
+    if (skipped.length) log.push(`arena: ${agent} ${id}: skipped ${skipped.join(', ')} (no effort the model takes)`);
+  }
+  log.push(`arena: ${ARENA} agent/latest/overall published ${arena.published} (${arena.rows.length} rows); no row for ${unscored.join(', ') || 'none'}`);
   const { board, ...others } = inputs.sources;
   inputs.sources = { board: { ...board, name: 'Terminal-Bench official leaderboard, GitHub submissions' }, hub: undefined, ...others };
   inputs.sources.hub = {
@@ -196,10 +250,15 @@ export async function readSources({ base, prices, catalog, github, fetchText, to
     name: 'LiteLLM model price catalog, standard tier', by: 'LiteLLM', licence: 'MIT; published list-price facts',
     url: prices.source, gives: 'server/price-catalog.snapshot.json: cacheWrite5m (input for Gemini, which has no cache-write premium), cacheRead and output per million tokens for every vendor; refreshed with npm run gen:catalog',
   };
+  inputs.sources.arena = {
+    name: 'Arena agent leaderboard, Hugging Face dataset lmarena-ai/leaderboard-dataset (config agent, split latest, category overall)', by: 'Arena',
+    licence: 'CC BY 4.0, per the dataset card; its per-row license column is each model\'s, not the data\'s. Never scrape arena.ai, whose terms forbid it.', url: ARENA,
+    gives: 'Each model/effort\'s IPS score, mapped onto Terminal-Bench points by matching mean and spread over the model/efforts both score; quality only, cost and minutes stay Terminal-Bench\'s',
+  };
   const used = (pick) => [...new Set(Object.values(inputs.models).flatMap((ms) => Object.values(ms)).flatMap((m) => pick(m['terminal-bench']) ?? []))].sort(newer).reverse().join(' or ');
   const vendors = Object.keys(AGENTS).filter((a) => Object.keys(inputs.models[a] || {}).length).map((a) => AGENTS[a].vendor);
   const and = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}` : xs[0]);
-  inputs.credit = `Scores: Terminal-Bench ${used((x) => x.board?.version)}, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by ${and(vendors)} on Terminal-Bench ${used((x) => x.sweep?.version)}. Prices: ${and(vendors)} list prices from the LiteLLM catalog (MIT), read ${today}.`;
+  inputs.credit = `Scores: Terminal-Bench ${used((x) => x.board?.version)}, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by ${and(vendors)} on Terminal-Bench ${used((x) => x.sweep?.version)}, averaged with Arena's agent leaderboard published ${arena.published} (Arena, lmarena-ai/leaderboard-dataset, CC BY 4.0), rescaled to Terminal-Bench points. Prices: ${and(vendors)} list prices from the LiteLLM catalog (MIT), read ${today}.`;
   inputs.manual = [...new Set(manual)].sort();
   const errors = inputErrors(inputs);
   if (errors.length) throw new Error(`sources: invalid reading:\n${errors.join('\n')}`);

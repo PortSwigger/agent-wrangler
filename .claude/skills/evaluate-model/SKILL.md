@@ -21,6 +21,7 @@ callers.
 | `anthropic-card` | [Fable 5.2 system card](https://assets.claude.com/27d60918d218125e7504bc7354c4b4626ec56b11.pdf), section 8.5 | Published results, read by hand and cited | Fable 5.2 accuracy at max only; cost, other efforts and minutes come from `like` |
 | `openai` | [Terra launch](https://openai.com/index/introducing-gpt-6-1-terra/), [Sol launch](https://openai.com/index/introducing-gpt-6-1-sol/) | Published results, read by hand and cited | Accuracy by effort; costs are null |
 | `google` | [Gemini 4 Hydrogen launch](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-hydrogen/) | Published results, read by hand and cited | Hydrogen's Terminal-Bench 4.0 accuracy/cost chart by effort, measured from its pixels; Gemini 3.8 Flash's Terminal-Bench 4.1 accuracy from the text |
+| `arena` | [Arena agent leaderboard, Hugging Face dataset](https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset) (config `agent`, split `latest`, category `overall`) | CC BY 4.0 (dataset card); credit Arena, name the licence, say it is rescaled | IPS score per model and effort (`Claude Opus 5.5 (Max)`), quality only |
 | `prices` | [LiteLLM catalog](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json), bundled in `server/price-catalog.snapshot.json` | MIT, list-price facts | `cacheWrite5m` (`input` for Gemini), `cacheRead`, `output` per million tokens |
 
 Never fetch OpenAI posts programmatically. Carry sweeps from the newest committed
@@ -34,6 +35,11 @@ Artificial Analysis, and those are not used. Confirm the numbers and remove only
 resolved manual flags. No Artificial Analysis data is used. Review terms before
 adding any source.
 
+Arena's CC BY grant covers only its Hugging Face dataset: read it through the
+datasets-server rows API, never arena.ai, whose terms forbid scraping and limit
+the site to personal use. The rows' `license` column is each model's licence, not
+the data's.
+
 ## Read and compare
 
 1. Run `npm run gen:catalog` for fresh prices using core's existing mechanism.
@@ -46,7 +52,11 @@ adding any source.
    same harness with the same tokens, it is a re-score of that run: accuracy comes
    from the Hub row (`hub_row`), tokens and minutes from the GitHub run. Other
    tokens mean another run, so the reader flags it for a person instead. It reads the Anthropic chart titled with the newest
-   version the page charts. It writes
+   version the page charts. It reads every page of Arena's `agent` `latest`
+   rows, keeps category `overall` (one publish date, no duplicates), and
+   matches `Claude Opus 5.5 (Max)`, `GPT-6.1 Sol (Medium)` or
+   `Gemini 4 Neon (High)` to a current catalog model at an effort it takes;
+   rows without an effort, and models Arena does not list, are logged. It writes
    `.claude/skills/evaluate-model/inputs-<today>.json`. `--base FILE` and
    `--out FILE` allow an explicit baseline and scratch output.
 3. Run `node .claude/skills/evaluate-model/evaluate.js --diff FRESH BASE`.
@@ -77,6 +87,9 @@ Slack notices are conditional on `SLACK_WEBHOOK_URL`. No auto-merge.
 
 `inputs-<date>.json` records `sources` (name, by, licence, url, gives), `credit`,
 `benchmarks` (name, version, weight), `models`, and optional `manual` source flags.
+A quality-only benchmark names the benchmark it is mapped `onto` and its
+`published` date instead of a version; a model it scores has
+`<bench>: {scores: {effort: score}}`, copied verbatim.
 A model has `price: {write, read, output}`, optional sibling `like`, optional
 `supersededBy`, optional `efforts` (the ascending efforts it takes, all five when
 absent; agy's models stop at high or xhigh, matching `server/agents/agy.js`), and
@@ -108,6 +121,15 @@ The evaluator preserves the established derivation:
   meet it. Rows cover only the efforts the model takes.
 - Each row is `Q*p(e), C*r(e), T*(0.25 + 0.75*r(e))`. Average benchmarks by weight,
   round once with ties to even: integer quality, 2dp dollars, 1dp minutes.
+- Arena (weight 1, `onto` Terminal-Bench) gives quality only. Its scores are put
+  on Terminal-Bench points by matching mean and spread over every current
+  model/effort both score (a least-squares fit would shrink Arena towards the
+  middle and halve its say). An effort Arena has not scored follows
+  Terminal-Bench's ladder from the nearest effort it has, the higher on a tie.
+  A model Arena does not list keeps Terminal-Bench quality alone; cost and
+  minutes are always Terminal-Bench's. Equal weight: neither benchmark alone
+  ranks agents as well as the two together, and Arena is a preference signal
+  over real sessions rather than pass/fail tasks, so it gets no more say.
 - A front point is unbeaten on quality, cost and time together. Reports are
   cheapest first and do not rely on the later public maths/API.
 

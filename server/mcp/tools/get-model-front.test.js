@@ -15,7 +15,7 @@ const agents = [
   ] },
 ];
 const sonnet = { agent: 'claude', model: 'sonnet', effort: 'high' };
-const sol = { agent: 'codex', model: 'gpt-6.2-sol', effort: 'xhigh', quality: 60, usd: 0.77, minutes: 16 };
+const sol = { agent: 'codex', model: 'gpt-6.2-sol', effort: 'xhigh', quality: 55, usd: 0.77, minutes: 16 };
 const call = (args, installed = agents) => getModelFrontTool.handler({ deps: { agents: async () => installed } }, args);
 
 test('get_model_front returns only launchable front points, cheapest first, with units and credit', async () => {
@@ -26,13 +26,13 @@ test('get_model_front returns only launchable front points, cheapest first, with
   assert.match(result.credit, /Terminal-Bench 4\.1, each model on the newest version/);
   assert.match(result.credit, /LiteLLM catalog/);
   assert.deepEqual(result.units, {
-    quality: 'Terminal-Bench points, on the newest version (4.1, else 4.0) the board has run each model on', usd: 'list-price dollars per task', minutes: 'wall-clock minutes per task',
+    quality: 'Terminal-Bench points, on the newest version (4.1, else 4.0) the board has run each model on, averaged with Arena agent-leaderboard scores rescaled to those points', usd: 'list-price dollars per task', minutes: 'wall-clock minutes per task',
   });
   assert.deepEqual(result.front, [
     { agent: 'codex', model: 'gpt-6-luna', effort: 'low', quality: 7, usd: 0.1, minutes: 23.2, onCurve: true },
-    { agent: 'codex', model: 'gpt-6.2-sol', effort: 'low', quality: 53, usd: 0.51, minutes: 12.3, onCurve: true },
+    { agent: 'codex', model: 'gpt-6.2-sol', effort: 'low', quality: 48, usd: 0.51, minutes: 12.3, onCurve: true },
     { ...sol, onCurve: true },
-    { agent: 'claude', model: 'opus', effort: 'high', quality: 65, usd: 4.76, minutes: 40.6, onCurve: true },
+    { agent: 'claude', model: 'opus', effort: 'high', quality: 61, usd: 4.76, minutes: 40.6, onCurve: true },
   ]);
   assert.equal('pick' in result, false);
 });
@@ -41,7 +41,7 @@ test('front filters do not narrow pick judgement or change curve membership', as
   const unfiltered = (await call()).structuredContent.front;
   for (const filters of [{ agent: 'claude' }, { maxUsd: 0.1 }, { minQuality: 64 }, { agent: 'claude', maxUsd: 0.1, minQuality: 64 }]) {
     const { structuredContent: result } = await call({ ...filters, pick: sonnet });
-    assert.deepEqual(result.pick, { ...sonnet, resolvedEffort: 'high', scored: true, quality: 39, usd: 2.27, minutes: 44, onFront: false, beatenBy: sol });
+    assert.deepEqual(result.pick, { ...sonnet, resolvedEffort: 'high', scored: true, quality: 40, usd: 2.27, minutes: 44, onFront: false, beatenBy: sol });
     assert.ok(result.front.every((p) => (!filters.agent || p.agent === filters.agent)
       && (filters.maxUsd === undefined || p.usd <= filters.maxUsd)
       && (filters.minQuality === undefined || p.quality >= filters.minQuality)));
@@ -62,7 +62,7 @@ test('Auto with omitted or empty effort resolves the reported model effort', asy
   for (const effort of [undefined, '']) {
     const pick = { agent: 'codex', model: 'gpt-6.2-sol', ...(effort === undefined ? {} : { effort }) };
     const { structuredContent: result } = await call({ maxUsd: 0.1, pick });
-    assert.deepEqual(result.pick, { ...pick, resolvedEffort: 'xhigh', scored: true, quality: 60, usd: 0.77, minutes: 16, onFront: true, beatenBy: null });
+    assert.deepEqual(result.pick, { ...pick, resolvedEffort: 'xhigh', scored: true, quality: 55, usd: 0.77, minutes: 16, onFront: true, beatenBy: null });
   }
 });
 
