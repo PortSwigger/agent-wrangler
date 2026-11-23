@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   resolveClaudeAutoEffort, resolveCodexAutoEffort, parseCodexConfigEffort,
+  resolveAgyAutoEffort, parseAgyModelEffort,
   readClaudeSources, withAutoEffort, sourcesSignature,
 } from './auto-effort.js';
 import { claudeModelId } from './claude.js';
@@ -14,7 +15,7 @@ after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 // A fresh set of source paths under its own dir, each file written only if given.
 let n = 0;
-function sources({ remote, managed, dropIns = {}, user, codex } = {}) {
+function sources({ remote, managed, dropIns = {}, user, codex, agy } = {}) {
   const dir = path.join(tmp, String(n++));
   fs.mkdirSync(path.join(dir, 'managed-settings.d'), { recursive: true });
   const paths = {
@@ -24,6 +25,7 @@ function sources({ remote, managed, dropIns = {}, user, codex } = {}) {
     managedDropIns: path.join(dir, 'managed-settings.d'),
     user: path.join(dir, 'settings.json'),
     codexConfig: path.join(dir, 'config.toml'),
+    agySettings: path.join(dir, 'agy-settings.json'),
   };
   const write = (file, v) => v !== undefined && fs.writeFileSync(file, typeof v === 'string' ? v : JSON.stringify(v));
   write(paths.remote, remote);
@@ -31,6 +33,7 @@ function sources({ remote, managed, dropIns = {}, user, codex } = {}) {
   for (const [name, v] of Object.entries(dropIns)) write(path.join(paths.managedDropIns, name), v);
   write(paths.user, user);
   write(paths.codexConfig, codex);
+  write(paths.agySettings, agy);
   return paths;
 }
 
@@ -131,4 +134,35 @@ test('a settings change is re-read and changes the sources signature', () => {
   assert.equal(withAutoEffort('claude', [{ value: 'opus' }], paths)[0].autoEffort, 'xhigh');
   fs.writeFileSync(paths.managedFile, JSON.stringify({ effortLevel: 'low' }));
   assert.equal(withAutoEffort('claude', [{ value: 'opus' }], paths)[0].autoEffort, 'low');
+});
+
+test('agy: a family runs at its fixed default, whatever settings.json names', () => {
+  assert.equal(resolveAgyAutoEffort('gemini-4-neon'), 'medium');
+  assert.equal(resolveAgyAutoEffort('gemini-4-neon', { settingsModel: 'Gemini 4 Neon (High)' }), 'medium');
+  assert.equal(resolveAgyAutoEffort('gemini-3.1-pro', { settingsModel: 'Gemini 3.1 Pro (High)' }), 'low');
+  assert.equal(resolveAgyAutoEffort('gemini-9-unknown'), null);
+});
+
+test('agy: the default entry runs at the effort in settings.json\'s model', () => {
+  assert.equal(parseAgyModelEffort('Gemini 4 Neon (XHigh)'), 'xhigh');
+  assert.equal(parseAgyModelEffort('Gemini 4 Neon'), null);
+  assert.equal(parseAgyModelEffort('Gemini 4 Neon (Turbo)'), null);
+  assert.equal(resolveAgyAutoEffort('default', { settingsModel: 'Gemini 3.1 Pro (High)' }), 'high');
+  assert.equal(resolveAgyAutoEffort('default'), null);
+});
+
+test('agy: withAutoEffort reads settings.json, and a change to it moves the signature', () => {
+  const paths = sources({ agy: { model: 'Gemini 4 Neon (Low)' } });
+  const models = [{ value: 'gemini-4-neon' }, { value: 'gemini-3.1-pro' }, { value: 'default' }];
+  assert.deepEqual(withAutoEffort('agy', models, paths), [
+    { value: 'gemini-4-neon', autoEffort: 'medium' },
+    { value: 'gemini-3.1-pro', autoEffort: 'low' },
+    { value: 'default', autoEffort: 'low' },
+  ]);
+  const before = sourcesSignature(paths);
+  fs.writeFileSync(paths.agySettings, JSON.stringify({ model: 'Gemini 4 Neon (XHigh)', modelProvider: 'gemini' }));
+  assert.notEqual(sourcesSignature(paths), before);
+  assert.equal(withAutoEffort('agy', models, paths)[2].autoEffort, 'xhigh');
+  fs.writeFileSync(paths.agySettings, '{not json');
+  assert.deepEqual(withAutoEffort('agy', [{ value: 'default' }], paths), [{ value: 'default' }]);
 });
