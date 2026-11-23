@@ -4,9 +4,52 @@ const FIELDS = 'id,createdAt,state,title,number,isDraft,statusCheckRollup,mergeS
 const FAILING = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED']);
 const PENDING = new Set(['PENDING', 'IN_PROGRESS', 'QUEUED', 'EXPECTED']);
 
+// A check run's identity: workflow + job name for check runs, context for
+// commit statuses. Entries with neither are left uncollapsed.
+function checkKey(c) {
+  if (typeof c.context === 'string' && c.context) return `context\0${c.context}`;
+  if (typeof c.name === 'string' && c.name) return `run\0${c.workflowName ?? ''}\0${c.name}`;
+  return null;
+}
+
+// gh renders an unset time as the zero date, so anything before 1970 is unset.
+function timeOf(value) {
+  const t = Date.parse(value);
+  return Number.isFinite(t) && t > 0 ? t : null;
+}
+
+// Newest first: a run that has not started yet is newer than any that has;
+// otherwise by startedAt, then completedAt.
+function recency(c) {
+  const started = timeOf(c.startedAt);
+  const completed = timeOf(c.completedAt);
+  if (started === null && completed === null) return [Infinity, Infinity];
+  return [started ?? completed, completed ?? Infinity];
+}
+
+function newer(a, b) {
+  const [as, ac] = recency(a);
+  const [bs, bc] = recency(b);
+  return as !== bs ? as > bs : ac >= bc;
+}
+
+// GitHub keeps every run of a check on the head commit, so a run cancelled by a
+// workflow concurrency group sits beside the run that replaced it. Only the
+// latest run of each check counts; a lone cancelled run still does.
+function latestRuns(checks) {
+  const latest = new Map();
+  const rest = [];
+  for (const c of checks) {
+    const key = checkKey(c);
+    if (key === null) rest.push(c);
+    else if (!latest.has(key) || newer(c, latest.get(key))) latest.set(key, c);
+  }
+  return [...latest.values(), ...rest];
+}
+
 function checkRollup(checks) {
   if (!checks.length) return 'none';
-  const states = checks.map((c) => c.conclusion || c.status || c.state);
+  const states = latestRuns(checks).map((c) => c.conclusion || c.status || c.state);
   if (states.some((s) => FAILING.has(s))) return 'failing';
   if (states.some((s) => PENDING.has(s))) return 'pending';
   return 'passing';
