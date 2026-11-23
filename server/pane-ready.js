@@ -1,6 +1,7 @@
 import { adapterFor } from './agents/index.js';
-import { capturePane, capturePaneStyled, classifyPane, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys, prefillPane } from './tmux-scraper.js';
+import { capturePane, capturePaneStyled, classifyPane, isCompacting, codexUpdateState, stripAnsi, sendKeys as defaultSendKeys, sendText as defaultSendText, prefillPane } from './tmux-scraper.js';
 import { paneComposerIsEmpty, paneComposerIsReady } from './ghost-suggestion.js';
+import { logWarn } from './log.js';
 
 const READY_TIMEOUT_MS = 20000;
 const READY_POLL_MS = 250;
@@ -10,6 +11,22 @@ const SUBMIT_POLL_MS = 300;
 const COMPACT_TIMEOUT_MS = 300000;
 const COMPACT_POLL_MS = 1000;
 const IMAGE_TIMEOUT_MS = 15000;
+const WARM_UP_TIMEOUT_MS = 15000;
+
+// Panes the board is still preparing (warmUpPane, then any first prompt it
+// types), by tmux name. Everything else that types into a pane waits for it:
+// waitForComposerReady awaits it, and pane-deferral defers while it is held.
+const holds = new Map();
+
+export function holdPane(name, work) {
+  const settled = Promise.resolve(work).catch(() => {}).finally(() => {
+    if (holds.get(name) === settled) holds.delete(name);
+  });
+  holds.set(name, settled);
+  return settled;
+}
+
+export const paneHeld = (name) => holds.has(name);
 
 // Hold a paste until the freshly-relaunched agent's TUI has actually painted its
 // composer — the fix for a silent, measured message loss.
@@ -54,8 +71,11 @@ export async function waitForComposerReady(name, socket, agent, {
   requireEmpty = true,
   capture = capturePaneStyled,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  // False only for the preparation that holds the pane itself.
+  afterHold = true,
 } = {}) {
   if (!name) return false;
+  if (afterHold) await holds.get(name);
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const pane = await capture(name, 60, socket);
@@ -233,5 +253,72 @@ export async function waitForCompactionEnd(name, socket, {
     await sleep(pollMs);
     if (!isCompacting(await capture(name, 30, socket))) return 'finished';
     if (Date.now() >= deadline) return 'timeout';
+  }
+}
+
+// Get a freshly launched pane's MCP tools into its first turn, for an agent
+// that only connects them on demand (an adapter's `terminal.warmUp`, agy's
+// AGY_WARM_UP): type the command that starts them, wait for its panel to show
+// the board's server connected or failed, then close the panel. Returns
+// 'ready', 'failed: <agent's error>', 'timeout' or 'not-ready' (no composer
+// to type into), and logs anything but 'ready': the session then runs without
+// the board's tools. Callers hold the pane (holdPane) while it runs.
+export async function warmUpPane(name, socket, agent, {
+  timeoutMs = WARM_UP_TIMEOUT_MS,
+  pollMs = READY_POLL_MS,
+  capture = capturePane,
+  waitReady = (n, s, a) => waitForComposerReady(n, s, a, { afterHold: false }),
+  send = defaultSendKeys,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  log = logWarn,
+} = {}) {
+  const warm = adapterFor(agent).terminal.warmUp;
+  if (!warm || !name) return null;
+  let outcome = 'not-ready';
+  if (await waitReady(name, socket, agent)) {
+    await send(name, ['-l', warm.keys], socket);
+    await sleep(150);
+    await send(name, ['Enter'], socket);
+    outcome = 'timeout';
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const pane = stripAnsi(await capture(name, 40, socket) || '');
+      const at = pane.search(warm.panel);
+      const panel = at < 0 ? '' : pane.slice(at);
+      const failed = warm.failed.exec(panel);
+      if (warm.ready.test(panel)) { outcome = 'ready'; break; }
+      if (failed) { outcome = `failed: ${failed[1].trim()}`; break; }
+      if (Date.now() >= deadline) break;
+      await sleep(pollMs);
+    }
+    await send(name, [warm.close], socket);
+  }
+  if (outcome !== 'ready') log(`[${agent}] ${name}: the board's MCP server did not connect before the first turn (${outcome}); this session has no board tools until it does`);
+  return outcome;
+}
+
+// A first prompt typed into a freshly launched pane: with images (each path
+// as its own bracketed paste, then the prose, then one Enter, the only shape
+// the TUI turns into inline images; dispatch-runner.js), or for an agent that
+// cannot take it on its command line (launchCarriesIntent: false). Each image
+// is held until the composer shows its marker, or the Enter beats a slow
+// attach and leaves the image behind (see pasteImages). Held until the TUI has
+// painted its composer, since a paste into a pane that is still booting is
+// silently lost. Never throws: the session exists either way, and the intent
+// is still on the card to resend.
+export async function deliverFirstPrompt({ tmux, socket = '', agent, text, imagePaths = [] }, deps = {}) {
+  const {
+    waitReady = waitForComposerReady, paste = pasteImages, send = defaultSendText, confirm = ensureSubmitted,
+    log = (m) => console.error(m),
+  } = deps;
+  try {
+    await waitReady(tmux, socket, agent);
+    if (!await paste(tmux, socket, agent, imagePaths)) log(`[dispatch] an image in the first prompt may not have attached in ${tmux}`);
+    await send(tmux, text, socket);
+    // An image-only prompt leaves just `[Image #1]` in the composer, so that is
+    // what the submit check looks for when there is no prose to find.
+    if (!await confirm(tmux, socket, { text: text || (imagePaths.length ? '[Image #1]' : ''), agent })) log(`[dispatch] first prompt may not have been submitted in ${tmux}`);
+  } catch (err) {
+    log(`[dispatch] could not deliver the first prompt to ${tmux}: ${err?.message || err}`);
   }
 }

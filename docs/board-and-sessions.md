@@ -126,6 +126,15 @@ model**.
 - **Where it runs:** each launch adds the board's plugin folder (`~/.agent-wrangler/agy/root`) as a
   workspace, which gives the session the board's MCP tools and a start-up hook. The launch folder is
   trusted, and the board's tools allowed, for that session only; your `~/.gemini` is never written.
+- **Board tools:** agy starts a plugin's MCP server only when something first needs it, and a turn
+  gets only the tools connected when it starts. Left alone, the first turn of every launch and every
+  resume would run with no board tools. So when an agy pane starts, the board opens agy's `/mcp`
+  panel, waits for `agent-wrangler_agent-wrangler` to show ✓, closes the panel, and only then types
+  the card's first prompt. Anything else the board sends (mail, PR notices, chat) waits for this
+  too. The model sees each board tool as a function named
+  `mcp_agent-wrangler_agent-wrangler_<tool>`, and its instructions say so. If the server shows ✗ or
+  doesn't connect within 15 seconds, the board logs `the board's MCP server did not connect` with
+  agy's error and sends the prompt anyway. That session then has no board tools.
 - **History:** agy keeps conversations as SQLite files. The board keeps a JSONL copy of each under
   `~/.agent-wrangler/agy/transcripts` for the Chat tab, search and usage. A dormant agy card resumes its
   conversation with `agy --conversation`.

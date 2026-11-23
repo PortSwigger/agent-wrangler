@@ -37,6 +37,18 @@ export function messagesOf(contentType, body) {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
+// agy hands an MCP server's tools to the model "lazily" by default: a list of
+// names in its system prompt and one `call_mcp_tool` function to reach them
+// through, after reading each tool's schema from a file. Marked
+// `antigravity/alwaysLoad`, each board tool is instead a function of its own
+// (`mcp_agent-wrangler_agent-wrangler_<tool>`), as Claude and Codex get them,
+// so the board's instructions that name a tool can be followed as written.
+export function alwaysLoaded(reply) {
+  const tools = reply?.result?.tools;
+  if (!Array.isArray(tools)) return reply;
+  return { ...reply, result: { ...reply.result, tools: tools.map((t) => ({ ...t, _meta: { ...t?._meta, 'antigravity/alwaysLoad': true } })) } };
+}
+
 async function relay(line) {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
@@ -52,7 +64,7 @@ async function relay(line) {
     if (!res.ok && res.status !== 202) { fail(msg, `Agent Wrangler MCP returned HTTP ${res.status}`); return; }
     for (const reply of messagesOf(res.headers.get('content-type'), body)) {
       if (msg.method === 'initialize' && reply?.result?.protocolVersion) protocolVersion = reply.result.protocolVersion;
-      write(reply);
+      write(msg.method === 'tools/list' ? alwaysLoaded(reply) : reply);
     }
   } catch (err) {
     fail(msg, `Agent Wrangler MCP is unreachable: ${err.message}`);
