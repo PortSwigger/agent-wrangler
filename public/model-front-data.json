@@ -1,6 +1,6 @@
 {
-  "read": "2026-11-22",
-  "credit": "Scores: Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic, OpenAI and Google on Terminal-Bench 4.1 or 4.0. Prices: Anthropic, OpenAI and Google list prices from the LiteLLM catalog (MIT), read 2026-11-22.",
+  "read": "2026-11-23",
+  "credit": "Scores: Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic, OpenAI and Google on Terminal-Bench 4.1 or 4.0. Prices: Anthropic, OpenAI and Google list prices from the LiteLLM catalog (MIT), read 2026-11-23.",
   "benchmarks": {
     "terminal-bench": {
       "name": "Terminal-Bench",
