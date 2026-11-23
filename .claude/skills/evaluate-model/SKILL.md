@@ -11,6 +11,16 @@ standalone evaluator reports the front for all agents together, Claude alone,
 Codex alone and Gemini (agy) alone. UI, presets and defaults belong to their
 callers.
 
+## Wrangler-bench
+
+Quality is **Wrangler-bench**, Agent Wrangler's own blend of two benchmarks at
+equal weight: Terminal-Bench and Arena's agent leaderboard. Arena is rescaled
+onto Terminal-Bench's 0–100 scale by matching mean and spread over the
+model/efforts both score, then averaged with it. Cost and minutes come from
+Terminal-Bench alone. A model Arena does not list keeps its Terminal-Bench
+quality. The `credit` must keep naming both sources and their licences and say
+that Arena was rescaled and blended: CC BY 4.0 requires stating the change.
+
 ## Sources
 
 | Key | Source | Licence | Gives |
@@ -122,7 +132,7 @@ The evaluator preserves the established derivation:
 - Each row is `Q*p(e), C*r(e), T*(0.25 + 0.75*r(e))`. Average benchmarks by weight,
   round once with ties to even: integer quality, 2dp dollars, 1dp minutes.
 - Arena (weight 1, `onto` Terminal-Bench) gives quality only. Its scores are put
-  on Terminal-Bench points by matching mean and spread over every current
+  on Terminal-Bench's scale by matching mean and spread over every current
   model/effort both score (a least-squares fit would shrink Arena towards the
   middle and halve its say). An effort Arena has not scored follows
   Terminal-Bench's ladder from the nearest effort it has, the higher on a tie.

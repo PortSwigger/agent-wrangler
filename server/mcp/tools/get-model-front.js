@@ -15,13 +15,13 @@ export const getModelFrontTool = {
     + 'quality, cost and time together, cheapest first. `onCurve: false` marks a setting that is on the '
     + 'front only for being faster. Pass `pick` to check one setting against the whole installed-agent '
     + 'front, regardless of filters: whether it is on the front, and the best setting that beats it. '
-    + 'An unscored pick has no numbers or verdict. Numbers measure doing a coding task '
-    + '(Terminal-Bench 4.1, or 4.0 where the board has not run a model on 4.1, averaged with Arena\'s agent leaderboard rescaled to Terminal-Bench points), not reviewing one. Only settings this board can launch. Read-only.',
+    + 'An unscored pick has no numbers or verdict. Numbers measure doing a coding task, not reviewing one: '
+    + 'quality is Wrangler-bench, Terminal-Bench and Arena\'s agent leaderboard averaged at equal weight with Arena rescaled onto Terminal-Bench\'s scale; cost and time are Terminal-Bench\'s. Only settings this board can launch. Read-only.',
   inputSchema: {
     reviewFor: z.string().optional().describe('Source provider for an independent review. Returns reviewAgent using declared provider preference, excluding this provider; defaults to the calling session provider.'),
     agent: z.string().optional().describe(`Only this agent's front settings (${knownAgentIds().join(', ')}); does not restrict pick judgement.`),
     maxUsd: z.number().positive().optional().describe('Leave out front settings costing more than this per task.'),
-    minQuality: z.number().min(0).max(100).optional().describe('Leave out front settings scoring below this.'),
+    minQuality: z.number().min(0).max(100).optional().describe('Leave out front settings scoring below this Wrangler-bench quality.'),
     pick: z.object({ agent: z.string(), model: z.string(), effort: z.string().optional() }).optional()
       .describe('A setting to judge. Omit effort (or pass "") for Auto, scored as the effort the agent will use.'),
   },
