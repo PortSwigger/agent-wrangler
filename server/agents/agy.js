@@ -12,6 +12,7 @@ import { allowedAgyTools, ensureAgyRoot } from './agy-config.js';
 import { AGY_DIR, IDS_DIR, MIRROR_DIR, conversationCwd, discoverAgyLiveId, forEachMirrorLine, syncMirror } from './agy-db.js';
 import { createAgyChatScanner, extractAgyLine, mightCarryAgyChat, mightCarryAgyText } from './agy-transcript.js';
 import { activityInRangeAgy, agySources, analyzeAgy, listResumableAgy, scanDaily, scanMonth } from './agy-usage.js';
+import { readAgySettingsModel, resolveAgyAutoEffort } from './auto-effort.js';
 
 // Google's Antigravity CLI (`agy`, verified against 1.5.13). Next to Gemini CLI:
 //   - agy picks its own conversation id; the board's SessionStart hook records
@@ -268,6 +269,11 @@ export const agy = {
   efforts: EFFORTS,
   effortsForModel: (model) => agyEffortsFor(model),
   modelId: (value) => (value === 'default' ? null : value),
+  // A launch with no --effort (auto-effort.js has what agy runs then).
+  autoEffortResolver(paths) {
+    const settingsModel = readAgySettingsModel(paths.agySettings);
+    return (value) => resolveAgyAutoEffort(value, { settingsModel });
+  },
   contextWindow: () => null,
   unavailableMessage: "This is an agy conversation, but the `agy` binary isn't on PATH — install Antigravity CLI (or put it on the launchd PATH) to resume agy sessions.",
   presetsSessionId: false,

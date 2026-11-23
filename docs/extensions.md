@@ -1677,7 +1677,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   ("Auto"), read from the user's and organization's settings (Claude: managed
   settings, a settings `env` block's `CLAUDE_CODE_EFFORT_LEVEL`, user settings,
   then the model's documented default; Codex: `config.toml`, then the model's
-  catalog default), and is absent when unknown. **`api.agents.onChange(fn)`**
+  catalog default; agy: each Gemini family's fixed default, and for its
+  `default` entry the effort in `settings.json`'s `model`), and is absent when unknown. **`api.agents.onChange(fn)`**
   fires (with its own copy) whenever the server re-sends the `agents` frame: on
   connect, and when a catalog refresh or one of those settings files changes it. It returns the unsubscribe
   function; subscriptions die with the extension, and a throwing listener is
