@@ -174,9 +174,9 @@ function command(opts, args) {
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
 const plain = (text) => String(text || '').replace(ANSI, '');
 const RULE = /^\s*─{10,}\s*$/;
-// Dialogs that wait on the human: folder trust, tool and command permission,
-// sign-in, quota and a missing API key.
-const NEEDS_YOU_RE = /Do you trust the contents of this project|Requesting permission|Run this command\?|Allow (?:calling )?this tool\?|Allow this|Authentication required|Select login method|not signed in|Individual quota reached|quota exceeded|GEMINI_API_KEY environment variable is not set/i;
+// Dialogs that wait on the human: folder trust, tool and command permission
+// (a subagent's too), sign-in, quota and a missing API key.
+const NEEDS_YOU_RE = /Do you trust the contents of this project|Requesting permission|Run this command\?|Allow (?:calling )?this tool\?|Allow this|needs approval for \w+|Authentication required|Select login method|not signed in|Individual quota reached|quota exceeded|GEMINI_API_KEY environment variable is not set/i;
 // The footer under the composer reads `? for shortcuts` while agy waits and
 // `esc to …` while a turn runs; the slash-command menu also ends in `esc to
 // cancel`, under its `↑/↓ Navigate` hint, and is not a turn.
@@ -187,31 +187,59 @@ function lines(text, n = 40) {
   return plain(text).split('\n').filter((l) => l.trim()).slice(-n);
 }
 
-// The composer: `> ` between the last two rules, with the footer below. Null
-// when the pane shows none. Returns its text (the draft).
-export function agyComposer(text) {
-  const all = plain(text).split('\n');
-  const bottom = all.findLastIndex((l) => RULE.test(l));
-  if (bottom < 0) return null;
-  let top = bottom - 1;
-  while (top >= 0 && !RULE.test(all[top])) top -= 1;
-  if (top < 0 || !/^\s*>/.test(all[top + 1] || '')) return null;
-  return all.slice(top + 1, bottom)
-    .map((l, i) => (i === 0 ? l.replace(/^\s*> ?/, '') : l.replace(/^ {2}/, '')))
-    .join('\n').trimEnd();
+// The prompt box: the `>` block between two rules. While background tasks or
+// subagents run, agy draws their rows, indented, in a rule-framed area of its
+// own under the box, so the box is the nearest `>` block above any such area.
+// Returns the rule indices around it, or null when the pane shows none.
+function agyPromptBox(all) {
+  let bottom = all.findLastIndex((l) => RULE.test(l));
+  while (bottom > 0) {
+    let top = bottom - 1;
+    while (top >= 0 && !RULE.test(all[top])) top -= 1;
+    if (top < 0) return null;
+    const body = all.slice(top + 1, bottom);
+    if (/^\s*>/.test(body[0] || '')) return { top, bottom };
+    const rows = body.filter((l) => l.trim());
+    if (!rows.length || !rows.every((l) => /^\s/.test(l))) return null;
+    bottom = top;
+  }
+  return null;
 }
 
-// The lines under the composer's bottom rule.
+// An empty composer in a non-default mode shows a hint in place of the draft:
+// `Plan mode: research & plan only (shift+tab to cycle)`.
+const MODE_PLACEHOLDER_RE = /^[A-Z][\w-]* mode: .*\(shift\+tab to cycle\)$/;
+
+// The composer's text (the draft): '' when empty, null when the pane shows no
+// prompt box.
+export function agyComposer(text) {
+  const all = plain(text).split('\n');
+  const box = agyPromptBox(all);
+  if (!box) return null;
+  const draft = all.slice(box.top + 1, box.bottom)
+    .map((l, i) => (i === 0 ? l.replace(/^\s*> ?/, '') : l.replace(/^ {2}/, '')))
+    .join('\n').trimEnd();
+  return MODE_PLACEHOLDER_RE.test(draft) ? '' : draft;
+}
+
+// The footer: the lines under the last rule, below the prompt box and any
+// task or subagent area.
 function agyFooter(text) {
   const all = plain(text).split('\n');
   const bottom = all.findLastIndex((l) => RULE.test(l));
   return bottom < 0 ? '' : all.slice(bottom + 1).join('\n');
 }
 
-// The footer's model and effort: `Gemini 4 Neon · high`.
+// The footer's model and effort: `Gemini 4 Neon · high`, before any running
+// count (`· 1 task(s) · /tasks`, `· 1 subagent(s)`).
+// A subagent row above it names its model too, so the lowest match wins.
+const FOOTER_MODEL_RE = /((?:Gemini|Claude|GPT)[^·]*?·\s*\w+)(?:\s*·\s*\d+ \w+\(s\))*(?:\s*·\s*\/tasks)?\s*$/;
 export function agyFooterModel(text) {
-  const tail = lines(text, 3).join('\n');
-  return /((?:Gemini|Claude|GPT)[^\n·]*?·\s*\w+)\s*$/m.exec(tail)?.[1]?.trim() || null;
+  for (const line of lines(text, 3).reverse()) {
+    const model = FOOTER_MODEL_RE.exec(line)?.[1]?.trim();
+    if (model) return model;
+  }
+  return null;
 }
 
 export function agyClassify(text) {
