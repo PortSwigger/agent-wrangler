@@ -301,7 +301,7 @@ test('an effort list or board effort the model cannot take is named', () => {
 const arena = JSON.parse(readFileSync(new URL('./inputs-2026-11-23.json', import.meta.url), 'utf8'));
 const tbOnly = () => { const i = structuredClone(arena); delete i.benchmarks.arena; for (const ms of Object.values(i.models)) for (const m of Object.values(ms)) delete m.arena; delete i.sources.arena; return i; };
 
-test('Arena is put on Terminal-Bench points by matching mean and spread, and averaged in for quality only', () => {
+test('Arena is put on Terminal-Bench\'s scale by matching mean and spread, and averaged in for quality only', () => {
   const tb = derive(tbOnly()), both = derive(arena);
   const fit = both.calibration.find((c) => c.bench === 'arena');
   assert.equal(fit.onto, 'terminal-bench');
@@ -367,6 +367,6 @@ test('the report prints Arena\'s mapping and each model\'s scores, and credits A
   assert.match(text, /arena +Arena agent leaderboard, Hugging Face dataset lmarena-ai\/leaderboard-dataset .*, Arena: CC BY 4\.0/);
   assert.match(text, /arena onto terminal-bench: Q = 46\.05 \+ 242\.89 × \(score − 0\.0964\), matching mean and spread over the 18 model\/efforts both score/);
   assert.match(text, /arena claude opus +high 0\.1386 → Q 56\.29, max 0\.1912 → Q 69\.06; other efforts by terminal-bench's ladder/);
-  assert.match(arena.credit, /Terminal-Bench 4\.1.*Arena's agent leaderboard published 2026-11-22 \(Arena, lmarena-ai\/leaderboard-dataset, CC BY 4\.0\), rescaled to Terminal-Bench points/);
+  assert.match(arena.credit, /^Scores: Wrangler-bench, the equal-weight average of Terminal-Bench 4\.1.*Arena's agent leaderboard published 2026-11-22 \(Arena, lmarena-ai\/leaderboard-dataset, CC BY 4\.0\), which Agent Wrangler rescaled onto Terminal-Bench's scale before averaging/);
   assert.doesNotMatch(text, /CHANGED|NEW|GONE/);
 });

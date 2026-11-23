@@ -26,7 +26,7 @@ test('get_model_front returns only launchable front points, cheapest first, with
   assert.match(result.credit, /Terminal-Bench 4\.1, each model on the newest version/);
   assert.match(result.credit, /LiteLLM catalog/);
   assert.deepEqual(result.units, {
-    quality: 'Terminal-Bench points, on the newest version (4.1, else 4.0) the board has run each model on, averaged with Arena agent-leaderboard scores rescaled to those points', usd: 'list-price dollars per task', minutes: 'wall-clock minutes per task',
+    quality: 'Wrangler-bench: Terminal-Bench (newest version the board has run each model on, 4.1 else 4.0) and Arena\'s agent leaderboard rescaled onto its scale, averaged at equal weight', usd: 'list-price dollars per task', minutes: 'wall-clock minutes per task',
   });
   assert.deepEqual(result.front, [
     { agent: 'codex', model: 'gpt-6-luna', effort: 'low', quality: 7, usd: 0.1, minutes: 23.2, onCurve: true },

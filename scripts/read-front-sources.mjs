@@ -253,12 +253,12 @@ export async function readSources({ base, prices, catalog, github, fetchText, to
   inputs.sources.arena = {
     name: 'Arena agent leaderboard, Hugging Face dataset lmarena-ai/leaderboard-dataset (config agent, split latest, category overall)', by: 'Arena',
     licence: 'CC BY 4.0, per the dataset card; its per-row license column is each model\'s, not the data\'s. Never scrape arena.ai, whose terms forbid it.', url: ARENA,
-    gives: 'Each model/effort\'s IPS score, mapped onto Terminal-Bench points by matching mean and spread over the model/efforts both score; quality only, cost and minutes stay Terminal-Bench\'s',
+    gives: 'Each model/effort\'s IPS score, mapped onto Terminal-Bench\'s scale by matching mean and spread over the model/efforts both score; quality only, cost and minutes stay Terminal-Bench\'s',
   };
   const used = (pick) => [...new Set(Object.values(inputs.models).flatMap((ms) => Object.values(ms)).flatMap((m) => pick(m['terminal-bench']) ?? []))].sort(newer).reverse().join(' or ');
   const vendors = Object.keys(AGENTS).filter((a) => Object.keys(inputs.models[a] || {}).length).map((a) => AGENTS[a].vendor);
   const and = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}` : xs[0]);
-  inputs.credit = `Scores: Terminal-Bench ${used((x) => x.board?.version)}, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by ${and(vendors)} on Terminal-Bench ${used((x) => x.sweep?.version)}, averaged with Arena's agent leaderboard published ${arena.published} (Arena, lmarena-ai/leaderboard-dataset, CC BY 4.0), rescaled to Terminal-Bench points. Prices: ${and(vendors)} list prices from the LiteLLM catalog (MIT), read ${today}.`;
+  inputs.credit = `Scores: Wrangler-bench, the equal-weight average of Terminal-Bench ${used((x) => x.board?.version)}, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by ${and(vendors)} on Terminal-Bench ${used((x) => x.sweep?.version)}, and Arena's agent leaderboard published ${arena.published} (Arena, lmarena-ai/leaderboard-dataset, CC BY 4.0), which Agent Wrangler rescaled onto Terminal-Bench's scale before averaging; cost and minutes are Terminal-Bench's alone. Prices: ${and(vendors)} list prices from the LiteLLM catalog (MIT), read ${today}.`;
   inputs.manual = [...new Set(manual)].sort();
   const errors = inputErrors(inputs);
   if (errors.length) throw new Error(`sources: invalid reading:\n${errors.join('\n')}`);

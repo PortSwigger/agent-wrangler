@@ -41,7 +41,7 @@ the target session's title, falling back to its short session id if no title is 
 The selected model, effort and Quality, Cost and Time bars stay above three collapsible sections.
 **Recommended models** opens by default on first use: drag its slider or use the arrow keys to
 choose a recommended setting, cheapest to best. **Cost & quality graph** plots measured quality
-against cost per task on a log scale; click an available point to select it. Both views include
+([Wrangler-bench](agent-tools.md#wrangler-bench)) against cost per task on a log scale; click an available point to select it. Both views include
 settings recommended for their speed as well as their quality and cost. **All models** holds the
 full agent/model and effort dropdowns, including settings outside the recommendations.
 

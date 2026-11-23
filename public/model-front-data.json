@@ -1,6 +1,6 @@
 {
   "read": "2026-11-23",
-  "credit": "Scores: Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic, OpenAI and Google on Terminal-Bench 4.1 or 4.0, averaged with Arena's agent leaderboard published 2026-11-22 (Arena, lmarena-ai/leaderboard-dataset, CC BY 4.0), rescaled to Terminal-Bench points. Prices: Anthropic, OpenAI and Google list prices from the LiteLLM catalog (MIT), read 2026-11-23.",
+  "credit": "Scores: Wrangler-bench, the equal-weight average of Terminal-Bench 4.1, each model on the newest version the board has run it on (tbench.ai, Apache-2.0), with effort results published by Anthropic, OpenAI and Google on Terminal-Bench 4.1 or 4.0, and Arena's agent leaderboard published 2026-11-22 (Arena, lmarena-ai/leaderboard-dataset, CC BY 4.0), which Agent Wrangler rescaled onto Terminal-Bench's scale before averaging; cost and minutes are Terminal-Bench's alone. Prices: Anthropic, OpenAI and Google list prices from the LiteLLM catalog (MIT), read 2026-11-23.",
   "benchmarks": {
     "terminal-bench": {
       "name": "Terminal-Bench",
