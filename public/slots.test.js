@@ -33,7 +33,7 @@ test('register refuses an unknown slot name and a malformed contribution', () =>
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a' }), /no mount function/);
   slots.register('panel.section', 'x', { id: 'a', mount() {} });
   assert.throws(() => slots.register('panel.section', 'x', { id: 'a', mount() {} }), /already registered/);
-  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate', 'board.tray']);
+  assert.deepEqual(SLOT_NAMES, ['panel.section', 'panel.metaChip', 'card.pill', 'view', 'dispatch.field', 'card.action', 'card.cost', 'task.action', 'settings.panel', 'task.body', 'link.chip', 'notification.cue', 'file.open', 'session.inputGate', 'board.tray', 'task.button']);
   // A view needs a label before it has a host: the rail button is drawn from it.
   assert.throws(() => slots.register('view', 'x', { id: 'v', mount() {} }), /in view has no label/);
   // An optional `badge` of the wrong type is a typo that would otherwise be
@@ -1097,6 +1097,55 @@ test('taskMenuItems collects each task.action\'s items for the tile, with the sa
   assert.match(errors.join('\n'), /z items failed — contribution removed/);
   assert.equal(slots.contributions('task.action').length, 2);
   assert.deepEqual(slots.menuItems({ sessionId: 'c1' }, {}, {}).map((i) => i.label), ['Card only']);
+});
+
+test('task.button is a value slot: it needs button, not mount', () => {
+  const { slots } = harness();
+  assert.throws(() => slots.register('task.button', 'a', { id: 'x', mount() {} }), /has no button function/);
+  slots.register('task.button', 'a', { id: 'x', button: () => null });
+});
+
+test('taskButtons draws each task.button that answers for the tile, with keys, escaped-later text and a checked icon', () => {
+  const { slots, errors } = harness();
+  const svg = '<svg viewBox="0 0 16 16"><path d="M1 1h14"/></svg>';
+  slots.register('task.button', 'a', { id: 'quick', button: (t) => ({ title: `Quick in ${t.name}`, icon: svg, run() {} }) });
+  slots.register('task.button', 'b', { id: 'bad-icon', button: () => ({ title: 'Plain', icon: '<svg><script>x</script></svg>', run() {} }) });
+  slots.register('task.button', 'c', { id: 'none', button: () => null });
+  slots.register('task.button', 'd', { id: 'no-run', button: () => ({ title: 'Broken' }) });
+  slots.register('task.button', 'e', { id: 'throws', button: () => { throw new Error('nope'); } });
+  const got = slots.taskButtons({ id: 't1', name: 'Ship it', adhoc: false }, {}, {});
+  assert.deepEqual(got, [
+    { key: 'a:quick', title: 'Quick in Ship it', icon: svg },
+    { key: 'b:bad-icon', title: 'Plain', icon: '' },
+  ]);
+  assert.match(errors.join('\n'), /without a title and run/);
+  assert.match(errors.join('\n'), /throws button failed — contribution removed/);
+  assert.equal(slots.contributions('task.button').length, 4);
+});
+
+test('runTaskButton runs the clicked button for its tile, asks afresh, and contains a throw', () => {
+  const { slots, errors } = harness();
+  const ran = [];
+  let offer = true;
+  slots.register('task.button', 'a', { id: 'quick', button: (t, g, api) => (offer ? { title: 'Quick', run: (e) => ran.push(t.id, e, typeof api) } : null) });
+  slots.register('task.button', 'b', { id: 'boom', button: () => ({ title: 'Boom', run: () => { throw new Error('bad'); } }) });
+  assert.equal(slots.runTaskButton('a:quick', { id: 't1' }, {}, {}, 'evt'), true);
+  assert.deepEqual(ran, ['t1', 'evt', 'object']);
+  assert.equal(slots.runTaskButton('b:boom', { id: 't1' }, {}, {}), true);
+  assert.match(errors.join('\n'), /boom task button failed/);
+  assert.equal(slots.runTaskButton('a:missing', { id: 't1' }, {}, {}), false);
+  offer = false;
+  assert.equal(slots.runTaskButton('a:quick', { id: 't1' }, {}, {}), false);
+  assert.equal(ran.length, 3);
+});
+
+test('task.button: another deck\'s task offers only contributions registered with decks: true', () => {
+  const { slots } = harness();
+  slots.register('task.button', 'old', { id: 'x', button: () => ({ title: 'Old', run() {} }) });
+  slots.register('task.button', 'new', { id: 'y', decks: true, button: (t) => ({ title: `New ${t.deckTaskId ?? t.id}`, run() {} }) });
+  assert.deepEqual(slots.taskButtons({ id: 't1' }, {}, {}).map((b) => b.title), ['Old', 'New t1']);
+  assert.deepEqual(slots.taskButtons({ id: 'd2/t9', deckId: 'd2', deckTaskId: 't9' }, {}, {}).map((b) => b.title), ['New t9']);
+  assert.equal(slots.runTaskButton('old:x', { id: 'd2/t9', deckId: 'd2', deckTaskId: 't9' }, {}, {}), false);
 });
 
 test('costCeiling takes the first positive answer and reports a second one once', () => {

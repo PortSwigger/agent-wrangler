@@ -36,7 +36,7 @@ export function hasDevcontainerConfig(cwd) {
     || fs.existsSync(path.join(cwd, '.devcontainer.json'));
 }
 
-// Stop the container the wrangler brought up for this workspace dir (the one
+// Stop the container Agent Wrangler brought up for this workspace dir (the one
 // containerIdFor resolves by the devcontainer.local_folder label) — offered on
 // archive so a dormant devcontainer session stops leaving its container `Up`
 // indefinitely. Returns the stopped container id, or null when there was nothing
@@ -60,6 +60,34 @@ export async function stopContainer(cwd, { run = defaultRun } = {}) {
     return cid;
   } catch {
     return null;
+  }
+}
+
+// Tear down the compose project(s) of a worktree whose folder is being deleted:
+// containers, networks and the project's own volumes. Unlike stopContainer the
+// sidecars go too: they belong to this worktree's project and nothing can reuse
+// them once the folder is gone. Only volumes named `<project>_…` are removed: a
+// worktree project also carries volumes it shares with the main checkout (named
+// after the main checkout's project), which is why `compose down -v` is unsafe.
+// Best-effort like stopContainer; returns the projects torn down.
+export async function removeWorktreeContainers(hostDir, { run = defaultRun } = {}) {
+  try {
+    const { stdout } = await run('docker', ['ps', '-a', '--filter', `label=devcontainer.local_folder=${hostDir}`,
+      '--format', '{{.Label "com.docker.compose.project"}}']);
+    const projects = [...new Set((stdout || '').split('\n').map((s) => s.trim()).filter(Boolean))];
+    for (const project of projects) {
+      const ids = async (...args) => ((await run('docker', [...args, '--filter', `label=com.docker.compose.project=${project}`, '-q'])).stdout || '')
+        .split('\n').map((s) => s.trim()).filter(Boolean);
+      const containers = await ids('ps', '-a');
+      if (containers.length) await run('docker', ['rm', '-f', ...containers]);
+      const networks = await ids('network', 'ls');
+      if (networks.length) await run('docker', ['network', 'rm', ...networks]);
+      const volumes = (await ids('volume', 'ls')).filter((v) => v.startsWith(`${project}_`));
+      if (volumes.length) await run('docker', ['volume', 'rm', ...volumes]);
+    }
+    return projects;
+  } catch {
+    return [];
   }
 }
 

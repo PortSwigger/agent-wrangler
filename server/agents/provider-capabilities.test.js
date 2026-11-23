@@ -169,9 +169,10 @@ test('built-in providers declare the capabilities the former id checks read', ()
   assert.equal(registry.providerMetadata(claude).controls.codexPolicy, false);
 });
 
-// Gemini is the provider added with nothing outside server/agents/ comparing ids:
+// Gemini CLI was the provider added with nothing outside server/agents/ comparing ids:
 // each shared path reads what its adapter declares, and an undeclared field means no.
-test('Gemini declares every capability the shared paths read, and inherits none from Claude', () => {
+// It is now read-only (dispatchable: false), which the shared paths read the same way.
+test('Gemini CLI declares every capability the shared paths read, and inherits none from Claude', () => {
   const gemini = registry.adapterFor('gemini');
   assert.equal(registry.adapterForTmux('gm_ab12'), gemini);
   assert.ok(!gemini.terminal.autoBlock && !gemini.terminal.updatesOnExit && !gemini.terminal.socketMail);
@@ -180,11 +181,30 @@ test('Gemini declares every capability the shared paths read, and inherits none 
   const meta = registry.providerMetadata(gemini);
   assert.equal(meta.controls.codexPolicy, false);
   assert.equal(meta.supportsRemoteControl, false);
-  assert.equal(meta.headless, true);
+  assert.equal(meta.headless, false);
+  assert.equal(meta.fork, false);
   assert.deepEqual(meta.billingProviders, [{ id: 'google', label: 'Google' }]);
   assert.equal(registry.supportsDisallowedTools('gemini'), false);
   assert.equal(gemini.presetsSessionId, true);
-  assert.match(registry.launchTargetError('gemini', 'opus'), /"opus" is a claude model/);
-  assert.equal(registry.launchTargetError('gemini', 'auto'), null);
-  assert.match(registry.effortError('gemini', 'high', 'auto'), /Unknown effort/);
+  assert.equal(registry.agentError('gemini'), null, 'its old cards and bills still name a registered agent');
+  assert.match(registry.launchTargetError('gemini', 'auto'), /Gemini CLI sessions can no longer be started/);
+  assert.match(registry.modelError('agy', 'gemini-2.5-pro'), /Unknown model/);
+  assert.doesNotMatch(registry.modelError('agy', 'gemini-2.5-pro'), /did you mean agent: "gemini"/, 'never points a launch at Gemini CLI');
+});
+
+test('agy declares every capability the shared paths read, and inherits none from Claude', () => {
+  const agy = registry.adapterFor('agy');
+  assert.equal(registry.adapterForTmux('ag_ab12'), agy);
+  assert.ok(!agy.terminal.autoBlock && !agy.terminal.updatesOnExit && !agy.terminal.socketMail);
+  assert.ok(!agy.history.branches && !agy.history.requiresResumeFile);
+  assert.equal(mayExitForUpdate({}, 'ag_ab12'), false);
+  const meta = registry.providerMetadata(agy);
+  assert.equal(meta.controls.codexPolicy, false);
+  assert.equal(meta.supportsRemoteControl, false);
+  assert.equal(meta.headless, true);
+  assert.equal(meta.fork, false);
+  assert.deepEqual(meta.billingProviders, [{ id: 'google', label: 'Google' }]);
+  assert.equal(registry.supportsDisallowedTools('agy'), false);
+  assert.equal(agy.presetsSessionId, false);
+  assert.equal(typeof agy.discoverLiveId, 'function');
 });

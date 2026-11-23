@@ -118,7 +118,6 @@ export async function performSpawn({ deps, caller, args, buildDispatch }) {
     cwd: result.cwd ?? null,
     agent,
     task,
-    ...(result.withheldRepos?.length ? { withheldRepos: result.withheldRepos, withheldNote: 'Not given to the new session: this session cannot reach them. The new session was told to ask the human with request_repo if it needs them.' } : {}),
   };
   // A runtime whose launch can still fail after dispatch (e.g. a cloud hand-off)
   // is waited on briefly, so a refused launch reaches the caller here rather than

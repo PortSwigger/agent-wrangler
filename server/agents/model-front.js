@@ -3,7 +3,7 @@ import { frontOf, curveOf, onFront } from '../../public/model-front.js';
 
 export const data = JSON.parse(readFileSync(new URL('../../public/model-front-data.json', import.meta.url), 'utf8'));
 const units = {
-  quality: 'Terminal-Bench 4.0 points',
+  quality: 'Wrangler-bench: Terminal-Bench (newest version the board has run each model on, 4.1 else 4.0) and Arena\'s agent leaderboard rescaled onto its scale, averaged at equal weight',
   usd: 'list-price dollars per task',
   minutes: 'wall-clock minutes per task',
 };

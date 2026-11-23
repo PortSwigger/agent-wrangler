@@ -1,4 +1,4 @@
-import { registeredAgents, modelsWithDefault, resolvedModelId } from './index.js';
+import { dispatchableAgents, modelsWithDefault, resolvedModelId } from './index.js';
 import { withAutoEffort } from './auto-effort.js';
 import { backgroundModel } from '../headless.js';
 
@@ -33,12 +33,12 @@ export function agentCapabilities(adapter) {
   };
 }
 
-// `host.agents.list()`: every registered agent, installed or not, with what it
+// `host.agents.list()`: every agent a session can start on, installed or not, with what it
 // offers. Models carry `efforts` (the effort values a launch of that model accepts),
 // `autoEffort` (what it runs at with none passed, null when unknown) and
 // `background`, true on the one model Settings › Background model names — what a
 // headless run with no model of its own uses.
-export async function agentList({ adapters = registeredAgents(), env = process.env, background = backgroundModel({ adapters }) } = {}) {
+export async function agentList({ adapters = dispatchableAgents(), env = process.env, background = backgroundModel({ adapters }) } = {}) {
   const available = await Promise.all(adapters.map((a) => Promise.resolve().then(() => a.isAvailable()).catch(() => false)));
   return adapters.map((a, i) => {
     const efforts = (a.efforts || []).map(({ value, label }) => ({ value, label }));

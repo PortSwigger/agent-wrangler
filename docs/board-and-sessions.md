@@ -30,13 +30,18 @@ The dialog places task controls on the left and the model picker on the right, s
 narrow screens. **Intent / first prompt** starts at twelve rows and can be resized vertically.
 **Schedule a session** uses the same layout, with timing and action controls on the task side.
 Choose **Existing session** to show the target session and optional message instead of launch controls.
+To copy something off the board mid-draft, click **Minimise** (the − at the dialog's top right). The
+dialog collapses to a small card in the bottom left showing its title, the chosen task and the start
+of the prompt, and the board stays usable. Click the card, or **New session** again for the same task
+or no task, to reopen the draft exactly as you left it; the card's × discards it. Opening the dialog
+for a different task, or from a review or extension, starts a fresh draft instead.
 When a schedule starts, its notification shows the schedule name. For an unnamed schedule, it shows
 the target session's title, falling back to its short session id if no title is available.
 
 The selected model, effort and Quality, Cost and Time bars stay above three collapsible sections.
 **Recommended models** opens by default on first use: drag its slider or use the arrow keys to
 choose a recommended setting, cheapest to best. **Cost & quality graph** plots measured quality
-against cost per task on a log scale; click an available point to select it. Both views include
+([Wrangler-bench](agent-tools.md#wrangler-bench)) against cost per task on a log scale; click an available point to select it. Both views include
 settings recommended for their speed as well as their quality and cost. **All models** holds the
 full agent/model and effort dropdowns, including settings outside the recommendations.
 
@@ -87,7 +92,7 @@ Optional launch controls include:
   what a launch without the dialog (`spawn_session`, an extension) gets. A session keeps its choice across resume
   and fork, and a scheduled launch saves it. An extension that answers `codexPolicy` (see
   [extensions](extensions.md)) overrides it for the sessions it answers for. This replaces the separate
-  `aw-codex-policy` extension, which Wrangler no longer loads: uninstall it from Settings → Extensions.
+  `aw-codex-policy` extension, which Agent Wrangler no longer loads: uninstall it from Settings → Extensions.
 - **Workflow:** run the issue-to-PR autopilot in a fresh worktree.
 - **Quick launch:** use a model button or `Command+1` through `Command+3`. An extension can replace these with its own quick launches (see [extensions](extensions.md)); its buttons and shortcuts then take their place.
 
@@ -96,29 +101,50 @@ attachable terminal only after being resumed through the board.
 
 ### Gemini CLI sessions
 
-When Google's `gemini` command (Gemini CLI 0.66 or later) is on your `PATH`, **Gemini** joins the agent
-picker. Sign Gemini CLI in once yourself (run `gemini` in a terminal and pick a sign-in method); the board's
-sessions use the same sign-in. Models are **Auto** (Gemini routes each turn between Pro and Flash, its
-own default), Gemini 3.1 Pro, Gemini 2.5 Pro, Gemini 3.5 Flash and Gemini 3.1 Flash-Lite. A Gemini model
-can also be the **Background model** in Settings → Automation.
+agy replaced Google's Gemini CLI as the board's Gemini agent, so **Gemini CLI** is no longer in the agent
+picker, the Background model list or the agents a session can spawn. Sessions it ran before stay readable:
+their cards keep their Chat tab, model and estimated cost, and their conversations (in
+`~/.agent-wrangler/gemini/home` and `~/.gemini/tmp`) still show in search and usage. They can't be
+resumed, forked or adopted; start an agy session to carry the work on.
 
-- **Permission mode:** Auto runs Gemini in its YOLO approval mode, because Gemini has no automatic
-  reviewer and a session nobody watches would otherwise stop at every prompt. Manual, Accept edits and
-  Plan map to Gemini's default, auto-edit and plan approval modes.
-- **Where it runs:** the board launches Gemini with its own Gemini home
-  (`~/.agent-wrangler/gemini/home`): your `~/.gemini/settings.json` plus the board's MCP server and
-  hooks, with your sign-in, extensions and skills linked in. Your `~/.gemini` is never written, and the
-  board's Gemini conversations are kept in that home rather than `~/.gemini/tmp`. Folder trust is off
-  there, as the board trusts the folders it launches Claude and Codex in.
-- **Cost** is an API-equivalent estimate at Google's list prices (shown with `~`), as Codex's is.
+### agy sessions
 
-What Gemini sessions do not have yet: phone Remote Control, `disallowedTools`, an effort control,
-switching model mid-conversation, a context-budget control, mail during a running turn, or sub-agent
-detail. Status comes from the terminal screen (working, needs-you, idle), not from a status file. The
-board's instructions and skill catalogue reach Gemini as context at session start rather than as part of
-its system prompt. A fork copies the conversation under a new id and resumes it; its first message is
-typed in once the copy has opened. A Gemini conversation started outside the board can be found in
-search but not resumed from a card.
+When Google's `agy` command (Antigravity CLI 1.5.13 or later) is on your `PATH`, **agy** joins the agent
+picker. The board's sessions use agy's own sign-in and your `modelProvider` setting as they are. With
+`"modelProvider": "gemini"` agy needs `GEMINI_API_KEY` in its environment. A `GEMINI_API_KEY` in the
+environment the board runs in (for the background service, its launchd or systemd unit) is used as it is.
+Without one, on macOS the board reads the key Gemini CLI saved in the Keychain (`gemini-cli-api-key`) and
+hands it to agy sessions only, outside the visible launch command; if that lookup fails, agy says the key is
+missing. Models are Gemini 4 Neon, Hydrogen, Carbon
+and Argon, Gemini 3.8 Flash and Gemini 3.1 Pro, each with the efforts agy offers it (Low to Extra high),
+or **agy default** to use the model you picked in agy. An agy model can also be the **Background
+model**.
+
+- **Permission mode:** Auto runs agy's own auto mode, whose reviewer approves safe commands. Manual,
+  Accept edits and Plan map to agy's default, accept-edits and plan modes, and Bypass to
+  `--dangerously-skip-permissions`.
+- **Where it runs:** each launch adds the board's plugin folder (`~/.agent-wrangler/agy/root`) as a
+  workspace, which gives the session the board's MCP tools and a start-up hook. The launch folder is
+  trusted, and the board's tools allowed, for that session only; your `~/.gemini` is never written.
+- **Board tools:** agy starts a plugin's MCP server only when something first needs it, and a turn
+  gets only the tools connected when it starts. Left alone, the first turn of every launch and every
+  resume would run with no board tools. So when an agy pane starts, the board opens agy's `/mcp`
+  panel, waits for `agent-wrangler_agent-wrangler` to show ✓, closes the panel, and only then types
+  the card's first prompt. Anything else the board sends (mail, PR notices, chat) waits for this
+  too. The model sees each board tool as a function named
+  `mcp_agent-wrangler_agent-wrangler_<tool>`, and its instructions say so. If the server shows ✗ or
+  doesn't connect within 15 seconds, the board logs `the board's MCP server did not connect` with
+  agy's error and sends the prompt anyway. That session then has no board tools.
+- **History:** agy keeps conversations as SQLite files. The board keeps a JSONL copy of each under
+  `~/.agent-wrangler/agy/transcripts` for the Chat tab, search and usage. A dormant agy card resumes its
+  conversation with `agy --conversation`.
+- **Cost** is an API-equivalent estimate at Google's list prices (shown with `~`).
+
+What agy sessions do not have yet: Fork (agy's own `/fork` switches the running session to the copy, so
+the board offers no Fork for agy cards), phone Remote Control, `disallowedTools`, switching model
+mid-conversation, a context-window figure, mail during a running turn, the PR-attach hook, or sub-agent
+detail. Status comes from the terminal screen. The board's instructions and skill catalogue reach agy as
+a system message when a conversation starts.
 
 ## Organise work with tasks
 
@@ -179,7 +205,7 @@ limit: a child's own children sit indented beneath it on the same spine, steppin
 until the indent stops growing after four. Attaching a session moves its children with it.
 
 A Codex card's working or idle status comes from Codex's own turn-end notification plus its session log,
-with the terminal screen as a tie-breaker. Wrangler sets `notify` when it launches Codex and forwards the
+with the terminal screen as a tie-breaker. Agent Wrangler sets `notify` when it launches Codex and forwards the
 event to any `notify` command already in `~/.codex/config.toml`. The latest turn end for each thread is
 kept under `~/.agent-wrangler/codex-turns/`.
 
@@ -220,8 +246,8 @@ subscriber is archived or missing, or the subscriber calls `stop_status_notices`
 ## Messages at the bottom of the board
 
 Short messages (toasts) and persistent notifications share a stack about 12px from the
-top-right corner. Messages can cover board headers. Over an open dialog, the stack keeps
-its header, Close button and footer controls clear. **Settings → Appearance → Toast position** switches
+top-right corner. Messages stay at the viewport corner when dialogs open or close and
+can cover board or dialog controls. **Settings → Appearance → Toast position** switches
 between **Top right** (the default) and **Bottom right**, immediately and for this browser.
 Newest messages sit nearest the chosen edge, with **Clear all** beside that edge. With two or
 more messages, **Clear all** dismisses the whole stack
@@ -250,7 +276,6 @@ Right-click a card or open **Actions** to find:
 - **Peer review session…**, using an available different provider, preferring Claude before Codex.
 - **View diff** for uncommitted, branch, and PR review.
 - **Copy reference** (right-click only) to paste a session into another agent's chat; the agent reads it with `read_session_transcript`.
-- **GitHub repos…** on a session at a remote location (see [GitHub repos at a remote location](#github-repos-at-a-remote-location)).
 - **Open terminal** for a separate shell in the session directory.
 - **Snooze** until a preset or custom time, optionally with a wake-up note.
 - **Mark read / unread** to manage attention.
@@ -261,22 +286,7 @@ Right-click a card or open **Actions** to find:
 
 Extensions may add more actions to this menu.
 
-### GitHub repos at a remote location
-
-A runtime that runs sessions away from this machine asks for **GitHub repos** (`owner/name`) in
-place of a folder when you dispatch. The session clones them there. A session it starts gets only
-the repos it names that its own session holds; any other repo it names has to be asked for with
-`request_repo`, like any repo the session finds it needs later.
-
-To give it another repo later, open **GitHub repos…** from the card's menu or **Actions**, type one
-or more `owner/name`, and choose **Add**. The runtime is told first, and the session then gets mail
-saying where to clone it. A fork shares its parent's location, so it gets the repo too.
-
-A session that finds it needs another repo asks with the `request_repo` tool. You get a toast
-naming the session, the repos and its reason, with **Allow** and **Decline**; the request also waits
-in **GitHub repos…** (shown as **GitHub repos (1 waiting)…**) until you answer it there. Either way
-the session gets mail with your answer. Only you can widen what a session reaches: a request adds
-nothing until you allow it.
+For a remote session, name any repository the agent should work on in the initial prompt. The credentials available at its runtime determine what it can access.
 
 ## Chat, terminal, and files
 
@@ -298,13 +308,13 @@ only if that site allows it; otherwise use Copy Image instead.
 In the new-session dialog, each attached image's chip shows a thumbnail; hover over it or focus it
 for a larger preview. While a preview is open, Escape closes the preview rather than the dialog.
 
-When a message resumes a dormant Codex session, Wrangler waits for its terminal
+When a message resumes a dormant Codex session, Agent Wrangler waits for its terminal
 input to be ready, including during an active turn. If a draft, dialog or unreadable
 terminal prevents delivery, the chat reports the uncertainty and keeps your message
 available to retry.
 
 Automated terminal notifications (mail and PR/check nudges) wait while the composer holds an unsent
-draft, including multiline text. Once it is clear, Wrangler submits the notification automatically.
+draft, including multiline text. Once it is clear, Agent Wrangler submits the notification automatically.
 Claude mail delivered through its messaging socket does not touch the terminal composer.
 Newly launched terminal agents get up to 15 seconds to connect to MCP before notifications can
 proceed through the composer and dialog checks. After five minutes of waiting behind unsent text,
@@ -332,6 +342,14 @@ and decks never talk to each other.
    [Running a second deck](../README.md#running-a-second-deck) to start one with no board of its own.
 2. Open **Settings › Decks**, enter the deck's URL (for example `http://127.0.0.1:7890`) and an
    optional name, and press **Add deck**.
+
+For a managed cloud deck, start the board with `AW_CLOUD_DECK_GATEWAY` set to the gateway
+origin. The gateway must allow credentialed requests and WebSocket connections from the board's
+exact origin. Sign in to the gateway in the same browser, then choose **Settings › Decks →
+Connect cloud deck**. The gateway checks access and prepares the signed-in developer's namespace.
+Settings shows provisioning progress, then adds the ready deck to the board. **Retry cloud deck**
+checks access again after a refusal or service interruption. Reconnecting reuses the saved row,
+including its name and colour.
 
 The deck list is kept by the board server, so every browser on this board shows the same decks.
 The board's own deck is always first: you can rename and recolour it, but not remove it. Each row
@@ -427,8 +445,8 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
   defaults a new Codex session starts from (workspace-write and never unless you change them).
 - PR auto-fix, Codex and Claude folder trust, and the **Background model**: the agent and model
   (Claude Haiku by default) for small tool-less one-shot jobs that name no model of their own, such
-  as the archive memory review. Any installed agent that can run headless is offered, Gemini
-  included (`gemini -p` with every tool denied).
+  as the archive memory review. Any installed agent that can run headless is offered, agy
+  included (`agy --output-format json`, with every tool denied).
   Codex folder trust uses the resolved directory path, so a symlink and its target share one trust
   entry. If the directory cannot be resolved or trust cannot be saved, the launch reports an error.
   Claude folder trust covers scratch sessions and worktrees of a repo you already trust in Claude: the

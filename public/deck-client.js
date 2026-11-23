@@ -50,6 +50,7 @@ const refused = (code, message) => ({ ok: false, data: null, error: { code, mess
 
 export function createDeckClient({
   fetchImpl = (...a) => fetch(...a),
+  credentials = 'same-origin',
   WebSocketImpl = globalThis.WebSocket,
   location = globalThis.location,
   origin = () => deckOrigin(location),
@@ -78,7 +79,7 @@ export function createDeckClient({
   };
 
   async function readDescriptor() {
-    const res = await fetchImpl(`${origin().http}/deck`, { cache: 'no-store' });
+    const res = await fetchImpl(`${origin().http}/deck`, { cache: 'no-store', credentials, ...(credentials === 'include' && { redirect: 'error' }) });
     if (!res.ok) throw new Error(`GET /deck answered ${res.status}`);
     return res.json();
   }
@@ -105,6 +106,7 @@ export function createDeckClient({
     ws = sock;
     sock.onopen = () => { setStatus('ready'); onOpen(); };
     sock.onmessage = (ev) => {
+      if (stopped) return;
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg?.type === 'state') onState(msg);
@@ -126,10 +128,12 @@ export function createDeckClient({
     handshake = (async () => {
       let d;
       try { d = await readDescriptor(); } catch {
+        if (stopped) return;
         setStatus('unreachable');
         setTimer(start, retryMs);
         return;
       }
+      if (stopped) return;
       if (!accept(d)) {
         setStatus('incompatible');
         setTimer(start, incompatibleRetryMs);
@@ -177,9 +181,18 @@ export function createDeckClient({
     return status === 'ready' && actions.has(action) && ws?.readyState === 1;
   }
 
+  // A fire-and-forget frame outside the action protocol (the open-dialog
+  // count). False when the socket is down; onOpen is the time to resend.
+  function signal(frame) {
+    if (!ws || ws.readyState !== 1) return false;
+    ws.send(JSON.stringify(frame));
+    return true;
+  }
+
   return {
     start,
     refresh,
+    signal,
     supports,
     act,
     canSend,

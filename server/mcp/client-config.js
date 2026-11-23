@@ -61,7 +61,7 @@ export function allowedToolName(tool) {
   return `mcp__${MCP_SERVER_NAME}__${tool}`;
 }
 
-// The CORE wrangler MCP tools a launched session is granted without a per-call
+// The CORE Agent Wrangler MCP tools a launched session is granted without a per-call
 // prompt. Lives here (the leaf the agents import) rather than in the tools
 // registry, since that registry pulls in session-manager and would cycle back
 // through the agents layer. Keep in sync when a new always-on core tool is
@@ -69,7 +69,7 @@ export function allowedToolName(tool) {
 // (itself a leaf — see server/extensions/index.js), derived from the very list
 // the loader registers, so an extension tool is granted in the same place it is
 // declared.
-const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'get_session_cost', 'get_model_front', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'request_repo', 'send_message', 'archive_session', 'restore_session', 'restore_task', 'assign_session', 'rename_session', 'update_schedule', 'read_mail', 'list_mail', 'read_session_transcript'];
+const ALLOWED_TOOLS = ['list_sessions', 'get_session_info', 'get_session_cost', 'get_model_front', 'list_tasks', 'spawn_session', 'get_links', 'set_links', 'workflow_phase', 'name_branch', 'send_message', 'archive_session', 'restore_session', 'restore_task', 'assign_session', 'rename_session', 'update_schedule', 'read_mail', 'list_mail', 'read_session_transcript'];
 
 // `ext` is injectable (defaulting to the boot-loaded extensions) so tests never
 // touch the memo or the shared config.json.

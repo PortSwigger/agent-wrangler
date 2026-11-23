@@ -1,0 +1,40 @@
+
+
+      ▄▀▀▄        Antigravity CLI 1.5.15
+     ▀▀▀▀▀▀       Gemini API key
+    ▀▀▀▀▀▀▀▀      Gemini 4 Neon (Medium)
+   ▄▀▀    ▀▀▄     ~/work/repo
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────
+> Invoke a subagent (invoke_subagent) whose task is to run `sleep 60` and then say done. Do not wait for it; reply
+  "launched" as soon as it starts.
+
+○ Thought for 5.8s (Launching Subagent Now)
+● Spawned 1 subagent (ctrl+o to expand)
+
+  launched
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ● Agent(self: Sleep Runner) · Gemini 4 Neon  Sleep for 60 seconds · 43s
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                   Gemini 4 Neon · medium · 1 subagent(s)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

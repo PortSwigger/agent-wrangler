@@ -1,49 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseRepos, childRepos, withheldReposBrief, prLinkRefusal, prRepoOf, reposBrief, checkLocationBranch, findUnpushed, unpushedText, renameLocationBranchText, MAX_UNPUSHED_COMMITS } from './repos.js';
+import { checkLocationBranch, findUnpushed, unpushedText, renameLocationBranchText, MAX_UNPUSHED_COMMITS } from './repos.js';
 
-test('repos normalise to owner/name, drop repeats, and refuse anything else', () => {
-  assert.deepEqual(normaliseRepos([' acme/widgets', 'https://github.com/acme/gadgets.git', 'git@github.com:acme/x', 'ACME/Widgets']), ['acme/widgets', 'acme/gadgets', 'acme/x']);
-  assert.deepEqual(normaliseRepos(undefined), []);
-  assert.throws(() => normaliseRepos('acme/widgets'), /must be an array/);
-  assert.throws(() => normaliseRepos(['widgets']), /"widgets" is not a GitHub repo/);
-  assert.throws(() => normaliseRepos(['acme/..']), /not a GitHub repo/);
-  assert.throws(() => normaliseRepos([7]), /must be "owner\/name" strings/);
-  assert.throws(() => normaliseRepos(Array.from({ length: 21 }, (_, i) => `a/r${i}`)), /at most 20 repos/);
-});
-
-test('a child of a location session gets only the repos its spawner holds, and the rest are withheld', () => {
-  const parent = { location: {}, repos: ['acme/a', 'acme/b'] };
-  assert.deepEqual(childRepos(parent, []), { repos: ['acme/a', 'acme/b'], withheld: [] });
-  assert.deepEqual(childRepos(parent, ['ACME/b']), { repos: ['ACME/b'], withheld: [] });
-  assert.deepEqual(childRepos(parent, ['acme/a', 'acme/c']), { repos: ['acme/a'], withheld: ['acme/c'] });
-  assert.deepEqual(childRepos(parent, ['acme/c']), { repos: [], withheld: ['acme/c'] });
-  assert.deepEqual(childRepos({ cwd: '/host' }, ['other/x']), { repos: ['other/x'], withheld: [] }, 'a host spawner has no repos to limit to');
-  assert.deepEqual(childRepos(undefined, []), { repos: [], withheld: [] });
-  assert.equal(withheldReposBrief([]), '');
-  assert.match(withheldReposBrief(['acme/c']), /acme\/c, which the session that started you cannot reach.*request_repo/);
-});
-
-test('a location card links only pull requests in its own repos', () => {
-  const entry = { location: {}, repos: ['acme/widgets'] };
-  assert.equal(prRepoOf('https://github.com/acme/widgets/pull/3'), 'acme/widgets');
-  assert.equal(prLinkRefusal(entry, { type: 'pr', url: 'https://github.com/ACME/widgets/pull/3' }), null);
-  assert.match(prLinkRefusal(entry, { type: 'pr', url: 'https://github.com/other/x/pull/3' }), /not a pull request in this session's repos \(acme\/widgets\)/);
-  assert.match(prLinkRefusal({ location: {} }, { type: 'pr', url: 'https://github.com/acme/widgets/pull/3' }), /\(none\)/);
-  assert.equal(prLinkRefusal(entry, { type: 'jira', key: 'ABC-1' }), null);
-  assert.equal(prLinkRefusal({ cwd: '/x' }, { type: 'pr', url: 'https://github.com/other/x/pull/3' }), null);
-});
-
-test('the brief names each clone and the branch to make', () => {
-  const brief = reposBrief('/w', ['acme/widgets', 'other/widgets'], { branch: 'fix', base: 'main' });
-  assert.match(brief, /acme\/widgets\.git \/w\/acme-widgets/);
-  assert.match(brief, /other\/widgets\.git \/w\/other-widgets/);
-  assert.match(brief, /git switch -c fix origin\/main/);
-  assert.equal(reposBrief('/w', []), '');
-  assert.deepEqual(checkLocationBranch({ branch: 'fix', base: 'main', repos: ['a/b'] }), { branch: 'fix', branchBase: 'main' });
-  assert.throws(() => checkLocationBranch({ branch: 'fix', repos: [] }), /branch needs GitHub repos/);
-  assert.throws(() => checkLocationBranch({ base: 'main', repos: ['a/b'] }), /base needs a branch/);
-  assert.match(renameLocationBranchText({ cwd: '/w', repos: ['acme/widgets'] }, 'old', 'new'), /git -C \/w\/widgets branch -m old new/);
+test('a remote branch can be specified without a repository', () => {
+  assert.deepEqual(checkLocationBranch({ branch: 'fix', base: 'main' }), { branch: 'fix', branchBase: 'main' });
+  assert.throws(() => checkLocationBranch({ base: 'main' }), /base needs a branch/);
+  assert.match(renameLocationBranchText('old', 'new'), /git branch -m old new/);
 });
 
 test('unpushed answers are capped and cleaned; a card on this machine or a runtime without the hook is not asked', async () => {

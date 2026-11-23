@@ -15,7 +15,7 @@ function probes({ local, inTmux }) {
   };
 }
 
-test('wrangler sees the Dock but tmux does not → stale, names the socket', async () => {
+test('Agent Wrangler sees the Dock but tmux does not → stale, names the socket', async () => {
   const p = probes({ local: async () => DOCK, inTmux: async () => NO_DOCK });
   assert.deepEqual(await checkGuiSession({ platform: 'darwin', socket: 'aw-1', ...p }), { socket: 'aw-1' });
   assert.deepEqual(p.calls, [
@@ -34,7 +34,7 @@ test('no tmux server on the socket → nothing to warn about', async () => {
   assert.equal(await checkGuiSession({ platform: 'darwin', socket: 'aw-1', ...p }), null);
 });
 
-test('wrangler itself cannot see the Dock → no warning, and tmux is not probed', async () => {
+test('Agent Wrangler itself cannot see the Dock → no warning, and tmux is not probed', async () => {
   const p = probes({ local: async () => NO_DOCK, inTmux: async () => NO_DOCK });
   assert.equal(await checkGuiSession({ platform: 'darwin', socket: 'aw-1', ...p }), null);
   assert.equal(p.calls.length, 1);

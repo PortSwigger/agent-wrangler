@@ -24,7 +24,6 @@ export const SESSION_VIEW_FIELDS = [
   'spawnedBy', 'autoFixPrChecks', 'autoMergeOnPass', 'childFullView', 'offBoard', 'links',
   'worktree', 'tasks', 'tty', 'managed', 'restarting', 'tmux', 'dormant', 'exitOutput', 'usd',
   'advisorUsd', 'tokens', 'subAgents', 'teammates', 'mail', 'statusNoticeBlocked',
-  'repos', 'repoRequests',
 ];
 
 const DROPPED = new Set(SESSION_VIEW_DROPPED);
@@ -68,7 +67,7 @@ export const SETTINGS_KEYS = [
   'extensions',
 ];
 
-export const STATUS_KEYS = ['codeVersion', 'quarantinedBuiltins', 'staleGuiSession', 'missingExtensionFiles'];
+export const STATUS_KEYS = ['codeVersion', 'quarantinedBuiltins', 'toolSchemaFailures', 'staleGuiSession', 'missingExtensionFiles'];
 
 const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => k in obj).map((k) => [k, obj[k]]));
 

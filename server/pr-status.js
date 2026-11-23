@@ -4,9 +4,52 @@ const FIELDS = 'id,createdAt,state,title,number,isDraft,statusCheckRollup,mergeS
 const FAILING = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED']);
 const PENDING = new Set(['PENDING', 'IN_PROGRESS', 'QUEUED', 'EXPECTED']);
 
+// A check run's identity: workflow + job name for check runs, context for
+// commit statuses. Entries with neither are left uncollapsed.
+function checkKey(c) {
+  if (typeof c.context === 'string' && c.context) return `context\0${c.context}`;
+  if (typeof c.name === 'string' && c.name) return `run\0${c.workflowName ?? ''}\0${c.name}`;
+  return null;
+}
+
+// gh renders an unset time as the zero date, so anything before 1970 is unset.
+function timeOf(value) {
+  const t = Date.parse(value);
+  return Number.isFinite(t) && t > 0 ? t : null;
+}
+
+// Newest first: a run that has not started yet is newer than any that has;
+// otherwise by startedAt, then completedAt.
+function recency(c) {
+  const started = timeOf(c.startedAt);
+  const completed = timeOf(c.completedAt);
+  if (started === null && completed === null) return [Infinity, Infinity];
+  return [started ?? completed, completed ?? Infinity];
+}
+
+function newer(a, b) {
+  const [as, ac] = recency(a);
+  const [bs, bc] = recency(b);
+  return as !== bs ? as > bs : ac >= bc;
+}
+
+// GitHub keeps every run of a check on the head commit, so a run cancelled by a
+// workflow concurrency group sits beside the run that replaced it. Only the
+// latest run of each check counts; a lone cancelled run still does.
+function latestRuns(checks) {
+  const latest = new Map();
+  const rest = [];
+  for (const c of checks) {
+    const key = checkKey(c);
+    if (key === null) rest.push(c);
+    else if (!latest.has(key) || newer(c, latest.get(key))) latest.set(key, c);
+  }
+  return [...latest.values(), ...rest];
+}
+
 function checkRollup(checks) {
   if (!checks.length) return 'none';
-  const states = checks.map((c) => c.conclusion || c.status || c.state);
+  const states = latestRuns(checks).map((c) => c.conclusion || c.status || c.state);
   if (states.some((s) => FAILING.has(s))) return 'failing';
   if (states.some((s) => PENDING.has(s))) return 'pending';
   return 'passing';
@@ -78,7 +121,7 @@ export async function fetchPrStatus(url, run = defaultRun) {
 // because the merge runs non-interactively (no TTY to pick a method) and a
 // squash is the sensible default for an autopilot feature branch (matches this
 // repo's own single-commit-per-PR history). We deliberately do NOT pass
-// --delete-branch: the branch is checked out in the wrangler-created worktree
+// --delete-branch: the branch is checked out in the worktree created by Agent Wrangler
 // (so a local delete would fail), and the existing archive-time cleanup flow
 // owns branch/worktree removal. Resolves { code, stderr }.
 function defaultMerge(url) {
@@ -94,13 +137,13 @@ function defaultMerge(url) {
 // needed). `first: 100` caps the thread list; a PR with more silently undercounts
 // (not worth paginating for v1). The jq filter runs inside gh, so stdout is just
 // the unresolved count as a bare integer.
-const UNRESOLVED_QUERY = 'query($url:URI!){resource(url:$url){...on PullRequest{reviewThreads(first:100){nodes{isResolved}}}}}';
+const UNRESOLVED_QUERY = 'query($url:URI!){resource(url:$url){...on PullRequest{reviewThreads(first:100){nodes{id isResolved path line originalLine comments(first:1){nodes{author{login} body}}}}}}}';
 const UNRESOLVED_JQ = '.data.resource.reviewThreads.nodes | map(select(.isResolved==false)) | length';
 
-function defaultUnresolvedRun(url) {
+function defaultUnresolvedRun(url, jq = UNRESOLVED_JQ) {
   return new Promise((resolve) => {
     execFile('gh', ['api', 'graphql', '-f', `query=${UNRESOLVED_QUERY}`, '-f', `url=${url}`,
-      '-q', UNRESOLVED_JQ], { timeout: 15000 },
+      '-q', jq], { timeout: 15000 },
       (err, stdout) => resolve({ code: err ? (err.code ?? 1) : 0, stdout: stdout || '' }));
   });
 }
@@ -119,6 +162,25 @@ export async function fetchUnresolvedThreadCount(url, run = defaultUnresolvedRun
     if (!trimmed) return null;
     const n = Number(trimmed);
     return Number.isInteger(n) && n >= 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchUnresolvedThreads(url, run = (u) => defaultUnresolvedRun(u,
+  '.data.resource.reviewThreads.nodes | map(select(.isResolved==false) | .comments.nodes |= map(.body = ((.body // "") | .[0:321])))')) {
+  try {
+    const { code, stdout } = await run(url);
+    if (code !== 0) return null;
+    const threads = JSON.parse(stdout);
+    if (!Array.isArray(threads)) return null;
+    return threads.map((thread) => ({
+      id: thread.id,
+      author: thread.comments?.nodes?.[0]?.author?.login ?? null,
+      path: thread.path,
+      line: thread.line ?? thread.originalLine ?? null,
+      body: String(thread.comments?.nodes?.[0]?.body ?? '').slice(0, 321),
+    }));
   } catch {
     return null;
   }

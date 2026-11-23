@@ -19,7 +19,7 @@ import { deliverMessage as defaultDeliverMessage } from './message-delivery.js';
 //     session's own pastes dir; handing an extension that channel would make any
 //     file on the box readable by an agent, off a string the extension chose.
 //   - `clearComposer` empties the pane before pasting. It means one thing only —
-//     the chat view's Esc-then-edit flow, where the wrangler's own interrupt put
+//     the chat view's Esc-then-edit flow, where Agent Wrangler's own interrupt put
 //     the restored prompt there — and an extension clearing a human's half-typed
 //     draft is a bug with no legitimate caller.
 // A future option an extension genuinely needs is a deliberate widening here,

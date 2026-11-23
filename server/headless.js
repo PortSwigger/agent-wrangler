@@ -3,15 +3,17 @@ import { execFile as defaultExecFile } from 'node:child_process';
 import { adapterFor, registeredAgents, effortError } from './agents/index.js';
 import { backgroundModelConfig } from './config-store.js';
 
-// A tool-less, one-shot model call for the wrangler's own small jobs (archive
+// A tool-less, one-shot model call for Agent Wrangler's own small jobs (archive
 // memory review) and for extensions (`host.agents.headless`, capability
 // `agents:headless`). Any adapter with a `headless` capability can run one:
 //
 //   headless.defaultModel()  — the model a call naming only this agent runs.
 //   headless.command({ prompt, model, effort, env, cwd, execFile })
-//                            → { file, args, env, liveSessionId?, cleanup? }, or a
+//                            → { file, args, env, stdin?, liveSessionId?, cleanup? }, or a
 //                              promise of it: the binary and argv for one run
-//                              with every tool off. A liveSessionId fixed at
+//                              with every tool off. `stdin`, when set, is
+//                              written in place of the payload (a CLI that
+//                              reads its prompt there too). A liveSessionId fixed at
 //                              launch is returned here; cleanup runs once the
 //                              run ends. May throw when it cannot guarantee
 //                              no tools, and the run then fails.
@@ -43,13 +45,17 @@ export function defaultBackgroundModel(adapters = registeredAgents()) {
 }
 
 // Settings › Automation › Background model: what a headless run uses when the
-// caller names no model. A stored agent that is gone or cannot run headless,
-// or a model it no longer lists, falls back to the default rather than failing
-// every background job.
+// caller names no model. A stored agent that was replaced (`replacedBy`: Gemini
+// CLI → agy) runs its replacement's headless default. One that is gone or
+// cannot run headless, or a model it no longer lists, falls back to the default
+// rather than failing every background job.
 export function backgroundModel({ cfg, adapters = registeredAgents() } = {}) {
   const stored = backgroundModelConfig(cfg);
   const adapter = stored && adapters.find((a) => a.id === stored.agent && a.headless);
   if (adapter && adapter.models.some((m) => m.value === stored.model)) return { agent: adapter.id, model: stored.model };
+  const replacedBy = stored && adapters.find((a) => a.id === stored.agent)?.replacedBy;
+  const heir = replacedBy && adapters.find((a) => a.id === replacedBy && a.headless);
+  if (heir) return { agent: heir.id, model: heir.headless.defaultModel() };
   return defaultBackgroundModel(adapters);
 }
 
@@ -109,7 +115,7 @@ export async function runHeadless({
   let cmd;
   try {
     try {
-      cmd = await target.adapter.headless.command({ prompt, model: target.model, effort: target.effort, env, cwd, execFile });
+      cmd = await target.adapter.headless.command({ prompt, stdin, model: target.model, effort: target.effort, env, cwd, execFile });
     } catch (error) {
       return { text: null, liveSessionId: null, agent: target.agent, model: target.model, error };
     }
@@ -131,7 +137,7 @@ export async function runHeadless({
           error,
         });
       });
-      child.stdin.end(stdin);
+      child.stdin.end(cmd.stdin ?? stdin);
     });
   } finally {
     cmd?.cleanup?.();

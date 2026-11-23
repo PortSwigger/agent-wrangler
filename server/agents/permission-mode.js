@@ -1,9 +1,9 @@
-import { adapterFor, agentError } from './index.js';
+import { adapterFor, launchAgentError } from './index.js';
 export const CLAUDE_PERMISSION_MODES = ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'];
 
 export function permissionModeError(value, agent = 'claude') {
   if (value == null) return null;
-  const invalid = agentError(agent);
+  const invalid = launchAgentError(agent);
   if (invalid) return invalid;
   const adapter = adapterFor(agent);
   if (!CLAUDE_PERMISSION_MODES.includes(value)) {

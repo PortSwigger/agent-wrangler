@@ -16,8 +16,8 @@ Git runs without a prompt, so a private GitHub repository needs a credential hel
 `gh auth login`, then `gh auth setup-git`, and install from its `https://` URL. When a clone or
 update check fails that way, the Extensions tab says so.
 
-The tab is a list beside a detail pane, and opens on the **+ Add extension** pane. The list groups **Core** extensions (they ship with the
-wrangler) and **Installed** ones (from git URLs), each with a dot that is filled when it is enabled;
+The tab is a list beside a detail pane, and opens on the **+ Add extension** pane. The list groups **Core** extensions (they ship with
+Agent Wrangler) and **Installed** ones (from git URLs), each with a dot that is filled when it is enabled;
 **Filter** narrows it by name. **Check all** in the Installed heading checks every installed extension
 for a newer commit; when one is found, **Update all** appears beside it and the extension gets its own
 update button in the list. With Settings › Updates on Notify or Auto, the hourly update check also
@@ -25,7 +25,7 @@ checks installed extensions: an outdated one shows its update button and how man
 missing without pressing Check all, the Extensions tab and the Settings button are badged, and a
 toast says so once per new commit. Extensions are not updated automatically, even on Auto, unless you
 turn on **Auto-update** for that extension (see below).
-Updated code loads only when the wrangler restarts. Where the wrangler can restart itself, the update's
+Updated code loads only when Agent Wrangler restarts. Where Agent Wrangler can restart itself, the update's
 consent dialog offers **Update & restart** (**Approve, update & restart** when the update asks for new
 capabilities), which restarts once the update has installed; after **Update all**, it restarts once,
 after the last update. **Update without restarting** applies the update and leaves **Restart now** in
@@ -39,7 +39,7 @@ extension installs are off on this deck, and installing, updating, uninstalling 
 **Auto-update** switch are disabled; the deck refuses them from any board or API, and auto-update
 applies nothing. The **Enabled** switch and **Settings** still work.
 
-When a Claude or Codex session resumes, Wrangler compares the enabled extension tools with the
+When a Claude or Codex session resumes, Agent Wrangler compares the enabled extension tools with the
 schemas recorded at its last launch. If they differ, it adds a reminder to re-run ToolSearch and
 disregard earlier schema results. For Claude, the reminder precedes an existing resume prompt, or
 appears in the system instructions when there is no prompt. Codex receives it in the developer
@@ -49,6 +49,12 @@ and sessions without a previous schema record receive no reminder.
 This reminder is advisory: re-running ToolSearch does not guarantee that a resumed agent recognises
 or uses the current schema. Check the tool's current parameters when a resumed agent reports that a
 new parameter is unavailable.
+
+If an extension tool's input schema cannot be converted, that tool is unavailable; session launches
+and other tools keep working. A persistent board banner names the affected extensions and points to
+`wrangler.log`. The log records the extension, tool name and conversion error once per tool per
+server process. The board refresh retries conversion and clears the notice when the affected tools
+recover. The notice survives browser reloads and reconnects.
 
 The server checks loaded installed extensions' directories and `index.js` manifests once a minute.
 If either disappears, it logs an error once per incident and shows a persistent board banner naming
@@ -67,7 +73,7 @@ An extension with Auto-update on is updated by the hourly update check, so only 
 Updates is on Notify or Auto. An update is applied only when it asks for no new capabilities and passes
 the same lockfile and host API checks as an update you start yourself. Otherwise it stays an update
 button for you to review, and its detail pane says why it was not applied. The updated code loads at
-a restart. Where the wrangler can restart itself (it runs as a background service), it restarts on its
+a restart. Where Agent Wrangler can restart itself (it runs as a background service), it restarts on its
 own once it is idle: no headless runs or session launches in flight and no scheduled session due in the
 next two minutes. While it is busy it looks again every minute, and several updates, or an update of
 Agent Wrangler itself in the same check, share one restart. Where it cannot restart itself, the
@@ -187,7 +193,7 @@ Supported manifest contributions are:
 | Runtimes | `runtimes`: where a session's agent runs, offered in the dispatch dialog's Runtime select and `spawn_session`. See [Runtimes](#runtimes) |
 | Agent skills | `skills/<name>/SKILL.md` plus the manifest's `skills` list |
 | Extension settings | `settings` (`text`, `textarea`, `number`, `toggle`, `select`, `list`), read through `host.settings` |
-| Browser UI | `board: { client, styles }` beside `boardApi`, and slots from `public/slots.js`. See [Deck and board halves](#deck-and-board-halves) |
+| Browser UI | `board: { client, styles }` beside `boardApi`, and slots from `public/slots.js` (for example `task.button`, an icon button on each task tile's title bar). See [Deck and board halves](#deck-and-board-halves) |
 | Themes | `board: { themes }`: a directory of `<id>/theme.json` + assets, offered in Settings › Appearance. See [Themes](#themes) |
 | Core access | `requires`, served through the versioned host API in `server/host-api/` |
 | Telemetry | `telemetry.events` to emit typed usage events, which core sends to its built-in collector. See [Telemetry](#telemetry) |
@@ -502,6 +508,44 @@ a [`core.deprecated`](#core-events) event under the surface id in the last colum
   [Migrating an unsplit manifest](#migrating-an-unsplit-manifest) still work through adapters, log
   one warning on first use naming the replacement, and are reported as `core.deprecated`.
 
+### Tool schemas with the host’s Zod
+
+Extensions must build tool schemas with core’s Zod instance and must not bundle their own `zod`.
+Declare `schema:zod` in `requires` and `engines: { wranglerApi: '^2.1.0' }` in both the manifest
+and `package.json`’s `wranglerExtension` block. The capability provides **`host.schema.z`** (Zod 4).
+Use a synchronous `inputSchema({ host })` factory so the host is available when building a tool’s
+schema; it returns a Zod object schema or a raw shape, just like a static `inputSchema`:
+
+```js
+export default {
+  id: 'example',
+  label: 'Example',
+  requires: ['schema:zod'],
+  engines: { wranglerApi: '^2.1.0' },
+  tools: [{
+    name: 'example_echo',
+    description: 'Echo a message.',
+    inputSchema: ({ host }) => ({ text: host.schema.z.string().min(1) }),
+    handler: async (_frame, { text }) => ({ content: [{ type: 'text', text }] }),
+  }],
+};
+```
+
+Factories may run repeatedly for MCP registration, tool fingerprints and diagnostics. Keep them
+side-effect free. Existing static schemas remain supported. A throwing or invalid factory follows
+the same tool omission and diagnostic path as a schema conversion failure.
+
+A core Zod **major** upgrade requires a host API **major** bump. Extensions must use a compatible,
+major-bounded `engines.wranglerApi` range so install and update reject an incompatible host before
+loading the extension, with the required and served API versions in the reason. This applies even
+when a legacy host API shim is retained: a shim must not serve a different Zod major under the same
+API major.
+
+Install and update warn when `package.json` declares `zod` in `dependencies` or
+`optionalDependencies`, or as a non-optional `peerDependencies` entry (npm installs those peers
+automatically). The warning appears in consent and the server log (including automatic
+updates); it does not block installation. Remove the dependency when migrating to `host.schema.z`.
+
 ### Session launch capabilities
 
 | Capability | Host surface |
@@ -515,8 +559,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 ## Internal architecture and invariants
 
 - **An extension runs IN-PROCESS WITH FULL ACCESS TO THE MACHINE, and `requires` is
-  DISCLOSURE, not enforcement.** The capability list says what a manifest asked the
-  wrangler for; nothing stops its code — or any of its dependencies' — doing more,
+  DISCLOSURE, not enforcement.** The capability list says what a manifest asked
+  Agent Wrangler for; nothing stops its code — or any of its dependencies' — doing more,
   the browser half is trusted at exactly the same level as the server half (no
   iframe sandbox), and `npm ci --ignore-scripts` is a **mitigation, not a boundary**
   (it stops install-time lifecycle hooks only; dependency code runs in-process on
@@ -782,10 +826,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   restart semantics below are unchanged: updated code loads at the next start.
   The check returns what it applied as `autoApplied`, and `update-service.js`
   keeps those ids pending and restarts through the same `onApplied` →
-  `exitForRestart` path as a wrangler update, on the same terms: only with
+  `exitForRestart` path as an Agent Wrangler update, on the same terms: only with
   `canRestart` (`restartSupported()`) and only while `isQuiet()`, retrying
   every `restartRetryMs` while busy. It is called at most once per process, so
-  several extensions, or a wrangler auto-apply in the same tick, mean one
+  several extensions, or an Agent Wrangler auto-apply in the same tick, mean one
   restart. Without `canRestart` nothing restarts, as before. A human install
   or update never schedules it.
 - **Early adopter is a PER-INSTALL opt-in on the provenance record too**
@@ -813,9 +857,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   and released on every failure path, or one bad repository would wedge every later
   install for the life of the process.
 - **Uninstall removes the directory and the provenance entry; whatever the extension
-  wrote elsewhere survives because the wrangler does not know where it is** — a
+  wrote elsewhere survives because Agent Wrangler does not know where it is** — a
   store's file is chosen by the extension's own factory, and there is no
-  wrangler-owned per-extension data dir to sweep. An explicit purge is deferred, so
+  per-extension data dir owned by Agent Wrangler to sweep. An explicit purge is deferred, so
   the confirm copy (`uninstallBodyText`) states the gap rather than selling retention
   as a feature; it also only claims live code is still running when the extension is
   actually active (`enabled && !quarantine`) — a turned-off or quarantined one
@@ -845,8 +889,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   or whose `extensions.<id>` is a stale `false`, lands registered-but-inactive and
   the reply says `active: false`, because an install must never leave the process in
   a state a restart would not reproduce.
-- **"Restart the wrangler to finish" now comes with the button that does it — ONE
-  button, above the detail pane (a restart is a whole-wrangler action, so several
+- **"Restart Agent Wrangler to finish" now comes with the button that does it — ONE
+  button, above the detail pane (restarting affects the whole Agent Wrangler server, so several
   pending extensions must not each draw their own), in
   the amber `--warn`/`--warn-fg` role rather than Uninstall's danger red; the detail
   pane and the notice above it still say what is waiting on it. The button exists ONLY
@@ -982,7 +1026,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   to redraw for, and the dialog re-reads on every open.
 - **An extension may SHIP a skill, and the whole catalog is assembled in ONE
   place: `agent-skills.js`'s `allSkillEntries`.** A manifest's `skills` names
-  either one of the wrangler's own `agent-skills/skills/<name>` (all it could
+  either one of Agent Wrangler's own `agent-skills/skills/<name>` (all it could
   name before this, and still how it GATES one) or its own
   `<dir>/skills/<name>/SKILL.md` — same layout, sidecar `WRANGLER.md` included.
   The merge reads the loader's list rows (`id`/`dir`/`skills`) on EVERY call, so
@@ -1042,7 +1086,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   flip, never by the manifest's `help`** — two lines now, neither naming a restart,
   both naming the next-resume lag, because "the panel went and my agent still has
   the tools" is otherwise indistinguishable from a switch that did nothing. A static
-  help sentence cannot say this: a blanket "takes effect after the wrangler
+  help sentence cannot say this: a blanket "takes effect after Agent Wrangler
   restarts" was once appended to any help that didn't mention one, and it is simply
   false. A manifest's `help` says what the feature IS and what survives a toggle,
   nothing about when.
@@ -1547,6 +1591,28 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   route, so an extension can reopen whatever the reader left. It never fires if
   the panel never opened (a refused restore) or a later `openSession`/`openDiff`
   replaced the request first.
+- **`task.button` (2.2.0) is a value slot for a task tile's title bar.** A
+  contribution carries `button(task, graph, api)`, which gets the same subject as
+  `task.action` and returns `{ title, icon, run }` or `null` for that tile. Core
+  draws the button (`cards.js taskButtonsHtml`) just before the New session robot,
+  on named tasks and on Unassigned. `title` is text and is also the button's
+  tooltip and accessible name. `icon` passes the same SVG allow-list as a
+  `link.chip` icon, and an icon that is missing or refused is drawn as a plus. A
+  click finds the contribution again by its `<extId>:<id>` key
+  (`slots.runTaskButton`) and calls `run(event)`, so a button whose `button()`
+  now answers `null` does nothing. A throwing `run` is reported and never breaks
+  the board. A throwing `button()` removes the contribution, and an answer without
+  a `title` and `run` is skipped and reported. Another deck's task offers only
+  contributions registered with `decks: true`, and none while that deck is
+  unreachable, the same rule as core's robot button. A board half using it
+  declares `^2.2.0`:
+
+  ```js
+  slots.register('task.button', {
+    id: 'quick',
+    button: (task) => ({ title: 'Quick session', icon: BOLT_SVG, run: () => api.act('start', { taskId: task.adhoc ? null : task.id }) }),
+  });
+  ```
 - **`board.tray` (1.53.0)** is an exclusive mount-style slot for the bottom strip.
   Register `{ id, mount(el, api, ctx), update?(el, ctx, graph), unmount?(el),
   minimiseItem?(task, graph, api), backgroundItem?(graph, api) }`.
@@ -1611,7 +1677,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   ("Auto"), read from the user's and organization's settings (Claude: managed
   settings, a settings `env` block's `CLAUDE_CODE_EFFORT_LEVEL`, user settings,
   then the model's documented default; Codex: `config.toml`, then the model's
-  catalog default), and is absent when unknown. **`api.agents.onChange(fn)`**
+  catalog default; agy: each Gemini family's fixed default, and for its
+  `default` entry the effort in `settings.json`'s `model`), and is absent when unknown. **`api.agents.onChange(fn)`**
   fires (with its own copy) whenever the server re-sends the `agents` frame: on
   connect, and when a catalog refresh or one of those settings files changes it. It returns the unsubscribe
   function; subscriptions die with the extension, and a throwing listener is
@@ -1627,9 +1694,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
 
   `data` is `{ read, credit, benchmarks, models }`: `read` is the reading date,
   `credit` cites the benchmark sources and bundled LiteLLM price catalog,
-  `benchmarks` records benchmark names, versions and weights, and
+  `benchmarks` records benchmark names, versions (or publish dates) and weights, and
   `models[agent][model][effort]` is `[quality, usd, minutes]` per coding task.
-  Quality is Terminal-Bench points (higher is better); dollars and wall-clock
+  Quality is [Wrangler-bench](agent-tools.md#wrangler-bench), Terminal-Bench
+  and Arena's agent leaderboard blended at equal weight (higher is better); dollars and wall-clock
   minutes are lower-is-better. These are coding-task measurements, not review
   quality scores. A **pick** is `{ agent, model, effort }`; a scored **point**
   adds `{ quality, usd, minutes, cost, time }`. `cost` and `time` are chart
@@ -1946,8 +2014,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   it is on the task. The builder therefore does BOTH halves (pass the task pre-launch,
   `taskStore.assign` after), exactly as the `spawn_*` tools and the board's own
   dispatch handler do; that assign is not a `tasks:write` escalation, because
-  the only card it can name is the one the call just minted. The same "ask the
-  wrangler, don't reimplement it" rule is why `worktree: {branch, base, auto,
+  the only card it can name is the one the call just minted. The same "ask
+  Agent Wrangler, don't reimplement it" rule is why `worktree: {branch, base, auto,
   folderName}` exists: an extension that cuts its own worktree and launches into
   it as a plain cwd gets no worktree record on the card, and the badge, the
   archive-time cleanup offer and core's `name_branch` all key off that record.
@@ -2564,8 +2632,8 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   the transient toast limit and are never evicted. The stack defaults to top-right;
   core **Settings → Appearance → Toast position** can move it to bottom-right for
   this browser. Newest messages sit nearest the chosen corner, about 12px from the
-  viewport edges. They can cover board headers, but keep an open dialog’s header,
-  Close button and footer controls clear. All text is set as text.
+  viewport edges, including while dialogs open or close. They can cover board or
+  dialog controls. All text is set as text.
 - **Client `api.ui.toast({ severity, text, detail, actions })`** (1.71.0) shows a
   transient message in the board's own toast stack (`public/toast.js`), the one
   core's toasts and `ui.notify` use, for feedback on something the human just did.
@@ -2600,13 +2668,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `host.sessions.archive(sid, { allowUnpushed })` works the same way, resolving
   `{ archived: [], unpushed }`. `unpushed` is `[{ sessionId, label, repos: [{ repo, dir,
   commits: [{ sha, subject }], error? }] }]`.
-- **`host.sessions.spawn({ runtime, repos, branch, base })`** (1.85.0) dispatches on a
-  runtime by id (an unknown id is refused by name). A runtime with a `location` takes
-  GitHub `repos` (`owner/name` or a GitHub URL, at most 20) instead of a folder; `branch`
-  (with `base`, its starting remote branch) is the branch the session creates in each
-  clone and pushes to. The agent is briefed to clone each repo; a projection's `repos`
-  lists a location card's repos (including any added after dispatch, 1.88.0) and is null
-  for a card on this machine.
+- **`host.sessions.spawn({ runtime, branch, base })`** dispatches on a runtime by id. At a remote location, the brief can name a repository and the optional branch and base specify where to start work.
 - **`host.usage.byCard()`** (capability `usage:read`, 1.6.0) resolves every card's
   spend recomputed from transcripts, through the same cached scan as the Usage
   panel: one frozen row per card, `{ cardId, usd, estimatedUsd, days }`. A card's
@@ -2673,8 +2735,9 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   finite number from 0 to 100, both inclusive output thresholds; invalid values
   reject the promise. `read` is the benchmark snapshot date (`YYYY-MM-DD`), `credit`
   its source attribution, and `units` is
-  `{ quality: 'Terminal-Bench 4.0 points', usd: 'list-price dollars per task',
-  minutes: 'wall-clock minutes per task' }`. These are coding-task measurements,
+  `{ quality, usd, minutes }`: quality in [Wrangler-bench](agent-tools.md#wrangler-bench),
+  list-price dollars per task and wall-clock
+  minutes per task, each described in words. These are coding-task measurements,
   not review-specific scores. Unmeasured settings are omitted. A manifest using
   this method declares `^1.92.0`, or `^1.94.0` when using candidate restrictions.
   For example, `host.agents.front({ agents: ['claude'], excludeModels: ['opus'] })`
@@ -2750,7 +2813,7 @@ if (host.telemetry.on()) {
   undeclared event, an undeclared field, a missing field or a value its type refuses, even when
   `on()` is false, so a bug shows up in development. It returns whether the event was queued. The wire `type` is
   forced to `<your id>.<name>`: no extension can emit another's events, and the id `core` is reserved
-  for the wrangler.
+  for Agent Wrangler.
 - **`host.telemetry.ref(kind, id)`** is an HMAC of `kind:id` under a per-install secret that never
   leaves the machine, 16 hex characters: stable on this machine, meaningless anywhere else.
 - **`host.telemetry.repo(raw)`** takes a slug or a git remote and gives `owner/name`, `none` for
@@ -2804,7 +2867,7 @@ Core POSTs `{ "events": [...] }` as JSON, at most 100 events and 64 KiB per requ
 | `ts` | when it was emitted, RFC 3339 UTC to the second |
 | `type`, `v` | `<emitter>.<name>` and the declared version |
 | `install` | a random UUID made once per data directory, not derived from the machine or user |
-| `awVersion`, `emitterVersion` | the wrangler's version and the emitter's (`version`, or the wrangler's for core and builtins) |
+| `awVersion`, `emitterVersion` | Agent Wrangler's version and the emitter's (`version`, or Agent Wrangler's for core and builtins) |
 
 There is no team or user field: `install` plus each event's `repo` is what ties events to one
 person's work.
@@ -2819,7 +2882,7 @@ events, and any of them still queued are dropped at the next send.
 
 ### Core events
 
-The wrangler emits these itself, as emitter `core` (server/core-telemetry.js). `session` and
+Agent Wrangler emits these itself, as emitter `core` (server/core-telemetry.js). `session` and
 `parent` are refs of card ids. Nothing a person wrote is sent: a prompt's text is read from the
 transcript on the machine, typed there, and dropped.
 
@@ -2852,7 +2915,7 @@ transcript on the machine, typed there, and dropped.
 | Field | Values |
 | --- | --- |
 | `session` | ref of the card |
-| `source` | `composer` (the chat view), `terminal` (typed into the pane), `dispatch` (a dialog's first prompt), `mail` (mailbox and the wrangler's other notices: status notices, PR nudges), `extension` (`host.deliver`), `spawn` (an extension's or agent's spawn brief), `schedule` |
+| `source` | `composer` (the chat view), `terminal` (typed into the pane), `dispatch` (a dialog's first prompt), `mail` (mailbox and Agent Wrangler's other notices: status notices, PR nudges), `extension` (`host.deliver`), `spawn` (an extension's or agent's spawn brief), `schedule` |
 | `human` | true for `composer`, `terminal` and `dispatch` |
 | `kind` | for a human prompt: `task`, `extend`, `correct`, `answer`, `approve`, `ask`, `unblock`, `ship` or `other`; `null` for the rest, and when no model could type it |
 | `classifier` | `rule`, `model`, or `none` when `kind` is `null` |
@@ -2864,7 +2927,7 @@ transcript on the machine, typed there, and dropped.
 
 **`core.interrupt`**, when someone stops a working agent mid-turn: the chat view's Stop or an
 extension's `sessions.interrupt` while the card works, or a stop the transcript records (Claude's
-"Request interrupted by user", Codex's aborted turn) that the wrangler did not send:
+"Request interrupted by user", Codex's aborted turn) that Agent Wrangler did not send:
 
 | Field | Values |
 | --- | --- |
@@ -2908,7 +2971,7 @@ adapters' use; the board reports its adapters' use through the `deck.deprecation
 | `extension` | the extension's id when it is a builtin; `installed` for any other; `unknown` when the use names no extension: `GET /file`, a `/ws` connection before it sends a message, a route on the board's port, a session route off the session API's port, or a board read outside a contribution's own call |
 | `extensionRef` | for `installed`: a ref of the extension's id; `null` otherwise |
 
-**How prompts are typed.** Each prompt the wrangler delivers (a chat send, a dispatch, mail, an
+**How prompts are typed.** Each prompt Agent Wrangler delivers (a chat send, a dispatch, mail, an
 extension's delivery, a schedule, a pane paste) leaves a hash of its text and its source in memory
 for ten minutes; a transcript turn matching one takes that source, and any other is `terminal`.
 A human prompt goes through rules first: a card's first is `task`, short assent is `approve`,
@@ -3034,12 +3097,12 @@ Maintainer notes:
   one file to the same path (or rewrites the path in `inner`, as devcontainer does for
   the PR hook), and must let the agent reach the session API's URL in
   `AW_STATUS_EVENT_URL`. `launchContext.statusEvents` is `true` on such a launch. A
-  `buildLaunch` runtime and an agent with no status hooks (Gemini) are not affected,
+  `buildLaunch` runtime and an agent with no status hooks (agy) are not affected,
   and every runtime without the flag keeps file-based status. An older server ignores
   the key, so a manifest that needs it declares `^1.83.0`.
 - **`deliver` sits on send_message's legacy push path**, before the tmux check, and gets
   the BEGIN/END-fenced text, because the target is a raw prompt stream. The footer drops
-  the "reply with send_message" line, since that agent has no wrangler MCP. A card whose
+  the "reply with send_message" line, since that agent has no Agent Wrangler MCP. A card whose
   runtime has `buildLaunch` or `deliver` is stored `mailCapable: false` (its command has
   no `--mcp-config`, so no `read_mail`); that flag is what routes peer messages there.
   `mailbox-delivery.js` is untouched, since a mailbox branch for such a card could never
@@ -3060,8 +3123,8 @@ Maintainer notes:
 
   | Hook | When | Answer |
   | --- | --- | --- |
-  | `provision({ sessionId, cwd, agent, ext, repos, branch, base })` (required) | dispatch, after the last refusal | a JSON-able ref of at most 16 KiB, stored as `entry.location` |
-  | `open({ ref, entry, phase })` | before each launch (`dispatch`, `resume`, `fork`), and with `repos` when a running card's `entry.repos` grows (1.88.0) | `{ cwd? }`, the absolute path there the agent starts in; dispatch needs one or a `cwd` |
+  | `provision({ sessionId, cwd, agent, ext, branch, base })` (required) | dispatch, after the last refusal | a JSON-able ref of at most 16 KiB, stored as `entry.location` |
+  | `open({ ref, entry, phase })` | before each launch (`dispatch`, `resume`, `fork`) | `{ cwd? }`, the absolute path there the agent starts in; dispatch needs one or a `cwd` |
   | `suspend` | idle suspend after the pane is killed, and a clean exit | — |
   | `resume` | before every resume or fork; a quick no-op when running | — |
   | `delete` | archive (after the unpushed check), forget, a failed dispatch | — |
@@ -3087,8 +3150,7 @@ Maintainer notes:
   another card holds the same ref (a fork shares its parent's), and a location deleted on
   archive refuses a later resume. While suspended a card shows the cost, activity, title
   and summary read when it was suspended. Location cards are kept live by tmux liveness,
-  like `liveByTmux`; a location card refuses `addDirs` and `worktree`, links only pull
-  requests in its own `repos` (others are refused and never polled), and an unattended
+  like `liveByTmux`; a location card refuses `addDirs` and `worktree`, and an unattended
   wake resumes it in its stored `cwd` without creating anything on this machine.
   `name_branch` records the new branch name and tells
   the agent the `git branch -m` to run in its clones. Validation quarantines a `location`
@@ -3096,23 +3158,6 @@ Maintainer notes:
   hook or an unknown key, or an off-shape `suspendIdleHours`. While the extension is
   inactive the bound copy throws from `provision`, `open`, `resume`, `unpushed` and
   `diff`, and reads nothing.
-- **A location card's repos (1.88.0).** A session spawned by a location session gets
-  only the repos it names that its spawner holds (all of them when it names none). A
-  repo it names that the spawner does not hold is withheld: the runtime's `provision`
-  never sees it, the dispatch result and `spawn_session` carry it as `withheldRepos`,
-  and the child is briefed to ask for it with `request_repo`. Only the human widens
-  what a card reaches, by adding repos from the card's **GitHub repos…** dialog or by
-  allowing a session's `request_repo` (a toast with Allow and Decline, and the same
-  dialog); a request alone adds nothing. Either way core appends the repos to
-  `entry.repos` on the card and every card sharing its ref, then calls
-  `open({ ref, entry, phase: 'repos' })` before the session is mailed where to clone
-  them, so a runtime that limits what a card reaches (a credential proxy, say) reads
-  `entry.repos` there as well as in `provision`. A throw from that `open` adds nothing
-  and is shown to the human, and an allowed request it refused stays waiting. A
-  suspended card takes the repos without an `open`; its runtime sees them in the
-  `resume` open. A repo whose name matches one the card holds is refused, since its
-  clone dir would move. Every session on a deck is offered `request_repo`; a card on
-  this machine is refused it, since it already reaches the human's checkouts.
 - **The deck's runtime offer (1.87.0).** The deck's `--runtimes <ids>` startup
   option (env `AW_RUNTIMES`, comma-separated runtime ids) picks the runtimes it
   offers. It is read once at start: no setting, control message, deck action or

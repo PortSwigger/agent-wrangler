@@ -217,6 +217,17 @@ export async function collectLaunchContext(
       if (!refuseIfSet.includes(n)) refuseIfSet.push(n);
     }
   }
+  // The agent's own secrets (agy's Gemini API key, read from the Keychain), for
+  // that agent's launches only and never over a variable an extension set. A
+  // failed lookup adds nothing and logs nothing.
+  if (typeof adapter.launchSecretEnv === 'function') {
+    let own = {};
+    try { own = (await adapter.launchSecretEnv()) || {}; } catch { own = {}; }
+    for (const [k, v] of Object.entries(own)) {
+      if (!ENV_NAME_RE.test(k) || typeof v !== 'string' || !v || v.includes('\0')) continue;
+      if (!Object.hasOwn(secretEnv, k) && !Object.hasOwn(env, k)) secretEnv[k] = v;
+    }
+  }
   // A name set both ways is delivered as a secret only: left in `env` too, its
   // value would be written inline into the launch command.
   for (const k of Object.keys(secretEnv)) {

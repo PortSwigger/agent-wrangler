@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import semver from 'semver';
@@ -98,8 +99,8 @@ test('HOST_API_VERSION is a real semver version', () => {
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders. 2.0.0 is
 // the deck API major: every 1.x range is still served, on the v1 shim (1.96.0).
-test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '2.0.0');
+test('the served version is 2.2.0, and every 1.x manifest range the v1 shim can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '2.2.0');
   assert.equal(V1_SHIM_VERSION, '1.96.0');
   assert.equal(servesRange('^1.96.0'), true);
   assert.equal(servesRange('^1.95.0'), true);
@@ -201,7 +202,9 @@ test('the served version is 2.0.0, and every 1.x manifest range the v1 shim can 
   assert.equal(servesRange('^1.1.0'), true);
   assert.equal(servesRange('^1.0.0'), true);
   assert.equal(servesRange('^2.0.0'), true);
-  assert.equal(servesRange('^2.1.0'), false);
+  assert.equal(servesRange('^2.1.0'), true);
+  assert.equal(servesRange('^2.2.0'), true);
+  assert.equal(servesRange('^2.3.0'), false);
   assert.equal(servesRange('^3.0.0'), false);
 });
 
@@ -235,4 +238,13 @@ test('a malformed range never passes', () => {
   assert.equal(isValidRange('not a range'), false);
   assert.equal(servesRange('not a range'), false);
   assert.equal(isValidRange('^1.0.0'), true);
+});
+
+test('the host API major pins the Zod major it serves', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  const zodMajorByHostMajor = { 2: 4 };
+  const zodMajor = zodMajorByHostMajor[semver.major(HOST_API_VERSION)];
+  assert.ok(zodMajor, 'Declare the Zod major served by this host API major');
+  assert.ok(semver.subset(pkg.dependencies.zod, `^${zodMajor}.0.0`),
+    'A core Zod major upgrade requires a host API major bump; preserve existing API majors’ Zod contract');
 });

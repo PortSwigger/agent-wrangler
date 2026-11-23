@@ -207,7 +207,7 @@ test('a fork never loads the workflow skill plugin (a fork is not a tracked run)
   assert.doesNotMatch(cmd, /\/skills\/issue-to-pr/);
 });
 
-test('claude launch injects the wrangler MCP server, its bearer read from the token env, and the allow entries', () => {
+test('claude launch injects Agent Wrangler MCP server, its bearer read from the token env, and the allow entries', () => {
   const cmd = claude.buildLaunch({ sessionId: 'CARD', liveSessionId: 'LIVE', intent: '' });
   assert.match(cmd, /--mcp-config/);
   assert.match(cmd, /mcp__agent-wrangler__list_sessions/);

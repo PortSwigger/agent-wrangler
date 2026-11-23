@@ -1,4 +1,4 @@
-import { agentError, adapterFor } from '../agents/index.js';
+import { launchAgentError, adapterFor } from '../agents/index.js';
 import { local } from './local.js';
 import { devcontainer } from './devcontainer.js';
 
@@ -98,7 +98,7 @@ import { devcontainer } from './devcontainer.js';
 //                card whose agent has no local pane to paste into. `from` is the
 //                sender's card id and `text` the BEGIN/END-fenced body the pane
 //                paste would get, minus its "reply with send_message" line (the
-//                agent has no wrangler MCP to reply with). A runtime with `deliver` stores its cards as
+//                agent has no Agent Wrangler MCP to reply with). A runtime with `deliver` stores its cards as
 //                `mailCapable: false`, so send_message routes them here (see
 //                mcp/tools/send-message.js).
 //   launchStatus (optional) ({ entry }) → { state, error?, url? } or null —
@@ -127,14 +127,12 @@ import { devcontainer } from './devcontainer.js';
 //                and pointing the agent's loopback URLs at this deck), status comes
 //                from readLive/analyze, and every other fact comes back from a hook
 //                below, size-capped and shape-checked by server/locations/index.js.
-//     provision  async ({ sessionId, cwd, agent, ext, repos, branch, base }) → a JSON-able
+//     provision  async ({ sessionId, cwd, agent, ext, branch, base }) → a JSON-able
 //                ref (at most 16 KiB), stored as `entry.location`. Once per dispatch,
 //                after the last refusal and before anything is created.
 //     open       (optional) async ({ ref, entry, phase }) → { cwd? } | void. Before every
 //                launch there ('dispatch', 'resume', 'fork'); `cwd` is the absolute
-//                location path the agent starts in, stored on the card. Also with
-//                phase 'repos' when `entry.repos` grows on a running card, before
-//                the session is told; a throw there adds nothing.
+//                location path the agent starts in, stored on the card.
 //     suspend    (optional) async ({ ref, entry }): stop the compute, keep its storage.
 //                Idle suspend, and a clean exit.
 //     resume     (optional) async ({ ref, entry }): start it again, before every resume
@@ -231,7 +229,7 @@ export function runtimeAgents(rt) {
 // dispatch itself, so a stale dialog selection, a schedule or a scripted
 // request can't bypass what the dialog's Runtime select disables.
 export function runtimeAgentError(rt, agent = 'claude') {
-  const invalid = agentError(agent);
+  const invalid = launchAgentError(agent);
   if (invalid) return invalid;
   const agents = runtimeAgents(rt);
   if (!agents || agents.includes(agent)) return null;

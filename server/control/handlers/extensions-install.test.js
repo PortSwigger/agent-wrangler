@@ -75,7 +75,7 @@ function reply(c, type) {
 // is the honest case; a test passes them separately to stage a repo whose
 // package.json disclosure and index.js manifest DISAGREE.
 function fakeClone({
-  id = 'notes', requires = [], lock = true, declaration = true, deps = true,
+  id = 'notes', requires = [], lock = true, declaration = true, deps = true, zod = false,
   declaredId = id, declaredRequires = requires, indexThrows = false, defaultEnabled = true,
   range = null, declaredRange = range, earlyAdopter = null, declaredEarlyAdopter = earlyAdopter,
 } = {}) {
@@ -88,7 +88,7 @@ function fakeClone({
     fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({
       name: 'notes',
       type: 'module',
-      ...(deps ? { dependencies: { left: '^1.0.0' } } : {}),
+      ...(deps || zod ? { dependencies: { ...(deps ? { left: '^1.0.0' } : {}), ...(zod ? { zod: '^4.6.7' } : {}) } } : {}),
       ...(declaration ? {
         wranglerExtension: {
           id: declaredId, label: 'Notes', description: 'Keeps notes.', author: 'A Colleague', requires: declaredRequires,
@@ -289,7 +289,7 @@ test('ext-uninstall removes the directory and the record, keeps store data, and 
   assert.deepEqual(c.calls.deactivated, ['notes']);
   assert.equal(c.calls.changed, 1);
   assert.equal(c.calls.rebuild, 1);
-  await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'shipped' }, c), /ships with the wrangler/);
+  await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'shipped' }, c), /ships with Agent Wrangler/);
   await assert.rejects(() => extUninstallHandler.handler({ type: 'ext-uninstall', id: 'nope' }, c), /Unknown extension/);
   reset();
 });
@@ -631,7 +631,7 @@ function updateTick(c, remoteSha) {
   return { svc, applied };
 }
 
-test('an auto-applied update restarts the wrangler once; a human update does not', async () => {
+test('an auto-applied update restarts Agent Wrangler once; a human update does not', async () => {
   reset();
   const c = await installOptedIn();
   useFakes({ requires: ['tasks:read'], sha: 'd'.repeat(40) });
@@ -661,7 +661,7 @@ test('ext-set-auto-update persists the opt-in for a git install and refuses buil
   assert.equal(readProvenance().notes.autoUpdate, true);
   assert.deepEqual(reply(c, 'ext-auto-update'), { type: 'ext-auto-update', id: 'notes', on: true });
   assert.equal(c.calls.rebuild, 1);
-  await assert.rejects(extSetAutoUpdateHandler.handler({ id: 'core', on: true }, c), /ships with the wrangler/);
+  await assert.rejects(extSetAutoUpdateHandler.handler({ id: 'core', on: true }, c), /ships with Agent Wrangler/);
   await assert.rejects(extSetAutoUpdateHandler.handler({ id: 'by-hand', on: true }, c), /not installed from a git URL/);
   await extSetAutoUpdateHandler.handler({ id: 'notes', on: false }, c);
   assert.equal(readProvenance().notes.autoUpdate, false);
@@ -752,7 +752,7 @@ test('ext-set-early-adopter replies a refusal on its reqId, and refuses builtin 
   const refused = reply(c, 'ext-early-adopter-result');
   assert.equal(refused.ok, false);
   assert.match(refused.error, /not installed from a git URL/);
-  await assert.rejects(extSetEarlyAdopterHandler.handler({ id: 'core', on: true }, c), /ships with the wrangler/);
+  await assert.rejects(extSetEarlyAdopterHandler.handler({ id: 'core', on: true }, c), /ships with Agent Wrangler/);
   assert.equal(c.calls.rebuild, 0);
   reset();
 });
@@ -1019,4 +1019,21 @@ test('a failed receipt publication preserves the prior install and removes the u
     assert.deepEqual(fs.readdirSync(generationRoot('notes')), [before.generation]);
     assert.deepEqual(fs.readdirSync(tmpDir()), []);
   } finally { fs.rmSync(blocked, { recursive: true, force: true }); reset(); }
+});
+
+test('install and update warn about package.json zod without refusing installation', async () => {
+  reset();
+  const c = ctx();
+  const first = await install(c, { zod: true });
+  assert.match(first.warnings[0], /zod.*schema:zod.*host.schema.z/);
+  assert.equal(reply(c, 'ext-install-done').installed, true);
+  const next = ctx();
+  const update = await install(next, { zod: true });
+  assert.equal(update.update, true);
+  assert.deepEqual(update.warnings, first.warnings);
+  assert.equal(reply(next, 'ext-install-done').installed, true);
+  const clean = ctx();
+  const disclosure = await disclose(clean);
+  assert.deepEqual(disclosure.warnings, []);
+  await extConsentHandler.handler({ tempId: disclosure.tempId, approve: false }, clean);
 });

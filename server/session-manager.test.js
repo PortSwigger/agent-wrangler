@@ -22,9 +22,9 @@ const clean = { tmux: 'cc_abc', sessionId: 's1', status: 0, archived: false };
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 // Scratch dirs for folderless dispatches must live under the data dir, NOT inside
-// the wrangler checkout. readBranch walks up to the nearest enclosing repo, so a
-// scratch dir inside the source tree made every blank-cwd session report the
-// wrangler's own branch — the "branch bleeding between sessions" bug.
+// Agent Wrangler checkout. readBranch walks up to the nearest enclosing repo, so a
+// scratch dir inside the source tree made every blank-cwd session report
+// Agent Wrangler's own branch — the "branch bleeding between sessions" bug.
 test('scratch SESSIONS_DIR follows DATA_DIR (defaulting to ~/.agent-wrangler)', () => {
   assert.equal(SESSIONS_DIR, path.join(DATA_DIR, 'sessions'));
   if (!process.env.AW_DATA_DIR) {
@@ -1122,6 +1122,19 @@ for (const agent of ['codex', 'future-agent']) {
   });
 }
 
+test('a Gemini CLI card is refused on resume and dispatch before kill or launch', async () => {
+  const sm = smForDispatch();
+  const prev = { agent: 'gemini', cwd: os.tmpdir(), liveSessionId: '7b0f1c2e-1111-4222-8333-444455556666' };
+  sm.map.set('gm', prev);
+  const effects = [];
+  sm.killForSession = async () => { effects.push('kill'); return []; };
+  sm._newSession = async () => { effects.push('launch'); };
+  await assert.rejects(() => sm._doResume('gm', os.tmpdir(), {}), /no longer runs Gemini CLI/);
+  await assert.rejects(sm.dispatch({ agent: 'gemini', cwd: os.tmpdir(), intent: 'do it' }), /Gemini CLI sessions can no longer be started/);
+  assert.deepEqual(effects, []);
+  assert.equal(sm.map.get('gm'), prev);
+});
+
 test('_doResume relaunches a Remote Control session with --remote-control, and a plain one without', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-rc-resume-'));
   const sm = new SessionManager();
@@ -1862,12 +1875,12 @@ test('renameWorktreeBranch renames the git branch and syncs entry.worktree.branc
   assert.ok(saved >= 1);
 });
 
-test('renameWorktreeBranch throws for a session with no wrangler-created worktree', async () => {
+test('renameWorktreeBranch throws for a session with no worktree created by Agent Wrangler', async () => {
   const sm = new SessionManager();
   sm.map.clear();
   sm._save = () => {};
   sm.map.set('CARD2', { short: 'b', tmux: 'cc_b', createdAt: 1 });
-  await assert.rejects(() => sm.renameWorktreeBranch('CARD2', 'whatever'), /no wrangler-created worktree/);
+  await assert.rejects(() => sm.renameWorktreeBranch('CARD2', 'whatever'), /no worktree created by Agent Wrangler/);
   await assert.rejects(() => sm.renameWorktreeBranch('nope', 'whatever'), /Unknown session/);
 });
 
@@ -3258,7 +3271,7 @@ test('syncNotesToContainer: docker cp -L notes for a live devcontainer session; 
   assert.ok(cps[0].join(' ').includes('/host/notes cid1:/tmp/aw-d/launch-dirs/0')); // into the same place launch put it
 });
 
-// The git-dir grant keys off the LAUNCH CWD, not off a wrangler-made worktree
+// The git-dir grant keys off the LAUNCH CWD, not off a worktree made by Agent Wrangler
 // entry: a Codex worker handed a pre-existing linked worktree as plain `cwd`
 // (no `worktree` field on its entry) has exactly the same sandbox problem, and
 // so does a plain checkout — Codex keeps `<root>/.git` read-only inside every
@@ -3943,7 +3956,7 @@ test('secretEnv: an extension runtime gets no file and no values, and the skip n
   assert.ok(warned.every((w) => !w.includes(SECRET_VALUE)));
 });
 
-for (const agent of ['claude', 'codex', 'gemini']) {
+for (const agent of ['claude', 'codex', 'agy']) {
   test(`beforeSpawn refuses ${agent} before creating a directory or launching`, async () => {
     const sm = smForDispatch();
     const target = path.join(os.tmpdir(), `aw-spawn-refused-${agent}-${Date.now()}`);

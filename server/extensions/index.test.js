@@ -965,7 +965,7 @@ test('a manifest may declare a skill it ships itself, and the name is CLAIMED li
 });
 
 test('a declared skill that resolves nowhere quarantines, naming the extension and the skill', () => {
-  rejects(manifest({ skills: ['job-worker'] }), /Extension fake: unknown skill "job-worker" — neither agent-skills\/skills\/job-worker in the wrangler nor skills\/job-worker\/SKILL\.md/);
+  rejects(manifest({ skills: ['job-worker'] }), /Extension fake: unknown skill "job-worker" — neither agent-skills\/skills\/job-worker in Agent Wrangler nor skills\/job-worker\/SKILL\.md/);
   // A directory whose frontmatter answers to another name is the same failure:
   // the catalog would publish it under a name this manifest never declared.
   const dir = shippingDir('job-worker', { frontmatterName: 'something-else' });

@@ -1,9 +1,13 @@
 import { claude } from './claude.js';
 import { codex } from './codex.js';
 import { gemini } from './gemini.js';
+import { agy } from './agy.js';
 import { logWarn } from '../log.js';
 
-const allAgents = () => [claude, codex, gemini];
+const allAgents = () => [claude, codex, gemini, agy];
+// The agents a session can be started on. Gemini CLI stays registered only so
+// its old conversations still read (chat, usage, search): `dispatchable: false`.
+export const dispatchableAgents = () => allAgents().filter((a) => a.dispatchable !== false);
 
 export function createAgentRegistry(adapters) {
   const values = typeof adapters === 'function' ? adapters : () => adapters;
@@ -33,6 +37,10 @@ export function providerMetadata(adapter) {
     controls: { ...(adapter.controls || {}), codexPolicy: adapter.launch?.codexPolicy === true },
     supportsRemoteControl: adapter.supportsRemoteControl === true,
     headless: Boolean(adapter.headless),
+    // false when the adapter cannot branch a conversation (no buildFork).
+    fork: typeof adapter.buildFork === 'function',
+    // false for an agent kept only to read its old conversations (Gemini CLI).
+    resume: adapter.dispatchable !== false,
     forkHelp: adapter.forkHelp || 'Branch this conversation into a new session. The original keeps running independently.',
   };
 }
@@ -149,8 +157,9 @@ export function isOwnedTmux(name) {
 }
 
 export async function availableAgents() {
-  const flags = await Promise.all(allAgents().map((a) => a.isAvailable().catch(() => false)));
-  return allAgents().filter((_, i) => flags[i]);
+  const agents = dispatchableAgents();
+  const flags = await Promise.all(agents.map((a) => a.isAvailable().catch(() => false)));
+  return agents.filter((_, i) => flags[i]);
 }
 
 // The pre-selected model in the dispatch dialog is baked into each adapter via a
@@ -160,7 +169,7 @@ export async function availableAgents() {
 // value leaves the adapter's built-in default standing (see validateDefaultModel).
 export function modelsWithDefault(agent, env = process.env) {
   const override = env.AW_DEFAULT_MODEL;
-  if (!override || !agent.models.some((m) => m.value === override)) return agent.models;
+  if (!override || agent.dispatchable === false || !agent.models.some((m) => m.value === override)) return agent.models;
   return agent.models.map((m) => ({ ...m, default: m.value === override }));
 }
 
@@ -169,7 +178,7 @@ export function modelsWithDefault(agent, env = process.env) {
 export function validateDefaultModel(env = process.env) {
   const override = env.AW_DEFAULT_MODEL;
   if (!override) return;
-  if (!allAgents().some((a) => a.models.some((m) => m.value === override))) {
+  if (!dispatchableAgents().some((a) => a.models.some((m) => m.value === override))) {
     logWarn(`[agent-wrangler] AW_DEFAULT_MODEL="${override}" matches no known model; using built-in default`);
   }
 }
@@ -183,12 +192,23 @@ export function validateDefaultModel(env = process.env) {
 // list anywhere: everything below is derived from the adapters.
 
 export function knownAgentIds() {
-  return allAgents().map((a) => a.id);
+  return dispatchableAgents().map((a) => a.id);
 }
 
+// Null for a registered agent, even one that no longer starts (its old cards
+// and bills still name it); see launchAgentError for what may be launched.
 export function agentError(id) {
   if (id == null || allAgents().some((a) => a.id === id)) return null;
   return `Unknown agent "${id}". Valid agents: ${knownAgentIds().join(', ')}.`;
+}
+
+// agentError, plus a refusal for a registered agent nothing starts any more.
+export function launchAgentError(id) {
+  const unknown = agentError(id);
+  if (unknown || id == null) return unknown;
+  const adapter = allAgents().find((a) => a.id === id);
+  if (adapter.dispatchable !== false) return null;
+  return `${adapter.label} sessions can no longer be started. Valid agents: ${knownAgentIds().join(', ')}.`;
 }
 
 // An error message when `model` is not one of `agentId`'s launch models, else
@@ -203,11 +223,11 @@ export function agentError(id) {
 // reaches for `model: "opus"` against `agent: "codex"`.
 export function modelError(agentId, model) {
   if (model == null || model === '') return null;
-  const wrongAgent = agentError(agentId);
+  const wrongAgent = launchAgentError(agentId);
   if (wrongAgent) return wrongAgent;
   const adapter = adapterFor(agentId);
   if (adapter.models.some((m) => m.value === model)) return null;
-  const other = allAgents().find((a) => a !== adapter && a.models.some((m) => m.value === model));
+  const other = dispatchableAgents().find((a) => a !== adapter && a.models.some((m) => m.value === model));
   const hint = other ? ` "${model}" is a ${other.id} model — did you mean agent: "${other.id}"?` : '';
   const valid = adapter.models.map((m) => m.value).join(', ');
   return `Unknown model "${model}" for agent "${adapter.id}". Valid models: ${valid}.${hint}`;
@@ -233,14 +253,14 @@ export function effortError(agentId, effort, model, resolve = adapterFor) {
 // `effort` is optional: the UI dispatch paths pick it from a dropdown and pass
 // nothing here, where the MCP tools take it as a free string from an agent.
 export function launchTargetError(agentId, model, effort) {
-  return agentError(agentId) || modelError(agentId, model) || effortError(agentId, effort, model);
+  return launchAgentError(agentId) || modelError(agentId, model) || effortError(agentId, effort, model);
 }
 
 // The `effort` parameter's own description text on those tools, generated from
 // the adapters — the counterpart to modelChoicesText, and for the same reason:
 // a tool schema is the only enumeration of the effort vocabulary an agent reads.
 export function effortChoicesText() {
-  return allAgents()
+  return dispatchableAgents()
     .map((a) => `${a.id}: ${(a.efforts || []).map((e) => e.value).join(', ')}`)
     .join('; ');
 }
@@ -252,7 +272,7 @@ export function effortChoicesText() {
 // spawn-session skill points here rather than keeping a hand-copied table (one
 // that had already drifted: `opusplan` was missing from it).
 export function modelChoicesText() {
-  return allAgents()
+  return dispatchableAgents()
     .map((a) => `${a.id}: ${a.models.map((m) => `${m.value} (${m.label})`).join(', ')}`)
     .join('; ');
 }
@@ -265,7 +285,7 @@ export function modelChoicesText() {
 // reach them), where a loaded SKILL.md body is plainly in front of it. So the
 // skill keeps a table after all — generated, never hand-copied.
 export function modelTableMarkdown() {
-  return allAgents().map((a) => {
+  return dispatchableAgents().map((a) => {
     const rows = a.models.map((m) => `- \`${m.value}\` — ${m.label}${m.default ? ' (default)' : ''}`);
     // Efforts ride the same generated block rather than a second one: they are
     // per-adapter vocabulary picked at the same moment as the model, and a

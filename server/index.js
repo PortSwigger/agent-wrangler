@@ -20,6 +20,7 @@ import { TaskStore } from './task-store.js';
 import { ScheduleStore } from './schedule-store.js';
 import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { readProvenance } from './extensions/provenance.js';
+import { extensionToolSchemaFailures } from './extensions/tool-schema.js';
 import { extensionToolFingerprint } from './extensions/tool-fingerprint.js';
 import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor, themeSources } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
@@ -47,7 +48,7 @@ import { createPrObservationStore, createPrObservationPoller } from './pr-observ
 import { normalisePr, linkMatches } from './mcp/links.js';
 import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
-import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, adapterFor, resolvedModelId } from './agents/index.js';
+import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, dispatchableAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
 import { createInstalledAgents } from './agents/installed.js';
 import { createMcpRequestHandler } from './mcp/server.js';
@@ -92,7 +93,7 @@ import { createLinkNormaliser } from './mcp/links.js';
 import { createExtDeliver } from './ext-deliver.js';
 import { sweepStaging, sweepGenerations } from './extensions/external.js';
 import { log, logWarn, logError } from './log.js';
-import { createRestartBarrier, restartIsQuiet } from './restart-barrier.js';
+import { dialogsFrame, createRestartBarrier, restartIsQuiet } from './restart-barrier.js';
 import { installShutdownLog } from './shutdown-log.js';
 import { restartSupported } from './control/handlers/restart.js';
 import { startPriceCatalogRefresh, onPriceCatalogChange, knownModelId } from './price-catalog.js';
@@ -136,9 +137,15 @@ process.on('unhandledRejection', (err) => logError('[unhandledRejection]', err))
 
 // Registered before anything can exit, so even a failed boot says why it went.
 let publishRestartStatus = () => {};
+// Open dialogs per board connection (a `dialogs` frame from the client), so an
+// unattended restart waits until nobody is mid-typing. A socket's entry goes
+// when it closes.
+const openDialogs = new Map();
+const dialogsOpen = () => [...openDialogs.values()].reduce((a, b) => a + b, 0);
 const restartBarrier = createRestartBarrier({
   log,
   isIdle: () => headlessRunsInFlight() === 0,
+  isHeld: () => dialogsOpen() > 0,
   onStatus: (status) => {
     log(`[agent-wrangler] ${status.message}`);
     publishRestartStatus(status);
@@ -297,7 +304,7 @@ const storesFor = (id) => Object.fromEntries(
 // Per-launch skill gating (the _extLaunchSkills seam): consulted by
 // dispatch/resume/fork before the adapter builds the command, so an extension
 // can answer "not this session" for a skill its manifest declares.
-sessionManager._extensionToolFingerprint = () => extensionToolFingerprint(ext.tools);
+sessionManager._extensionToolFingerprint = () => extensionToolFingerprint(ext.tools, hostApiFor);
 sessionManager._extLaunchSkills = createSkillGate(ext, hostApiFor, logError);
 // Per-launch Codex sandbox/approval policy (the _extCodexPolicy seam).
 sessionManager._extCodexPolicy = createCodexPolicyResolver(ext, hostApiFor, logError);
@@ -528,7 +535,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
       ...extWiring,
     }));
     // What it declared under `telemetry`, checked and normalised by the loader.
-    // A builtin's events carry the wrangler's version; an installed one's its own.
+    // A builtin's events carry Agent Wrangler's version; an installed one's its own.
     if (e.telemetry?.events) telemetry.registerEmitter(id, { version: e.version || (e.external ? '0.0.0' : VERSION), events: e.telemetry.events });
     // Core's `spawner` list follows the extensions present.
     coreTelemetry.register();
@@ -775,13 +782,15 @@ async function runPrStatusSweep(only) {
     ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
   ].filter((l) => !only || (l.scope === only.scope && l.ownerId === only.ownerId));
   let changed = false;
+  const threadsByUrl = new Map();
   // The install-wide fallback for a session with no explicit autoFixPrChecks —
   // read once per sweep and shared by every pane-nudge decision below (the
   // merged/closed line here, plus all three transition loops), so one tick can't
   // gate two of them on different defaults.
   const fixPrDefault = autoFixPrChecksDefault();
-  for await (const { scope, ownerId, url, number, unresolvedCount, previousUnresolvedCount, status: res, fetchedAt } of observePrLinks(links)) {
+  for await (const { scope, ownerId, url, number, unresolvedCount, unresolvedThreads, previousUnresolvedCount, status: res, fetchedAt } of observePrLinks(links)) {
     if (res == null) continue;
+    if (unresolvedThreads) threadsByUrl.set(url, unresolvedThreads);
     const store = scope === 'task' ? taskStore : sessionManager;
     // A merged/closed PR is dead: drop its link automatically (any pr link,
     // however it was attached). Nudge a live owning session's pane, like the
@@ -812,13 +821,15 @@ async function runPrStatusSweep(only) {
     const current = [
       ...taskStore.prLinks().map((l) => ({ ...l, scope: 'task' })),
       ...sessionManager.prLinks().map((l) => ({ ...l, scope: 'session' })),
-    ];
+    ].map((l) => ({ ...l, unresolvedThreads: threadsByUrl.get(l.url) }));
     // Collected so the unresolved-comment loop below can skip its OWN pane
     // nudge for any link that just got a checkStatus nudge this same tick (see
     // that loop for why: a "Request changes" review with inline comments fires
     // both diffs in the same sweep, and two unawaited deliverPrNudge calls to
     // one pane would interleave — the same hazard planCheckTransition's merge
     // branch already guards against for merge-vs-nudge).
+    const unresolvedEvents = diffUnresolvedComments(current);
+    const unresolvedByKey = new Map(unresolvedEvents.map((ev) => [`${ev.scope}:${ev.ownerId}:${ev.url}`, ev]));
     const checkStatusKeys = new Set();
     for (const ev of diffCheckStatus(current)) {
       checkStatusKeys.add(`${ev.scope}:${ev.ownerId}:${ev.url}`);
@@ -845,7 +856,7 @@ async function runPrStatusSweep(only) {
         // flips live promptly; an 'error' (resume failed) surfaces via onPrWakeError
         // and must NOT rebuild.
         deliverPrNudge(ev, entry, {
-          message: prPaneNudge(ev), tmuxFor, socketFor, paneDeferral,
+          message: prPaneNudge(ev, unresolvedByKey.get(`${ev.scope}:${ev.ownerId}:${ev.url}`)), tmuxFor, socketFor, paneDeferral,
           sessionManager, onError: onPrWakeError,
         }).then(announceAfterNudge(checksEvent)).catch(() => broadcast({ ...checksEvent, nudged: false }));
       }
@@ -892,7 +903,7 @@ async function runPrStatusSweep(only) {
     // changes" review commonly trips BOTH diffs in one sweep (new inline
     // comments AND a fresh changes-requested transition), and two unawaited
     // deliverPrNudge calls to the same pane would interleave their pastes.
-    for (const ev of diffUnresolvedComments(current)) {
+    for (const ev of unresolvedEvents) {
       const entry = sessionManager.entryFor(ev.ownerId);
       const key = `${ev.scope}:${ev.ownerId}:${ev.url}`;
       const commentNudge = !checkStatusKeys.has(key) && planUnresolvedTransition(ev, entry, fixPrDefault);
@@ -1076,7 +1087,6 @@ async function prAttachHandler(req, res, caller) {
     try { link = normalisePr({ url }); } catch { res.writeHead(400).end('bad url'); return; }
     const existing = sessionManager.getLinks(caller);
     if (existing.some((l) => linkMatches(l, link))) { res.writeHead(200).end('ok'); return; }
-    if (sessionManager.prLinkRefusal(caller, [link])) { res.writeHead(403).end('not one of this session\'s repos'); return; }
     sessionManager.setLinks(caller, [...existing, link]);
     res.writeHead(200).end('ok');
     pollPrStatuses({ scope: 'session', ownerId: caller }).catch(() => {}); // immediate status
@@ -1161,7 +1171,7 @@ const mcpRequestHandler = createMcpRequestHandler({
   boardClients: () => controlWss.clients.size,
 });
 
-const installedAgents = createInstalledAgents({ adapters: registeredAgents });
+const installedAgents = createInstalledAgents({ adapters: dispatchableAgents });
 
 // GET /deck — the deck API's descriptor. Host-pinned like /file.
 function deckHandler(req, res) {
@@ -1230,6 +1240,7 @@ const deckServer = createDeckServer({
 // extensions alone — so a disabled extension's client is a 404, never served.
 const boardDecks = createBoardDecks({
   file: path.join(DATA_DIR, 'board-decks.json'),
+  cloudGateway: process.env.AW_CLOUD_DECK_GATEWAY,
   onChange: (snapshot) => boardServer.announceDecks(snapshot),
 });
 const boardServer = createBoardServer({
@@ -1385,6 +1396,7 @@ async function rebuildOnce() {
   // rather than the connect announcement so the banner survives a reconnect the
   // same way fdWarning's re-send does. A handful of short ids at most.
   graph.quarantinedBuiltins = quarantinedBuiltinIds();
+  graph.toolSchemaFailures = extensionToolSchemaFailures(ext.tools, hostApiFor);
   graph.missingExtensionFiles = missingExtensionFiles;
   // Boot-fixed too, and carried the same way for the same reason.
   graph.staleGuiSession = staleGuiSession;
@@ -1497,7 +1509,7 @@ async function refreshNextStaleSession() {
 
 controlWss.on('connection', (ws) => {
   lastControlActivity = Date.now();
-  // `canRestart` gates the board's own "Restart the wrangler" button: a restart
+  // `canRestart` gates the board's own "Restart Agent Wrangler" button: a restart
   // is an exit that only comes back under a supervisor (see control/handlers/
   // restart.js), so the client must never offer it otherwise.
   // Announcements reach the board as events, then the state stream follows. A
@@ -1560,7 +1572,17 @@ controlWss.on('connection', (ws) => {
     staleGuiSession: () => staleGuiSession,
     recheckGuiSession: async () => { staleGuiSession = await sessionManager.checkGuiSession(); },
   };
-  ws.on('message', (raw) => { lastControlActivity = Date.now(); routeControlMessage(raw, ctx, { legacy: ws.legacy }); });
+  ws.on('message', (raw) => {
+    lastControlActivity = Date.now();
+    const dialogs = dialogsFrame(raw);
+    if (dialogs !== null) {
+      if (dialogs > 0) openDialogs.set(ws, dialogs);
+      else openDialogs.delete(ws);
+      return;
+    }
+    routeControlMessage(raw, ctx, { legacy: ws.legacy });
+  });
+  ws.on('close', () => openDialogs.delete(ws));
 });
 
 // --- PTY channel: stream a tmux attach to xterm.js ---
@@ -1581,7 +1603,7 @@ async function main() {
     }
     throw err;
   }
-  // Refuse to start if another wrangler already owns this DATA_DIR — a second
+  // Refuse to start if another Agent Wrangler already owns this DATA_DIR — a second
   // instance would clobber tasks.json/mappings.json with its own stale snapshot
   // (the "sessions unassigned / deleted tasks reappear on restart" bug). Acquired
   // before any store write (init/rebuild) so a duplicate never gets a save in.

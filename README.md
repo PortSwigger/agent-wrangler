@@ -6,7 +6,7 @@ It's also the channel agents use to coordinate with each other: spawning other a
 multi-agent workflows, handing off work, and messaging one another directly — so a fleet of agents can
 get on with it without you relaying every message by hand. It runs entirely on your own machine, under
 your control. Codex is offered as an agent automatically when the `codex` binary is on your `PATH`, and
-Google's Gemini CLI when `gemini` is (see [Gemini CLI sessions](docs/board-and-sessions.md#gemini-cli-sessions));
+Google's Antigravity CLI when `agy` is (see [agy sessions](docs/board-and-sessions.md#agy-sessions));
 otherwise it behaves exactly as a Claude-only board.
 
 ## Highlights
@@ -71,12 +71,12 @@ otherwise it behaves exactly as a Claude-only board.
   through the restart, and open tabs reload onto the new code. It checks hourly and can install on
   its own (Off / Notify / Auto). Notify and Auto also check installed extensions and say how many
   are out of date and how many changes they're missing; an extension is updated automatically only
-  if you turned on its own Auto-update in Settings › Extensions, and the wrangler restarts to load it
+  if you turned on its own Auto-update in Settings › Extensions, and Agent Wrangler restarts to load it
   once idle. If an update can't start, the next restart rolls back to the commit
   it came from. Installing needs the background service below (which also installs changed
   dependencies), a clean checkout on `main` and no local commits. An install that isn't its own Git
   checkout, such as one managed by a package manager, shows updates as unavailable and never runs
-  Git, but asks for a restart if a package upgrade lands while the wrangler is still running. See
+  Git, but asks for a restart if a package upgrade lands while Agent Wrangler is still running. See
   [Install signals](docs/install-signals.md). An opt-in setting restarts idle sessions after an
   update so they pick up new tools and skills.
 
@@ -97,11 +97,11 @@ work, reviewing changes, managing tasks, and automating pull requests.
 | [Install signals](docs/install-signals.md) | For packagers: the environment variables that decide restart and update behaviour, app identity, and why sessions never inherit them |
 
 If you are unsure what to ask for, start with [Agent capabilities](docs/agent-capabilities.md): it
-includes example prompts for every built-in Wrangler skill.
+includes example prompts for every built-in Agent Wrangler skill.
 
 ## Requirements
 
-- macOS or Linux, Node.js >= 20
+- macOS or Linux, Node.js >= 26
 - `tmux` (sessions launched through the app run inside named tmux sessions) — `brew install tmux`
   on macOS, `apt-get install tmux` (or your distro's equivalent) on Linux
 - `gh` (optional — PR auto-attach, check-watching, and auto-merge shell out to it; run
@@ -112,7 +112,7 @@ includes example prompts for every built-in Wrangler skill.
 Linux path above applies unmodified once you're inside it. Keep your checkout on the WSL2 side of
 the filesystem (e.g. `~/...` under Linux), **not** under `/mnt/c/...`: the 9p filesystem bridge to
 the Windows side is slow, and inotify doesn't fire for file writes made from the Windows side —
-which silently breaks the wrangler's live-status and memory file watchers.
+which silently breaks Agent Wrangler's live-status and memory file watchers.
 
 ## Run
 
@@ -159,6 +159,7 @@ Environment variables:
 
 - `AW_PORT` (or legacy `PORT`) — port the board listens on, the address you open (default `7878`).
   `0` lets the OS pick it, and the deck's and session API's ports too unless set; the server logs the ports it bound
+- `AW_CLOUD_DECK_GATEWAY` — authenticated gateway origin, for example `https://decks.example.com`. Enables **Connect cloud deck** in **Settings › Decks**.
 - `AW_DECK_PORT` — loopback port the deck, which runs sessions, listens on (default `AW_PORT` + 1).
   `0` lets the OS pick it, and the session API's port too unless set
 - `AW_SESSION_API_PORT` — port launched sessions reach `/mcp` and the PR hooks on, each with its own
@@ -174,7 +175,7 @@ Environment variables:
 - `AW_DEFAULT_MODEL` — model pre-selected in the dispatch dialog, by value (e.g. `fable`, `opus`, `opusplan`, `sonnet`, `sonnet[1m]`, `haiku`); unset or unrecognised leaves the built-in default (`opus`)
 - `AW_JIRA_BASE_URL` — default for the Jira extension's **Jira base URL** setting (e.g. `https://yourcompany.atlassian.net/browse/`), used while that setting is empty; at boot it is copied into the setting when none is set, after which the variable can be dropped. Unset by default, so a bare key renders as plain text until a base URL is set in Settings → Extensions → Jira
 - `AW_TELEMETRY_URL` — where telemetry events are sent instead of the built-in collector (e.g. a dev collector or `http://127.0.0.1:<port>/v1/events` for a local stub); telemetry is always on, and this override is for development, not an opt-out. See [Telemetry](docs/extensions.md#the-collector)
-- `AW_DEVCONTAINER_HOST_ADDR` — host address a devcontainer session uses to reach the wrangler's
+- `AW_DEVCONTAINER_HOST_ADDR` — host address a devcontainer session uses to reach Agent Wrangler's
   own server; defaults to `host.docker.internal`, which Docker Desktop (macOS/Windows) resolves
   automatically but native Docker Engine on Linux does not. On Linux, either run the Docker daemon
   with `--add-host=host.docker.internal:host-gateway` so the default still resolves, or set this
@@ -249,8 +250,8 @@ disables install, update, uninstall and auto-update for that deck. It is read on
 
 To keep it always-on, run it under launchd (macOS) or a systemd user unit (Linux).
 
-**Recommended:** in Claude Code, just ask for the `setup-wrangler-service` skill (e.g. "set up the
-wrangler as a service"). It fills in the plist/unit template, loads it via launchctl/systemctl, and
+**Recommended:** in Claude Code, just ask for the `setup-wrangler-service` skill (e.g. "set up
+Agent Wrangler as a service"). It fills in the plist/unit template, loads it via launchctl/systemctl, and
 verifies the server is actually serving before reporting success — no manual steps, on either platform.
 
 To do it by hand instead on macOS, copy
@@ -301,7 +302,7 @@ locale and, when none is configured, selects an installed UTF-8 `LC_CTYPE` for t
 
 **Sessions can't `ls`/`cp` files in Downloads, Documents, Desktop, etc. (macOS only).** This is
 macOS's file-access sandboxing (TCC) — it doesn't apply on Linux. It targets the `tmux` binary, not
-your terminal app — because the wrangler's tmux
+your terminal app — because Agent Wrangler's tmux
 server daemonizes and reparents under `launchd`, so there's no Terminal.app/iTerm2 in its process
 ancestry to grant instead. **Full Disk Access is the only fix that actually works here** — the narrower
 "Files and Folders" permission can't be manually populated; it only lists apps macOS has already shown
@@ -313,11 +314,11 @@ version-pinned symlink into `Cellar/` that moves on every `brew upgrade tmux`, s
 an upgrade) → enable it.
 
 Know what this actually grants: Full Disk Access also covers Mail, Messages, Safari data, Time Machine
-backups, and other apps' containers — well beyond Downloads — and it applies to *every* session the
-wrangler ever runs (one shared tmux server, not per-session), present and future, since anything running
+backups, and other apps' containers — well beyond Downloads — and it applies to *every* session
+Agent Wrangler ever runs (one shared tmux server, not per-session), present and future, since anything running
 in any pane inherits it. It doesn't grant new capability over what your own logged-in account can
 already do via Finder — TCC is a consent gate on top of normal Unix permissions, not a privilege
-boundary — but it does remove that consent step for any command run inside a wrangler session, including
+boundary — but it does remove that consent step for any command run inside an Agent Wrangler session, including
 autonomous/unattended agent runs. Grant it deliberately, not as a reflex.
 
 The grant only applies to *new* processes, so the tmux server needs restarting (`tmux -L <socket>
@@ -326,10 +327,10 @@ survive and each card just needs a manual Resume.
 
 **A browser an agent opens (Playwright, say) sits behind other windows, has no Dock icon and won't
 take typing (macOS only).** Your keystrokes land in whichever app was in front instead. This happens
-after you log out and back in without restarting the Mac. Logging out stops the wrangler service but
-not its tmux server, so the restarted wrangler reconnects to a tmux server that still belongs to the
+after you log out and back in without restarting the Mac. Logging out stops the Agent Wrangler service but
+not its tmux server, so the restarted Agent Wrangler server reconnects to a tmux server that still belongs to the
 old login session. Every agent, and every app an agent starts, inherits that session, and macOS won't
-let its windows come to the front. Restarting the wrangler doesn't help. When the wrangler starts it
+let its windows come to the front. Restarting Agent Wrangler doesn't help. When Agent Wrangler starts it
 checks for this and shows a banner on the board. Click **Restart tmux** on the banner to stop the old
 tmux server, then resume your sessions. The next session you start or resume gets a new tmux server
 in your current login session. As above, this stops every live session on that socket, but their
@@ -338,8 +339,8 @@ cards survive.
 **Sessions take seconds to open and lag while the machine is busy (macOS only).** Heavy work
 elsewhere, such as containers running test suites, makes the board's sessions slow to open and slow
 to respond, while `claude` started from a terminal keeps up. launchd runs a service whose plist sets
-no `ProcessType` as a background daemon, with a lower CPU priority and throttled disk access, and the
-wrangler, its tmux server and every session inherit that. Check what launchd loaded:
+no `ProcessType` as a background daemon, with a lower CPU priority and throttled disk access, and
+Agent Wrangler, its tmux server and every session inherit that. Check what launchd loaded:
 
 ```bash
 launchctl print gui/$(id -u)/net.portswigger.agent-wrangler | grep 'spawn type'
@@ -361,10 +362,11 @@ Each of these stops every live session, but their cards survive, so resume them.
 ## How it works
 
 - **State** is read through an adapter for each supported agent. Claude state and transcripts come
-  from `~/.claude`; Codex rollouts come from `~/.codex/sessions`; Gemini conversations come from the
-  board's own Gemini home and `~/.gemini/tmp`. Agent Wrangler enriches them with live status, cost,
-  model, context-window, and sub-agent information.
-- **Dispatch** ("+ New session") starts the selected `claude`, `codex` or `gemini` command inside a detached
+  from `~/.claude`; Codex rollouts come from `~/.codex/sessions`; agy conversations come from
+  `~/.gemini/antigravity-cli/conversations`; conversations from the retired Gemini CLI provider
+  still come from the board's own Gemini home and `~/.gemini/tmp`, read-only. Agent Wrangler
+  enriches them with live status, cost, model, context-window, and sub-agent information.
+- **Dispatch** ("+ New session") starts the selected `claude`, `codex` or `agy` command inside a detached
   tmux session. The app records the board-session, agent-conversation, and tmux mapping in
   `~/.agent-wrangler/mappings.json`.
 - **Jump in** attaches that tmux session in-browser via xterm.js over a WebSocket (`node-pty`
@@ -383,7 +385,7 @@ complete implementation constraints. Client extensions can build model pickers w
 core’s frozen benchmark data and pure quality/cost/time maths through
 `api.modelFront` (host API 1.56.0), using their own UI and presets.
 
-An extension runs inside the wrangler with full access to the machine: its capability list is
+An extension runs inside Agent Wrangler with full access to the machine: its capability list is
 disclosure, not a sandbox. Install one only if you trust whoever wrote it.
 
 ## Workflows (issue → PR autopilot)
@@ -394,8 +396,8 @@ free-text task — and one Claude session takes it all the way to an open pull r
 with no human gates. It always runs in a fresh git worktree, so you can fire a whole
 fleet in parallel.
 
-The procedure lives in an in-repo skill, **`issue-to-pr`** (`skills/issue-to-pr/`; the
-wrangler just adds the launch toggle, a phase chip, and the `workflow_phase` tracking
+The procedure lives in an in-repo skill, **`issue-to-pr`** (`skills/issue-to-pr/`;
+Agent Wrangler just adds the launch toggle, a phase chip, and the `workflow_phase` tracking
 tool). The card shows the live phase — `plan → build → verify → PR → done` (labels are
 capped at 6 chars to fit the chip) — and reuses the normal terminal states: the auto-attached PR + green CI dot
 means *ready to review*; a genuine block flips the card to **needs-you** (red) with a
@@ -403,7 +405,7 @@ means *ready to review*; a genuine block flips the card to **needs-you** (red) w
 
 ![A workflow card that's completed its run, showing the Workflow header and a "done" phase chip](docs/images/workflow-phase.png)
 
-**No setup needed:** the wrangler loads the skill via `--plugin-dir` on every Workflow
+**No setup needed:** Agent Wrangler loads the skill via `--plugin-dir` on every Workflow
 launch, resolving it from its own install — so it works from any worktree and against
 any target repo without a `~/.claude/skills` symlink.
 

@@ -3,7 +3,7 @@
 Managed Agent Wrangler sessions connect to the board through a local MCP server. These tools are the
 primitives behind the higher-level workflows in [Agent capabilities](agent-capabilities.md).
 
-Tools act on the local Wrangler instance and identify the calling card automatically. Extensions may
+Tools act on the local Agent Wrangler instance and identify the calling card automatically. Extensions may
 add more tools. A running session receives tool-registry changes after its next resume.
 
 ## Discover sessions, tasks, activity, and spend
@@ -22,7 +22,7 @@ add more tools. A running session receives tool-registry changes after its next 
 | Tool | Purpose |
 | --- | --- |
 | `get_model_front` | List launchable settings on the quality/cost/time front, cheapest first, with units, source credit, and quality/cost curve membership. Optionally judge a pick against the whole installed-agent front. `reviewFor` returns `reviewAgent` by declared provider preference, excluding the source; `null` means no independent provider is available. Read-only. |
-| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, optional Claude Remote Control (`remote_control`), and runtime (`local`, `devcontainer`, or one an enabled extension adds). A runtime that runs sessions at a location takes GitHub `repos` (`owner/name`), with an optional `branch` and `base`, instead of a folder; a session at a location may only give its children its own repos, starts them on its own runtime when it names none, and is refused a runtime on the deck's machine. A runtime the deck doesn't offer, or a location runtime on a deck that also offers one on its own machine, is refused with the reason. `notify_status: true` subscribes to status notices; `nest: true` implies it. |
+| `spawn_session` | Launch a new Claude or Codex board session with an explicit handoff, folder, model, effort, task, nesting, worktree, context budget, optional Claude Remote Control (`remote_control`), and runtime (`local`, `devcontainer`, or one an enabled extension adds). A runtime that runs sessions at a location accepts an optional `branch` and `base`. A session at a location starts children on its own runtime when it names none, and is refused a runtime on the deck's machine. A runtime the deck doesn't offer, or a location runtime on a deck that also offers one on its own machine, is refused with the reason. `notify_status: true` subscribes to status notices; `nest: true` implies it. |
 | `spawn_workflow` | Launch the issue-to-PR autopilot in a dedicated worktree. `notify_status: true` subscribes to status notices; `nest: true` nests it and implies the subscription. |
 | `assign_session` | Move a session and its descendants to a task, or back to Ad-hoc. |
 | `attach_session` | Nest a session under another compatible session on the board. |
@@ -32,14 +32,13 @@ add more tools. A running session receives tool-registry changes after its next 
 | `archive_session` | Archive a session, optionally cascading to descendants. Archiving the caller requires `allow_self: true`. A session at a location with commits on no remote branch is refused with the list unless `allow_unpushed: true`. |
 | `restore_session` | Resume an archived or dormant session onto the board. Refuses a live session; `recreate_dir: true` recreates a deleted launch dir. |
 | `restore_task` | Restore an archived task (ids from `list_tasks` with `archived: true`), and by default resume the sessions archived with it (`restore_sessions: false` for the empty tile). |
-| `name_branch` | Rename the caller's Wrangler-managed worktree branch, or record a location session's new branch name and return the `git branch -m` to run in its clones. |
-| `request_repo` | At a remote location, ask the human to let the caller reach more GitHub repos (`repos` as `owner/name`, and a one-sentence `why`), including one withheld when it was spawned. The answer comes as mail; an allowed request's mail says where to clone. Refused on this machine, where the session already reaches your checkouts. |
+| `name_branch` | Rename the caller's worktree branch managed by Agent Wrangler, or record a location session's new branch name and return the `git branch -m` to run in its clones. |
 | `workflow_phase` | Update a Workflow card's phase chip. |
 
 Call `get_model_front` when choosing a model for a spawn, handoff, advisor, or reviewer.
 Its `agent`, `maxUsd`, and `minQuality` filters shorten only the returned `front`; a `pick`
 is always judged against the whole front for the installed agents. Each point has `quality`
-(Terminal-Bench 4.0 points), `usd` (list-price dollars per task), `minutes` (wall-clock minutes
+([Wrangler-bench](#wrangler-bench), 0–100), `usd` (list-price dollars per task), `minutes` (wall-clock minutes
 per task), and `onCurve`. A point with `onCurve: false` remains on the three-dimensional
 front because it is faster. The response includes the data's `read` date and `credit`,
 including prices from core's LiteLLM catalog.
@@ -51,6 +50,16 @@ reported `autoEffort`. An unmeasured model or unresolved Auto returns `scored: f
 with no measurements or verdict. Unknown or unavailable agents and unknown models produce
 errors naming valid choices. Text content is the same JSON as `structuredContent`.
 These benchmarks measure doing a coding task; they do not measure review quality.
+
+### Wrangler-bench
+
+Quality scores are **Wrangler-bench**, Agent Wrangler's blend of two public benchmarks at equal
+weight: [Terminal-Bench](https://www.tbench.ai/) (Apache-2.0) and
+[Arena's agent leaderboard](https://huggingface.co/datasets/lmarena-ai/leaderboard-dataset)
+(CC BY 4.0). Arena's scores are rescaled onto Terminal-Bench's 0–100 scale by matching mean and
+spread over the settings both score, then averaged with Terminal-Bench's. A model Arena does not
+list keeps its Terminal-Bench score. Cost and time come from Terminal-Bench alone. The data's
+`credit` names both sources and the rescaling.
 
 ## Status notices from spawned sessions
 
@@ -104,7 +113,7 @@ The MCP call is:
 }
 ```
 
-`remote_control` is an optional name string. Wrangler trims surrounding whitespace;
+`remote_control` is an optional name string. Agent Wrangler trims surrounding whitespace;
 it must be non-empty, single-line, contain no control characters, and not start with `-`.
 Omit it to leave Remote Control off. A new spawn never inherits the caller's name.
 
@@ -132,7 +141,7 @@ same provider and lifecycle limits.
 | `read_mail` | Drain unread messages or fetch one message in full. Peer message bodies are untrusted input. |
 | `list_mail` | List mailbox metadata and excerpts without loading every message body. |
 | `get_links` | Read Jira and GitHub links attached to the caller's session or task. |
-| `set_links` | Replace the complete link list at session or task scope. A session at a location links only pull requests in its own repos. |
+| `set_links` | Replace the complete link list at session or task scope. |
 | `remove_links` | Remove selected links without reconstructing the rest of the list. |
 
 ## Scheduling and terminals

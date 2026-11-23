@@ -1,7 +1,7 @@
 import { log } from '../../log.js';
 import { INSTALL_ENV } from '../../install-env.js';
 
-// "Restart the wrangler to finish" is the answer to every extension install and
+// "Restart Agent Wrangler to finish" is the answer to every extension install and
 // uninstall, and without this the board could only ask a human to go and type a
 // launchctl/systemctl command — which is why an uninstall looked like it had
 // done nothing at all.
@@ -25,7 +25,7 @@ export const restartHandler = {
   type: 'restart-server',
   async handler(msg, ctx) {
     if (!ctx.canRestart) {
-      throw new Error('Nothing restarts this wrangler (it was not started by a supervisor, or it is a dev instance), so it cannot restart itself — stop and start it the way you launched it.');
+      throw new Error('Nothing restarts this Agent Wrangler server (it was not started by a supervisor, or it is a dev instance), so it cannot restart itself — stop and start it the way you launched it.');
     }
     // A state change a human would ask about afterwards, and the one line that
     // explains an otherwise unexplained restart in the log. The shutdown line's

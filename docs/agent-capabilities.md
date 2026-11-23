@@ -1,18 +1,18 @@
 # Agent capabilities
 
-Managed Claude, Codex and Gemini sessions receive Wrangler-specific skills: guidance for using the underlying
+Managed Claude, Codex and agy sessions receive skills for Agent Wrangler: guidance for using the underlying
 [agent tools](agent-tools.md) correctly. Ask in ordinary language or use the examples below.
 
-## Built-in Wrangler skills
+## Built-in Agent Wrangler skills
 
 | Skill | Use it for | Example request |
 | --- | --- | --- |
-| `adversarial-pr-review` | A second opinion on a pull request from the preferred available different agent provider. A Claude session launches Codex; a Codex session launches Claude. The reviewer follows a written-out review process, which you can replace in the **Adversarial PR review** extension's settings, and sends one verdict with ranked findings through Wrangler mail. It requires another provider to be installed, selecting by declared preference (Claude before Codex). Ships as a built-in extension; in Claude Code it is listed as `adversarial-pr-review:adversarial-pr-review`, and `/adversarial-pr-review` still invokes it. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | “Run an adversarial review of the PR attached to this session.” |
+| `adversarial-pr-review` | A second opinion on a pull request from the preferred available different agent provider. A Claude session launches Codex; a Codex session launches Claude. The reviewer follows a written-out review process, which you can replace in the **Adversarial PR review** extension's settings, and sends one verdict with ranked findings through Agent Wrangler mail. It requires another provider to be installed, selecting by declared preference (Claude before Codex). Ships as a built-in extension; in Claude Code it is listed as `adversarial-pr-review:adversarial-pr-review`, and `/adversarial-pr-review` still invokes it. See [Reviews and pull requests](reviews-and-prs.md#ask-for-an-adversarial-pr-review). | “Run an adversarial review of the PR attached to this session.” |
 | `advisor` | Consulting a stronger model before a difficult decision, when stuck, or before declaring substantial work complete. | “Ask an advisor to challenge this design before I commit to it.” |
-| `checklist` | Keeping a short, human-visible progress list on the session card. It is deliberately separate from the agent's private plan. | “Keep the Wrangler checklist updated while you do this.” |
+| `checklist` | Keeping a short, human-visible progress list on the session card. It is deliberately separate from the agent's private plan. | “Keep the Agent Wrangler checklist updated while you do this.” |
 | `links` | Attaching Jira issues and GitHub pull requests to a session or task so they appear on the board and drive PR automation. | “Attach PR 123 to this session.” |
-| `mail` | Reading queued messages from peer sessions and deciding whether a reply or action is needed. | “Check your Wrangler mailbox and act on anything relevant.” |
-| `session-activity` | Reconstructing what was worked on during a date or date range, including archived and suspended sessions. | “Summarise what I worked on yesterday from Wrangler activity.” |
+| `mail` | Reading queued messages from peer sessions and deciding whether a reply or action is needed. | “Check your Agent Wrangler mailbox and act on anything relevant.” |
+| `session-activity` | Reconstructing what was worked on during a date or date range, including archived and suspended sessions. | “Summarise what I worked on yesterday from Agent Wrangler activity.” |
 | `session-hierarchy` | Distinguishing board nesting from launch lineage, and finding a session's parent, spawner, or task. Also linking you to another session: `[name](#session=<id>)` in chat selects it in place. | “Which session spawned you, and where are you nested?” |
 | `spawn-session` | Starting a new, independent board session with an explicit handoff, agent, model, task, optional nesting, status notices (`notify_status: true`), and [Claude Remote Control](agent-tools.md#remote-control-on-spawn_session). | “Spawn a Claude session to investigate the failing integration tests with Remote Control named Phone.” |
 | `task-memory` | Reading and maintaining context shared by every session assigned to the same task, including work across multiple repositories. | “Record that decision in task memory for future sessions.” |
@@ -31,9 +31,11 @@ phase and switches to **needs-you** if blocked. Launch it from the dialog or wit
 In a checkout of this repository, ask “Are the model benchmarks current?” to use
 [the project-local `evaluate-model` skill](../.claude/skills/evaluate-model/SKILL.md).
 It reads permitted benchmark sources and the bundled LiteLLM prices, preserves
-OpenAI effort results for manual reading, and generates `public/model-front-data.json`.
-The evaluator prints separate fronts for both agents, Claude and Codex without
-requiring the client API. The weekly **Refresh model front** workflow runs the
+OpenAI and Google effort results for manual reading, and generates `public/model-front-data.json`,
+whose quality is [Wrangler-bench](agent-tools.md#wrangler-bench).
+The evaluator prints separate fronts for all agents together, Claude, Codex and
+Gemini (agy) without requiring the client API. agy's Gemini models are scored on
+the board's Antigravity CLI runs, at each model's own top effort rather than max. The weekly **Refresh model front** workflow runs the
 catalog refresh first and opens a reviewable data PR when inputs change; it never
 auto-merges. Slack notices require `SLACK_WEBHOOK_URL`.
 
@@ -41,7 +43,7 @@ Client extensions can use [host API **1.56.0** `api.modelFront`](extensions.md)
 for the same frozen data and pure quality/cost/time maths, filtered to the installed
 agent catalog. It also supplies a quality/cost curve and resolves known Auto
 efforts; extensions provide their own presets and picker UI. The data ships
-with Wrangler and is available without installing an extension or making external
+with Agent Wrangler and is available without installing an extension or making external
 benchmark requests.
 
 ## Human-visible collaboration surfaces

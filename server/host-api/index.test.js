@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -642,11 +643,11 @@ test('agents is ABSENT without agents:read', () => {
 test('agents.list() lists every registered agent from the real registry with their capability flags', async () => {
   const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring() });
   const agents = await host.agents.list();
-  assert.deepEqual(agents.map((a) => a.id), ['claude', 'codex', 'gemini']);
-  const [claude, codex, gemini] = agents;
-  assert.deepEqual(gemini.capabilities, { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: false, mailWhileWorking: false, headless: true });
-  assert.equal(gemini.models.find((m) => m.value === 'auto').resolved, null);
-  assert.equal(gemini.models.find((m) => m.value === 'gemini-2.5-pro').resolved, 'gemini-2.5-pro');
+  assert.deepEqual(agents.map((a) => a.id), ['claude', 'codex', 'agy'], 'Gemini CLI, kept only to read old sessions, is not offered');
+  const [claude, codex, agy] = agents;
+  assert.deepEqual(agy.capabilities, { disallowedTools: false, remoteControl: false, askUserTool: null, sandbox: false, mailWhileWorking: false, headless: true });
+  assert.equal(agy.models.find((m) => m.value === 'default').resolved, null);
+  assert.equal(agy.models.find((m) => m.value === 'gemini-4-neon').resolved, 'gemini-4-neon');
   assert.equal(claude.label, 'Claude');
   assert.equal(claude.available, true);
   assert.equal(typeof codex.available, 'boolean');
@@ -677,7 +678,7 @@ test('agents.list() marks the Background model, Claude Haiku by default', async 
 test('agents.front() projects the installed-agent MCP front and freezes fresh results', async () => {
   let agents = [
     { id: 'claude', available: true, efforts: [{ value: 'low' }, { value: 'high' }], models: [{ value: 'opus', efforts: ['low', 'high'] }] },
-    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-sol', efforts: ['low', 'xhigh'] }, { value: 'gpt-6-luna', efforts: ['low'] }] },
+    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-terra', efforts: ['low', 'xhigh'] }, { value: 'gpt-6-luna', efforts: ['low'] }] },
     { id: 'unavailable', available: false, efforts: [], models: [] },
   ];
   const host = buildHostApi({ id: 'x', requires: ['agents:read'], ...wiring({ listAgents: async () => agents }) });
@@ -700,7 +701,7 @@ test('agents.front() projects the installed-agent MCP front and freezes fresh re
 test('agents.front() restricts candidates before dominance and curve calculation', async () => {
   const agents = [
     { id: 'claude', available: true, efforts: [{ value: 'low' }, { value: 'high' }], models: [{ value: 'opus' }, { value: 'sonnet' }] },
-    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.1-sol' }, { value: 'gpt-6-luna' }] },
+    { id: 'codex', available: true, efforts: [{ value: 'low' }, { value: 'xhigh' }], models: [{ value: 'gpt-6.2-sol' }, { value: 'gpt-6-luna' }] },
     { id: 'offline', available: false, efforts: [], models: [] },
   ];
   const before = structuredClone(agents);
@@ -711,8 +712,8 @@ test('agents.front() restricts candidates before dominance and curve calculation
   assert.ok(claude.front.some((p) => p.model === 'sonnet'), 'removing Codex promotes Sonnet');
   assert.ok(claude.front.every((p) => p.agent === 'claude'));
   assert.equal(claude.front.find((p) => p.model === 'opus' && p.effort === 'low').onCurve, true);
-  assert.equal((await host.agents.front({ agent: 'claude' })).front.find((p) => p.model === 'opus' && p.effort === 'low').onCurve, false);
-  const excluded = await host.agents.front({ excludeModels: ['gpt-6.1-sol', 'gpt-6-luna'] });
+  assert.equal((await host.agents.front({ agent: 'claude' })).front.some((p) => p.model === 'opus' && p.effort === 'low'), false, 'filtering after dominance keeps GPT-6.2 Sol low beating it');
+  const excluded = await host.agents.front({ excludeModels: ['gpt-6.2-sol', 'gpt-6-luna'] });
   assert.deepEqual(excluded, claude);
   const onlySonnet = await host.agents.front({ agents: ['claude'], excludeModels: ['opus'] });
   assert.ok(onlySonnet.front.length > 0);
@@ -1115,12 +1116,12 @@ test('without core telemetry wired, host.telemetry is inert', () => {
   assert.equal(host.telemetry.emit('a', {}), false);
 });
 
-test('a ^1 manifest boots on the v1 shim and its host.version says so; a ^2 one gets 2.0.0', () => {
+test('a ^1 manifest boots on the v1 shim and its host.version says so; a ^2 one gets the current version', () => {
   assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0' }).version, '1.96.0');
   assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0', boardApi: '^1.74.0' }).version, '1.96.0');
-  assert.equal(buildHostApi({ id: 'new-ext', range: '^2.0.0', boardApi: '^2.0.0' }).version, '2.0.0');
-  assert.equal(buildHostApi({ id: 'any-ext' }).version, '2.0.0');
-  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.97.0' }), /needs host API \^1\.97\.0, this server serves 2\.0\.0/);
+  assert.equal(buildHostApi({ id: 'new-ext', range: '^2.0.0', boardApi: '^2.0.0' }).version, HOST_API_VERSION);
+  assert.equal(buildHostApi({ id: 'any-ext' }).version, HOST_API_VERSION);
+  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.97.0' }), /needs host API \^1\.97\.0, this server serves 2\.2\.0/);
 });
 
 test('spawn validates Codex approvalPolicy and forwards only the approval selection', async () => {
@@ -1168,4 +1169,15 @@ test('an extension can read only its own live install receipt', () => {
   const receipt = host.extension.receipt();
   receipt.runningSha = 'changed';
   assert.equal(host.extension.receipt().runningSha, runningSha);
+});
+
+test('schema:zod serves the core zod instance only when declared', () => {
+  assert.equal(buildHostApi({ id: 'x' }).schema, undefined);
+  const host = buildHostApi({ id: 'x', requires: ['schema:zod'], range: '^2.1.0' });
+  assert.equal(host.schema.z, z);
+  assert.ok(Object.isFrozen(host.schema));
+  const schema = host.schema.z.object({ name: host.schema.z.string() });
+  assert.equal(schema instanceof z.ZodObject, true);
+  assert.equal(z.toJSONSchema(schema).properties.name.type, 'string');
+  assert.deepEqual(schema.parse({ name: 'example' }), { name: 'example' });
 });

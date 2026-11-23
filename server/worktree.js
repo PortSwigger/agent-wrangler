@@ -394,7 +394,7 @@ export async function renameBranch({ worktreePath, repoRoot = '', desired, curre
   return { branch: name, repoRoot: root };
 }
 
-// Guardrail for a session the wrangler launches inside a worktree it created:
+// Guardrail for a session Agent Wrangler launches inside a worktree it created:
 // the agent is ALREADY isolated, so it must not spin up a *second* (nested)
 // worktree (which would orphan this branch). Stated as fact, not a procedure, so
 // no agent can botch it. Injected only on dispatch (the creation moment).

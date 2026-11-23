@@ -80,8 +80,6 @@ export function projectSession(entry, id, { taskId = null, node = null } = {}) {
     worktree: worktreeSummary(e.worktree),
     // The extension hosting the card in its own view, null for a board card.
     offBoard: e.offBoard ?? null,
-    // A location card's GitHub repos (`owner/name`); null for a card on this machine.
-    repos: e.location !== undefined ? [...(e.repos || [])] : null,
   });
 }
 

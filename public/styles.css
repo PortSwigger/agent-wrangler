@@ -426,7 +426,8 @@ body.dragging { user-select: none; cursor: col-resize; }
 .sess-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 /* "Actions" overflow button — a bordered pill (kebab glyph + label) that opens
    the session-action menu. The eight inline icons collapsed into this one entry. */
-.sess-actions-btn { height: 26px; padding: 0 10px 0 9px; display: inline-flex; align-items: center; gap: 5px; background: transparent; border: 1px solid var(--border); color: var(--fg-muted); border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; }
+.toast-clear, .sess-actions-btn { height: 26px; padding: 0 10px 0 9px; display: inline-flex; align-items: center; font: inherit; font-size: 12px; font-weight: 500; }
+.sess-actions-btn { gap: 5px; background: transparent; border: 1px solid var(--border); color: var(--fg-muted); border-radius: 7px; cursor: pointer; }
 .sess-actions-btn:hover { color: var(--fg); background: var(--surface-2); }
 .sess-actions-btn svg { width: 15px; height: 15px; fill: currentColor; }
 /* Hairline between the Actions button and the inline window controls. */
@@ -468,6 +469,8 @@ button.danger:hover { background: var(--danger-bg); border-color: var(--danger-s
    chip as a .sess-meta or .card-meta flex item — so the slot machinery adds no
    box of its own to size or style. */
 #panel-sections, .sess-meta-ext, .card-meta-ext, .ext-slot { display: contents; }
+/* The author display rule overrides the browser's default [hidden] styling. */
+.ext-slot[hidden] { display: none; }
 
 /* The dispatch modal's three `dispatch.field` anchor hosts (index.html,
    #m-dispatch-fields), same layout-transparency rule: an extension's control
@@ -756,6 +759,45 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 .file-error { color: var(--red-fg); }
 
 .modal-card h3 { margin: 0 0 14px; color: var(--fg); }
+/* Title + the dispatch dialog's minimise button (#m-minimize) on one row. */
+.modal-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.modal-minimize {
+  flex: 0 0 auto; background: transparent; border: 0; color: var(--fg-subtle); width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; margin: -4px -6px 0 0;
+}
+.modal-minimize:hover, .modal-minimize:focus-visible { background: var(--surface-2); color: var(--fg); }
+.modal-minimize.hidden { display: none; }
+.modal-minimize .icon, .dm-discard .icon { width: 16px; height: 16px; display: block; }
+
+/* The minimised dispatch dialog: a small card floating bottom-left, clear of the
+   nav rail and below every modal overlay (z-index 20), so the board stays usable
+   while the draft waits. Click reopens; the x discards. */
+#dispatch-minimized {
+  position: fixed; left: 66px; bottom: 12px; z-index: 19;
+  display: flex; align-items: flex-start; width: 280px; max-width: calc(100vw - 78px);
+  background: var(--surface); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px var(--shadow);
+}
+#dispatch-minimized[hidden] { display: none; }
+/* The whole card is the hover target: tint it as one, and keep the global
+   button:hover off the restore button so the card never renders two-tone. */
+#dispatch-minimized:hover { background: color-mix(in srgb, var(--surface-2) 70%, var(--surface)); }
+#dispatch-minimized .dm-restore, #dispatch-minimized .dm-restore:hover { background: transparent; border: 0; border-radius: 10px 0 0 10px; }
+#dispatch-minimized .dm-restore:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dm-restore {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; text-align: left;
+  background: transparent; border: 0; padding: 10px 4px 10px 12px; color: var(--fg); cursor: pointer; font: inherit;
+}
+.dm-title { font-size: 13px; font-weight: 600; }
+.dm-task { font-size: 12px; color: var(--accent); }
+.dm-intent { font-size: 12px; color: var(--fg-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.dm-intent.empty { font-style: italic; color: var(--fg-subtle); }
+.dm-task:empty { display: none; }
+.dm-discard {
+  flex: 0 0 auto; background: transparent; border: 0; color: var(--fg-subtle); width: 26px; height: 26px; padding: 0; margin: 6px 6px 0 0;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer;
+}
+.dm-discard:hover, .dm-discard:focus-visible { background: var(--surface-2); color: var(--fg); }
 .modal-card label { display: block; font-size: 11px; text-transform: uppercase; color: var(--fg-subtle); margin: 10px 0 4px; }
 .modal-card input, .modal-card textarea, .modal-card select {
   width: 100%; background: var(--field-bg); border: 1px solid var(--border); border-radius: 6px;
@@ -861,20 +903,6 @@ body.light #sn-when, body.light #m-sch-at, body.light #m-sch-time { color-scheme
 #fork-modal.hidden { display: none; }
 .fork-note { font-size: 12px; color: var(--fg-muted); line-height: 1.5; margin: 0 0 8px; }
 .fork-note code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--blue-fg); font-size: 11px; }
-
-/* A location card's GitHub repos (public/repo-access.js) */
-#repos-modal {
-  position: fixed; inset: 0; background: var(--overlay);
-  display: flex; align-items: center; justify-content: center; z-index: 20;
-}
-#repos-modal.hidden { display: none; }
-.repos-card { width: 480px; max-width: calc(100vw - 32px); }
-.repos-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
-.repos-list li { font-family: var(--font-mono); font-size: 12px; background: var(--surface-2); border-radius: 4px; padding: 2px 6px; }
-.repos-list li.repos-none { font-family: inherit; background: none; padding: 0; color: var(--fg-subtle); }
-.repos-request { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin: 8px 0; font-size: 12px; line-height: 1.5; }
-.repos-request-why { color: var(--fg-muted); }
-.repos-request .modal-actions { margin-top: 6px; }
 
 /* Scheduled sessions panel */
 #schedules-modal {
@@ -1243,8 +1271,8 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
 .toast-list[data-overflow="true"] { margin-top: 0; margin-bottom: 0; }
 .toast-clear {
   z-index: 1; align-self: flex-end; flex-shrink: 0; pointer-events: auto;
-  padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--surface); color: var(--fg); font: inherit; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--fg); cursor: pointer;
 }
 .toast-clear[hidden] { display: none; }
 #toast button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
@@ -1376,6 +1404,9 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 .task-new-sess { display: inline-flex; align-items: center; background: transparent; border: none; color: var(--task-action, var(--fg-subtle)); padding: 0 2px; cursor: pointer; }
 .task-new-sess .icon { width: 15px; height: 15px; }
 .task-new-sess:hover { color: var(--blue-fg); background: transparent; }
+.task-ext-btn { display: inline-flex; align-items: center; background: transparent; border: none; color: var(--task-action, var(--fg-subtle)); padding: 0 2px; cursor: pointer; }
+.task-ext-btn svg { width: 15px; height: 15px; }
+.task-ext-btn:hover { color: var(--blue-fg); background: transparent; }
 .task-name-input { flex: 1; font-size: 13px; font-weight: 700; background: var(--bg); border: 1px solid var(--blue); border-radius: 5px; color: var(--fg); padding: 1px 5px; font-family: inherit; outline: none; }
 
 .task-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
@@ -1687,8 +1718,8 @@ main:has(#sidebar:not(.collapsed)) #grid { flex: 0 0 auto; width: 54%; }
 }
 /* Live "agent team" spine: the lead's team members, each a full Claude in its own
    pane of the lead's tmux session. Same connector layout/language as .child-spine
-   (neutral --border line, reuses .worker-row rows) — a team member is NOT a
-   wrangler session, so its row (.worker-row.team-row) carries no data-sid, isn't
+   (neutral --border line, reuses .worker-row rows) — a team member is NOT an
+   Agent Wrangler session, so its row (.worker-row.team-row) carries no data-sid, isn't
    draggable, and opens no card menu (see cards.js teammateRowHtml, app.js). */
 .team-spine {
   --line-color: var(--border);
@@ -3902,6 +3933,8 @@ a.ext-row-origin { color: var(--blue-fg); }
 .deck-status { flex: 0 0 auto; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-muted); }
 .deck-status.ready { color: #3fae6a; border-color: #3fae6a; }
 .deck-status.incompatible, .deck-status.unreachable { color: #d64f6a; border-color: #d64f6a; }
+.deck-cloud { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--border-muted); }
+.deck-cloud .setting-help { margin: 0; }
 .deck-add { display: flex; gap: 8px; align-items: center; }
 .deck-add input[type="text"] { flex: 1 1 auto; min-width: 0; }
 .deck-add button, .deck-row button { flex: 0 0 auto; white-space: nowrap; }

@@ -9,7 +9,7 @@ import { z } from 'zod';
 export const createTerminalTool = {
   name: 'create_terminal',
   description:
-    'Open a plain shell terminal in the wrangler board sidebar, in your session\'s working '
+    'Open a plain shell terminal in the Agent Wrangler board sidebar, in your session\'s working '
     + 'directory. Optionally pre-populate the shell prompt with `command` (without running it — '
     + 'the user decides). Only works when a board client is connected. Returns an error when '
     + 'no board is open, when your session cwd cannot be resolved, or when `command` contains '

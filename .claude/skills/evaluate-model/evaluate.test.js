@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const FRONT_DATA = JSON.parse(readFileSync(new URL('../../../public/model-front-data.json', import.meta.url), 'utf8'));
 import { rowsOf, derive, report, round, boardUsd, inputErrors, diffInputs, versionOf, newestInputs, dataOf, frontFor, EFFORTS } from './evaluate.js';
+import { agy } from '../../../server/agents/agy.js';
 
 const inputs = JSON.parse(readFileSync(new URL('./inputs-2026-10-28.json', import.meta.url), 'utf8'));
 const skill = readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8');
@@ -15,7 +16,7 @@ test('the newest inputs reproduce every row and the credit in model-front-data.j
 });
 
 test('every source the inputs read is in SKILL.md’s licence table, with its links, and the credit names each', () => {
-  for (const [id, s] of Object.entries(inputs.sources)) {
+  for (const [id, s] of [inputs, JSON.parse(readFileSync(newestInputs(), 'utf8'))].flatMap((i) => Object.entries(i.sources))) {
     assert.match(skill, new RegExp(`^\\| \`${id}\` \\|`, 'm'), `${id} has a licence row`);
     for (const url of [s.url].flat()) assert.ok(skill.includes(url), `${id}: ${url} is in SKILL.md`);
   }
@@ -103,7 +104,7 @@ test('the report lists the sources and their licences, flags what is unconfirmed
   assert.match(text, /board +Terminal-Bench 4\.0 official leaderboard, Stanford, Laude Institute and Harbor: Apache-2\.0/);
   assert.match(text, /UNCONFIRMED: Taken from coverage crediting OpenAI/);
   assert.match(text, /claude haiku +Q 39\.20 vendor max 39\.2; /);
-  assert.match(text, /Front, both \(19 points/);
+  assert.match(text, /Front, all \(19 points/);
 });
 
 test('front reporting is standalone and removes absent models', () => {
@@ -112,7 +113,7 @@ test('front reporting is standalone and removes absent models', () => {
   const { text, ok } = report(fresh, dataOf(inputs));
   assert.equal(ok, true);
   assert.match(text, /GONE +claude fable/);
-  for (const set of ['both', 'claude', 'codex']) assert.match(text, new RegExp(`Front, ${set} \\(`));
+  for (const set of ['all', 'claude', 'codex', 'gemini']) assert.match(text, new RegExp(`Front, ${set} \\(`));
   assert.doesNotMatch(text, /Programmes|curated/);
 });
 
@@ -148,8 +149,49 @@ test('a version bump outranks changed numbers and lists both', () => {
   const { status, bumped, text } = diffInputs(inputs, fresh);
   assert.equal(status, 'version bumped');
   assert.deepEqual(bumped, ['Terminal-Bench v4.0 -> v4.1']);
-  assert.match(text, /re-read every model/);
+  assert.match(text, /newest version the board has run it on/);
+  assert.match(text, /re-read every vendor sweep/);
   assert.match(text, /CHANGED {2}claude opus terminal-bench board accuracy 64\.85 -> 66/);
+});
+
+test('a superseded model lends its ladder to its successor and has no rows of its own', () => {
+  const i = structuredClone(inputs);
+  i.models.codex['gpt-new'] = { like: 'gpt-6-astra', price: i.models.codex['gpt-6-astra'].price, 'terminal-bench': { board: { ...tb('codex', 'gpt-6.1-sol', i).board, version: '4.1' } } };
+  i.models.codex['gpt-6-astra'].supersededBy = 'gpt-new';
+  const { rows } = derive(i), astra = tb('codex', 'gpt-6-astra', i).sweep.efforts, board = tb('codex', 'gpt-new', i).board;
+  assert.equal(rows.codex['gpt-6-astra'], undefined);
+  assert.equal(rows.codex['gpt-new'].low[0], round(board.accuracy * astra.low[0] / astra.max[0], 0));
+  assert.equal(rows.codex['gpt-new'].max[2], round(board.avg_trial_duration_sec / 60, 1));
+  const { text } = report(i, dataOf(inputs));
+  assert.match(text, /codex gpt-6-astra +donor only, superseded by gpt-new/);
+  assert.match(text, /codex gpt-new +Q \d+\.\d+ board 4\.1;/);
+  assert.match(text, /GONE  codex gpt-6-astra/);
+  i.models.codex['gpt-6-astra'].supersededBy = 'gpt-6-astra';
+  tb('codex', 'gpt-new', i).board.version = 'next';
+  const errs = inputErrors(i).join('\n');
+  assert.match(errs, /codex gpt-6-astra: supersededBy names no other codex model/);
+  assert.match(errs, /codex gpt-new terminal-bench board: version is not major.minor/);
+});
+
+test('a model moving to a newer board version, or being superseded, is a changed number', () => {
+  const fresh = structuredClone(inputs);
+  Object.assign(tb('claude', 'opus', fresh).board, { version: '4.1', minutes_file: 'original.json', hub_row: 'row-id' });
+  fresh.sources.hub = { name: 'hub', by: 'hub', licence: 'cited', url: 'https://www.tbench.ai/' };
+  tb('claude', 'opus', fresh).sweep.version = '4.0';
+  fresh.models.codex['gpt-6-astra'].supersededBy = 'gpt-6.1-sol';
+  const { status, text } = diffInputs(inputs, fresh);
+  assert.equal(status, 'numbers changed');
+  for (const re of [/claude opus terminal-bench board version undefined -> 4\.1/, /claude opus terminal-bench board minutes_file undefined -> original\.json/, /claude opus terminal-bench board hub_row undefined -> row-id/,
+    /claude opus terminal-bench sweep version none -> 4\.0/, /codex gpt-6-astra supersededBy none -> gpt-6\.1-sol/]) assert.match(text, re);
+});
+
+test('a tbench.ai re-score names its row in the report and needs the hub source', () => {
+  const i = structuredClone(inputs);
+  Object.assign(tb('claude', 'opus', i).board, { version: '4.1', accuracy: 66, hub_row: 'row-id' });
+  assert.match(inputErrors(i).join('\n'), /claude opus terminal-bench board: hub_row without a hub source/);
+  i.sources.hub = { name: 'hub', by: 'hub', licence: 'cited', url: 'https://www.tbench.ai/' };
+  assert.deepEqual(inputErrors(i), []);
+  assert.match(report(i, dataOf(inputs)).text, /claude opus +Q 66\.00 board 4\.1 \(tbench\.ai; tokens and minutes from its GitHub run\); C \$\d+\.\d+ board tokens/);
 });
 
 test('a patch release keeps the scale; a missing version is a bump', () => {
@@ -191,4 +233,140 @@ test('an empty model set and a zero sweep denominator are rejected', () => {
 
 test('reordering the same manual source flags is no change', () => {
   assert.equal(diffInputs({ ...inputs, manual: ['Read sweep A', 'Read sweep B'] }, { ...inputs, manual: ['Read sweep B', 'Read sweep A'] }).status, 'up to date');
+});
+
+const gemini = JSON.parse(readFileSync(new URL('./inputs-2026-11-22.json', import.meta.url), 'utf8'));
+
+test('an agy model is anchored at the effort the board ran it at, with rows only for the efforts it takes', () => {
+  const { board, sweep } = tb('agy', 'gemini-4-hydrogen', gemini), q = sweep.efforts, rows = rowsOf(gemini);
+  assert.equal(board.effort, 'high');
+  const usd = boardUsd(board, gemini.models.agy['gemini-4-hydrogen'].price), mins = board.avg_trial_duration_sec / 60;
+  assert.deepEqual(Object.keys(rows.agy['gemini-4-hydrogen']), ['low', 'medium', 'high', 'xhigh']);
+  for (const e of ['low', 'medium', 'high', 'xhigh']) {
+    const r = q[e][1] / q.high[1];
+    assert.deepEqual(rows.agy['gemini-4-hydrogen'][e], [round(board.accuracy * q[e][0] / q.high[0], 0), round(usd * r, 2), round(mins * (0.25 + 0.75 * r), 1)], e);
+  }
+  assert.deepEqual(Object.keys(rows.agy['gemini-4-carbon']), ['low', 'medium', 'high'], 'Carbon stops at high, as agy offers it');
+  assert.equal(rows.agy['gemini-4-neon'].xhigh[0], round(tb('agy', 'gemini-4-neon', gemini).board.accuracy, 0), 'Neon ran at xhigh, its top');
+  assert.equal(rows.agy['gemini-4-neon'].high[0], rows.agy['gemini-4-neon'].xhigh[0], 'Hydrogen\'s ladder is flat from high to xhigh');
+});
+
+test('Gemini list prices bill fresh input at the input price, which reproduces the board\'s own cost', () => {
+  const runs = { 'gemini-4-neon': 1922.24, 'gemini-4-carbon': 1358.25, 'gemini-4-hydrogen': 784.24 };
+  for (const [id, total] of Object.entries(runs)) {
+    const { board } = tb('agy', id, gemini);
+    assert.equal(round(boardUsd(board, gemini.models.agy[id].price) * board.n_trials, 2), total, id);
+  }
+});
+
+test('a Gemini model off the board stands on Google\'s figure at its top effort, priced on its donor\'s tokens', () => {
+  const { anchors, rows } = derive(gemini), flash = anchors.find((a) => a.model === 'gemini-3.8-flash');
+  assert.equal(flash.Q, 18.2);
+  assert.equal(flash.quality, 'vendor max 18.2 at high');
+  assert.equal(flash.cost, 'gemini-4-hydrogen\'s board tokens at its own price');
+  assert.equal(flash.minutes, 'like gemini-4-hydrogen');
+  assert.deepEqual(rows.agy['gemini-3.8-flash'].high, [18, round(boardUsd(tb('agy', 'gemini-4-hydrogen', gemini).board, gemini.models.agy['gemini-3.8-flash'].price), 2), rows.agy['gemini-4-hydrogen'].high[2]]);
+});
+
+test('the report prints a Gemini-only front next to Claude\'s and Codex\'s', () => {
+  const { text } = report(gemini, dataOf(gemini)), front = text.split('Front, gemini (')[1];
+  assert.match(front, /^\d+ points/);
+  assert.match(front, /agy gemini-4-carbon high +65 pts/);
+  assert.doesNotMatch(front, /claude|codex/);
+  assert.match(text.split('Front, all (')[1], /agy gemini-4-carbon high/);
+});
+
+test('the measured agy models are ones agy offers, with the efforts it offers each', () => {
+  for (const [id, m] of Object.entries(gemini.models.agy)) {
+    assert.deepEqual(m.efforts, agy.effortsForModel(id).map((e) => e.value), id);
+    assert.ok(agy.models.some((x) => x.value === id), id);
+  }
+});
+
+test('an effort list or board effort the model cannot take is named', () => {
+  const bad = structuredClone(gemini);
+  bad.models.agy['gemini-4-carbon'].efforts = ['high', 'low'];
+  tb('agy', 'gemini-4-argon', bad).board.effort = 'max';
+  const errs = inputErrors(bad).join('\n');
+  assert.match(errs, /agy gemini-4-carbon: efforts must be a non-empty, ascending list/);
+  assert.match(errs, /agy gemini-4-argon terminal-bench board: effort max is not one the model takes/);
+  const fresh = structuredClone(gemini);
+  fresh.models.agy['gemini-4-carbon'].efforts = ['low', 'high'];
+  tb('agy', 'gemini-4-neon', fresh).board.effort = 'high';
+  const { text } = diffInputs(gemini, fresh);
+  assert.match(text, /CHANGED {2}agy gemini-4-carbon efforts low, medium, high -> low, high/);
+  assert.match(text, /CHANGED {2}agy gemini-4-neon terminal-bench board effort xhigh -> high/);
+});
+
+const arena = JSON.parse(readFileSync(new URL('./inputs-2026-11-23.json', import.meta.url), 'utf8'));
+const tbOnly = () => { const i = structuredClone(arena); delete i.benchmarks.arena; for (const ms of Object.values(i.models)) for (const m of Object.values(ms)) delete m.arena; delete i.sources.arena; return i; };
+
+test('Arena is put on Terminal-Bench\'s scale by matching mean and spread, and averaged in for quality only', () => {
+  const tb = derive(tbOnly()), both = derive(arena);
+  const fit = both.calibration.find((c) => c.bench === 'arena');
+  assert.equal(fit.onto, 'terminal-bench');
+  assert.equal(fit.n, 18, 'every current model/effort Arena and Terminal-Bench both score');
+  const opus = both.anchors.find((a) => a.bench === 'arena' && a.model === 'opus'), mapped = opus.scores.max[1];
+  assert.equal(mapped, fit.my + fit.sy * (arena.models.claude.opus.arena.scores.max - fit.mx) / fit.sx);
+  assert.ok(Math.abs(fit.mx - 0.0964) < 1e-4 && Math.abs(fit.my - 46.05) < 0.01, 'the means the report prints');
+  // Quality is the equal-weight mean of both; cost and minutes are Terminal-Bench's alone.
+  const tbAnchor = tb.anchors.find((a) => a.model === 'opus');
+  assert.equal(both.rows.claude.opus.max[0], round((tbAnchor.Q + mapped) / 2, 0));
+  for (const [agent, ms] of Object.entries(both.rows)) for (const [model, es] of Object.entries(ms)) for (const [e, v] of Object.entries(es)) assert.deepEqual(v.slice(1), tb.rows[agent][model][e].slice(1), `${agent} ${model} ${e}`);
+  assert.deepEqual(both.rows.agy['gemini-3.1-pro'], tb.rows.agy['gemini-3.1-pro'], 'a model Arena does not list keeps Terminal-Bench alone');
+});
+
+test('an effort Arena has not scored follows Terminal-Bench\'s ladder from the nearest one it has, the higher on a tie', () => {
+  const i = structuredClone(arena);
+  i.models.claude.opus.arena.scores = { low: 0.05, max: 0.19 };
+  const { rows, anchors, calibration } = derive(i), fit = calibration.find((c) => c.bench === 'arena');
+  const map = (s) => fit.my + fit.sy * (s - fit.mx) / fit.sx;
+  // Rows round once, so rebuild Terminal-Bench's unrounded quality from its anchor and ladder.
+  const tbQ = (e) => { const a = derive(tbOnly()).anchors.find((x) => x.model === 'opus'), s = tb('claude', 'opus', i).sweep.efforts; return a.Q * s[e][0] / s.max[0]; };
+  assert.equal(rows.claude.opus.medium[0], round((tbQ('medium') + map(0.05) * tbQ('medium') / tbQ('low')) / 2, 0), 'medium is nearer low');
+  assert.equal(rows.claude.opus.high[0], round((tbQ('high') + map(0.19) * tbQ('high') / tbQ('max')) / 2, 0), 'high ties low and max, so it takes max');
+  assert.deepEqual(Object.keys(anchors.find((a) => a.bench === 'arena' && a.model === 'opus').scores), ['low', 'max']);
+});
+
+test('an Arena benchmark needs a publish date, a scale to map onto and scores at efforts the model takes', () => {
+  assert.deepEqual(inputErrors(arena), []);
+  const bad = structuredClone(arena);
+  bad.benchmarks.arena.published = 'latest';
+  bad.models.agy['gemini-4-carbon'].arena.scores = { xhigh: 0.2 };
+  bad.models.claude.opus.arena.scores = {};
+  bad.models.claude.haiku.arena.scores.high = 'n/a';
+  let errs = inputErrors(bad).join('\n');
+  for (const re of [/benchmarks\.arena: published is not a YYYY-MM-DD date/, /agy gemini-4-carbon arena scores xhigh: not a score at an effort the model takes/, /claude opus arena: no scores/, /claude haiku arena scores high: not a score/]) assert.match(errs, re);
+  bad.benchmarks.arena.onto = 'arena';
+  assert.match(inputErrors(bad).join('\n'), /benchmarks\.arena: onto names no weighted benchmark with a scale of its own/);
+  const few = structuredClone(arena);
+  for (const [agent, ms] of Object.entries(few.models)) for (const [id, m] of Object.entries(ms)) if (!(agent === 'claude' && id === 'opus')) delete m.arena;
+  assert.throws(() => derive(few), /fewer than 3 model\/efforts shared with terminal-bench/);
+});
+
+test('a new Arena reading is a numbers change; adding Arena is one; remapping it onto another benchmark is a scale change', () => {
+  const fresh = structuredClone(arena);
+  fresh.benchmarks.arena.published = '2026-11-30';
+  fresh.models.claude.opus.arena.scores.max = 0.2;
+  fresh.models.claude.opus.arena.scores.xhigh = 0.18;
+  delete fresh.models.claude.haiku.arena;
+  const { status, text } = diffInputs(arena, fresh);
+  assert.equal(status, 'numbers changed');
+  for (const re of [/CHANGED {2}Arena agent leaderboard published 2026-11-22 -> 2026-11-30/, /CHANGED {2}claude opus arena max 0\.19117186195772867 -> 0\.2/, /NEW {6}claude opus arena xhigh none -> 0\.18/, /GONE {5}claude haiku arena high -0\.004238737455761248 -> none/]) assert.match(text, re);
+  const added = diffInputs(tbOnly(), arena);
+  assert.equal(added.status, 'numbers changed');
+  assert.match(added.text, /NEW {6}Arena agent leaderboard benchmark/);
+  assert.match(diffInputs(arena, { ...structuredClone(arena), read: '2026-11-24' }).text, /^up to date: .*Terminal-Bench v4\.1, Arena agent leaderboard published 2026-11-22/);
+  const moved = structuredClone(arena);
+  moved.benchmarks.arena.onto = 'other';
+  assert.equal(diffInputs(arena, moved).status, 'version bumped');
+});
+
+test('the report prints Arena\'s mapping and each model\'s scores, and credits Arena under CC BY 4.0', () => {
+  const { text } = report(arena, dataOf(arena));
+  assert.match(text, /arena +Arena agent leaderboard, Hugging Face dataset lmarena-ai\/leaderboard-dataset .*, Arena: CC BY 4\.0/);
+  assert.match(text, /arena onto terminal-bench: Q = 46\.05 \+ 242\.89 × \(score − 0\.0964\), matching mean and spread over the 18 model\/efforts both score/);
+  assert.match(text, /arena claude opus +high 0\.1386 → Q 56\.29, max 0\.1912 → Q 69\.06; other efforts by terminal-bench's ladder/);
+  assert.match(arena.credit, /^Scores: Wrangler-bench, the equal-weight average of Terminal-Bench 4\.1.*Arena's agent leaderboard published 2026-11-22 \(Arena, lmarena-ai\/leaderboard-dataset, CC BY 4\.0\), which Agent Wrangler rescaled onto Terminal-Bench's scale before averaging/);
+  assert.doesNotMatch(text, /CHANGED|NEW|GONE/);
 });

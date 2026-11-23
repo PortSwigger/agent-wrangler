@@ -221,18 +221,26 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
 
   function open(entry) {
     const d = { entry, deckId: null, graph: null, ext: null, status: 'connecting', live: false, duplicate: null, started: ++opened };
-    const cached = cache?.get(entry);
+    // A gateway URL can serve different signed-in developers. Its last
+    // graph belongs to the authenticated connection, not the URL.
+    const cached = !entry.cloud && cache?.get(entry);
     if (cached && typeof cached.deckId === 'string' && Array.isArray(cached.sessions) && cached.url === entry.url) {
       d.deckId = cached.deckId;
       d.graph = stampDeck({ sessions: cached.sessions, tasks: cached.tasks, schedules: cached.schedules }, cached.deckId);
     }
     d.client = makeClient({
       origin: () => originOfUrl(d.entry.url),
+      credentials: entry.cloud ? 'include' : 'same-origin',
       onStatus: (status) => {
         d.status = status;
         if (status !== 'ready') d.live = false;
         const id = d.client.descriptor()?.deckId;
         if (id) d.deckId = id;
+        if (entry.cloud && status !== 'ready') {
+          d.deckId = null;
+          d.graph = null;
+          d.ext = null;
+        }
         d.duplicate = duplicateOf(d);
         if (d.duplicate) d.client.stop();
         onChange();
@@ -244,7 +252,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
         d.graph = stampDeck(stateToGraph(frame), d.deckId);
         d.ext = frame.ext && typeof frame.ext === 'object' ? frame.ext : null;
         d.live = true;
-        cache?.set(d.entry, { url: d.entry.url, deckId: d.deckId, sessions: d.graph.sessions || [], tasks: d.graph.tasks, schedules: d.graph.schedules });
+        if (!entry.cloud) cache?.set(d.entry, { url: d.entry.url, deckId: d.deckId, sessions: d.graph.sessions || [], tasks: d.graph.tasks, schedules: d.graph.schedules });
         onChange();
       },
       onEvent: (frame) => { if (d.deckId && !d.duplicate) onEvent(d.deckId, frame); },
@@ -261,7 +269,7 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
     let changed = false;
     for (const [id, d] of decks) {
       const next = wanted.get(id);
-      if (!next || next.url !== d.entry.url) { d.client.stop(); decks.delete(id); cache?.drop(d.entry); changed = true; }
+      if (!next || next.url !== d.entry.url || next.cloud !== d.entry.cloud) { d.client.stop(); decks.delete(id); cache?.drop(d.entry); changed = true; }
       else if (next !== d.entry) { d.entry = next; changed = true; }
     }
     for (const [id, entry] of wanted) if (!decks.has(id)) { open(entry); changed = true; }
@@ -286,6 +294,13 @@ export function createRemoteDecks({ makeClient = createDeckClient, ownDeckId = (
 
   return {
     sync,
+    reopen(id) {
+      const deck = decks.get(id);
+      if (!deck) return;
+      deck.client.stop();
+      open(deck.entry);
+      onChange();
+    },
     list: () => [...decks.values()].map(shown),
     clientFor: (deckId) => {
       for (const d of decks.values()) if (!d.duplicate && d.deckId === deckId) return d.client;
@@ -337,7 +352,7 @@ export function createDeckList({ fetchImpl = (...a) => fetch(...a), EventSourceI
   const take = (snap) => {
     if (!snap || !Array.isArray(snap.decks) || (typeof snap.rev === 'number' && snap.rev < rev)) return;
     rev = typeof snap.rev === 'number' ? snap.rev : rev;
-    onList(snap.decks);
+    onList(snap.decks, snap.cloudGateway || null);
   };
   return {
     start() {

@@ -1,82 +1,14 @@
-import crypto from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
-import { shellQuote } from './claude.js';
-import { codexSkillCatalog, mandatorySkillPrompt } from '../agent-skills.js';
-import { launchAddDirsOf, launchEnvGuard, launchEnvPrefix } from '../launch-context.js';
-import { worktreeGuardrailPrompt } from '../worktree.js';
-import { prAttachUrl, prModelUrl } from '../mcp/client-config.js';
-import { installPath } from '../install-root.js';
 import { geminiCostUsd } from '../pricing.js';
-import { ensureGeminiHome, HEADLESS_POLICY_PATH } from './gemini-config.js';
 import { GEMINI_TMP, cwdForConversation, findConversation, forEachConversationLine, geminiSources } from './gemini-files.js';
 import { createGeminiChatScanner, extractGeminiLine, mightCarryGeminiChat, mightCarryGeminiText } from './gemini-transcript.js';
 import { activityInRangeGemini, analyzeGemini, geminiContextWindow, listResumableGemini, scanDaily, scanMonth } from './gemini-usage.js';
 
-// Google's Gemini CLI (`gemini`, verified against 0.66). What it can and cannot
-// do next to Claude and Codex is in the supported-agents skill; in short:
-//   - its conversation id is chosen at launch (`--session-id`), so it is preset;
-//   - it runs in a Gemini home of the board's (GEMINI_CLI_HOME, gemini-config.js)
-//     whose settings add the board's MCP server and hooks to the user's own;
-//     the session token reaches them through $AW_SESSION_TOKEN;
-//   - instructions and the skills catalog reach it through a SessionStart hook,
-//     as context rather than a system prompt;
-//   - status is read off the pane; there is no live status file;
-//   - a fork copies the conversation under a new id (gemini-fork.js) and resumes it.
-
-const exec = promisify(execFile);
-const FORK_SCRIPT = installPath(fileURLToPath(new URL('./gemini-fork.js', import.meta.url)));
-
-// The launch's approval mode for each permission mode the dispatch dialog offers.
-// Gemini has no auto-approval classifier: "auto" is its YOLO mode, so a session
-// nobody watches never stalls on a prompt; pick another mode to be asked.
-const APPROVAL_MODES = { auto: 'yolo', manual: 'default', acceptEdits: 'auto_edit', plan: 'plan' };
-
-export function geminiApprovalArgs(permissionMode) {
-  const mode = APPROVAL_MODES[permissionMode ?? 'auto'];
-  if (!mode) throw new Error(`Permission mode "${permissionMode}" is not supported for Gemini. Valid values: ${Object.keys(APPROVAL_MODES).join(', ')}.`);
-  return ['--approval-mode', mode];
-}
-
-// The instructions every launch hands Gemini: a mandatory skill's nudge, card
-// naming, the skills catalog (each SKILL.md read on demand by absolute path, as
-// Codex does) and, in a worktree, its guardrail.
-export function geminiInstructions({ sessionId, worktree = null, disabledSkills }) {
-  const title = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call the agent-wrangler rename_session MCP tool with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
-  const parts = [mandatorySkillPrompt(undefined, { disabledSkills }), title, codexSkillCatalog(undefined, { disabledSkills })];
-  if (worktree) parts.push(worktreeGuardrailPrompt(worktree));
-  return parts.filter(Boolean).join('\n\n');
-}
-
-// The extensions' env first and core's after, so an extension adds variables
-// but never overrides ours (the last assignment of a name wins).
-function envPrefix({ sessionId, spawnedBy, launchContext, worktree, disabledSkills, home }) {
-  let env = launchEnvGuard(launchContext, shellQuote) + launchEnvPrefix(launchContext, shellQuote)
-    + `AW_SESSION_ID=${shellQuote(sessionId)} AW_PR_ATTACH_URL=${shellQuote(prAttachUrl())} AW_PR_MODEL_URL=${shellQuote(prModelUrl())} `
-    + `GEMINI_CLI_HOME=${shellQuote(home)} AW_GEMINI_CONTEXT=${shellQuote(geminiInstructions({ sessionId, worktree, disabledSkills }))} `;
-  if (spawnedBy) env += `AW_SPAWNER_SESSION_ID=${shellQuote(spawnedBy)} `;
-  return env;
-}
-
-// Flags every launch, resume and fork carries. `--skip-trust` trusts the launch
-// directory for this session only (Gemini's own trust file is never written).
-function commonFlags({ model, permissionMode, addDirs = [], launchContext, policyPath }) {
-  const args = ['--skip-trust', ...geminiApprovalArgs(permissionMode), '--policy', policyPath];
-  if (model) args.push('-m', model);
-  for (const d of [...launchAddDirsOf(launchContext), ...addDirs]) args.push('--include-directories', d);
-  return args;
-}
-
-// `--prompt-interactive=<text>` rather than a positional or `-i <text>`, so an
-// intent starting with `-` cannot be read as a flag.
-const intentArg = (intent) => (intent.trim() ? [`--prompt-interactive=${intent.trim()}`] : []);
-
-function command(opts, args, before = '') {
-  const { home, policyPath } = ensureGeminiHome();
-  const env = envPrefix({ ...opts, home });
-  return `${before ? `${env}${before} && ` : ''}${env}gemini ${[...args, ...commonFlags({ ...opts, policyPath })].map(shellQuote).join(' ')}`;
-}
+// Google's Gemini CLI (`gemini`), kept only to read the conversations it left
+// behind: agy (Antigravity CLI, agy.js) replaced it as the board's Gemini
+// agent. Nothing starts, resumes, forks, adopts or runs a headless call on it
+// (`dispatchable: false`, no build functions, no `headless`). What stays is
+// what an old card or search result reads: its chat, its usage and estimated
+// cost, its model pill, and status for a pane still running from before.
 
 // ---- The pane --------------------------------------------------------------
 
@@ -124,41 +56,10 @@ function composerIsEmpty(text, { allowWhileWorking = false } = {}) {
   return !typed || typed === PLACEHOLDER;
 }
 
-// ---- Headless --------------------------------------------------------------
-
-// `gemini -p` with the payload on stdin (Gemini puts it ahead of the prompt),
-// every tool denied by a policy, no extensions and no MCP server. The id is
-// fixed with `--session-id`, and it runs in the board's Gemini home, so usage
-// finds and bills the recorded conversation. The user's own settings still
-// apply (the home's settings are theirs plus ours): no flag skips them.
-const geminiHeadless = {
-  defaultModel: () => 'gemini-3.1-flash-lite',
-  command({ prompt, model, env = {} }) {
-    const liveSessionId = crypto.randomUUID();
-    const { home } = ensureGeminiHome();
-    const args = [
-      '-p', prompt, '-o', 'json', '-m', model, '--session-id', liveSessionId, '--skip-trust',
-      '-e', 'none', '--allowed-mcp-server-names', 'agent-wrangler-headless-none', '--policy', HEADLESS_POLICY_PATH,
-    ];
-    return { file: 'gemini', args, env: { ...process.env, ...env, GEMINI_CLI_HOME: home }, liveSessionId };
-  },
-  // `-o json` prints one object: { session_id, response, stats, error? }.
-  parse(stdout) {
-    const text = String(stdout);
-    const start = text.indexOf('{');
-    const parsed = JSON.parse(start > 0 ? text.slice(start) : text);
-    return {
-      text: typeof parsed.response === 'string' ? parsed.response.trim() : null,
-      liveSessionId: typeof parsed.session_id === 'string' ? parsed.session_id : undefined,
-      error: parsed.error ? (parsed.error.message || 'Gemini failed') : null,
-    };
-  },
-};
-
 // ---- Models ----------------------------------------------------------------
 
-// `auto` is the CLI's own default (it routes each turn between Pro and Flash);
-// the rest are full model ids the CLI accepts, so each runs exactly that model.
+// The models its sessions ran, for an old card's model pill and context window.
+// `auto` was the CLI's own default (it routed each turn between Pro and Flash).
 const MODELS = [
   { value: 'auto', label: 'Auto · Gemini picks Pro or Flash', pillLabel: 'auto', default: true, contextWindow: 1_048_576 },
   { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)', pillLabel: 'pro 3.1', transcriptPrefixes: ['gemini-3.1-pro'], contextWindow: 1_048_576 },
@@ -169,23 +70,23 @@ const MODELS = [
 
 export const gemini = {
   id: 'gemini',
-  label: 'Gemini',
+  label: 'Gemini CLI',
   tmuxPrefix: 'gm_',
   reviewPriority: 30,
+  dispatchable: false,
+  // A Background model still set to Gemini CLI runs agy's (headless.js).
+  replacedBy: 'agy',
   models: MODELS,
   efforts: [],
   // `auto` runs whichever model Gemini routes a turn to, so it names no one id.
   modelId: (value) => (value === 'auto' ? null : value),
   contextWindow: geminiContextWindow,
-  unavailableMessage: "This is a Gemini conversation, but the `gemini` binary isn't on PATH — install Gemini CLI (or put it on the launchd PATH) to resume Gemini sessions.",
+  unavailableMessage: 'This is a Gemini CLI conversation. Agent Wrangler no longer runs Gemini CLI, so it can be read but not resumed: start an agy session instead.',
+  // The card id is the conversation id (it was fixed at launch with `--session-id`).
   presetsSessionId: true,
-  // A resume intent is pasted once the pane is up (see pr-nudge-runner): a
-  // `--prompt-interactive` prompt races Gemini's own resume (gemini-fork.js).
-  resumeCarriesIntent: false,
   supportsRemoteControl: false,
   supportsDisallowedTools: false,
   headlessArchiveReview: false,
-  headless: geminiHeadless,
   history: {
     branches: false,
     directory: ({ geminiDir } = {}) => geminiDir ?? GEMINI_TMP,
@@ -214,7 +115,8 @@ export const gemini = {
   presentation: { icon: 'gemini', color: '#4285f4', estimatedCost: true },
   controls: {
     switchModel: false,
-    permissionModes: Object.keys(APPROVAL_MODES),
+    // The modes its sessions were launched in, for an old card's mode chip.
+    permissionModes: ['auto', 'manual', 'acceptEdits', 'plan'],
   },
   launch: { grantPaths: 'realpath', trust: null, gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false },
   terminal: {
@@ -238,39 +140,12 @@ export const gemini = {
     interruptKeys: ['Escape'],
   },
 
-  async isAvailable() {
-    try {
-      const { stdout } = await exec('sh', ['-c', 'command -v gemini']);
-      return Boolean(stdout.trim());
-    } catch {
-      return false;
-    }
-  },
+  async isAvailable() { return false; },
 
   // `gemini` is a node script: ps shows `node /path/to/bin/gemini …`, twice
   // (the CLI relaunches itself with a larger heap).
   matchProcess(command) {
     return /(?:^|\/)gemini(?:\.js)?(?:\s|$)/.test(command || '');
-  },
-
-  buildLaunch({ sessionId, liveSessionId, intent = '', model, permissionMode, addDirs = [], worktree = null, spawnedBy, launchContext, disabledSkills }) {
-    const opts = { sessionId, spawnedBy, launchContext, worktree, disabledSkills, model, permissionMode, addDirs };
-    return command(opts, ['--session-id', liveSessionId || sessionId, ...intentArg(intent)]);
-  },
-
-  buildResume({ sessionId, resumeId, model, permissionMode, addDirs = [], worktree = null, spawnedBy, launchContext, disabledSkills }) {
-    const opts = { sessionId, spawnedBy, launchContext, worktree, disabledSkills, model, permissionMode, addDirs };
-    return command(opts, ['--resume', resumeId]);
-  },
-
-  // The copy lands where `--resume` looks for the fork's directory, then the
-  // fork resumes it under its own id. Its first prompt is typed in by the fork
-  // script once the resume is open (see gemini-fork.js for why not argv).
-  buildFork({ sessionId, liveSessionId, sourceId, model, permissionMode, intent = '', addDirs = [], launchContext, disabledSkills }) {
-    const newId = liveSessionId || crypto.randomUUID();
-    const copy = [process.execPath, FORK_SCRIPT, sourceId, newId, ...(intent.trim() ? [intent.trim()] : [])].map(shellQuote).join(' ');
-    const opts = { sessionId, launchContext, disabledSkills, model, permissionMode, addDirs };
-    return command(opts, ['--resume', newId], copy);
   },
 
   async discoverLiveId({ sessionId }) { return sessionId; },

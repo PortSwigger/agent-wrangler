@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile as realExecFile, execFileSync } from 'node:child_process';
 import { CODEX_HEADLESS_DISABLED_FEATURES } from './agents/codex.js';
-import { adapterFor, registeredAgents } from './agents/index.js';
+import { adapterFor, dispatchableAgents } from './agents/index.js';
 
 // The Claude half of these tests predates the generic runner: they pin the
 // `claude -p` argv and env exactly as the archive review always ran it.
@@ -258,7 +258,11 @@ function codexOnPath() {
 test('a headless call has no tools available: the installed codex lists none for any model', { skip: !codexOnPath() && 'codex is not on PATH', timeout: 60_000 }, async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'headless-codex-home-'));
   try {
-    for (const { value: model } of adapterFor('codex').models) {
+    // An installed Codex older than the catalog snapshot cannot run models it has never heard of.
+    const offline = new Set(JSON.parse(execFileSync('codex', ['debug', 'models'], { cwd: os.tmpdir(), env: { ...process.env, CODEX_HOME: home }, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })).models.map((m) => m.slug));
+    const models = adapterFor('codex').models.map((m) => m.value).filter((model) => offline.has(model));
+    assert.ok(models.length, 'the installed codex knows none of the catalog models');
+    for (const model of models) {
       const cmd = await adapterFor('codex').headless.command({ prompt: 'P', model, env: { CODEX_HOME: home }, cwd: os.tmpdir(), execFile: realExecFile });
       try {
         const overrides = cmd.args.flatMap((a, i) => (a === '--disable' || a === '-c' ? [a, cmd.args[i + 1]] : []));
@@ -344,5 +348,5 @@ test('the Background model defaults to Claude Haiku and falls back when the stor
   // The default is read off the registry's adapters, not an id: the first that can run headless.
   const fixture = [{ id: 'plain', models: [] }, { id: 'oneshot', models: [{ value: 'small' }], headless: { defaultModel: () => 'small' } }];
   assert.deepEqual(defaultBackgroundModel(fixture), { agent: 'oneshot', model: 'small' });
-  assert.ok(registeredAgents().every((a) => a.headless), 'every built-in adapter can run headless');
+  assert.ok(dispatchableAgents().every((a) => a.headless), 'every built-in adapter a session can start on can run headless');
 });

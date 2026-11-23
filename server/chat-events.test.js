@@ -1213,7 +1213,7 @@ test('claude: a task notification that later surfaces as its OWN turn is still n
   // role:'user' turn — the same "absorbed but still appears later" fate a
   // real queued prompt can have — the plain-turn path has no commandMode to
   // check at all, so this must be caught by content (isSynthetic) instead, or
-  // the chat view draws a fake human bubble for the wrangler's own plumbing.
+  // the chat view draws a fake human bubble for Agent Wrangler's own plumbing.
   const notification = '<task-notification>\n<task-id>a528dac57874e3fa4</task-id>\n<status>completed</status>\n<summary>Agent finished</summary>\n</task-notification>';
   const text = claudeLines(
     queued(notification, { commandMode: 'task-notification', origin: undefined }),

@@ -12,7 +12,7 @@ import {
 import { snapshotTaskRects, taskAtPoint } from './task-drag.js';
 import { taskContentHeight, watchTaskScrollEdges } from './task-scroll.js';
 import { createAdditionalFolders } from './additional-folders.js';
-import { parseRepoInput, runtimeHasLocation } from './dispatch-repos.js';
+import { runtimeHasLocation } from './dispatch-repos.js';
 import { createDispatchWaiter } from './dispatch-waiter.js';
 import { focusReturnTarget } from './terminal-dialog.js';
 import {
@@ -41,6 +41,7 @@ import {
 import { shouldReturnToChat } from './chat-handoff.js';
 import { createSlots } from './slots.js';
 import { createBoardTargets } from './board-targets.js';
+import { createDialogReporter } from './dialog-reporter.js';
 import { createSessionPanel } from './session-panel.js';
 import { createRailButtons } from './rail-buttons.js';
 import { MODEL_FRONT } from './model-front-api.js';
@@ -57,20 +58,20 @@ import {
 import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
-import { toast, dismissToast, setToastPosition } from './toast.js';
+import { toast, setToastPosition } from './toast.js';
 import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
 import { createRemoteDecks, createDeckList, mergeDeckGraphs, routeDeck, deckLabel, deckColour, extensionDecks, deckPickerOptions, deckRuntimes, deckRunsAgent, sessionsOnDeck, scheduleActionForDeck, OWN_ENTRY, remoteTaskView, scopeCall, scopeReply } from './decks.js';
+import { connectCloudDeck } from './cloud-deck.js';
 import { mountDecksPanel } from './decks-panel.js';
 import { setLegacyReporter, withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
-import { prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
+import { prToastActions, prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
-import { createRepoAccess } from './repo-access.js';
 import { createRenderer } from './markdown-preview.js';
 import { openFilePreview } from './file-preview.js';
 import { createExtFileViewer } from './ext-file-viewer.js';
@@ -99,6 +100,7 @@ import { autoCompactPresetTokens, normalizeAutoCompactPresetForAgentChange } fro
 import { keybindings } from './keybindings.js';
 import { registerCoreBindings } from './core-keybindings.js';
 import { createSessionEmbed } from './session-embed.js';
+import { minimizedSummary, shouldRestoreMinimized } from './dispatch-minimize.js';
 
 let currentView = 'grid';
 
@@ -283,7 +285,6 @@ function noteExtClientFacts(list) {
 // slots.apiFor, which is the only place the extension id is known.
 const notifications = createNotifications({ document });
 setToastPosition(getSetting('toastPosition'));
-const repoAccess = createRepoAccess({ document, send: (m) => send(m), toast, dismissToast });
 // Back api.targets / api.front and api.rail (slots binds the extension id).
 const boardTargets = createBoardTargets({
   doc: document,
@@ -769,6 +770,9 @@ let autoCompactAgent = 'claude';
 let editingScheduleId = null; // the schedule being edited in 'schedule-edit' mode
 let subagentModalReq = null; // { sessionId, subagentId } — the in-flight fetch, to correlate its async reply
 let scheduleAction = 'dispatch'; // 'dispatch' | 'session' — a schedule's action kind
+// The dialog is minimised to #dispatch-minimized (see minimizeDispatch).
+let dispatchMinimized = false;
+const minimizedEl = document.getElementById('dispatch-minimized');
 let latestSchedules = { schedules: [] };
 let wtBranchEdited = false;
 let wtFolderEdited = false;
@@ -1019,7 +1023,6 @@ function barWord(s) {
 
 function applyGraph(graph) {
   latestSessions = graph.sessions || [];
-  repoAccess.onGraph(latestSessions);
   // history is the one key the server may leave OUT: it's the archive of every
   // session ever set aside and it changes a handful of times a day against a ~2s
   // broadcast, so it rides only the ticks that change it (server/deck/state.js).
@@ -1079,9 +1082,12 @@ function applyGraph(graph) {
   // opens Settings to find out why something they never turned off is gone.
   // Deliberately NO "dismiss for today": an installed extension's quarantine
   // stays on its own row (and raises nothing here), so anything that reaches
-  // this banner is the wrangler's own fault and must stay visible until fixed.
+  // this banner is Agent Wrangler's own fault and must stay visible until fixed.
   // Boot-fixed, so re-asserting it on every graph is idempotent.
   quarantinedBuiltins = Array.isArray(graph.quarantinedBuiltins) ? graph.quarantinedBuiltins : [];
+  const hadToolSchemaFailures = toolSchemaFailures.length > 0;
+  toolSchemaFailures = Array.isArray(graph.toolSchemaFailures) ? graph.toolSchemaFailures : [];
+  if (hadToolSchemaFailures && !toolSchemaFailures.length && !fdBannerActive) hideSystemBanner();
   const hadMissingFiles = missingExtensionFiles.length > 0;
   missingExtensionFiles = Array.isArray(graph.missingExtensionFiles) ? graph.missingExtensionFiles : [];
   if (hadMissingFiles && !missingExtensionFiles.length && !fdBannerActive) hideSystemBanner();
@@ -2192,6 +2198,7 @@ function cardCtx() {
     isChildFullView,
     costCeiling: (s) => slots.costCeiling(s, latestGraph),
     linkChip: (l) => slots.linkChip(l, latestGraph, extApi),
+    taskButtons: (tileKey) => slots.taskButtons(taskSubject(tileKey), latestGraph, extApi),
     hiddenChips: slots.hiddenChips(),
   };
 }
@@ -2924,15 +2931,22 @@ function extMenuItems(s) {
   }));
 }
 
+// The subject a task tile hands its `task.action` and `task.button`
+// contributions: `{ id, name, adhoc }`, the no-task tile carrying ADHOC_ID, plus
+// deckId/deckTaskId for another deck's task.
+function taskSubject(tileKey) {
+  const isNoTask = tileKey === ADHOC_ID;
+  const task = isNoTask ? null : findTask(tileKey);
+  return { id: tileKey, name: task?.name ?? null, adhoc: isNoTask, ...deckTaskFields(task) };
+}
+
 // `task.action` extension items for one task tile's right-click menu, in the
 // same item shape as extMenuItems. The subject is the tile — `{ id, name,
 // adhoc }`, the no-task tile carrying ADHOC_ID — not the DOM cell.
 function extTaskMenuItems(taskId, isNoTask) {
-  const id = isNoTask ? ADHOC_ID : taskId;
-  const task = isNoTask ? null : findTask(taskId);
   // Core carries Minimise in both task menus, so the legacy minimise-task
   // extension's own item is dropped rather than shown twice.
-  return slots.taskMenuItems({ id, name: task?.name ?? null, adhoc: isNoTask, ...deckTaskFields(task) }, latestGraph, extApi)
+  return slots.taskMenuItems(taskSubject(isNoTask ? ADHOC_ID : taskId), latestGraph, extApi)
     .filter((it) => !(it.extId === 'minimise-task' && it.label === 'Minimise'))
     .map((it) => ({
       label: it.label,
@@ -3083,6 +3097,10 @@ function attachMenuItems(sessionId) {
   });
 }
 
+// An agent whose adapter cannot branch a conversation (agy) offers no Fork.
+const canFork = (s) => providerMetadataFor(s?.agent).fork !== false;
+const canResume = (s) => providerMetadataFor(s?.agent).resume !== false;
+
 function openCardMenu(card, x, y) {
   const s = sessionByCard(card);
   if (!s) return;
@@ -3094,11 +3112,10 @@ function openCardMenu(card, x, y) {
   // what the pencil button assumes. Fork/Archive act on the id directly.
   const items = [
     { label: 'Rename', icon: PENCIL_ICON, action: 'session.rename', run: () => { selectSession(card); beginRename(card); } },
-    ...(!snoozed ? [{ label: 'Fork', icon: FORK_ICON, action: 'session.fork', run: () => openFork(sessionId) }] : []),
+    ...(!snoozed && canFork(s) ? [{ label: 'Fork', icon: FORK_ICON, action: 'session.fork', run: () => openFork(sessionId) }] : []),
     ...(!snoozed ? [{ label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', run: () => peerReviewSession(sessionId) }] : []),
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => openDiffPanel(card) },
     { label: 'Copy reference', icon: COPY_ICON, run: () => copySessionReference(s) },
-    ...reposMenuItems(s),
     ...(s.exitOutput ? [{ label: 'Show last output', icon: ROBOT_ICON, run: () => selectSession(card) }] : []),
     { sep: true },
     ...(snoozed ? [
@@ -3117,7 +3134,7 @@ function openCardMenu(card, x, y) {
     { sep: true },
     // Restart (kill tmux + relaunch with --resume) only makes sense while the
     // session is live; a dormant/snoozed card already offers Resume elsewhere.
-    ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', run: () => restartSession(sessionId) }] : []),
+    ...(s.managed && canResume(s) ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', run: () => restartSession(sessionId) }] : []),
     // Promote is offered only for a nested session, and never for a workflow
     // worker (its orchestrator's autopilot run tracks it — promoting would
     // desync that). Attach is offered whenever there's at least one valid
@@ -3130,13 +3147,6 @@ function openCardMenu(card, x, y) {
     { label: 'Archive', icon: ARCHIVE_ICON, action: 'session.archive', danger: true, run: () => archiveSession(sessionId) },
   ];
   mountMenu(supportedItems(items, (action) => canAct(action, s)), x, y);
-}
-
-// A location card's repos dialog, named for what is waiting in it.
-function reposMenuItems(s) {
-  if (!Array.isArray(s.repos)) return [];
-  const waiting = s.repoRequests?.length || 0;
-  return [{ label: waiting ? `GitHub repos (${waiting} waiting)…` : 'GitHub repos…', icon: GITHUB_ICON, run: () => repoAccess.open(s.sessionId) }];
 }
 
 // A line to paste into another agent's chat: the id is what read_session_transcript
@@ -3159,11 +3169,10 @@ function openActionsMenu(card, x, y) {
   const { sessionId } = s;
   const byId = new Map(latestSessions.map((sess) => [sess.sessionId, sess]));
   const items = [
-    { label: 'Fork session', icon: FORK_ICON, action: 'session.fork', trailing: KBD_FORK, run: () => openFork(sessionId) },
+    ...(canFork(s) ? [{ label: 'Fork session', icon: FORK_ICON, action: 'session.fork', trailing: KBD_FORK, run: () => openFork(sessionId) }] : []),
     { label: 'Peer review session…', icon: PLUS_ICON, action: 'session.dispatch', trailing: KBD_PEER_REVIEW, run: () => peerReviewSession(sessionId) },
     // Re-rendered so an embedded panel's Diff button lights up (api.mountSession).
     { label: 'View diff', icon: DIFF_ICON, action: 'session.view-diff', trailing: KBD_DIFF, run: () => { openDiffPanel(card); if (sessionEmbed.active()) renderPanel(card); } },
-    ...reposMenuItems(s),
     // Gated on `cwd`, not `managed` — the server handler (open-terminal-for-session.js)
     // only needs entry.cwd to create an independent shell tmux; it doesn't touch the
     // agent's own pane, so this works on a dormant session too (a bad cwd just surfaces
@@ -3177,7 +3186,7 @@ function openActionsMenu(card, x, y) {
     autoMergeMenuItem(s),
     ...extMenuItems(s),
     { sep: true },
-    ...(s.managed ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
+    ...(s.managed && canResume(s) ? [{ label: 'Restart', icon: RESTART_ICON, action: 'session.resume', trailing: KBD_RESTART, run: () => restartSession(sessionId) }] : []),
     ...(s.parentSession && !isWorkflowWorker(s, byId) ? [{ label: 'Promote to full session', icon: PROMOTE_ICON, action: 'session.detach', run: () => promoteSession(sessionId) }] : []),
     ...(s.parentSession ? [childFullViewMenuItem(s)] : []),
     ...(attachCandidates(sessionId, onBoard(latestSessions).filter((x) => x.deckId === s.deckId), assignedTaskId).length ? [{ label: 'Attach to…', icon: ATTACH_ICON, action: 'session.attach', submenu: attachMenuItems(sessionId) }] : []),
@@ -3220,7 +3229,7 @@ function openModelMenu(sessionId, x, y) {
     // Said once, up front, because it is genuinely surprising: /model is not
     // scoped to this session. Verified — it writes "model" into
     // ~/.claude/settings.json, so it becomes the default for every new Claude
-    // session, wrangler-launched or not.
+    // session, launched by Agent Wrangler or not.
     ...(provider.controls?.modelSwitchNote ? [{ header: provider.controls.modelSwitchNote }] : []),
     ...models.map((m) => ({
       label: m.label,
@@ -3852,6 +3861,14 @@ function wireTaskControls(el) {
       openDispatch(cell.dataset.entity === 'no-task' ? null : cell.dataset.taskid);
     })
   );
+  el.querySelectorAll('.task-ext-btn').forEach((b) =>
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const cell = b.closest('.task-cell');
+      const tileKey = cell.dataset.entity === 'no-task' ? ADHOC_ID : cell.dataset.taskid;
+      slots.runTaskButton(b.dataset.taskButton, taskSubject(tileKey), latestGraph, extApi, e);
+    })
+  );
   el.querySelectorAll('.task-actions-btn').forEach((b) =>
     b.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3998,7 +4015,7 @@ function trackJustFinished(sessions) {
 function archivedToast(sessionId, text, worktree, archivedIds = [sessionId]) {
   const card = cardOf(sessionId);
   if (selectedCard === card) selectAfterArchive(card);
-  const actions = [{ label: 'Resume', onClick: () => { setPendingSelect(card); send({ type: 'resume', sessionId }); } }];
+  const actions = canResume(sessionByCard(card)) ? [{ label: 'Resume', onClick: () => { setPendingSelect(card); send({ type: 'resume', sessionId }); } }] : [];
   const cleanup = worktreeCleanupAction(sessionId, worktree, archivedIds);
   if (cleanup) actions.push(cleanup);
   const stopContainer = containerStopAction(sessionId, archivedIds);
@@ -4347,7 +4364,8 @@ function selectSession(card) {
 const resuming = new Set();
 let resumeFailTimer = null;
 function resumeDormant(card) {
-  if (cardUnreachable(card)) { selectSession(card); return; }
+  // An agent the board no longer runs (Gemini CLI) opens read-only: Chat still reads it.
+  if (cardUnreachable(card) || !canResume(sessionByCard(card))) { selectSession(card); return; }
   resuming.add(card);
   setPendingSelect(card);
   send({ type: 'resume', sessionId: sessionIdOf(card), card });
@@ -4993,11 +5011,12 @@ registerCoreBindings(keybindings, {
     if (currentShellTerm && currentShellTerm.card === card) { closeShellTerminal(); return; }
     if (sessionByCard(card)?.cwd) send({ type: 'open-terminal-for-session', sessionId: sessionIdOf(card), card });
   }),
-  'chord.fork': withSelected((card) => openFork(sessionIdOf(card))),
+  'chord.fork': withSelected((card) => { if (canFork(sessionByCard(card))) openFork(sessionIdOf(card)); }),
   // Restart matches its menu gate — only a live (managed) session, since a dormant
   // one already offers Resume. Peer review works on any session, like its menu row.
   'chord.restart': withSelected((card) => {
-    if (sessionByCard(card)?.managed) restartSession(sessionIdOf(card));
+    const s = sessionByCard(card);
+    if (s?.managed && canResume(s)) restartSession(sessionIdOf(card));
   }),
   'chord.peerReview': withSelected((card) => peerReviewSession(sessionIdOf(card))),
   'chord.maximize': withSelected(() => toggleMaximize()),
@@ -5219,10 +5238,11 @@ function renderSidebar(s) {
   term.innerHTML = `<div class="term-note">
     <p>This session isn't running in tmux, so its live terminal can't be attached — ${where}.</p>
     ${exitBlock}
-    <button id="resume-btn">▶ Resume a copy in a new terminal</button>
-    <p class="muted">${esc(providerMetadataFor(s?.agent).forkHelp || 'Branch this conversation into a fresh session. The original keeps running independently.')}</p>
+    ${canResume(s) ? `<button id="resume-btn">▶ Resume a copy in a new terminal</button>
+    <p class="muted">${esc(providerMetadataFor(s?.agent).forkHelp || 'Branch this conversation into a fresh session. The original keeps running independently.')}</p>`
+    : `<p class="muted">${esc(providerMetadataFor(s?.agent).label)} sessions can't be resumed any more; the Chat tab still reads this one.</p>`}
   </div>`;
-  term.querySelector('#resume-btn').addEventListener('click', () => {
+  term.querySelector('#resume-btn')?.addEventListener('click', () => {
     send({ type: 'resume', sessionId: s.sessionId, card: s.cardKey });
     toast('Resuming…');
   });
@@ -6213,6 +6233,7 @@ function applyRuntimeOffer() {
   const reasons = [];
   for (const opt of rt.options) {
     const found = offer.find((r) => r.id === opt.value);
+    opt.dataset.location = String(Boolean(found?.location));
     const reason = found?.unavailable || '';
     const base = opt.dataset.label || opt.textContent.replace(/ — unavailable$/, '');
     opt.dataset.label = base;
@@ -6468,26 +6489,16 @@ function syncRuntimeToggle() {
   document.getElementById('m-add-dirs-note').classList.toggle('hidden', foldersEnabled);
   const remote = selectedRuntimeHasLocation();
   document.getElementById('m-folder-row').classList.toggle('hidden', remote);
-  document.getElementById('m-repos-row').classList.toggle('hidden', !remote);
   if (remote) document.getElementById('m-worktree').checked = false;
   syncCodexPolicyRow(agent);
 }
 
-// Whether the picked runtime runs its sessions elsewhere, so the dialog asks for
-// GitHub repos instead of a folder.
+// A remote session starts in the working directory provided by its runtime.
 function selectedRuntimeHasLocation() {
   const rt = document.getElementById('m-runtime');
   const opt = rt?.options[rt.selectedIndex];
+  if (opt?.dataset.location === 'true') return true;
   return Boolean(opt) && runtimeHasLocation(latestExtensions, opt.dataset.ext, opt.value);
-}
-
-function renderReposState() {
-  const el = document.getElementById('m-repos-msg');
-  const { error } = parseRepoInput(document.getElementById('m-repos').value);
-  el.textContent = error || 'The session clones these from GitHub and branches off each default branch.';
-  el.className = error ? 'worktree-msg error' : 'worktree-msg';
-  document.getElementById('m-repos').classList.toggle('input-error', Boolean(error));
-  return error;
 }
 
 // Whether this provider takes the Codex sandbox/approval policy (its adapter's
@@ -6568,6 +6579,7 @@ function syncModalChrome() {
   document.getElementById('m-dispatch-fields').classList.toggle('hidden', isSub);
   document.getElementById('m-session-fields').classList.add('hidden');
   document.getElementById('m-go').classList.toggle('hidden', isSub);
+  document.getElementById('m-minimize').classList.toggle('hidden', isSub);
   document.getElementById('m-quick-launch')?.classList.toggle('hidden', isSub);
   if (isSub) { document.getElementById('m-when').classList.add('hidden'); return; }
   const sched = scheduleMode();
@@ -6697,7 +6709,6 @@ function readCoreDispatchFields() {
   return {
     cwd: remote ? undefined : cwdField() || proposedCwd,
     addDirs: remote ? [] : additionalFolders.values(),
-    repos: remote ? parseRepoInput(document.getElementById('m-repos').value).repos : undefined,
     intent: document.getElementById('m-intent').value.trim(),
     model: model || undefined,
     effort: document.getElementById('m-effort').value || undefined,
@@ -6824,6 +6835,7 @@ function openDispatchExtFields(saved) {
 // field from the saved dispatch + picker; otherwise the form defaults as for a
 // launch, with the cwd defaulted from the target task's sessions.
 function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
+  hideMinimizedCard();
   modalMode = mode;
   editingScheduleId = schedule?.id || null;
   // The action kind (and its dispatch bag) come off schedule.action; a launch is
@@ -6843,8 +6855,6 @@ function openModal({ mode, taskId = null, schedule = null, keepImages = [] }) {
   setDispatchCwdDefaults();
   if (schedule) document.getElementById('m-cwd').value = d.cwd || '';
   additionalFolders.reset(d.addDirs || []);
-  document.getElementById('m-repos').value = Array.isArray(d.repos) ? d.repos.join(', ') : '';
-  renderReposState();
   document.getElementById('m-intent').value = d.intent || '';
   // Images an openDispatch is about to adopt keep their previews through the reset.
   intentImages.reset({ keep: keepImages });
@@ -6935,6 +6945,10 @@ function taskDeckUnpickable(taskId) {
   return remoteDecks.entryFor(task.deckId)?.status === 'ready' ? null : (task.deckName || deckNameOf(task.deckId));
 }
 function openDispatch(taskId = null, opts = {}) {
+  if (shouldRestoreMinimized({ minimized: dispatchMinimized, mode: modalMode, draftTaskId: document.getElementById('m-task').value || null, taskId, opts })) {
+    restoreDispatch();
+    return;
+  }
   const unpickable = taskDeckUnpickable(taskId);
   if (unpickable) { toast(`${unpickable} is unreachable`, true); return; }
   const taskSel = document.getElementById('m-task');
@@ -6981,6 +6995,7 @@ function openScheduleEditor(schedule = null) {
 // field population — it's a distinct mode of the same #modal shell.
 function openSubagentModal(sessionId, subagentId) {
   if (!sessionId || !subagentId) return;
+  hideMinimizedCard();
   modalMode = 'subagent';
   subagentModalReq = { sessionId, subagentId };
   syncModalChrome();
@@ -7031,9 +7046,7 @@ function submitDispatch(over) {
   const wfOn = dispatchMode === 'workflow';
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
-  if (fields.repos) {
-    if (renderReposState()) return false;
-  } else if (cwdBlocked()) { renderCwdState(); return false; }
+  if (!selectedRuntimeHasLocation() && cwdBlocked()) { renderCwdState(); return false; }
   if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return false; }
   if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return false; }
   if (intentImages.busy()) { toast('Still attaching images — launch again in a moment.'); return false; }
@@ -7162,6 +7175,7 @@ function submitSchedule() {
 // Close #modal and reset to launch mode. If we were editing/creating a schedule,
 // the caller decides whether to reopen the panel.
 function closeModal() {
+  hideMinimizedCard();
   modal.classList.add('hidden');
   dispatchWaiter.close({ wasPending: wtPending });
   wtPending = false; setDispatchPending(false);
@@ -7177,6 +7191,52 @@ function cancelModal() {
   closeModal();
   if (reopen) openSchedulesPanel();
 }
+
+// Minimise: collapse the dialog to a small card (#dispatch-minimized) bottom-left
+// so the human can copy something off the board and come back. The form is only
+// hidden, never reset, so restoring shows it exactly as it was left. While
+// minimised #modal is .hidden, so every "is the dialog open" check (shortcuts,
+// board nav, submitDispatch) treats it as closed.
+function hideMinimizedCard() {
+  dispatchMinimized = false;
+  minimizedEl.hidden = true;
+}
+function minimizeDispatch() {
+  if (modal.classList.contains('hidden') || modalMode === 'subagent') return;
+  // A worktree/workflow launch awaiting its ack closes the dialog itself.
+  if (wtPending) return;
+  const taskSel = document.getElementById('m-task');
+  const s = minimizedSummary({
+    title: document.getElementById('m-title').textContent,
+    taskId: taskSel.value,
+    taskName: taskSel.options[taskSel.selectedIndex]?.textContent,
+    intent: scheduleMode() && scheduleAction === 'session'
+      ? document.getElementById('m-sch-message').value
+      : document.getElementById('m-intent').value,
+  });
+  document.getElementById('dm-title').textContent = s.title;
+  document.getElementById('dm-task').textContent = s.task || '';
+  const intentEl = document.getElementById('dm-intent');
+  intentEl.textContent = s.intent || 'No prompt yet';
+  intentEl.classList.toggle('empty', !s.intent);
+  modal.classList.add('hidden');
+  dispatchMinimized = true;
+  minimizedEl.hidden = false;
+}
+function restoreDispatch() {
+  if (!dispatchMinimized) return;
+  hideMinimizedCard();
+  modal.classList.remove('hidden');
+  const focus = scheduleMode()
+    ? document.getElementById(scheduleAction === 'session' ? 'm-sch-message' : 'm-intent')
+    : document.getElementById('m-intent');
+  focus?.focus();
+}
+document.getElementById('m-minimize').innerHTML = MINIMISE_ICON;
+document.getElementById('m-minimize').addEventListener('click', minimizeDispatch);
+document.getElementById('dm-discard').innerHTML = X_ICON;
+document.getElementById('dm-restore').addEventListener('click', restoreDispatch);
+document.getElementById('dm-discard').addEventListener('click', cancelModal);
 
 document.getElementById('new-session').addEventListener('click', () => openDispatch());
 // Seed --chat-font-size from the stored preference at startup. The terminal's
@@ -7196,11 +7256,12 @@ applyChatFontSize(chatFontSize());
 // row carries the reason, but nobody opens Settings to ask why something they
 // never turned off is missing. Deliberately with NO "dismiss for today": an
 // INSTALLED extension's quarantine stays on its own row and raises nothing
-// here, so anything reaching this banner is the wrangler's own fault and must
+// here, so anything reaching this banner is Agent Wrangler's own fault and must
 // stay visible until it is fixed. That is also why it needs no dismiss-key
 // namespace of its own, though system-banner.js now has one for the producers
 // that do.
 let quarantinedBuiltins = [];
+let toolSchemaFailures = [];
 let restartPendingExts = [];
 let missingExtensionFiles = [];
 // #system-banner is one slot and the fd watchdog is the more urgent producer, so
@@ -7237,6 +7298,11 @@ function syncStandingBanner() {
     return;
   }
   if (fdBannerActive) return;
+  if (toolSchemaFailures.length) {
+    const names = toolSchemaFailures.map(({ extId }) => latestExtensions.find((e) => e.id === extId)?.label || extId);
+    showSystemBanner(`⚠ Extension${names.length === 1 ? '' : 's'} ${names.join(', ')}: some tools couldn't be loaded; see wrangler.log`);
+    return;
+  }
   if (quarantinedBuiltins.length) {
     const many = quarantinedBuiltins.length !== 1;
     showSystemBanner(`⚠ Built-in extension${many ? 's' : ''} quarantined at startup (${quarantinedBuiltins.join(', ')}) — see Settings › Extensions for why`);
@@ -7253,7 +7319,7 @@ function syncStandingBanner() {
     return;
   }
   if (restartPendingExts.length) {
-    showSystemBanner(`⚠ Extension update installed but not loaded (${restartPendingExts.join(', ')}) — restart the wrangler so sessions see its new tools`);
+    showSystemBanner(`⚠ Extension update installed but not loaded (${restartPendingExts.join(', ')}) — restart Agent Wrangler so sessions see its new tools`);
     return;
   }
   const rollback = rolledBackText(rolledBackUpdate);
@@ -7658,7 +7724,7 @@ function mountExtensionsPanel(host) {
 }
 
 // The consent step. The modal is opened by the server's DISCLOSURE reply, never
-// by the click that asked for it: nothing may be approved before the wrangler
+// by the click that asked for it: nothing may be approved before Agent Wrangler
 // has actually read the manifest and lockfile it is describing.
 function openExtConsent(payload) {
   const modal = document.getElementById('ext-consent-modal');
@@ -7910,7 +7976,6 @@ document.getElementById('m-runtime').addEventListener('change', () => {
   renderWorktreeState();
 });
 document.getElementById('m-runtime').addEventListener('change', syncRuntimeToggle);
-document.getElementById('m-repos').addEventListener('input', renderReposState);
 document.getElementById('m-runtime').addEventListener('change', syncDispatchExtFields);
 for (const id of ['m-codex-approve-for-me', 'm-codex-bypass']) {
   document.getElementById(id).addEventListener('change', () => syncCodexPolicyControls(document.getElementById('m-codex-policy-row')));
@@ -8154,9 +8219,12 @@ const deck = createDeckClient({
   // A #view=search deep link runs setView before this socket exists, so its
   // index-status request is dropped. Re-issue it on open — which also refreshes
   // the view after a reconnect.
-  onOpen: () => { slots.connected(); if (currentView === 'search') onEnterSearchView(); },
+  onOpen: () => { slots.connected(); dialogReporter.resend(); if (currentView === 'search') onEnterSearchView(); },
   onClose: () => chatView.onConnectionClosed(),
 });
+// Tells the server how many dialogs are open, so an unattended restart waits
+// for them to close instead of reloading over what the human is typing.
+const dialogReporter = createDialogReporter({ doc: document, send: (frame) => deck.signal(frame) });
 // An extension's use of a board adapter, reported to the deck as telemetry.
 setLegacyReporter((surface, ext) => deck.act('deck.deprecation', { args: { surface, ext } }).then((r) => r.ok || r.error?.code === 'unsupported' || r.error?.code === 'invalid'));
 const DECK_CACHE_PREFIX = 'aw-deck-cache-';
@@ -8171,8 +8239,10 @@ const remoteDecks = createRemoteDecks({
   onChange: () => { applyDecks(); remountDecksPanel(); refreshDeckPicker(); },
   onEvent: (deckId, frame) => onRemoteDeckMessage(deckId, frame.data),
 });
+let cloudConnection = null;
 const deckList = createDeckList({
-  onList: (list) => {
+  onList: (list, gateway) => {
+    if (gateway !== (cloudConnection?.gateway ?? null)) cloudConnection = gateway ? { gateway } : null;
     deckEntries = list;
     remoteDecks.sync(list);
     applyDecks();
@@ -8294,7 +8364,7 @@ export function deckAct(action, { card = null, ...opts } = {}) {
 // settings, extensions and updates are its own and stay off this board.
 const REMOTE_DECK_MESSAGES = new Set([
   'notify', 'diff', 'diff-comments-result', 'pr-checks', 'pr-merge', 'pr-dirty', 'pr-unresolved',
-  'auto-archived', 'archived', 'archive-unpushed', 'repos-added', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
+  'auto-archived', 'archived', 'archive-unpushed', 'worktree-removed', 'container-stopped', 'branch-deleted', 'branch-delete-blocked',
   'forked', 'resume-needs-dir', 'open-terminal', 'subagent-detail', 'chat', 'message-result',
   'paste-image-result', 'interrupt-restore', 'model-set', 'error',
   'schedule-fired', 'schedule-error', 'schedule-missed',
@@ -8308,8 +8378,31 @@ function remountDecksPanel() {
   const el = document.getElementById('settings-decks');
   if (el) mountDecksPanel(el, decksPanelBridge);
 }
+async function connectConfiguredDeck() {
+  const attempt = cloudConnection;
+  if (!attempt || attempt.busy) return;
+  const saved = deckEntries.find((entry) => entry.cloud);
+  attempt.busy = true;
+  attempt.error = '';
+  const progress = (message) => { attempt.message = message; remountDecksPanel(); };
+  progress('Checking cloud deck access…');
+  try {
+    await connectCloudDeck(attempt.gateway, progress);
+    if (attempt === cloudConnection) await deckList.change({ op: 'register-cloud', gateway: attempt.gateway });
+  } catch (err) {
+    attempt.error = err.message;
+  } finally {
+    // A new gateway sign-in may represent a different developer at this URL.
+    if (saved && cloudConnection === attempt) remoteDecks.reopen(saved.id);
+    attempt.busy = false;
+    attempt.message = '';
+    remountDecksPanel();
+  }
+}
 const decksPanelBridge = {
   decks: boardDecks,
+  cloud: () => cloudConnection,
+  connectCloud: connectConfiguredDeck,
   change: (op) => deckList.change(op),
   toast,
 };
@@ -8366,7 +8459,7 @@ function onDeckMessage(msg) {
     if (TRANSIENT_PROGRESS_PHASES.has(msg.phase)) runNextExtUpdate();
   }
   else if (msg.type === 'ext-install-disclosure') openExtConsent(msg);
-  // The server refused it — the extension needs a host API this wrangler does
+  // The server refused it — the extension needs a host API this Agent Wrangler server does
   // not serve. Nothing changed on disk. An update's reason replaces its update
   // button (hasUpdate) and sits on its row until the next check; the `failed`
   // progress broadcast already carries the same line for a fresh install.
@@ -8461,7 +8554,6 @@ function onDeckMessage(msg) {
     }
   }
   else if (msg.type === 'auto-archived') archivedToast(msg.session.sessionId, `${msg.session.label} exited — archived`, msg.session.worktree);
-  else if (msg.type === 'repos-added') repoAccess.onAdded(msg);
   // The "Kill jobs & archive" outcome — the immediate toast in archiveSession()
   // already fired; this replaces it once the nudge/wait/teardown actually finish.
   else if (msg.type === 'archive-unpushed') {
@@ -8655,15 +8747,15 @@ function onPrChecks(msg) {
   const phrase = PR_CHECK_TEXT[msg.status] || msg.status;
   const shortSha = typeof msg.headSha === 'string' ? msg.headSha.slice(0, 7) : '';
   const text = `[Agent Wrangler] ${label}: ${phrase}${shortSha ? ` (${shortSha})` : ''}`;
-  toast(text, isErr, prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard));
+  toast(text, isErr, prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
-    n.onclick = () => { window.focus(); if (msg.scope === 'session') openSessionInBoard(msg.sessionId); };
+    n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
   }
   if (isErr) flashPr(msg.url);
 }
 
-// The wrangler auto-merged (or tried to) a session's PR on the passing
+// Agent Wrangler auto-merged (or tried to) a session's PR on the passing
 // transition, because that session opted into "Auto-merge when checks pass".
 // Success → accent toast; failure → red .err toast + a one-shot dot flash, so a
 // blocked merge (branch protection, conflicts) is visible rather than silent.
@@ -8672,7 +8764,7 @@ function onPrMerge(msg) {
   const text = msg.ok
     ? `PR #${msg.number} auto-merged`
     : `PR #${msg.number} auto-merge failed: ${msg.error}`;
-  toast(text, !msg.ok, msg.ok ? undefined : prAlertToastOptions());
+  toast(text, !msg.ok, prCheckToastOptions(msg.ok ? 'passing' : 'failing', msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
   if (!msg.ok) flashPr(msg.url);
 }
 
@@ -8684,10 +8776,10 @@ function onPrDirty(msg) {
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
-  toast(text, true, prAlertToastOptions());
+  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
-    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(cardOf(msg.sessionId)); };
+    n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
   }
   flashPr(msg.url);
 }
@@ -8703,10 +8795,10 @@ function onPrComments(msg) {
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const phrase = `${msg.delta} new unresolved review thread${msg.delta === 1 ? '' : 's'} (${msg.count} unresolved total)`;
   const text = `[Agent Wrangler] ${label}: ${phrase}`;
-  toast(text, true, prAlertToastOptions());
+  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
-    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(cardOf(msg.sessionId)); };
+    n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
   }
   flashPr(msg.url);
 }

@@ -1,3 +1,5 @@
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { toolInputSchema } from '../extensions/tool-schema.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { MCP_SERVER_NAME } from './client-config.js';
@@ -22,10 +24,13 @@ export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
   // caller check (server/session-api/check.js) already decided who the caller is.
   const hide = deps?.ext?.hideTool;
   const visible = hide ? tools.filter((t) => !hide(caller, t.name)) : tools;
+  const advertised = [];
   for (const tool of visible) {
+    const converted = toolInputSchema(tool, deps?.hostApiFor);
+    if (!converted) continue;
     server.registerTool(
       tool.name,
-      { description: tool.description, inputSchema: tool.inputSchema },
+      { description: tool.description, inputSchema: converted.schema },
       // An EXTENSION's tool (tagged with its owner by the loader) is invoked
       // with that extension's own `host` façade and never `deps` — the whole
       // point of the façade is that an extension cannot reach a singleton it did
@@ -37,7 +42,11 @@ export function buildMcpServer(deps, caller, { tools = activeTools() } = {}) {
         return deps?.restartBarrier ? deps.restartBarrier.run(invoke, `mcp:${tool.name}`) : invoke();
       },
     );
+    advertised.push({ name: tool.name, description: tool.description, inputSchema: converted.jsonSchema, execution: { taskSupport: 'forbidden' } });
   }
+  // Serve the checked conversion rather than letting the SDK convert it again.
+  server.server.registerCapabilities({ tools: { listChanged: true } });
+  server.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: advertised }));
   return server;
 }
 

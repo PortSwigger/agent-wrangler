@@ -7,7 +7,7 @@ export class UpdateBusyError extends Error {
   }
 }
 
-const NOT_STARTED_BY_SERVICE = 'This wrangler was not started by the checkout service (scripts/wrangler-start.sh under launchd or systemd), which rolls back a failed update and installs new dependencies. Pull and restart it the way you launched it.';
+const NOT_STARTED_BY_SERVICE = 'This Agent Wrangler server was not started by the checkout service (scripts/wrangler-start.sh under launchd or systemd), which rolls back a failed update and installs new dependencies. Pull and restart it the way you launched it.';
 
 function managedReason(manager) {
   if (manager === 'homebrew') return 'This install is managed by Homebrew. Update it with `brew upgrade agent-wrangler`, then `brew services restart agent-wrangler` if it runs as a service.';
@@ -59,19 +59,19 @@ export function createUpdateService({
   rolledBack = null,
   onStatus = () => {},
   // The one way out for a restart, called at most once per process: with the
-  // apply result after a wrangler update, or with `{ extensions }` (the ids
+  // apply result after an Agent Wrangler update, or with `{ extensions }` (the ids
   // auto-applied) when only extension updates are waiting to load.
   onApplied = () => {},
   // Installed extensions ride the same tick, notify only unless an extension
   // opted in to auto-update itself, in either mode (see
-  // extensions/update-check.js); this tick's Auto applies the wrangler only.
+  // extensions/update-check.js); this tick's Auto applies Agent Wrangler only.
   checkExtensions = null,
   onExtensions = () => {},
   // Whether anything brings this process back after it exits (restart.js
   // restartSupported). Without it an auto-applied extension update loads
-  // whenever a human next restarts the wrangler.
+  // whenever a human next restarts Agent Wrangler.
   canRestart = false,
-  // How long a restart waiting for the wrangler to go quiet sleeps between
+  // How long a restart waiting for Agent Wrangler to go quiet sleeps between
   // looks, and the timer it sleeps on (replaced in tests).
   restartRetryMs = 60 * 1000,
   later = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; },
@@ -126,11 +126,11 @@ export function createUpdateService({
   }, 'update:apply');
 
   // An auto-applied extension update loads only at a restart, and gets one on
-  // the wrangler's own auto-apply terms: only where something brings the
+  // Agent Wrangler's own auto-apply terms: only where something brings the
   // process back, and only while it is quiet. While it is not, the restart is
   // kept pending and looked at again every `restartRetryMs` rather than at the
   // next hourly tick. However many extensions are waiting, and whether or not
-  // a wrangler update restarts first, onApplied is called once.
+  // an Agent Wrangler update restarts first, onApplied is called once.
   function restartForExtensions() {
     restartTimer = null;
     if (restartArmed || !canRestart || awaitingRestart.size === 0) return;

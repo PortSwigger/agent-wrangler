@@ -1,6 +1,6 @@
 const shortSha = (sha) => (sha || '').slice(0, 7);
 
-export const UPDATE_HELP = 'Fast-forwards to origin/main and restarts the wrangler. Running sessions carry on, and pick up new tools and skills when restarted or resumed.';
+export const UPDATE_HELP = 'Fast-forwards to origin/main and restarts Agent Wrangler. Running sessions carry on, and pick up new tools and skills when restarted or resumed.';
 
 export function shouldReloadForVersion(seen, next) {
   return Boolean(seen && next && seen !== next);
@@ -18,7 +18,7 @@ export function updateToastText(status, { lastToasted = null, userAsked = false 
 
 export function rolledBackText(rolledBack) {
   if (!rolledBack?.target) return '';
-  return `The update to ${shortSha(rolledBack.target)} failed to start, so the wrangler rolled back to ${shortSha(rolledBack.previous)}. Automatic updates skip that commit; check the service log for the error.`;
+  return `The update to ${shortSha(rolledBack.target)} failed to start, so Agent Wrangler rolled back to ${shortSha(rolledBack.previous)}. Automatic updates skip that commit; check the service log for the error.`;
 }
 
 function el(tag, className, text) {
@@ -45,7 +45,7 @@ export function updateSummary({ phase, status, error } = {}) {
   if (status.behind === 0) return `Up to date (${shortSha(status.head)}).`;
   const commits = `${status.behind} new commit${status.behind === 1 ? '' : 's'} on origin/main.`;
   if (status.blocked) return `${commits} ${status.blocked}`;
-  if (!status.canApply) return `${commits} This wrangler was not started by the checkout service (launchd or systemd), so pull and restart it by hand.`;
+  if (!status.canApply) return `${commits} This Agent Wrangler server was not started by the checkout service (launchd or systemd), so pull and restart it by hand.`;
   return commits;
 }
 
@@ -80,8 +80,8 @@ export function installDriftNotice({ drift, canRestart = false } = {}) {
   const { version, runningVersion } = drift;
   const versions = version && runningVersion && version !== runningVersion ? ` (${runningVersion} → ${version})` : '';
   const text = drift.target
-    ? `An upgrade has landed${versions}, but this wrangler is still running the old version. Sessions already use the new version's hook and skills, so restart the wrangler to finish the upgrade.`
-    : `The install path ${drift.installRoot} cannot be resolved, so an upgrade may be in progress. Restart the wrangler once it finishes.`;
+    ? `An upgrade has landed${versions}, but this Agent Wrangler server is still running the old version. Sessions already use the new version's hook and skills, so restart Agent Wrangler to finish the upgrade.`
+    : `The install path ${drift.installRoot} cannot be resolved, so an upgrade may be in progress. Restart Agent Wrangler once it finishes.`;
   return { text, restart: Boolean(canRestart), hint: canRestart ? null : (drift.restartHint || null) };
 }
 
@@ -90,10 +90,10 @@ export function restartPanelEl({ drift, canRestart = false, restarting = false, 
   if (!notice && !canRestart) return null;
   const wrap = el('div', 'update-panel');
   const head = el('div', 'update-panel-head');
-  head.append(el('div', 'setting-label', notice ? 'Restart to finish the upgrade' : 'Restart wrangler'));
+  head.append(el('div', 'setting-label', notice ? 'Restart to finish the upgrade' : 'Restart Agent Wrangler'));
   if (canRestart) head.append(button(restarting ? 'Restarting…' : 'Restart now', 'ext-btn ext-btn-warn', { disabled: restarting, onClick: onRestart }));
   wrap.append(head);
-  wrap.append(el('div', notice ? 'update-summary' : 'setting-help', notice?.text || 'Restart the wrangler. Running sessions carry on.'));
+  wrap.append(el('div', notice ? 'update-summary' : 'setting-help', notice?.text || 'Restart Agent Wrangler. Running sessions carry on.'));
   if (restartStatus?.message) wrap.append(el('div', 'update-summary', restartStatus.message));
   if (notice?.hint) wrap.append(el('div', 'setting-help', notice.hint));
   return wrap;
@@ -193,7 +193,7 @@ export function extUpdatesEl({ summary = null, mode = 'notify', onOpen, now = Da
     }
     wrap.append(list);
   }
-  if (mode === 'auto' && exts.length) wrap.append(el('div', 'update-summary update-auto-note', 'Auto mode installs wrangler updates only. Extension updates wait for you.'));
+  if (mode === 'auto' && exts.length) wrap.append(el('div', 'update-summary update-auto-note', 'Auto mode installs Agent Wrangler updates only. Extension updates wait for you.'));
   const at = summary.checkedAt ? `${checkedAgoText(summary.checkedAt, now)} ` : '';
   wrap.append(el('div', 'setting-help', `${at}Built-in extensions are not checked.`));
   return wrap;

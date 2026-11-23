@@ -12,26 +12,35 @@ test('failing session checks offer a session action for 15 seconds', () => {
   assert.deepEqual(opened, ['s1']);
 });
 
-test('task check alerts have no session action', () => {
-  const options = prCheckToastOptions('failing', 'task', 't1', () => assert.fail());
+for (const status of ['passing', 'awaiting-review', 'failing', 'changes-requested']) {
+  for (const scope of ['session', 'task']) {
+    test(`${scope} ${status} checks link to their owner and preserve duration`, () => {
+      const opened = [];
+      const options = prCheckToastOptions(status, scope, 'owner',
+        (id) => opened.push(['session', id]), (id) => opened.push(['task', id]));
+      assert.equal(options.duration, ['failing', 'changes-requested'].includes(status) ? PR_TOAST_MS : undefined);
+      assert.equal(options.actions[0].label, scope === 'session' ? 'View session' : 'View task');
+      options.actions[0].onClick();
+      assert.deepEqual(opened, [[scope, 'owner']]);
+    });
+  }
+}
 
-  assert.equal(options.duration, 15000);
-  assert.deepEqual(options.actions, []);
-});
+for (const event of ['conflicts', 'review threads', 'merge failure']) {
+  for (const scope of ['session', 'task']) {
+    test(`${event} links to its ${scope} for 15 seconds`, () => {
+      const opened = [];
+      const options = prAlertToastOptions(scope, 'owner',
+        (id) => opened.push(['session', id]), (id) => opened.push(['task', id]));
+      assert.equal(options.duration, PR_TOAST_MS);
+      options.actions[0].onClick();
+      assert.deepEqual(opened, [[scope, 'owner']]);
+    });
+  }
+}
 
-test('review changes requested use the actionable error toast', () => {
-  const options = prCheckToastOptions('changes-requested', 'session', 's2', () => {});
-
-  assert.equal(options.duration, 15000);
-  assert.equal(options.actions[0].label, 'View session');
-});
-
-test('non-error check statuses keep the default toast behavior', () => {
-  assert.equal(prCheckToastOptions('passing', 'session', 's3', () => {}), undefined);
-});
-
-test('conflict, review-thread and merge-failure toasts expire like the checks toast', () => {
-  assert.equal(prAlertToastOptions().duration, PR_TOAST_MS);
+test('unscoped alerts retain their duration without a navigation action', () => {
+  assert.deepEqual(prAlertToastOptions(), { duration: PR_TOAST_MS, actions: [] });
 });
 
 test('a PR toast is suppressed only when the session was nudged and the setting is on', () => {
@@ -40,3 +49,66 @@ test('a PR toast is suppressed only when the session was nudged and the setting 
   assert.equal(prToastSuppressed({ nudged: false }, true), false);
   assert.equal(prToastSuppressed({}, true), false);
 });
+
+const { readFileSync } = await import('node:fs');
+const { runInNewContext } = await import('node:vm');
+const helpers = await import('./pr-check-notification.js');
+const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+const handlers = app.slice(app.indexOf('const PR_CHECK_TEXT ='), app.indexOf('// Re-theme a live terminal'));
+
+for (const [handler, variants] of [
+  ['onPrChecks', ['passing', 'awaiting-review', 'failing', 'changes-requested'].map(status => ({ status }))],
+  ['onPrMerge', [{ ok: true }, { ok: false }]],
+  ['onPrDirty', [{}]],
+  ['onPrComments', [{}]],
+]) {
+  for (const variant of variants) {
+    for (const scope of ['session', 'task']) {
+      test(`${handler} ${JSON.stringify(variant)} navigates to its ${scope}`, () => {
+        const opened = [];
+        const notifications = [];
+        const toasts = [];
+        class Notification {
+          static permission = 'granted';
+          constructor() { notifications.push(this); }
+        }
+        const context = {
+          ...helpers, Notification, window: { Notification, focus() {} },
+          focusSuppresses: () => false, suppressNudgedPrToasts: false,
+          openSessionInBoard: id => opened.push(['session', id]),
+          openTaskInBoard: id => opened.push(['task', id]),
+          toast: (...args) => toasts.push(args), flashPr() {},
+        };
+        runInNewContext(`${handlers}\n${handler}(${JSON.stringify({ ...variant, scope, sessionId: 'owner', number: 1 })});`, context);
+        const [, isErr, options] = toasts[0];
+        const expectedErr = handler === 'onPrChecks'
+          ? ['failing', 'changes-requested'].includes(variant.status)
+          : handler === 'onPrMerge' ? !variant.ok : true;
+        assert.equal(isErr, expectedErr);
+        assert.equal(options.duration, expectedErr ? PR_TOAST_MS : undefined);
+        assert.equal(options.actions[0].label, scope === 'session' ? 'View session' : 'View task');
+        options.actions[0].onClick();
+        assert.deepEqual(opened, [[scope, 'owner']]);
+        if (handler !== 'onPrMerge') {
+          notifications[0].onclick();
+          assert.deepEqual(opened, [[scope, 'owner'], [scope, 'owner']]);
+        } else {
+          assert.equal(notifications.length, 0);
+        }
+      });
+    }
+  }
+}
+
+for (const handler of ['onPrChecks', 'onPrMerge', 'onPrDirty', 'onPrComments']) {
+  for (const suppression of ['focus', 'nudged']) {
+    test(`${handler} preserves ${suppression} suppression`, () => {
+      runInNewContext(`${handlers}\n${handler}({ scope: 'session', sessionId: 'owner', nudged: true });`, {
+        ...helpers,
+        focusSuppresses: () => suppression === 'focus',
+        suppressNudgedPrToasts: suppression === 'nudged',
+        toast: () => assert.fail('suppressed event must not toast'),
+      });
+    });
+  }
+}

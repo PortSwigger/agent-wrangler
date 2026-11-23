@@ -46,7 +46,7 @@ seen. `list_mail` + `read_mail({id})` covers the same need far more cheaply.
 ## Status notices
 
 A `[Agent Wrangler] Status notice` is not mail and never appears in `read_mail`.
-It is Wrangler's observation of a session you spawned with `nest: true` or
+It is Agent Wrangler's observation of a session you spawned with `nest: true` or
 `notify_status: true`, sent directly over the messaging socket or pasted through
 the terminal gate. It can lag the board by one rebuild. Read the child's transcript
 or message it before assuming an idle observation means it finished. Child mail
@@ -81,14 +81,14 @@ faster.
 ## The right send tool — not Claude Code's built-in `SendMessage`
 
 Claude Code ships its own peer-messaging tools (`SendMessage`/`ListAgents`)
-that can also see wrangler-launched sessions — but they address peers by a
+that can also see sessions launched by Agent Wrangler — but they address peers by a
 `ListAgents` name (derived from the session's directory), not by card id.
-Calling the built-in `SendMessage` with a wrangler card id fails with
+Calling the built-in `SendMessage` with an Agent Wrangler card id fails with
 "No agent named '<card id>' is reachable" even though the session is alive
 and its own mail to you keeps arriving. Retrying the same call, or checking
 `ListAgents`, won't fix it — the id will never be a name there.
 
-Always message a board session with the wrangler's `send_message` MCP tool
+Always message a board session with Agent Wrangler's `send_message` MCP tool
 (`mcp__agent-wrangler__send_message`), addressed by card id from
 `list_sessions` or a mail message's `from` field. This mistake typically
 appears right after a context compaction, when the memory of which tool you

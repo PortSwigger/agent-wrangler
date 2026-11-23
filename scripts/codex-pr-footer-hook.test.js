@@ -12,7 +12,7 @@ function payload(command, output) {
   return JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command }, tool_response: output });
 }
 
-// A stand-in wrangler that records every request and answers no model, so the
+// A stand-in Agent Wrangler that records every request and answers no model, so the
 // footer stops before running gh.
 async function withServer(fn) {
   const requests = [];
@@ -42,12 +42,12 @@ async function waitFor(check, ms = 5000) {
   return check();
 }
 
-test('after gh pr create, the hook asks the wrangler for the model, never attaches, and stays silent', async () => {
+test('after gh pr create, the hook asks Agent Wrangler for the model, never attaches, and stays silent', async () => {
   await withServer(async (base, requests) => {
     const r = runHook(payload('gh pr create --title T --body B', `${PR}\n`), { AW_SESSION_ID: 'card-1', AW_PR_MODEL_URL: `${base}/pr-model`, AW_PR_ATTACH_URL: `${base}/pr-attach` });
     assert.equal(r.status, 0);
     assert.equal(r.stdout, '');
-    assert.ok(await waitFor(() => requests.length > 0), 'footer never called the wrangler');
+    assert.ok(await waitFor(() => requests.length > 0), 'footer never called Agent Wrangler');
     assert.deepEqual(requests, [{ method: 'POST', url: '/pr-model', session: 'card-1', auth: undefined }]);
   });
 });
@@ -56,7 +56,7 @@ test('a session launched with a token sends it as the bearer and no card id', as
   await withServer(async (base, requests) => {
     const r = runHook(payload('gh pr create --title T --body B', `${PR}\n`), { AW_SESSION_ID: 'card-1', AW_SESSION_TOKEN: 'awt_t', AW_PR_MODEL_URL: `${base}/pr-model` });
     assert.equal(r.status, 0);
-    assert.ok(await waitFor(() => requests.length > 0), 'footer never called the wrangler');
+    assert.ok(await waitFor(() => requests.length > 0), 'footer never called Agent Wrangler');
     assert.deepEqual(requests, [{ method: 'POST', url: '/pr-model', session: undefined, auth: 'Bearer awt_t' }]);
   });
 });

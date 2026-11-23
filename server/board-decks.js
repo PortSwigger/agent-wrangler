@@ -49,7 +49,11 @@ export function sanitizeDecks(raw) {
 
 // `apply(op)` takes { op: 'add', url, name?, colour? }, { op: 'update', id,
 // name?, colour? } or { op: 'remove', id } and returns { decks } or { error }.
-export function createBoardDecks({ file, onChange = () => {} }) {
+export function createBoardDecks({ file, cloudGateway, onChange = () => {} }) {
+  const gateway = normalizeDeckUrl(cloudGateway);
+  if (cloudGateway && (!gateway || new URL(cloudGateway).href !== gateway + '/')) {
+    throw new Error('AW_CLOUD_DECK_GATEWAY must be an HTTP(S) origin');
+  }
   let decks;
   try { decks = sanitizeDecks(JSON.parse(fs.readFileSync(file, 'utf8')).decks); } catch { decks = sanitizeDecks([]); }
   let rev = 1;
@@ -63,10 +67,19 @@ export function createBoardDecks({ file, onChange = () => {} }) {
     onChange(snapshot());
   }
 
-  const snapshot = () => ({ rev, decks: decks.map((d) => ({ ...d })) });
+  const snapshot = () => ({
+    rev,
+    ...(gateway && { cloudGateway: gateway }),
+    decks: decks.map((d) => ({ ...d, ...(gateway && d.url === gateway && { cloud: true }) })),
+  });
 
   function apply(body) {
     const op = body?.op;
+    if (op === 'register-cloud') {
+      if (!gateway || body.gateway !== gateway) return { error: 'The configured cloud gateway has changed. Reload the board.' };
+      if (decks.some((d) => d.url === gateway)) return snapshot();
+      return apply({ op: 'add', url: gateway, name: 'Cloud deck' });
+    }
     if (op === 'add') {
       const url = normalizeDeckUrl(body.url);
       if (!url) return { error: 'Give the deck\'s URL, like http://127.0.0.1:7890' };

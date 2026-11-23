@@ -431,6 +431,9 @@ export function readDeclaration(dir) {
   // CAPABILITIES here — this leaf cannot import the loader's vocabulary without
   // a cycle, and an unknown one already quarantines at boot with its own reason.
   const str = (v) => (typeof v === 'string' ? v : '');
+  const installsZod = Object.hasOwn(pkg.dependencies || {}, 'zod')
+    || Object.hasOwn(pkg.optionalDependencies || {}, 'zod')
+    || (Object.hasOwn(pkg.peerDependencies || {}, 'zod') && pkg.peerDependenciesMeta?.zod?.optional !== true);
   return {
     id: d.id,
     label: d.label,
@@ -440,6 +443,9 @@ export function readDeclaration(dir) {
     requires: [...(d.requires || [])],
     range: engines?.wranglerApi ?? null,
     earlyAdopterBranch: ea?.branch ?? null,
+    ...(installsZod ? {
+      warnings: ['This extension depends on its own zod. Declare schema:zod and build tool schemas with host.schema.z instead; extensions must not bundle zod.'],
+    } : {}),
   };
 }
 

@@ -356,6 +356,9 @@ function whenNode(ts) {
 // — see CLAUDE.md. Server refusals (e.g. a resume it won't do) surface via the
 // existing toast path.
 function appendActions(head, g) {
+  // Restore and Adopt relaunch the conversation, which an agent the board no
+  // longer runs (Gemini CLI) can't do; its results still open and read.
+  const relaunches = providerMetadataFor(g.agent).resume !== false;
   if (g.cardId && g.onBoard) {
     const b = document.createElement('button');
     b.className = 'search-act';
@@ -372,13 +375,13 @@ function appendActions(head, g) {
     resume.textContent = 'Restore';
     resume.title = 'Restore this session to the board';
     resume.addEventListener('click', () => { setPendingSelect(cardOf(g.cardId)); send({ type: 'resume', sessionId: g.cardId }); toast('Restoring…'); });
-    head.appendChild(resume);
+    if (relaunches) head.appendChild(resume);
     const fork = document.createElement('button');
     fork.className = 'search-act search-act--icon';
     fork.innerHTML = FORK_ICON;
     fork.title = 'Fork into a new session';
     fork.addEventListener('click', () => openFork(g.cardId));
-    head.appendChild(fork);
+    if (providerMetadataFor(g.agent).fork !== false) head.appendChild(fork);
     const remove = document.createElement('button');
     remove.className = 'search-act search-act--icon';
     remove.innerHTML = TRASH_ICON;
@@ -390,7 +393,7 @@ function appendActions(head, g) {
       }
     });
     head.appendChild(remove);
-  } else {
+  } else if (relaunches) {
     const b = document.createElement('button');
     b.className = 'search-act search-act--adopt';
     b.textContent = 'Adopt';

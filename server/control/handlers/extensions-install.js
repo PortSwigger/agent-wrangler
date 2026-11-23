@@ -197,7 +197,7 @@ function updateDiff(record, declared, deps) {
 // when it can. Applying one anyway is no refusal at all: the install or update
 // lands, then fails at activation or at the next BOOT (host-api/index.js), with
 // an update having already replaced the version that worked. Said in terms of
-// the wrangler rather than the API, because "update Agent Wrangler" is the
+// Agent Wrangler rather than the API, because "update Agent Wrangler" is the
 // thing a human can actually do about it.
 function engineMismatch(range) {
   if (servesRange(range)) return null;
@@ -338,6 +338,8 @@ export const extInstallHandler = {
         refuseIncompatible(ctx, { id: declared.id, label: declared.label, range: declared.range, reason: mismatch });
         return;
       }
+      const warnings = declared.warnings || [];
+      for (const warning of warnings) log(`[agent-wrangler] extension ${declared.id}: ${warning}`);
       const sha = await runners.head(dir);
       if (ref && /^[0-9a-f]{40}$/i.test(ref) && sha !== ref.toLowerCase()) throw new Error('The checked out commit does not match the exact ref');
       // Refused BEFORE consent and before any registry fetch: an extension
@@ -358,6 +360,7 @@ export const extInstallHandler = {
       const history = existing ? await runners.commits(dir, existing.sha || '').catch(() => null) : null;
       const reply = {
         type: 'ext-install-disclosure',
+        warnings,
         tempId,
         sha,
         ...(ref === undefined ? {} : { ref }),
@@ -487,7 +490,7 @@ export const extUninstallHandler = {
     const id = String(msg.id || '');
     const known = ctx.ext.list.find((e) => e.id === id);
     if (!known) throw new Error(`Unknown extension: ${id}`);
-    if (!known.external) throw new Error(`${id} ships with the wrangler and cannot be uninstalled — turn it off instead.`);
+    if (!known.external) throw new Error(`${id} ships with Agent Wrangler and cannot be uninstalled — turn it off instead.`);
     const dest = safeExtPath(id);
     // Deactivated and deregistered BEFORE the files go: its row, tools,
     // handlers, stores, sweeps and client asset are gone on the next tick. What
@@ -545,7 +548,7 @@ export const extSetAutoUpdateHandler = {
     const id = String(msg.id || '');
     const known = ctx.ext.list.find((e) => e.id === id);
     if (!known) throw new Error(`Unknown extension: ${id}`);
-    if (!known.external) throw new Error(`${id} ships with the wrangler and is updated with it.`);
+    if (!known.external) throw new Error(`${id} ships with Agent Wrangler and is updated with it.`);
     // setAutoUpdate refuses a record-less (hand-placed) extension itself.
     const record = setAutoUpdate(id, msg.on === true);
     // The loaded entry's record is what the graph reads, and it was taken at
@@ -572,7 +575,7 @@ export const extSetEarlyAdopterHandler = {
       const id = String(msg.id || '');
       const known = ctx.ext.list.find((e) => e.id === id);
       if (!known) throw new Error(`Unknown extension: ${id}`);
-      if (!known.external) throw new Error(`${id} ships with the wrangler and is updated with it.`);
+      if (!known.external) throw new Error(`${id} ships with Agent Wrangler and is updated with it.`);
       record = setEarlyAdopter(id, msg.on === true);
       known.provenance = { ...known.provenance, earlyAdopter: record.earlyAdopter };
       log(`[agent-wrangler] extension ${id} early-adopter builds ${record.earlyAdopter ? `on (${record.earlyAdopterBranch})` : 'off'}`);
@@ -646,7 +649,7 @@ export async function autoUpdateExtension(id, ctx) {
     await extConsentHandler.handler({ tempId: disclosure.tempId, approve: true }, quiet);
     const done = found('ext-install-done');
     if (!done?.installed) return refused() || { applied: false, reason: 'the update did not complete' };
-    log(`[agent-wrangler] extension ${id} auto-updated to ${done.sha.slice(0, 8)}; it loads when the wrangler restarts`);
+    log(`[agent-wrangler] extension ${id} auto-updated to ${done.sha.slice(0, 8)}; it loads when Agent Wrangler restarts`);
     return { applied: true, sha: done.sha };
   } catch (err) {
     return { applied: false, reason: String(err?.message || err) };

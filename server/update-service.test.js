@@ -151,7 +151,7 @@ test('a tick in off mode does not even check', async () => {
   assert.equal(events.statuses.length, 0);
 });
 
-test('a tick in auto mode applies only when the wrangler is quiet', async () => {
+test('a tick in auto mode applies only when Agent Wrangler is quiet', async () => {
   const busy = service({ isQuiet: () => false });
   await busy.svc.tick();
   assert.equal(busy.events.applied.length, 0);
@@ -199,7 +199,7 @@ test('an off tick checks no extensions', async () => {
   assert.equal(svc.extensions(), null);
 });
 
-test('an auto tick applies only the wrangler update, never an extension one', async () => {
+test('an auto tick applies only the Agent Wrangler update, never an extension one', async () => {
   const applies = [];
   const upToDate = { head: 'h0', remote: 'h0', behind: 0, commits: [], blocked: null };
   const { svc, events } = service({
@@ -276,7 +276,7 @@ test('restart waits while not quiet, then fires once quiet', async () => {
   assert.equal(timers.length, 0, 'nothing pending after it fires');
 });
 
-test('a wrangler auto-apply in the same tick is the one restart for extensions too', async () => {
+test('an Agent Wrangler auto-apply in the same tick is the one restart for extensions too', async () => {
   const { svc, events, timers } = restarting({ mode: () => 'auto' });
   await svc.tick();
   assert.equal(events.applied.length, 1);
@@ -284,7 +284,7 @@ test('a wrangler auto-apply in the same tick is the one restart for extensions t
   assert.equal(timers.length, 0);
 });
 
-test('a manual wrangler update while an extension restart is pending is the only restart', async () => {
+test('a manual Agent Wrangler update while an extension restart is pending is the only restart', async () => {
   const { svc, events, timers, setQuiet } = restarting();
   setQuiet(false);
   await svc.tick();

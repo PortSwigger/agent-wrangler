@@ -83,7 +83,7 @@ export const diffCommentsHandler = {
       }
       const message = formatDiffComments(comments, source);
 
-      // Live iff the wrangler owns a live tmux pane for it (tmuxFor truthy) —
+      // Live iff Agent Wrangler owns a live tmux pane for it (tmuxFor truthy) —
       // mirrors runSessionAction's liveness branch.
       let target = ctx.tmuxFor(sessionId);
       if (!target) {

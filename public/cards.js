@@ -614,7 +614,7 @@ function agentAccentVar(color) {
   return AGENT_COLOR_VARS[String(color || '').toLowerCase()] || '--border';
 }
 
-// One live "agent team" member on the lead's spine. NOT a wrangler session: it
+// One live "agent team" member on the lead's spine. NOT an Agent Wrangler session: it
 // shares the lead's tmux (its own pane), has no card id, and isn't attachable —
 // so it carries data-lead-card (a click focuses the lead, attaching the shared
 // session) rather than data-sid. The dot is tinted by the member's Claude colour
@@ -727,6 +727,15 @@ export function taskBodyHostHtml(key) {
   return `<div class="task-body-ext" data-task-body="${esc(key)}"></div>`;
 }
 
+// An extension's `task.button` contributions for one tile's title bar, drawn
+// before the New session robot. Title and key are text; the icon has already
+// passed the SVG allow-list (slots.js safeChipIcon), and an empty one falls
+// back to a plus. The click is wired in app.js by `data-task-button`.
+function taskButtonsHtml(tileKey, ctx) {
+  const buttons = ctx.taskButtons?.(tileKey) || [];
+  return buttons.map((b) => `<button class="task-ext-btn" data-task-button="${esc(b.key)}" title="${esc(b.title)}" aria-label="${esc(b.title)}">${b.icon || PLUS_ICON}</button>`).join('');
+}
+
 export function tileHtml(tile, ctx, { focusMode } = {}) {
   const pos = focusMode ? '' : `grid-column:${tile.col + 1}; grid-row:${tile.rowStart + 1} / span ${tile.span};`;
   if (tile.kind === 'placeholder') {
@@ -753,6 +762,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
   const showEmpty = !cards;
   const slotSel = ctx.selectedNewSlot === tileKey;
   const newSess = noNewSession ? '' : `<button class="task-new-sess" title="New session in this task">${ROBOT_ICON}</button>`;
+  const extButtons = noNewSession ? '' : taskButtonsHtml(tileKey, ctx);
   const emptyBody = (hint) =>
     `<div class="cell-empty-body">${noNewSession ? '' : `<button class="empty-new-sess${slotSel ? ' selected' : ''}">${ROBOT_ICON}<span>New session</span></button>`}<span class="empty-hint">${hint}</span></div>`;
   const slotRow = slotSel && !showEmpty
@@ -766,7 +776,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
     return `<div class="task-cell no-task${noTaskFlash}${moveClass}" data-entity="no-task" style="${pos}">
       <div class="task-head" draggable="true">
         <span class="task-name">Unassigned</span>
-        ${newSess}
+        ${extButtons}${newSess}
         <button class="task-actions-btn" title="Task actions">${KEBAB_ICON}</button>
       </div>
       <div class="task-body">${body('or drag sessions here to unassign')}</div>
@@ -785,7 +795,7 @@ export function tileHtml(tile, ctx, { focusMode } = {}) {
     <div class="task-head" draggable="true">
       ${taskDeckHtml(tile.task)}<span class="task-name" title="Double-click to rename">${esc(tile.task.name)}</span>
       ${linkBadge}
-      ${newSess}
+      ${extButtons}${newSess}
       <button class="task-actions-btn" title="Task actions">${KEBAB_ICON}</button>
     </div>
     <div class="task-body">${body('or drag a session here')}</div>

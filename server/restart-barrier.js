@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export class RestartPendingError extends Error {
   constructor() {
-    super('The wrangler is preparing to restart. Retry this request shortly.');
+    super('Agent Wrangler is preparing to restart. Retry this request shortly.');
     this.code = 'restarting';
     this.retryable = true;
   }
@@ -18,7 +18,7 @@ export function formatAge(ms) {
   return `${Math.floor(m / 60)}h${m % 60 ? `${m % 60}m` : ''}`;
 }
 
-export function createRestartBarrier({ timeoutMs = 30000, settleMs = 250, exit = () => process.exit(0), onStatus = () => {}, isIdle = () => true, log = () => {}, now = Date.now } = {}) {
+export function createRestartBarrier({ timeoutMs = 30000, settleMs = 250, exit = () => process.exit(0), onStatus = () => {}, isIdle = () => true, isHeld = () => false, holdPollMs = 250, log = () => {}, now = Date.now } = {}) {
   const scope = new AsyncLocalStorage();
   // One entry per admitted run(), removed on every exit path, so a drain that
   // times out can say WHAT it was waiting for instead of a bare count.
@@ -69,9 +69,18 @@ export function createRestartBarrier({ timeoutMs = 30000, settleMs = 250, exit =
     if (afterDrain) afterRestart = afterDrain;
     if (force) forced = true;
     if (restarting) return restarting;
-    closed = true;
-    publish('draining', reason, 'Waiting for in-flight requests and writes before restarting…');
     restarting = (async () => {
+      // An unattended restart first waits, still accepting work, for the human
+      // to close any dialog they have open on a board: a reload there would
+      // throw away what they were typing. isHeld() drops a tab's dialogs when it
+      // disconnects, so a closed tab cannot hold this forever. A forced restart,
+      // or one asked for mid-hold, skips it; so does a signal (afterDrain).
+      if (isHeld() && !forced && afterRestart === exit) {
+        publish('held', reason, 'Restart waiting for an open dialog to close…');
+        while (isHeld() && !forced && afterRestart === exit) await delay(holdPollMs);
+      }
+      closed = true;
+      publish('draining', reason, 'Waiting for in-flight requests and writes before restarting…');
       // Always yield: the request that asked for this restart must return first.
       const deadline = now() + timeoutMs;
       do {
@@ -147,4 +156,16 @@ export function createRestartBarrier({ timeoutMs = 30000, settleMs = 250, exit =
 export function restartIsQuiet({ barrier, headless = 0, launching = false, due = [], sessions = [] }) {
   return barrier.inFlight() === 0 && !barrier.draining() && headless === 0 && !launching && due.length === 0
     && !sessions.some((s) => s.status === 'working');
+}
+
+// A board's `{type:'dialogs', open:n}` frame: how many dialogs it has open.
+// Returns n (clamped to 0..50), or null when the frame is anything else.
+export function dialogsFrame(raw) {
+  const text = raw.toString();
+  if (!text.includes('"dialogs"')) return null;
+  let msg;
+  try { msg = JSON.parse(text); } catch { return null; }
+  if (msg?.type !== 'dialogs') return null;
+  const n = Math.floor(Number(msg.open));
+  return Number.isFinite(n) ? Math.min(50, Math.max(0, n)) : 0;
 }

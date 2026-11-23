@@ -27,7 +27,7 @@ and `pick` to check a candidate against the whole installed-agent front. Auto
 uses the model's reported effort; `scored: false` means there is no benchmark
 verdict. Apply the task's capability needs and the user's model exclusions.
 
-**Choose `model` deliberately for the task — don't just accept whatever inherits or defaults.** Match the model to what the work actually needs: bounded, mechanical work (a rebase, reading logs, a small fix with a clear spec) doesn't need a frontier model; a genuinely hard, ambiguous, or high-stakes problem does. The `(default)` markers in the generated table below are just the wrangler's fallback when `model` is left unset — not a recommendation — so pick explicitly rather than relying on them.
+**Choose `model` deliberately for the task — don't just accept whatever inherits or defaults.** Match the model to what the work actually needs: bounded, mechanical work (a rebase, reading logs, a small fix with a clear spec) doesn't need a frontier model; a genuinely hard, ambiguous, or high-stakes problem does. The `(default)` markers in the generated table below are just Agent Wrangler's fallback when `model` is left unset — not a recommendation — so pick explicitly rather than relying on them.
 
 **Pass `model` explicitly whenever you spawn the *other* agent.** The "inherit
 your own model" default only fires when the new session runs the same agent as
@@ -40,7 +40,7 @@ only within the same agent), or pass one of the levels listed below for that
 agent. The levels differ per provider, so an inherited one is never carried
 across a cross-agent spawn.
 
-The table below is **generated from the wrangler's agent adapters**, so it is the
+The table below is **generated from Agent Wrangler's agent adapters**, so it is the
 same list the tool validates against; an invalid `model` or `agent` is rejected
 before launch with an error naming the valid options. Don't hand-edit it — change
 `server/agents/*.js` and run `npm run gen:models`.
@@ -57,24 +57,29 @@ before launch with an error naming the valid options. Don't hand-edit it — cha
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`
 
 **Codex** (`agent: "codex"`):
-- `gpt-6.1-sol` — GPT-6.1-Sol · Latest workhorse model for coding and everyday work
-- `gpt-6-astra` — GPT-6-Astra · Frontier intelligence for the most demanding work
-- `gpt-6-sol` — GPT-6-Sol · Previous generation workhorse model (default)
+- `gpt-6.2-sol` — GPT-6.2-Sol · Fast, go-to model for coding and everyday work
+- `gpt-6.2-astra` — GPT-6.2-Astra · Our most capable model for complex coding and professional work
+- `gpt-6.1-sol` — GPT-6.1-Sol · Previous generation model for coding and everyday work
+- `gpt-6.1-terra` — GPT-6.1 Terra · Efficient model that excels at visual understanding and computer use
+- `gpt-6-astra` — GPT-6-Astra · Previous generation model for complex coding and professional work
+- `gpt-6-sol` — GPT-6-Sol · Legacy model for coding and everyday work (default)
 - `gpt-6-luna` — GPT-6-Luna · Fast and affordable model for easier tasks
-- `gpt-5.6-sol` — GPT-5.6-Sol · Older generation workhorse model
-- `gpt-5.6-terra` — GPT-5.6-Terra · Older balanced model for straightforward work
-- `gpt-5.6-luna` — GPT-5.6-Luna · Older fast and efficient model
-- `gpt-5.5` — GPT-5.5 · Legacy coding model
+- `gpt-5.6-sol` — GPT-5.6-Sol · Legacy model for coding and everyday work
+- `gpt-5.6-terra` — GPT-5.6-Terra · Legacy balanced model for agentic coding
+- `gpt-5.6-luna` — GPT-5.6-Luna · Legacy fast model for simpler tasks
 - `effort`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`
 
-**Gemini** (`agent: "gemini"`):
-- `auto` — Auto · Gemini picks Pro or Flash (default)
-- `gemini-3.1-pro-preview` — Gemini 3.1 Pro (preview)
-- `gemini-2.5-pro` — Gemini 2.5 Pro
-- `gemini-3.1-flash-lite` — Gemini 3.1 Flash-Lite
-- `gemini-3.5-flash` — Gemini 3.5 Flash
+**agy** (`agent: "agy"`):
+- `gemini-4-neon` — Gemini 4 Neon (default)
+- `gemini-4-hydrogen` — Gemini 4 Hydrogen
+- `gemini-4-carbon` — Gemini 4 Carbon
+- `gemini-4-argon` — Gemini 4 Argon
+- `gemini-3.8-flash` — Gemini 3.8 Flash
+- `gemini-3.1-pro` — Gemini 3.1 Pro
+- `default` — agy default (your /model choice)
+- `effort`: `low`, `medium`, `high`, `xhigh`
 
-The running wrangler's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
+The running Agent Wrangler server's lists can be newer than this table. An unknown `model` is rejected with the current valid list, so an error there is the source of truth.
 
 <!-- END GENERATED MODELS -->
 
@@ -98,11 +103,11 @@ have no Remote Control option.
 
 A Codex session runs under Codex's own OS sandbox (`--sandbox workspace-write`,
 approvals off). It can read anywhere, but it can only **write** to: its cwd, `/tmp`
-and `$TMPDIR`, its wrangler memory dir, and each `add_dirs` entry. A blocked write
+and `$TMPDIR`, its Agent Wrangler memory dir, and each `add_dirs` entry. A blocked write
 fails on the spot with `Operation not permitted` — there is no approval prompt to
 fall back on. Claude sessions have no such sandbox; none of this applies to them.
 
-The wrangler grants the repo's git-dir automatically — the main checkout's `.git`,
+Agent Wrangler grants the repo's git-dir automatically — the main checkout's `.git`,
 whether cwd is a plain checkout or a linked worktree (pre-existing or created via
 `worktree: true`) — so `git commit`/`push` work without any `add_dirs`.
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount, fetchPrDiff, fetchPrObservation } from './pr-status.js';
+import { fetchPrStatus, mergePr, fetchUnresolvedThreadCount, fetchPrDiff, fetchPrObservation, fetchUnresolvedThreads } from './pr-status.js';
 
 const runner = (stdout, code = 0) => async () => ({ code, stdout });
 const prRunner = (text) => {
@@ -204,4 +204,62 @@ test('observation failures carry diagnostics without changing fetchPrStatus null
   assert.deepEqual(result, { status: null, error: 'offline' });
   assert.equal((await fetchPrObservation('u', runner('invalid'))).status, null);
   assert.match((await fetchPrObservation('u', runner('invalid'))).error, /invalid/i);
+});
+
+
+test('fetchUnresolvedThreads returns author, current or original location and bounded root comments', async () => {
+  const result = await fetchUnresolvedThreads('u', unresolvedRun(JSON.stringify([
+    { id: 't1', path: 'app.js', line: 42, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Please fix this' }] } },
+    { id: 't2', path: 'old.js', line: null, originalLine: 7, comments: { nodes: [{ author: null, body: 'x'.repeat(1000) }] } },
+    { id: 't3', path: 'empty.js', comments: { nodes: [] } },
+  ])));
+  assert.deepEqual(result[0], { id: 't1', author: 'reviewer', path: 'app.js', line: 42, body: 'Please fix this' });
+  assert.equal(result[1].line, 7);
+  assert.equal(result[1].author, null);
+  assert.equal(result[1].body.length, 321);
+  assert.equal(result[2].body, '');
+  assert.deepEqual(await fetchUnresolvedThreads('u', unresolvedRun('[]')), []);
+});
+
+test('fetchUnresolvedThreads preserves the null-on-failure contract', async () => {
+  for (const output of ['', 'null', '{}', 'not json', '[null]']) {
+    assert.equal(await fetchUnresolvedThreads('u', unresolvedRun(output)), null);
+  }
+  assert.equal(await fetchUnresolvedThreads('u', unresolvedRun('[]', 1)), null);
+  assert.equal(await fetchUnresolvedThreads('u', async () => { throw new Error('unavailable'); }), null);
+});
+
+const rollupStatus = async (statusCheckRollup, mergeStateStatus = 'BLOCKED') =>
+  (await fetchPrStatus('u', runner(JSON.stringify({ id: 'PR_42', createdAt: '2026-11-15T10:00:00Z', state: 'OPEN', title: 'A change',
+    number: 42, isDraft: false, headRefOid: 'head', mergeStateStatus, reviewDecision: '', statusCheckRollup })))).checkStatus;
+const titleRun = (conclusion, startedAt, completedAt) => ({ __typename: 'CheckRun', workflowName: 'PR Title Check', name: 'Validate PR title',
+  status: 'COMPLETED', conclusion, startedAt, completedAt });
+
+test('a cancelled run superseded by a later successful run of the same check is not failing', async () => {
+  // A workflow concurrency group cancels the first of two runs started for the same head.
+  const rollup = [titleRun('CANCELLED', '2026-11-20T10:32:19Z', '2026-11-20T10:32:23Z'),
+    titleRun('SUCCESS', '2026-11-20T10:32:22Z', '2026-11-20T10:32:40Z')];
+  assert.equal(await rollupStatus(rollup, 'CLEAN'), 'passing');
+  assert.equal(await rollupStatus([...rollup].reverse(), 'CLEAN'), 'passing');
+});
+
+test('a lone cancelled run that is the latest of its check is still failing', async () => {
+  assert.equal(await rollupStatus([titleRun('CANCELLED', '2026-11-20T10:32:19Z', '2026-11-20T10:32:23Z')]), 'failing');
+  assert.equal(await rollupStatus([titleRun('SUCCESS', '2026-11-20T10:32:19Z', '2026-11-20T10:32:40Z'),
+    titleRun('CANCELLED', '2026-11-20T10:35:00Z', '2026-11-20T10:35:05Z')]), 'failing');
+});
+
+test('a queued rerun not yet started supersedes an earlier cancelled run', async () => {
+  assert.equal(await rollupStatus([titleRun('CANCELLED', '2026-11-20T10:32:19Z', '2026-11-20T10:32:23Z'),
+    { ...titleRun('', '0001-01-01T00:00:00Z', '0001-01-01T00:00:00Z'), status: 'QUEUED' }]), 'pending');
+});
+
+test('runs only collapse within the same workflow, job name or status context', async () => {
+  const cancelled = titleRun('CANCELLED', '2026-11-20T10:32:19Z', '2026-11-20T10:32:23Z');
+  const later = '2026-11-20T10:40:00Z';
+  assert.equal(await rollupStatus([cancelled, { ...titleRun('SUCCESS', later, later), workflowName: 'Other' }]), 'failing');
+  assert.equal(await rollupStatus([cancelled, { ...titleRun('SUCCESS', later, later), name: 'Other job' }]), 'failing');
+  const status = (state, startedAt) => ({ __typename: 'StatusContext', context: 'ci/build', state, startedAt });
+  assert.equal(await rollupStatus([status('ERROR', '2026-11-20T10:00:00Z'), status('SUCCESS', later)], 'CLEAN'), 'passing');
+  assert.equal(await rollupStatus([status('SUCCESS', '2026-11-20T10:00:00Z'), status('ERROR', later)]), 'failing');
 });
