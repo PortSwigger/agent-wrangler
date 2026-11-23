@@ -236,6 +236,39 @@ test('pane status, composer and footer model', () => {
   assert.equal(agy.terminal.composerIsEmpty(`${RULE}\n> draft\n${RULE}\n? for shortcuts\n`), false);
 });
 
+// Panes captured from agy 1.5.15 (paths shortened).
+const pane = (name) => fs.readFileSync(new URL(`../fixtures/agy-pane/${name}.txt`, import.meta.url), 'utf8');
+
+test('a background task or subagent area under the prompt box leaves the status readable', () => {
+  assert.deepEqual(agyClassify(pane('task-idle')), { status: 'idle' });
+  assert.equal(agyComposer(pane('task-idle')), '');
+  assert.equal(agy.terminal.composerIsEmpty(pane('task-idle')), true);
+  assert.equal(agyFooterModel(pane('task-idle')), 'Gemini 4 Neon · medium');
+  assert.equal(agyFooterModel(pane('subagent-idle')), 'Gemini 4 Neon · medium');
+  assert.deepEqual(agyClassify(pane('task-working')), { status: 'working' });
+  assert.equal(agy.terminal.composerIsEmpty(pane('task-working')), false);
+  assert.equal(agy.terminal.composerIsEmpty(pane('task-working'), { allowWhileWorking: true }), true);
+  assert.deepEqual(agyClassify(pane('task-draft')), { status: 'idle' });
+  assert.equal(agyComposer(pane('task-draft')), 'a draft');
+  assert.deepEqual(agyClassify(pane('subagent-idle')), { status: 'idle' });
+  assert.equal(agy.terminal.composerIsEmpty(pane('subagent-idle')), true);
+  assert.deepEqual(agyClassify(pane('subagent-blocked')), { status: 'needs-you', waitingFor: 'needs approval for Bash' });
+  const multiline = `${RULE}\n> line one\n  line two\n${RULE}\n  ● [08:36:17] sleep 90 running\n${RULE}\n? for shortcuts\n`;
+  assert.equal(agyComposer(multiline), 'line one\nline two');
+  const dialog = `${RULE}\n> run it\n${RULE}\nRequesting permission for:\n   sleep 90\n${RULE}\nesc to cancel\n`;
+  assert.equal(agyComposer(dialog), null, 'a dialog under the rule is not a task area');
+});
+
+test('a mode placeholder in an empty composer reads as empty', () => {
+  for (const name of ['accept-edits', 'plan', 'task-plan']) {
+    assert.equal(agyComposer(pane(name)), '', name);
+    assert.equal(agy.terminal.composerIsEmpty(pane(name)), true, name);
+  }
+  const auto = `${RULE}\n> Auto mode: edits & safe commands auto-approved (shift+tab to cycle)\n${RULE}\n? for shortcuts       auto · Gemini 4 Neon · low\n`;
+  assert.equal(agy.terminal.composerIsEmpty(auto), true);
+  assert.equal(agyComposer(`${RULE}\n> Plan mode: tidy this up\n${RULE}\n? for shortcuts\n`), 'Plan mode: tidy this up');
+});
+
 test('headless runs a piped prompt with every tool denied and reads its JSON', async () => {
   const target = resolveHeadlessTarget({ agent: 'agy' }, { background: null });
   assert.equal(target.model, 'gemini-3.8-flash');
