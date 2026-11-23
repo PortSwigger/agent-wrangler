@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { waitForComposerReady, ensureSubmitted, composerHoldsText, pasteImages, composerImageCount } from './pane-ready.js';
+import { waitForComposerReady, ensureSubmitted, composerHoldsText, pasteImages, composerImageCount, holdPane, paneHeld, warmUpPane } from './pane-ready.js';
 
 const ESC = '';
 // Byte-exact against ghost-suggestion.js's own markers — paneComposerIsEmpty
@@ -370,4 +370,78 @@ test('pasteImages does not wait on Codex or on a pane it cannot read', async () 
     assert.equal(slept, 0);
     assert.equal(ok, agent === 'codex');
   }
+});
+
+test('waitForComposerReady waits for a held pane, unless it is the hold itself', async () => {
+  let release;
+  holdPane('ag_held', new Promise((r) => { release = r; }));
+  assert.equal(paneHeld('ag_held'), true);
+  const opts = { capture: async () => claudeEmpty, sleep: nowait };
+  assert.equal(await waitForComposerReady('ag_held', '', 'claude', { ...opts, afterHold: false }), true);
+  let done = false;
+  const waiting = waitForComposerReady('ag_held', '', 'claude', opts).then((v) => { done = true; return v; });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(done, false, 'held until the preparation settles');
+  release();
+  assert.equal(await waiting, true);
+  assert.equal(paneHeld('ag_held'), false);
+});
+
+test('a failed preparation still releases the pane', async () => {
+  await holdPane('ag_fail', Promise.reject(new Error('tmux gone')));
+  assert.equal(paneHeld('ag_fail'), false);
+});
+
+// agy 1.5.15's `/mcp` panel, as captured from a live pane.
+const RULE = '─'.repeat(80);
+const agyPanel = (row) => [RULE, '>', RULE, 'MCP Servers', 'Plugins (~/.gemini/config/plugins)', row, 'Keyboard: ↑/↓ Navigate  enter Actions  esc Exit'].join('\n');
+const agyConnected = agyPanel('>  ✓ agent-wrangler_agent-wrangler  Tools: list_sessions, get_session_info,');
+const agyFailed = agyPanel('>  ✗ agent-wrangler_agent-wrangler  error: calling "initialize": Agent Wrangler MCP is unreachable: fetch failed');
+const agyIdle = [RULE, '>', RULE, '? for shortcuts'].join('\n');
+
+function warmUpDeps(panes) {
+  const sent = [];
+  const logs = [];
+  let i = 0;
+  return {
+    sent, logs,
+    deps: {
+      waitReady: async () => true,
+      capture: async () => panes[Math.min(i++, panes.length - 1)],
+      send: async (name, keys) => sent.push(keys),
+      sleep: nowait,
+      log: (m) => logs.push(m),
+    },
+  };
+}
+
+test('warmUpPane opens agy\'s MCP panel, waits for the board\'s server, then closes it', async () => {
+  const { sent, logs, deps } = warmUpDeps([agyIdle, agyPanel('>  ⋯ agent-wrangler_agent-wrangler  connecting'), agyConnected]);
+  assert.equal(await warmUpPane('ag_a', '', 'agy', deps), 'ready');
+  assert.deepEqual(sent, [['-l', '/mcp'], ['Enter'], ['Escape']]);
+  assert.deepEqual(logs, []);
+});
+
+test('warmUpPane reports a server agy could not start, and still closes the panel', async () => {
+  const { sent, logs, deps } = warmUpDeps([agyFailed]);
+  assert.equal(await warmUpPane('ag_a', '', 'agy', deps), 'failed: error: calling "initialize": Agent Wrangler MCP is unreachable: fetch failed');
+  assert.deepEqual(sent.at(-1), ['Escape']);
+  assert.match(logs[0], /\[agy\] ag_a: the board's MCP server did not connect .*Agent Wrangler MCP is unreachable/);
+});
+
+test('warmUpPane gives up after its timeout, and never types into a pane with no composer', async () => {
+  const slow = warmUpDeps([agyIdle]);
+  assert.equal(await warmUpPane('ag_a', '', 'agy', { ...slow.deps, timeoutMs: 0 }), 'timeout');
+  assert.deepEqual(slow.sent.at(-1), ['Escape']);
+  const booting = warmUpDeps([agyIdle]);
+  assert.equal(await warmUpPane('ag_a', '', 'agy', { ...booting.deps, waitReady: async () => false }), 'not-ready');
+  assert.deepEqual(booting.sent, []);
+  assert.equal(booting.logs.length, 1);
+});
+
+test('warmUpPane does nothing for an agent whose tools are there from the start', async () => {
+  const { sent, deps } = warmUpDeps([claudeEmpty]);
+  assert.equal(await warmUpPane('cc_a', '', 'claude', deps), null);
+  assert.equal(await warmUpPane('cx_a', '', 'codex', deps), null);
+  assert.deepEqual(sent, []);
 });

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { agy, agyClassify, agyComposer, agyFooterModel, agyLaunchSecretEnv, agyModeArgs, agyModelArgs, agySessionSettings } from './agy.js';
+import { AGY_TOOL_PREFIX, agy, agyClassify, agyComposer, agyFooterModel, agyInstructions, agyLaunchSecretEnv, agyModeArgs, agyModelArgs, agySessionSettings } from './agy.js';
 import { collectLaunchContext } from '../launch-context.js';
 import { runtimeFor } from '../runtimes/index.js';
 import { adapterFor, effortError, launchTargetError, modelPillFor, providerMetadata, supportsRemoteControl } from './index.js';
@@ -16,7 +16,8 @@ import { createAgyChatScanner, extractAgyLine } from './agy-transcript.js';
 import { analyzeAgy, listResumableAgy } from './agy-usage.js';
 import { ensureAgyRoot, pluginFiles } from './agy-config.js';
 import { sessionStart } from './agy-hook.js';
-import { messagesOf } from './agy-mcp-bridge.js';
+import { alwaysLoaded, messagesOf } from './agy-mcp-bridge.js';
+import { SessionManager } from '../session-manager.js';
 import { resolveHeadlessTarget } from '../headless.js';
 import { agyCostUsd } from '../pricing.js';
 import { dispatchModels } from './listing.js';
@@ -76,7 +77,9 @@ test('protobuf round trip reads nested fields by number', () => {
 test('launch passes model and effort separately, the board root, trust and MCP grants', () => {
   const cmd = agy.buildLaunch({ sessionId: 'card-1', cwd: '/work/repo', intent: '-fix it', model: 'gemini-4-neon', effort: 'high' });
   assert.match(cmd, / agy '--mode' 'auto' '--model' 'gemini-4-neon' '--effort' 'high' '--add-dir' '[^']*agy\/root'/);
-  assert.match(cmd, /'--prompt-interactive=-fix it'/);
+  assert.doesNotMatch(cmd, /--prompt-interactive|fix it/, 'a prompt on the command line would start a turn before the board\'s MCP server');
+  assert.equal(agy.launchCarriesIntent, false);
+  assert.ok(agy.terminal.warmUp);
   assert.match(cmd, /AW_AGY_MCP_URL='http:\/\/127\.0\.0\.1:\d+\/mcp'/);
   assert.match(cmd, /AW_AGY_CONTEXT='Your working directory is \/work\/repo/);
   assert.match(cmd, /AW_AGY_CWD='\/work\/repo'/);
@@ -139,6 +142,51 @@ test('SessionStart records the conversation and hands over instructions once', (
   assert.equal(conversationCwd(ID, { idsDir: dir, agyDir: tmp() }), '/work/repo');
   assert.equal(sessionStart({ conversationId: ID }, env, 6), null, 'a resume of the same conversation is not told twice');
   assert.equal(sessionStart({ conversationId: ID }, {}), null);
+});
+
+test('the instructions name the board tools by agy\'s function names', () => {
+  assert.equal(AGY_TOOL_PREFIX, 'mcp_agent-wrangler_agent-wrangler_');
+  const text = agyInstructions({ sessionId: 'card-1', cwd: '/work/repo' });
+  assert.match(text, /board tools are your functions named mcp_agent-wrangler_agent-wrangler_<tool>/);
+  assert.match(text, /Call mcp_agent-wrangler_agent-wrangler_rename_session with \{"target":"card-1"/);
+});
+
+test('the MCP bridge marks every board tool always-loaded, leaving other replies alone', () => {
+  const reply = { jsonrpc: '2.0', id: 3, result: { tools: [{ name: 'rename_session', inputSchema: {} }, { name: 'job_report', _meta: { x: 1 } }], nextCursor: 'n' } };
+  const out = alwaysLoaded(reply);
+  assert.deepEqual(out.result.tools.map((t) => t._meta), [{ 'antigravity/alwaysLoad': true }, { x: 1, 'antigravity/alwaysLoad': true }]);
+  assert.equal(out.result.nextCursor, 'n');
+  assert.equal(reply.result.tools[0]._meta, undefined, 'the reply it was given is not changed');
+  const error = { jsonrpc: '2.0', id: 3, error: { code: -1, message: 'no' } };
+  assert.equal(alwaysLoaded(error), error);
+});
+
+function agyManager() {
+  const sm = new SessionManager();
+  sm._save = () => {};
+  sm.refreshAlive = async () => {};
+  sm._resolveLiveId = async () => null;
+  const launched = [];
+  const prepared = [];
+  sm._newSession = async (tmux, dir, inner) => { launched.push(inner); };
+  sm._prepareFirstTurn = (args) => { prepared.push(args); };
+  return { sm, launched, prepared };
+}
+
+test('a dispatch launches agy bare and has the board type the intent after the MCP warm-up', async () => {
+  const { sm, launched, prepared } = agyManager();
+  const { sessionId, tmux } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'fix the login page', agent: 'agy', model: 'gemini-4-neon' });
+  assert.doesNotMatch(launched[0], /--prompt-interactive|fix the login page/);
+  assert.deepEqual(prepared, [{ agent: 'agy', tmux, socket: sm.socket, text: 'fix the login page' }]);
+  assert.equal(sm.entryFor(sessionId).intent, 'fix the login page', 'the card keeps its intent');
+});
+
+test('a resumed agy pane is warmed up before anything is typed into it', async () => {
+  const { sm, prepared } = agyManager();
+  sm.map.set('card-r', { tmux: 'ag_old', cwd: os.tmpdir(), agent: 'agy', liveSessionId: ID, intent: 'x' });
+  sm.killForSession = async () => {};
+  const { tmux } = await sm.resume('card-r', os.tmpdir());
+  assert.deepEqual(prepared, [{ agent: 'agy', tmux, socket: sm.socket, text: '' }]);
 });
 
 test('the MCP bridge reads JSON and SSE replies', () => {
