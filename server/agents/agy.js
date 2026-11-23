@@ -8,7 +8,7 @@ import { launchAddDirsOf, launchEnvGuard, launchEnvPrefix } from '../launch-cont
 import { worktreeGuardrailPrompt } from '../worktree.js';
 import { MCP_SERVER_NAME, mcpUrl, prAttachUrl, prModelUrl } from '../mcp/client-config.js';
 import { agyCostUsd } from '../pricing.js';
-import { allowedAgyTools, ensureAgyRoot } from './agy-config.js';
+import { PLUGIN_NAME, allowedAgyTools, ensureAgyRoot } from './agy-config.js';
 import { AGY_DIR, IDS_DIR, MIRROR_DIR, conversationCwd, discoverAgyLiveId, forEachMirrorLine, syncMirror } from './agy-db.js';
 import { createAgyChatScanner, extractAgyLine, mightCarryAgyChat, mightCarryAgyText } from './agy-transcript.js';
 import { activityInRangeAgy, agySources, analyzeAgy, listResumableAgy, scanDaily, scanMonth } from './agy-usage.js';
@@ -20,6 +20,10 @@ import { activityInRangeAgy, agySources, analyzeAgy, listResumableAgy, scanDaily
 //     each launch adds as a workspace (agy-config.js);
 //   - its conversations are SQLite; the board reads a JSONL mirror of each;
 //   - status is read off the pane;
+//   - the board's MCP tools reach a turn only once agy has started the plugin's
+//     MCP server, which it does lazily, so the board starts it from the pane
+//     before the first turn (`terminal.warmUp`) and types the first prompt
+//     after (`launchCarriesIntent: false`);
 //   - no fork: agy's `/fork` switches the running pane to the copy, so a board
 //     fork would have to open the same conversation in a second agy and type
 //     into it. That is left off rather than raced.
@@ -82,10 +86,16 @@ export function agyModelArgs(model, effort) {
 // on demand by absolute path) and, in a worktree, its guardrail. The board's
 // plugin folder is a second workspace agy may sort first, so the working
 // directory is named outright.
+// agy names a plugin's MCP server `<plugin>_<server>`, and each of its
+// always-loaded tools (agy-mcp-bridge.js) `mcp_<that server>_<tool>`.
+export const AGY_MCP_SERVER = `${PLUGIN_NAME}_${MCP_SERVER_NAME}`;
+export const AGY_TOOL_PREFIX = `mcp_${AGY_MCP_SERVER}_`;
+
 export function agyInstructions({ sessionId, cwd, worktree = null, disabledSkills }) {
-  const title = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call the agent-wrangler rename_session MCP tool with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
+  const tools = `Agent Wrangler's board tools are your functions named ${AGY_TOOL_PREFIX}<tool>. Wherever these instructions or a prompt name a board tool by its bare name (rename_session, job_report, read_mail, …), call that function.`;
+  const title = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call ${AGY_TOOL_PREFIX}rename_session with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
   const where = cwd ? `Your working directory is ${cwd}. Run shell commands there, and pass it explicitly as the command's working directory. The workspace folder ending in agy/root is Agent Wrangler's plugin folder: never work in it.` : '';
-  const parts = [where, mandatorySkillPrompt(undefined, { disabledSkills }), title, codexSkillCatalog(undefined, { disabledSkills })];
+  const parts = [where, tools, mandatorySkillPrompt(undefined, { disabledSkills }), title, codexSkillCatalog(undefined, { disabledSkills })];
   if (worktree) parts.push(worktreeGuardrailPrompt(worktree));
   return parts.filter(Boolean).join('\n\n');
 }
@@ -223,6 +233,21 @@ export function agyClassify(text) {
   return { status: 'unknown' };
 }
 
+// agy (1.5.15) starts a plugin's MCP servers only when something first needs
+// them, and a turn is sent with the tools connected at that moment: the turn
+// that starts a conversation, or the first one after a resume, never has the
+// board's. Its `/mcp` panel starts them without a turn, so before anything is
+// typed into a fresh pane the board opens it, waits for the board's server to
+// show connected (or failed), and closes it (pane-ready.js warmUpPane).
+const SERVER_RE = AGY_MCP_SERVER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const AGY_WARM_UP = {
+  keys: '/mcp',
+  panel: /^MCP Servers\s*$/m,
+  ready: new RegExp(`✓\\s+${SERVER_RE}\\b`),
+  failed: new RegExp(`✗\\s+${SERVER_RE}\\s+(.*)`),
+  close: 'Escape',
+};
+
 const composerIsReady = (text) => agyComposer(text) !== null && agyClassify(text).status === 'idle';
 function composerIsEmpty(text, { allowWhileWorking = false } = {}) {
   const draft = agyComposer(text);
@@ -271,9 +296,11 @@ export const agy = {
   contextWindow: () => null,
   unavailableMessage: "This is an agy conversation, but the `agy` binary isn't on PATH — install Antigravity CLI (or put it on the launchd PATH) to resume agy sessions.",
   presetsSessionId: false,
-  // An intent goes in as `-i` on a launch only; a resume's is pasted once the
-  // pane is up (pr-nudge-runner).
+  // No prompt goes on agy's command line, since it would start a turn with no
+  // board tools: a resume's is pasted once the pane is up (pr-nudge-runner),
+  // and a launch's is typed after the MCP warm-up (_prepareFirstTurn).
   resumeCarriesIntent: false,
+  launchCarriesIntent: false,
   supportsRemoteControl: false,
   supportsDisallowedTools: false,
   headlessArchiveReview: false,
@@ -329,6 +356,7 @@ export const agy = {
     allowWhileWorking: false,
     imageAcknowledgement: false,
     interruptKeys: ['Escape'],
+    warmUp: AGY_WARM_UP,
   },
 
   async isAvailable() {
@@ -345,10 +373,10 @@ export const agy = {
     return /^(?:\S*\/)?agy(?:\s|$)/.test(command || '');
   },
 
-  buildLaunch({ sessionId, cwd, intent = '', model, effort, permissionMode, addDirs = [], worktree = null, spawnedBy, launchContext, disabledSkills }) {
+  // No intent: the board types it once the MCP warm-up is done (launchCarriesIntent).
+  buildLaunch({ sessionId, cwd, model, effort, permissionMode, addDirs = [], worktree = null, spawnedBy, launchContext, disabledSkills }) {
     const opts = { sessionId, cwd, spawnedBy, launchContext, worktree, disabledSkills, model, effort, permissionMode, addDirs };
-    // `-i=<text>` so an intent starting with `-` is never read as a flag.
-    return command(opts, intent.trim() ? [`--prompt-interactive=${intent.trim()}`] : []);
+    return command(opts, []);
   },
 
   buildResume({ sessionId, cwd, resumeId, model, effort, permissionMode, addDirs = [], worktree = null, spawnedBy, launchContext, disabledSkills }) {

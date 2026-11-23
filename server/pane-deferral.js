@@ -3,6 +3,7 @@ import { adapterFor } from './agents/index.js';
 import { sendText as defaultSendText, capturePaneStyled as defaultCapture, classify as defaultClassify } from './tmux-scraper.js';
 import { codexComposerDiagnostic } from './agents/composer-parsers.js';
 import { paneComposerIsEmpty } from './ghost-suggestion.js';
+import { paneHeld as defaultPaneHeld } from './pane-ready.js';
 
 // Hold an AUTOMATED pane notification back while the human is mid-prompt.
 //
@@ -45,6 +46,7 @@ export function createPaneDeferral({
   sendText = defaultSendText,
   capture = defaultCapture,
   classify = defaultClassify,
+  paneHeld = defaultPaneHeld,
 } = {}) {
   // card id -> lines awaiting a clear composer, oldest first.
   const pending = new Map();
@@ -65,7 +67,7 @@ export function createPaneDeferral({
   // reason is for a log line only; every non-null answer defers.
   async function blocker(id, tmux, socket, deferWhileWorking = false, allowWhileWorking = false) {
     try {
-      if (!readyFor(id)) return 'agent still starting';
+      if (!readyFor(id) || paneHeld(tmux)) return 'agent still starting';
       const agent = agentFor(id);
       // PR notices can reach an active turn. Mail retains its agent-specific
       // timing policy, but both routes require clear input and no dialog.

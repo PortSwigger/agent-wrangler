@@ -43,6 +43,17 @@ test('a confirmed-empty composer takes the paste immediately and queues nothing'
   assert.deepEqual(pd.pending('c1'), []);
 });
 
+test('a pane the board is still preparing defers the paste', async () => {
+  const d = deps();
+  let held = true;
+  const pd = createPaneDeferral({ ...d, paneHeld: (name) => held && name === 'cc_one' });
+
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'You have mail' }), 'deferred');
+  assert.deepEqual(d.sent, []);
+  held = false;
+  assert.equal(await pd.deliverOrDefer({ id: 'c1', text: 'You have mail' }), 'sent');
+});
+
 test('an empty Codex composer takes the notification immediately', async () => {
   const d = deps({ pane: codexComposer(), agent: 'codex' });
   const pd = createPaneDeferral(d);

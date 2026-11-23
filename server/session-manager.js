@@ -36,6 +36,7 @@ import { notePrompt, promptSourceForReason } from './prompt-ledger.js';
 import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
 import { checkGuiSession } from './gui-session.js';
 import { gentleKill } from './tmux-gentle-kill.js';
+import { holdPane, warmUpPane, deliverFirstPrompt, waitForComposerReady } from './pane-ready.js';
 
 
 const exec = promisify(execFile);
@@ -1513,7 +1514,7 @@ export class SessionManager {
       // A scheduled resume can carry a message to deliver as the relaunch prompt
       // (claude --resume … -- <intent>), avoiding a paste race against a booting
       // agent. Empty for an interactive resume. (Codex resume ignores it.)
-      intent: freshAfterUpdate ? prev?.intent || '' : intent,
+      intent: freshAfterUpdate ? (adapter.launchCarriesIntent === false ? '' : prev?.intent || '') : intent,
       spawnedBy: prev?.spawnedBy,
       remoteControl: prev?.remoteControl,
       disallowedTools: prev?.disallowedTools,
@@ -1524,6 +1525,7 @@ export class SessionManager {
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext: runtimeLaunchContext(runtime, launchContext), secretEnvFile, ...this._statusHookFor(launchContext), ...(remote ? { location: prev.location } : {}) });
     const launchedAt = Date.now();
     const paneId = await this._newSession(tmux, remote ? os.homedir() : dir, launchCmd, this.socket);
+    if (!remote) this._prepareFirstTurn({ agent, tmux, socket: this.socket, text: freshAfterUpdate && adapter.launchCarriesIntent === false ? prev?.intent || '' : '' });
     if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt, at: remote ? { rt: runtime, entry: { ...prev, cwd: dir } } : null }) || undefined;
     // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
     // launch was in flight. Nothing awaits between this check and the map.set below.
@@ -1915,6 +1917,21 @@ export class SessionManager {
   // its own sessions, '' for legacy default-socket ones.
   _tmux(socket, args, opts) {
     return exec(this.tmuxBin, [...tmuxSocketArgs(socket), ...args], opts);
+  }
+
+  // Before anything is typed into a freshly launched pane: an agent whose MCP
+  // tools reach only a turn started after a warm-up (agy, its terminal.warmUp)
+  // gets that warm-up, then a first prompt it could not take at launch is
+  // typed. The pane is held meanwhile (pane-ready.js holdPane), so the board's
+  // other pastes wait for both. Not awaited: a launch returns as soon as its
+  // pane exists. A seam, like _newSession.
+  _prepareFirstTurn({ agent, tmux, socket, text = '' }) {
+    const warms = Boolean(adapterFor(agent).terminal?.warmUp);
+    if (!warms && !text) return null;
+    return holdPane(tmux, (async () => {
+      if (warms) await warmUpPane(tmux, socket, agent);
+      if (text) await deliverFirstPrompt({ tmux, socket, agent, text }, { waitReady: (n, s, a) => waitForComposerReady(n, s, a, { afterHold: false }) });
+    })());
   }
 
   // Create a detached tmux session for `inner` on `socket`, keeping the pane
@@ -2390,7 +2407,12 @@ export class SessionManager {
     const branchBrief = remote && locationBranch.branch
       ? `Work on branch \`${locationBranch.branch}\`${locationBranch.branchBase ? ` starting from origin/${locationBranch.branchBase}` : ''}.`
       : '';
-    const launchIntent = [branchBrief, deferIntent ? '' : intent].filter(Boolean).join('\n\n');
+    // An agent that cannot take its first prompt on the command line
+    // (launchCarriesIntent: false) has it typed once its pane is ready
+    // (_prepareFirstTurn).
+    const firstText = [branchBrief, deferIntent ? '' : intent].filter(Boolean).join('\n\n');
+    const typesIntent = !builds && !remote && adapter.launchCarriesIntent === false;
+    const launchIntent = typesIntent ? '' : firstText;
     // Asked on both paths so a buildLaunch runtime logs the secrets it skips.
     const secretEnvFile = this._secretEnvFileFor(rt, tmux, launchContext);
     const toolFingerprint = this._extensionToolFingerprint();
@@ -2404,6 +2426,7 @@ export class SessionManager {
       });
     const launchedAt = Date.now();
     const paneId = await this._newSession(tmux, remote ? os.homedir() : cwd, inner, this.socket);
+    if (!builds && !remote) this._prepareFirstTurn({ agent, tmux, socket: this.socket, text: typesIntent ? firstText : '' });
 
     const liveSessionId = builds ? undefined : presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt, at: remote ? { rt, entry: { runtime, location: locationRef, cwd, agent } } : null });
 

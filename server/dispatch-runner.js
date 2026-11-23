@@ -3,32 +3,10 @@ import { autoCompactTokensError } from './session-manager.js';
 import { workflowLaunchPrompt } from './workflow.js';
 import { slugFromIntent } from './worktree.js';
 import { claimStagedPastes } from './paste-store.js';
-import { sendText } from './tmux-scraper.js';
-import { waitForComposerReady, ensureSubmitted, pasteImages } from './pane-ready.js';
+import { deliverFirstPrompt } from './pane-ready.js';
 
-// A first prompt that carries images, delivered the way a chat message with
-// attachments is (message-delivery.js): each path as its own bracketed paste,
-// then the prose, then one Enter — the only shape the TUI turns into inline
-// images. Each image is held until the composer shows its marker, or the Enter
-// beats a slow attach and leaves the image behind (see pasteImages). Held until the freshly launched TUI has painted its composer, since a
-// paste into a pane that is still booting is silently lost. Never throws: the
-// session exists either way, and the intent is still on the card to resend.
-export async function deliverFirstPrompt({ tmux, socket = '', agent, text, imagePaths }, deps = {}) {
-  const {
-    waitReady = waitForComposerReady, paste = pasteImages, send = sendText, confirm = ensureSubmitted,
-    log = (m) => console.error(m),
-  } = deps;
-  try {
-    await waitReady(tmux, socket, agent);
-    if (!await paste(tmux, socket, agent, imagePaths)) log(`[dispatch] an image in the first prompt may not have attached in ${tmux}`);
-    await send(tmux, text, socket);
-    // An image-only prompt leaves just `[Image #1]` in the composer, so that is
-    // what the submit check looks for when there is no prose to find.
-    if (!await confirm(tmux, socket, { text: text || (imagePaths.length ? '[Image #1]' : ''), agent })) log(`[dispatch] first prompt with images may not have been submitted in ${tmux}`);
-  } catch (err) {
-    log(`[dispatch] could not deliver the first prompt with images to ${tmux}: ${err?.message || err}`);
-  }
-}
+// Moved to pane-ready.js, where session-manager can reach it too.
+export { deliverFirstPrompt };
 
 // The shared "perform a dispatch" routine, extracted verbatim from the dispatch
 // control handler so the scheduler fires the EXACT same path — a scheduled
