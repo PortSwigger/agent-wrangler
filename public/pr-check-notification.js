@@ -1,17 +1,20 @@
 export const PR_TOAST_MS = 15000;
 
-export function prCheckToastOptions(status, scope, sessionId, openSession) {
-  if (status !== 'failing' && status !== 'changes-requested') return undefined;
+export function prToastActions(scope, ownerId, openSession, openTask) {
+  if (scope === 'session') return [{ label: 'View session', onClick: () => openSession(ownerId) }];
+  if (scope === 'task') return [{ label: 'View task', onClick: () => openTask(ownerId) }];
+  return [];
+}
+
+export function prCheckToastOptions(status, scope, ownerId, openSession, openTask) {
   return {
-    duration: PR_TOAST_MS,
-    actions: scope === 'session'
-      ? [{ label: 'View session', onClick: () => openSession(sessionId) }]
-      : [],
+    ...(['failing', 'changes-requested'].includes(status) ? { duration: PR_TOAST_MS } : {}),
+    actions: prToastActions(scope, ownerId, openSession, openTask),
   };
 }
 
-export function prAlertToastOptions() {
-  return { duration: PR_TOAST_MS };
+export function prAlertToastOptions(scope, ownerId, openSession, openTask) {
+  return { duration: PR_TOAST_MS, actions: prToastActions(scope, ownerId, openSession, openTask) };
 }
 
 export function prToastSuppressed(msg, suppressNudged) {

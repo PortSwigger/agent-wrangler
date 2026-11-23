@@ -69,7 +69,7 @@ import { setLegacyReporter, withCompatFields } from './legacy-surface.js';
 import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
-import { prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
+import { prToastActions, prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
@@ -8747,10 +8747,10 @@ function onPrChecks(msg) {
   const phrase = PR_CHECK_TEXT[msg.status] || msg.status;
   const shortSha = typeof msg.headSha === 'string' ? msg.headSha.slice(0, 7) : '';
   const text = `[Agent Wrangler] ${label}: ${phrase}${shortSha ? ` (${shortSha})` : ''}`;
-  toast(text, isErr, prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard));
+  toast(text, isErr, prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
-    n.onclick = () => { window.focus(); if (msg.scope === 'session') openSessionInBoard(msg.sessionId); };
+    n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
   }
   if (isErr) flashPr(msg.url);
 }
@@ -8764,7 +8764,7 @@ function onPrMerge(msg) {
   const text = msg.ok
     ? `PR #${msg.number} auto-merged`
     : `PR #${msg.number} auto-merge failed: ${msg.error}`;
-  toast(text, !msg.ok, msg.ok ? undefined : prAlertToastOptions());
+  toast(text, !msg.ok, prCheckToastOptions(msg.ok ? 'passing' : 'failing', msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
   if (!msg.ok) flashPr(msg.url);
 }
 
@@ -8776,10 +8776,10 @@ function onPrDirty(msg) {
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
-  toast(text, true, prAlertToastOptions());
+  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
-    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(cardOf(msg.sessionId)); };
+    n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
   }
   flashPr(msg.url);
 }
@@ -8795,10 +8795,10 @@ function onPrComments(msg) {
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const phrase = `${msg.delta} new unresolved review thread${msg.delta === 1 ? '' : 's'} (${msg.count} unresolved total)`;
   const text = `[Agent Wrangler] ${label}: ${phrase}`;
-  toast(text, true, prAlertToastOptions());
+  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
-    n.onclick = () => { window.focus(); if (msg.scope === 'session') selectSession(cardOf(msg.sessionId)); };
+    n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
   }
   flashPr(msg.url);
 }
