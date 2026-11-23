@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { claudeModelId } from './claude.js';
 import { codexDefaultEffort } from './codex-catalog.js';
 import { codexHome } from '../codex-trust.js';
+import { AGY_DIR } from './agy-db.js';
 
 // "Auto" effort launches pass no --effort / model_reasoning_effort, so the agent
 // picks its own level from the user's and organization's config. This resolves
@@ -66,6 +67,7 @@ export function defaultSourcePaths({ env = process.env, platform = process.platf
     managedDropIns: dir && path.join(dir, 'managed-settings.d'),
     user: path.join(claudeConfigDir(env), 'settings.json'),
     codexConfig: path.join(codexHome(), 'config.toml'),
+    agySettings: path.join(AGY_DIR, 'settings.json'),
   };
 }
 
@@ -214,6 +216,37 @@ export function readCodexConfigEffort(file) {
   return readMemo(file, (f) => parseCodexConfigEffort(fs.readFileSync(f, 'utf8')));
 }
 
+// agy (checked against 1.5.15 in agy's own log, "Propagating selected model
+// override to backend: label=…"): `--model <family>` with no `--effort` runs
+// the family at a fixed default, whatever settings.json's `model` says, even
+// when that names the same family at another effort. settings.json's `model`
+// ("Gemini 4 Neon (High)") only applies to a launch with no `--model`, the
+// "default" entry.
+const AGY_FAMILY_DEFAULT = {
+  'gemini-4-neon': 'medium',
+  'gemini-4-hydrogen': 'medium',
+  'gemini-4-carbon': 'medium',
+  'gemini-4-argon': 'medium',
+  'gemini-3.8-flash': 'medium',
+  'gemini-3.1-pro': 'low',
+};
+const AGY_LABEL_LEVELS = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' };
+
+// The effort in an agy model label: "Gemini 4 Neon (XHigh)" → xhigh.
+export function parseAgyModelEffort(label) {
+  const m = /\(([^)]+)\)\s*$/.exec(typeof label === 'string' ? label : '');
+  return (m && AGY_LABEL_LEVELS[m[1].trim().toLowerCase()]) || null;
+}
+
+export function resolveAgyAutoEffort(value, { settingsModel = null } = {}) {
+  if (value === 'default') return parseAgyModelEffort(settingsModel);
+  return AGY_FAMILY_DEFAULT[value] || null;
+}
+
+export function readAgySettingsModel(file) {
+  return readJson(file)?.model ?? null;
+}
+
 // The agents frame's models with `autoEffort` added where it is known. `agent`
 // is an adapter or a registered agent's id.
 export function withAutoEffort(agent, models, paths = defaultSourcePaths()) {
@@ -227,7 +260,7 @@ export function withAutoEffort(agent, models, paths = defaultSourcePaths()) {
 
 // A cheap fingerprint of every source file (mtimes and sizes, no reads).
 export function sourcesSignature(paths = defaultSourcePaths()) {
-  const files = [paths.remote, ...paths.mdm, paths.managedFile, ...dropIns(paths.managedDropIns), paths.user, paths.codexConfig];
+  const files = [paths.remote, ...paths.mdm, paths.managedFile, ...dropIns(paths.managedDropIns), paths.user, paths.codexConfig, paths.agySettings];
   return files.filter(Boolean).map((f) => `${f}=${statKey(f)}`).join('\n');
 }
 

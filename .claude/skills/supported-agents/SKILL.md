@@ -113,7 +113,7 @@ cost function to `server/pricing.js`); an optional field left out means
 - [ ] `id`, `label`, `tmuxPrefix` (unique, e.g. `gm_`), `reviewPriority` (lower is picked first for a review)
 - [ ] `models` (`value`, `label`, `pillLabel`, `transcriptPrefixes`, `contextWindow`, one `default: true`) and `efforts` (or `effortsForModel(model)`)
 - [ ] `modelId(value)` when a launch value is an alias, and `contextWindow(model)` when the window is read rather than carried on `models`
-- [ ] `autoEffortResolver(paths)` for the "auto" effort, `modelCommand(model)` when the TUI switches model live
+- [ ] `autoEffortResolver(paths)` for the "auto" effort (null when unknown; any file it reads goes in `defaultSourcePaths` in `auto-effort.js`, which `sourcesSignature` watches), `modelCommand(model)` when the TUI switches model live
 - [ ] `isAvailable()` (binary on PATH), `unavailableMessage`, `launch.availabilityOverride` (optional)
 
 **Launching**

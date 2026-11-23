@@ -20,6 +20,7 @@ import { alwaysLoaded, messagesOf } from './agy-mcp-bridge.js';
 import { SessionManager } from '../session-manager.js';
 import { resolveHeadlessTarget } from '../headless.js';
 import { agyCostUsd } from '../pricing.js';
+import { dispatchModels } from './listing.js';
 
 const ID = '0c0cd5a7-f7aa-4713-9aca-ff89cba0cfb5';
 const T0 = Date.UTC(2026, 10, 20, 10, 0, 0);
@@ -356,4 +357,11 @@ test('GEMINI_API_KEY: a headless run gets it in its process env, the caller\'s k
   assert.ok(!viaKeychain.args.some((a) => a.includes('from-keychain')));
   const explicit = await agy.headless.command({ prompt: 'P', model: 'gemini-3.8-flash', env: { GEMINI_API_KEY: 'explicit' }, secretEnv });
   assert.equal(explicit.env.GEMINI_API_KEY, 'explicit');
+});
+
+test('the dispatch list says what Auto effort each Gemini family runs at', () => {
+  const byValue = Object.fromEntries(dispatchModels(agy).map((m) => [m.value, m.autoEffort]));
+  assert.equal(byValue['gemini-4-neon'], 'medium');
+  assert.equal(byValue['gemini-4-hydrogen'], 'medium');
+  assert.equal(byValue['gemini-3.1-pro'], 'low');
 });
