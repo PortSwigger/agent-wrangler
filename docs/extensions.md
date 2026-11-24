@@ -2473,18 +2473,18 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   therefore be stale: consumers must assess `fetchedAt` and `lastError`.
   Reattaching a URL resumes observation. A different `nodeId` at the same URL
   replaces the previous PR record entirely; compare `nodeId` and `createdAt`
-  when detecting URL reuse. Timestamp-only refreshes update memory without disk
-  writes; those timestamps persist with the next meaningful change for that URL.
-  After a restart, freshness timestamps therefore conservatively reflect the last
-  durable change rather than every successful poll. Each write touches only its
-  own URL file; retained history does not multiply sweep write costs.
+  when detecting URL reuse. Every completed fetch attempt persists its timestamps,
+  including when PR data is unchanged, so restart freshness reflects the latest
+  successful poll. Each write touches only its own URL file; retained history does
+  not multiply sweep write costs.
 
   Capability `events` alone grants observation payloads, without `links:read`.
   Subscribe using
   `host.events.on('pr:observation', observation => { /* ... */ })`.
-  The payload is the full deeply frozen observation above. Core emits once on
-  the first observation, any PR data change (including identity or head), and
-  error changes/recovery. Changes only to `fetchedAt`/`attemptedAt` do not emit.
+  The payload is the full deeply frozen observation above. Core emits after
+  every completed fetch attempt, including timestamp-only updates. Consumers can
+  detect observer recovery even when the PR data is unchanged; consumers needing
+  status transitions must compare PR fields rather than timestamps.
   Events follow the durable write and precede terminal link removal. A failed
   write is logged and leaves the prior observation snapshot intact for retry.
   Open PR link status updates and notifications continue; terminal links stay
