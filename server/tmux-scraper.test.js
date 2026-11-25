@@ -16,6 +16,56 @@ test('classify: unchanged for working/idle', () => {
   assert.equal(classify('a quiet prompt').status, 'idle');
 });
 
+const MCP_SERVER_DIALOG = `New MCP server found in this project: burp-toolbox
+
+  MCP servers may execute code or access system resources. All tool calls require approval. Learn more in the MCP documentation.
+
+    Use this MCP server
+    Use this and all future MCP servers in this project
+  ❯ Continue without using this MCP server`;
+
+test('classify: the new MCP server approval dialog names the server needing approval', () => {
+  const expected = { status: 'needs-you', waitingFor: 'New MCP server found in this project: burp-toolbox' };
+  assert.deepEqual(classify(MCP_SERVER_DIALOG), expected);
+  for (const option of [
+    'Use this MCP server',
+    'Use this and all future MCP servers in this project',
+    'Continue without using this MCP server',
+  ]) {
+    assert.deepEqual(classify(`New MCP server found in this project: burp-toolbox\n❯ 1. ${option}`), expected);
+  }
+  assert.deepEqual(classify(`\x1b[33m${MCP_SERVER_DIALOG}\x1b[0m`), expected);
+});
+
+test('classify: the plural MCP server approval dialog reads as needs-you', () => {
+  const pane = `2 new MCP servers found in this project
+Select any you wish to enable.
+
+MCP servers may execute code or access system resources. All tool calls require approval. Learn more in the MCP documentation.
+
+❯ ☒ example-tools
+  ☒ example-search
+
+  Enable selected
+
+Space to select · Esc to reject all`;
+  assert.deepEqual(classify(pane), {
+    status: 'needs-you', waitingFor: '2 new MCP servers found in this project',
+  });
+});
+
+test('classify: MCP server approval needs both a heading and an option line', () => {
+  for (const pane of [
+    'New MCP server found in this project: example-tools',
+    'Use this MCP server',
+    '2 new MCP servers found in this project\nSelect any you wish to enable.',
+    'Enable selected',
+    'The dialog says New MCP server found in this project: example-tools\nUse this MCP server',
+    'New MCP server found in this project: example-tools\nThe option is Use this MCP server.',
+    'New MCP server found in this project: example-tools\nUse this MCP server later',
+  ]) assert.equal(classify(pane).status, 'idle', pane);
+});
+
 test('classify: the OTHER copy variants of the workspace-trust dialog (not the one trustDialogState already owns) fall back to the generic startup-dialog check', () => {
   // Verbatim (title/body/CTA) from the installed binary's OTHER three live
   // copy variants for this dialog — trustDialogState() (below, from #156) is
