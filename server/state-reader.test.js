@@ -65,6 +65,29 @@ test('liveState returns null for a file without a sessionId', () => {
 
 const CWD = '/Users/me/vcs/agent-wrangler';
 
+test('sessionLabel skips prompt normalization when a higher-priority title wins', () => {
+  const intent = { replace() { throw new Error('unneeded prompt normalization'); } };
+  for (const agent of ['claude', 'codex', 'gemini', 'agy']) {
+    assert.equal(sessionLabel({ agent, names: ['Human title'], intent, cwd: CWD }), 'Human title');
+    assert.equal(sessionLabel({ agent, aiTitle: 'Concise title', intent, cwd: CWD }), 'Concise title');
+  }
+  assert.equal(sessionLabel({ names: [null, 'Cached title'], intent, cwd: CWD }), 'Cached title');
+  assert.equal(sessionLabel({ liveTitle: 'Live title', intent, cwd: CWD }), 'Live title');
+  assert.equal(sessionLabel({ agent: 'codex', summary: 'Summary title', intent, cwd: CWD }), 'Summary title');
+});
+
+test('sessionLabel preserves normalized prompt fallback and cached summary filtering', () => {
+  const intent = '  Investigate\n widgets\tcarefully 😀  ';
+  for (const agent of ['claude', 'codex', 'gemini', 'agy']) {
+    assert.equal(sessionLabel({ agent, names: ['', '(resumed)'], intent, cwd: CWD }), 'Investigate widgets carefully 😀');
+    assert.equal(sessionLabel({ agent, names: [null, 'Investigate widgets carefully 😀'], intent, summary: 'A useful summary', cwd: CWD }),
+      agent === 'claude' ? 'Investigate widgets carefully 😀' : 'A useful summary');
+  }
+  assert.equal(sessionLabel({ intent: '(resumed)', summary: '  Summary\n fallback ', cwd: CWD }), 'Summary fallback');
+  assert.equal(sessionLabel({ intent: 'agent-wrangler-3f', cwd: CWD }), 'agent-wrangler');
+  assert.equal(sessionLabel({ agent: 'codex', intent: '   ', cwd: CWD }), 'Codex session');
+});
+
 test('sessionLabel uses the intent when no explicit name is set (was falling to the folder)', () => {
   assert.equal(
     sessionLabel({ names: [null, null], intent: 'Fix the session title bug', summary: null, cwd: CWD, fallback: 'cc_ab12' }),
