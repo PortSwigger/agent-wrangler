@@ -151,6 +151,13 @@ test('the instructions name the board tools by agy\'s function names', () => {
   assert.match(text, /Call mcp_agent-wrangler_agent-wrangler_rename_session with \{"target":"card-1"/);
 });
 
+test('agy is not offered the show-image skill: its Chat draws no tool images', () => {
+  const text = agyInstructions({ sessionId: 'card-1', cwd: '/work/repo' });
+  assert.match(text, /read_mail/, 'the other nudges are still there');
+  assert.doesNotMatch(text, /show_image|skills\/show-image\//);
+  assert.doesNotMatch(agyInstructions({ sessionId: 'card-1', cwd: '/work/repo', disabledSkills: null }), /skills\/show-image\//);
+});
+
 test('the MCP bridge marks every board tool always-loaded, leaving other replies alone', () => {
   const reply = { jsonrpc: '2.0', id: 3, result: { tools: [{ name: 'rename_session', inputSchema: {} }, { name: 'job_report', _meta: { x: 1 } }], nextCursor: 'n' } };
   const out = alwaysLoaded(reply);

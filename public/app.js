@@ -8857,6 +8857,8 @@ const chatView = initChatView({
   // ever needs the cwd of the session it is showing, and latestSessions is already
   // the live answer.
   cwdFor: (card) => sessionByCard(card)?.cwd || null,
+  // A tool result's image, read out of the transcript by the card's own deck.
+  fetchImage: (card, ref) => deckAct('session.chat-image', { session: sessionIdOf(card), args: { ref }, card }),
 });
 
 if (window.Notification && Notification.permission === 'default') Notification.requestPermission();

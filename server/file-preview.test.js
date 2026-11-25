@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandHome, isMarkdownPath, resolveMarkdownPath } from './file-preview.js';
+import { expandHome, isImagePath, isMarkdownPath, resolveImagePath, resolveMarkdownPath } from './file-preview.js';
 
 test('expandHome expands ~ and ~/…', () => {
   assert.equal(expandHome('~', '/home/u'), '/home/u');
@@ -56,4 +56,23 @@ test('400 on null/undefined raw path', () => {
 test('400 on a relative / empty path', () => {
   assert.equal(resolveMarkdownPath('foo.md', fakeDeps()).status, 400);
   assert.equal(resolveMarkdownPath('', fakeDeps()).status, 400);
+});
+
+test('resolveImagePath accepts the four raster extensions and refuses the rest', () => {
+  const real = { '/a.png': '/a.png', '/b.JPEG': '/b.JPEG', '/c.gif': '/c.gif', '/d.webp': '/d.webp', '/e.svg': '/e.svg', '/f.md': '/f.md', '/g.png': '/g.txt' };
+  const deps = { ...fakeDeps(), realpathSync: (p) => { if (p in real) return real[p]; throw new Error('ENOENT'); } };
+  for (const p of ['/a.png', '/b.JPEG', '/c.gif', '/d.webp']) assert.deepEqual(resolveImagePath(p, deps), { status: 200, path: p });
+  for (const p of ['/e.svg', '/f.md', '/g.png']) {
+    assert.deepEqual(resolveImagePath(p, deps), { status: 415, message: 'not a PNG, JPEG, GIF or WebP file' }, p);
+  }
+});
+
+test('resolveImagePath reports the size of a file over the cap', () => {
+  const deps = { ...fakeDeps(), realpathSync: (p) => p, statSync: () => ({ size: 9_000_000, isFile: () => true }) };
+  assert.deepEqual(resolveImagePath('/big.png', deps), { status: 413, message: 'file too large', size: 9_000_000 });
+});
+
+test('isImagePath reads the extension only', () => {
+  assert.ok(isImagePath('/a/b.PNG'));
+  assert.ok(!isImagePath('/a/b.svg'));
 });

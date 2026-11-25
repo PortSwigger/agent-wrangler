@@ -70,7 +70,7 @@ test('exported install paths are absolute and point at the in-repo agent-skills 
 
 test('the real agent-skills dir ships its core skills with descriptions', () => {
   const names = skillEntries().map((e) => e.name);
-  assert.deepEqual(names, ['advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'spawn-session']);
+  assert.deepEqual(names, ['advisor', 'links', 'mail', 'session-activity', 'session-hierarchy', 'show-image', 'spawn-session']);
   for (const e of skillEntries()) assert.ok(e.description.length > 0, `${e.name} has a description`);
 });
 
@@ -107,7 +107,7 @@ test('a disabled todos extension suppresses the archive-to-todo skill from the c
   assert.deepEqual(extensionSkillPluginDirs(SKILLS_ROOT, { ...base, ext: off }), []);
 });
 
-test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
+test('task-memory, mail and show-image are mandatory (carry a nudge); links, spawn-session, session-activity, session-hierarchy, and advisor are discovery-only', () => {
   // task-memory ships with its extension, so it comes from the whole catalog.
   const byName = Object.fromEntries(allSkillEntries().map((e) => [e.name, e]));
   assert.equal(byName['task-memory'].extId, 'task-memory');
@@ -116,6 +116,10 @@ test('task-memory and mail are mandatory (carry a nudge); links, spawn-session, 
   // instruction (CLAUDE.md), so it carries an always-on nudge too, on top of
   // the per-message footer (a separate, per-message control — see mail-format.js).
   assert.ok(byName.mail.nudge.length > 0);
+  // show-image: an agent can't guess it may put a picture in front of the
+  // human, so it is told up front rather than left to discovery.
+  assert.match(byName['show-image'].nudge, /`show_image`/);
+  assert.equal(byName['show-image'].nudge.split('\n').length, 1, 'a one-line nudge');
   assert.equal(byName.links.nudge, '');
   assert.equal(byName['spawn-session'].nudge, '');
   assert.equal(byName['session-activity'].nudge, '');

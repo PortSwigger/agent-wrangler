@@ -100,6 +100,15 @@ test('codex resume and fork also carry the nudge + skills catalog in developer_i
   }
 });
 
+test('Codex launch, resume and fork carry the show_image nudge in developer_instructions', () => {
+  const cmds = [
+    codex.buildLaunch({ ...base, intent: '', addDirs: [] }),
+    codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', ...memory }),
+    codex.buildFork({ sessionId: 'BID', sourceId: 'ROLL-UUID', model: 'gpt-5.5', ...memory }),
+  ];
+  for (const cmd of cmds) assert.match(cmd, /developer_instructions=[\s\S]*`show_image` tool with its absolute path/);
+});
+
 test('Codex launch, resume, and fork instruct the agent to set a concise guarded card title', () => {
   const launch = codex.buildLaunch({ ...base, intent: 'Fix session names' });
   const resume = codex.buildResume({ sessionId: 'BID', resumeId: 'ROLL-UUID', ...memory });
