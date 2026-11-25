@@ -50,7 +50,8 @@ otherwise it behaves exactly as a Claude-only board.
   terminal attaches only to live panes. Chat shows a recent window of roughly the last 200
   events — enough that a typical session is visible whole — but history older than that window
   is not reachable from the UI. Images a tool returns (a Read of a PNG, a browser screenshot) show
-  inline as thumbnails that open full size. It surfaces Claude Code's end-of-turn recap, and offers the
+  inline as thumbnails that open full size, and agents can put a screenshot, chart or diagram there
+  on purpose with `show_image`. It surfaces Claude Code's end-of-turn recap, and offers the
   recap's proposed next step as a one-click prompt (loaded into the composer, never sent for
   you). Permission prompts only exist in the pane, so chat offers a one-click hop to the
   terminal to answer one and brings you back by itself once it is answered — switching view by

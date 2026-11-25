@@ -1,0 +1,1 @@
+To show the human a screenshot, chart, diagram or rendered output, save it as a PNG, JPEG, GIF or WebP file and call Agent Wrangler's `show_image` tool with its absolute path: it appears inline in your session's Chat on the board.

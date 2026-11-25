@@ -144,6 +144,19 @@ same provider and lifecycle limits.
 | `set_links` | Replace the complete link list at session or task scope. |
 | `remove_links` | Remove selected links without reconstructing the rest of the list. |
 
+## Show an image
+
+| Tool | Purpose |
+| --- | --- |
+| `show_image` | Show the human an image inline in the caller's Chat: pass the absolute path of a PNG, JPEG, GIF or WebP file on the board's machine, up to 5 MB. Returns the image as an MCP image block plus one text line, so it lands in the transcript and [Chat draws it as a thumbnail](board-and-sessions.md). |
+
+`show_image` resolves symlinks, then checks the extension of the real file and sniffs its bytes, so
+a file named `.png` that holds anything else is refused. A relative, missing, oversized or non-image
+path is refused with a sentence saying why; a relative one names the absolute path it would be from
+the session's folder. SVG and PDF are refused: render them to PNG first. Sessions in a container or
+at a location are refused, since their paths name files on another machine. Claude and Codex Chat
+show the image; agy's Chat does not yet, and agy sessions are not given the `show-image` skill.
+
 ## Scheduling and terminals
 
 | Tool | Purpose |
