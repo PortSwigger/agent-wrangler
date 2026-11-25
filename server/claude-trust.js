@@ -150,8 +150,9 @@ export async function mirrorWorktreeTrust(cwd, opts = {}) {
 
 // A login's own Claude config dir (the CLAUDE_CONFIG_DIR a launch context sets)
 // gets the same trust a default launch writes, authorised only by the server's
-// config: SESSIONS_DIR, MEMORY_DIR, the launch's ownedAddDirs inside dataDir,a worktree whose repo the server config
-// trusts, and the launch cwd itself when the server config already covers it. Nothing the
+// config: SESSIONS_DIR, MEMORY_DIR, the launch's ownedAddDirs inside dataDir, a
+// worktree whose repo the server config trusts, and the launch cwd itself when
+// the server config already covers it. Nothing the
 // login's own file trusts authorises anything. The dir must already exist (it
 // is never created), must not be the server's own or the CLI's default config
 // dir, and a symlinked .claude.json is left alone. Never throws.
