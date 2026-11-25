@@ -112,7 +112,17 @@ export const CAPABILITIES = new Set([
 //   files:open — open the file links clicked in chat and the terminal (file.open).
 //   board:press — press the board's buttons, cards and menu rows (api.targets.press).
 //   session:type — type and send prompts into the open session (api.sessionPanel.type).
-export const CLIENT_CAPABILITIES = new Set(['cards:hideChips', 'files:open', 'board:press', 'session:type']);
+//   board:wasm-worker — checked by the board server, not slots.js: while an
+//     enabled extension holds it, every board page is sent WASM_WORKER_CSP
+//     (http-handler.js) instead of BOARD_CSP.
+export const BOARD_WASM_WORKER = 'board:wasm-worker';
+export const CLIENT_CAPABILITIES = new Set(['cards:hideChips', 'files:open', 'board:press', 'session:type', BOARD_WASM_WORKER]);
+
+// Whether an enabled extension holds `capability`, read live so an enable,
+// disable, quarantine or uninstall changes the answer on the next request.
+export function enabledHolds(loaded, capability) {
+  return loaded.list.some((e) => e.enabled && !e.quarantine && e.requires.includes(capability));
+}
 
 // The CLOSED vocabulary a manifest's `hideDispatchField` is drawn from: the
 // core dispatch-modal fields an extension may take over by drawing its own

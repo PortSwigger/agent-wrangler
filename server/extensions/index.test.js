@@ -9,7 +9,7 @@ import {
   BUILTIN, RESERVED_GRAPH_KEYS, SESSION_HOOKS, CAPABILITIES, DISPATCH_FIELDS,
   validateManifest, assertGraphKeys, loadExtensions, getExtensions, extensionsForGraph,
   createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension,
-  primeExtensions, extensionsPrimed, _resetExtensionsForTests, themeSources,
+  primeExtensions, extensionsPrimed, _resetExtensionsForTests, themeSources, enabledHolds, BOARD_WASM_WORKER,
 } from './index.js';
 import { FORBIDDEN_IMPORTS } from './external.js';
 import { MAX_TEXT_LENGTH, MAX_TEXTAREA_LENGTH, MAX_PATTERN_LENGTH } from './setting-constraints.js';
@@ -1067,6 +1067,27 @@ test('a client-only capability is accepted in requires and rides the announcemen
   rejects(manifest({ requires: ['cards:teleport'] }), /unknown capability "cards:teleport" \(known: .*cards:hideChips/);
   const out = loadExtensions({ cfg: {}, builtin: [manifest({ client: 'public/index.js', handlers: [], requires: ['cards:hideChips'] })] });
   assert.deepEqual(out.clientManifest, [{ id: 'fake', client: '/ext/fake/index.js', requires: ['cards:hideChips'] }]);
+});
+
+test('board:wasm-worker is held only while an enabled extension declares it', () => {
+  assert.equal(BOARD_WASM_WORKER, 'board:wasm-worker');
+  assert.ok(validateManifest(manifest({ requires: [BOARD_WASM_WORKER] })));
+  const holder = () => manifest({ client: 'public/index.js', requires: [BOARD_WASM_WORKER] });
+  const plain = manifest({ id: 'other', label: 'Other', dir: path.join(HERE, 'other'), tools: [], handlers: [], stores: {}, skills: [], requires: ['cards:hideChips'] });
+  assert.equal(enabledHolds(loadExtensions({ cfg: {}, builtin: [plain] }), BOARD_WASM_WORKER), false, 'nobody declares it');
+  assert.equal(enabledHolds(loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [holder(), plain] }), BOARD_WASM_WORKER), false, 'its holder is off');
+
+  const out = loadExtensions({ cfg: {}, builtin: [holder(), plain] });
+  assert.equal(enabledHolds(out, BOARD_WASM_WORKER), true);
+  unregisterExtension(out, 'fake');
+  assert.equal(enabledHolds(out, BOARD_WASM_WORKER), false, 'disabled live');
+  registerExtension(out, holder(), { cfg: {} });
+  assert.equal(enabledHolds(out, BOARD_WASM_WORKER), true, 'enabled live');
+  quarantineExtension(out, 'fake', 'store factory threw');
+  assert.equal(enabledHolds(out, BOARD_WASM_WORKER), false, 'quarantined');
+  registerExtension(out, holder(), { cfg: {} });
+  unregisterExtension(out, 'fake', { remove: true });
+  assert.equal(enabledHolds(out, BOARD_WASM_WORKER), false, 'uninstalled');
 });
 
 // --- onTaskDelete ---

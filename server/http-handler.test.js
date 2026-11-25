@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createConnection } from 'node:net';
 import WebSocket, { WebSocketServer } from 'ws';
-import { createBoardServer, BOARD_CSP } from './http-handler.js';
+import { createBoardServer, BOARD_CSP, WASM_WORKER_CSP } from './http-handler.js';
 import { createDeckServer, refuseSessionCredentialUpgrade } from './deck/http.js';
 import { carriesSessionCredential } from './session-api/check.js';
 import { createBoardDecks } from './board-decks.js';
@@ -45,11 +45,13 @@ deck.on('upgrade', (req, socket, head) => (carriesSessionCredential(req) ? refus
 await new Promise((resolve) => deck.listen(0, '127.0.0.1', resolve));
 
 let boardPort = 0;
+let wasmWorkerHeld = false;
 const server = createBoardServer({
   boardPort: () => boardPort,
   deckPort: () => deck.address().port,
   extensionAssets: (id) => dirs[id] || null,
   extensionThemes: () => themeDirs,
+  wasmWorker: () => wasmWorkerHeld,
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 boardPort = server.address().port;
@@ -124,6 +126,24 @@ test('the board page names the deck\'s port and enforces its CSP', async () => {
   assert.equal(res.headers.get('content-security-policy'), BOARD_CSP);
   assert.equal(res.headers.get('content-security-policy-report-only'), null, 'enforced, not only reported');
   assert.match(await res.text(), new RegExp(`<meta name="aw-deck-port" content="${deck.address().port}" />`));
+});
+
+// What core sends is unchanged unless an enabled extension holds
+// board:wasm-worker, and is read per request, so a live enable or disable
+// takes effect on the next page load without a restart.
+test('every board route sends BOARD_CSP unless an extension holds board:wasm-worker, then WASM_WORKER_CSP', async () => {
+  const routes = ['/', '/app.js', '/ext/checklist/index.js', '/ext/nope/index.js', '/api/styles', '/missing.js'];
+  const csp = async (route) => (await fetch(`${base}${route}`)).headers.get('content-security-policy');
+  for (const route of routes) assert.equal(await csp(route), "script-src 'self'; object-src 'none'; base-uri 'self'", route);
+  wasmWorkerHeld = true;
+  try {
+    assert.equal(WASM_WORKER_CSP, "script-src 'self' 'unsafe-eval'; object-src 'none'; base-uri 'self'; worker-src 'self' blob:");
+    for (const route of routes) assert.equal(await csp(route), WASM_WORKER_CSP, route);
+  } finally {
+    wasmWorkerHeld = false;
+  }
+  for (const route of routes) assert.equal(await csp(route), BOARD_CSP, `${route} once it is let go`);
+  assert.equal(await csp('/deck'), null, 'a route forwarded to the deck carries the deck\'s headers, never the board\'s CSP');
 });
 
 test('the board page loads every script from its own origin, none inline', async () => {

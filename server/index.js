@@ -22,7 +22,7 @@ import { MailboxStore, UNREAD_TTL_MS } from './mailbox-store.js';
 import { readProvenance } from './extensions/provenance.js';
 import { extensionToolSchemaFailures } from './extensions/tool-schema.js';
 import { extensionToolFingerprint } from './extensions/tool-fingerprint.js';
-import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor, themeSources } from './extensions/index.js';
+import { primeExtensions, assertGraphKeys, extensionsForGraph, createSkillGate, createCodexPolicyResolver, createToolFilter, createTaskDeleteNotifier, quarantineExtension, registerExtension, unregisterExtension, hookPayloadFor, themeSources, enabledHolds, BOARD_WASM_WORKER } from './extensions/index.js';
 import { buildHostApi, buildExtSettings } from './host-api/index.js';
 import { HOST_API_VERSION } from './host-api/version.js';
 import { TOOLS } from './mcp/tools/index.js';
@@ -1248,6 +1248,7 @@ const boardServer = createBoardServer({
   deckPort: () => deckListenPort,
   extensionAssets: (id) => (Object.hasOwn(ext.dirs, id) ? ext.dirs[id] : null),
   extensionThemes: () => themeSources(ext.themeDirs),
+  wasmWorker: () => enabledHolds(ext, BOARD_WASM_WORKER),
   decks: boardDecks,
 });
 

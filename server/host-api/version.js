@@ -659,7 +659,12 @@ import semver from 'semver';
 // 2.1.0 adds the `schema:zod` capability (host.schema.z).
 // 2.2.0 adds the board's `task.button` slot: an icon button in a task tile's
 // title bar, beside New session. Board halves using it declare `^2.2.0`.
-export const HOST_API_VERSION = '2.2.0';
+// 2.3.0 adds the `board:wasm-worker` capability: while an enabled extension
+// holds it, the board's pages are sent WASM_WORKER_CSP (http-handler.js), which
+// lets a board half run a blob: worker that compiles WebAssembly and evaluates
+// strings. An older server quarantines the unknown capability, so a manifest
+// declaring it declares `^2.3.0`.
+export const HOST_API_VERSION = '2.3.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
 export const V1_SHIM_VERSION = '1.96.0';
