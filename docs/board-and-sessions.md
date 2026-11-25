@@ -298,6 +298,21 @@ streaming output, or direct TUI control.
 Rendered Markdown never loads a remote image by itself: an image an agent writes is shown as a link
 to it, so opening a message or file sends nothing to that site until you click.
 
+An image a tool returns shows in Chat as a thumbnail: a Read of a PNG, a browser screenshot from
+Claude in Chrome or Playwright, or any MCP tool that answers with an image. While a run of tool calls is
+collapsed, its images sit under the run's chip. Expanded, each image sits under its own tool's row.
+Click a thumbnail to see it full size, then click the image to switch between fitted and actual
+size. Escape or Close closes it. Claude tool results and Codex tool outputs both show images. Chat
+reads the image from the conversation's own transcript, and only when its thumbnail scrolls into
+view, so it never fetches a URL or opens a file. PNG, JPEG, GIF and WebP are shown, up to 8 MB each.
+A larger image is listed as not shown.
+
+Agents can also show you an image on purpose: a screenshot of what they changed, a chart, a diagram
+or rendered output. Claude and Codex sessions are told about the [`show_image`](agent-tools.md#show-an-image)
+tool at launch (the `show-image` skill), so you can ask "show me a screenshot of the page you
+changed" and the picture lands in Chat. agy's Chat does not show tool images yet, so agy sessions are
+not told about it.
+
 Paste or drop an image into the Chat composer, the agent terminal, or the new-session dialog's
 **Intent / first prompt** box (local launches; the session starts and then receives the images with
 its first prompt): screenshots, Copy Image from a

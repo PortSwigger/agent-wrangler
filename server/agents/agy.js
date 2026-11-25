@@ -92,11 +92,18 @@ export function agyModelArgs(model, effort) {
 export const AGY_MCP_SERVER = `${PLUGIN_NAME}_${MCP_SERVER_NAME}`;
 export const AGY_TOOL_PREFIX = `mcp_${AGY_MCP_SERVER}_`;
 
+// agy's Chat draws no image a tool returns (its chat scanner reads text only),
+// so the show-image skill, whose whole point is the human seeing the picture,
+// is not offered to it. The show_image tool itself stays granted: called
+// anyway, it only shows the image to the agent.
+const SKILLS_CHAT_CANNOT_SHOW = ['show-image'];
+
 export function agyInstructions({ sessionId, cwd, worktree = null, disabledSkills }) {
   const tools = `Agent Wrangler's board tools are your functions named ${AGY_TOOL_PREFIX}<tool>. Wherever these instructions or a prompt name a board tool by its bare name (rename_session, job_report, read_mail, …), call that function.`;
   const title = `Once you understand the first substantive task, name your Agent Wrangler card with a concise 3-8 word description. Call ${AGY_TOOL_PREFIX}rename_session with {"target":"${sessionId}","name":"<short task title>","only_if_unnamed":true}. Do not use the folder name or copy the full prompt. The tool preserves an existing custom title.`;
   const where = cwd ? `Your working directory is ${cwd}. Run shell commands there, and pass it explicitly as the command's working directory. The workspace folder ending in agy/root is Agent Wrangler's plugin folder: never work in it.` : '';
-  const parts = [where, tools, mandatorySkillPrompt(undefined, { disabledSkills }), title, codexSkillCatalog(undefined, { disabledSkills })];
+  const skills = { disabledSkills: [...(disabledSkills || []), ...SKILLS_CHAT_CANNOT_SHOW] };
+  const parts = [where, tools, mandatorySkillPrompt(undefined, skills), title, codexSkillCatalog(undefined, skills)];
   if (worktree) parts.push(worktreeGuardrailPrompt(worktree));
   return parts.filter(Boolean).join('\n\n');
 }

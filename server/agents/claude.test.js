@@ -143,6 +143,19 @@ test('a plain launch still carries --append-system-prompt for the mandatory-skil
   assert.doesNotMatch(plain, /already running inside a dedicated git worktree/);
 });
 
+test('launch, resume and fork carry the show_image nudge in --append-system-prompt and grant the tool', () => {
+  const cmds = [
+    claude.buildLaunch({ sessionId: 'SID' }),
+    claude.buildResume({ sessionId: 'OWNER', resumeId: 'LIVE' }),
+    claude.buildFork({ sessionId: 'CARD', liveSessionId: 'FL', sourceId: 'SRC' }),
+  ];
+  for (const cmd of cmds) {
+    assert.match(cmd, /'--append-system-prompt' '(?:[^']|'\\'')*call Agent Wrangler'\\''s `show_image` tool with its absolute path/);
+    assert.match(cmd, /'--allowedTools' '[^']*mcp__agent-wrangler__show_image/);
+  }
+  assert.doesNotMatch(claude.buildLaunch({ sessionId: 'SID', disabledSkills: ['show-image'] }), /show_image` tool/);
+});
+
 test('a worktree launch appends both the mandatory-skill nudge and the guardrail', () => {
   const wt = claude.buildLaunch({ sessionId: 'SID', worktree: { path: '/v/p-worktree-x', branch: 'x' } });
   assert.match(wt, /--append-system-prompt/);

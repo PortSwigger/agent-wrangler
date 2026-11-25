@@ -55,6 +55,7 @@ import { viewDiffHandler } from './view-diff.js';
 import { diffCommentsHandler } from './diff-comments.js';
 import { subagentDetailHandler } from './subagent-detail.js';
 import { chatHandler } from './chat.js';
+import { chatImageHandler } from './chat-image.js';
 import { interruptHandler } from './interrupt.js';
 import { pasteImageHandler } from './paste-image.js';
 import { usageHandler } from './usage.js';
@@ -132,6 +133,7 @@ export const CONTROL_HANDLERS = [
   diffCommentsHandler,
   subagentDetailHandler,
   chatHandler,
+  chatImageHandler,
   interruptHandler,
   pasteImageHandler,
   usageHandler,
