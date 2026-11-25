@@ -12,10 +12,6 @@ function freeze(value) {
   return value;
 }
 
-function content({ fetchedAt, attemptedAt, ...rest }) {
-  return JSON.stringify(rest);
-}
-
 export function createPrObservationStore({ directory, events, onError = () => {} } = {}) {
   const observations = new Map();
   const filenameFor = (url) => `${createHash('sha256').update(url).digest('hex')}.json`;
@@ -42,17 +38,14 @@ export function createPrObservationStore({ directory, events, onError = () => {}
         ...(status ? { ...structuredClone(status), state: status.state.toLowerCase(), fetchedAt: at } : {}),
         attemptedAt: at, lastError: error,
       });
-      const changed = !previous || content(previous) !== content(next);
-      if (changed) {
-        try {
-          if (directory) writeJsonAtomic(path.join(directory, filenameFor(url)), next);
-        } catch (err) {
-          onError('[pr-observations] saving failed', err);
-          return false;
-        }
+      try {
+        if (directory) writeJsonAtomic(path.join(directory, filenameFor(url)), next);
+      } catch (err) {
+        onError('[pr-observations] saving failed', err);
+        return false;
       }
       observations.set(url, next);
-      if (changed) events?.emit('pr:observation', next);
+      events?.emit('pr:observation', next);
       return true;
     },
   };

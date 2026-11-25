@@ -45,7 +45,7 @@ test('host reads durable observations after terminal links disappear, without ex
   assert.equal(store.get(url).statusCheckRollup[0].name, 'test');
 });
 
-test('observations publish through host events only on meaningful change, after committing the snapshot', (t) => {
+test('observations publish every completed attempt after committing the snapshot', (t) => {
   const { directory, store, host } = setup(t);
   const seen = [];
   host.events.on('pr:observation', (ev) => {
@@ -56,21 +56,21 @@ test('observations publish through host events only on meaningful change, after 
   });
   store.record(url, { status, error: null }, '2026-11-15T12:00:00.000Z');
   store.record(url, { status, error: null }, '2026-11-15T12:01:00.000Z');
-  assert.equal(seen.length, 1);
+  assert.equal(seen.length, 2);
   assert.equal(host.links.prObservation(url).fetchedAt, '2026-11-15T12:01:00.000Z');
   store.record(url, { status: null, error: 'gh exited 1' }, '2026-11-15T12:02:00.000Z');
-  assert.equal(seen.length, 2);
-  assert.equal(seen[1].headSha, 'abc');
-  assert.equal(seen[1].fetchedAt, '2026-11-15T12:01:00.000Z');
-  assert.equal(seen[1].attemptedAt, '2026-11-15T12:02:00.000Z');
-  assert.equal(seen[1].lastError, 'gh exited 1');
-  store.record(url, { status: null, error: 'gh exited 1' }, '2026-11-15T12:03:00.000Z');
-  assert.equal(seen.length, 2);
-  store.record(url, { status, error: null }, '2026-11-15T12:04:00.000Z');
   assert.equal(seen.length, 3);
-  assert.equal(seen[2].lastError, null);
-  store.record(url, { status: { ...status, headSha: 'def' }, error: null });
+  assert.equal(seen[2].headSha, 'abc');
+  assert.equal(seen[2].fetchedAt, '2026-11-15T12:01:00.000Z');
+  assert.equal(seen[2].attemptedAt, '2026-11-15T12:02:00.000Z');
+  assert.equal(seen[2].lastError, 'gh exited 1');
+  store.record(url, { status: null, error: 'gh exited 1' }, '2026-11-15T12:03:00.000Z');
   assert.equal(seen.length, 4);
+  store.record(url, { status, error: null }, '2026-11-15T12:04:00.000Z');
+  assert.equal(seen.length, 5);
+  assert.equal(seen[4].lastError, null);
+  store.record(url, { status: { ...status, headSha: 'def' }, error: null });
+  assert.equal(seen.length, 6);
 });
 
 test('a first failed fetch is distinguishable from an unseen URL and survives restart', (t) => {
@@ -163,15 +163,15 @@ test('all owners of a URL receive its result before another slow fetch can make 
 });
 
 
-test('timestamp-only refreshes update memory without rewriting durable files', (t) => {
+test('a restarted observer retains the latest successful refresh of an unchanged PR', (t) => {
   const { store, directory } = setup(t);
   store.record(url, { status, error: null }, '2026-11-15T12:00:00.000Z');
   const filename = path.join(directory, fs.readdirSync(directory)[0]);
   const before = fs.readFileSync(filename, 'utf8');
   store.record(url, { status, error: null }, '2026-11-15T12:01:00.000Z');
-  assert.equal(fs.readFileSync(filename, 'utf8'), before);
+  assert.notEqual(fs.readFileSync(filename, 'utf8'), before);
   assert.equal(store.get(url).fetchedAt, '2026-11-15T12:01:00.000Z');
-  assert.equal(createPrObservationStore({ directory }).get(url).fetchedAt, '2026-11-15T12:00:00.000Z');
+  assert.equal(createPrObservationStore({ directory }).get(url).fetchedAt, '2026-11-15T12:01:00.000Z');
 });
 
 test('changing one URL never rewrites the retained history', (t) => {
@@ -211,4 +211,18 @@ test('events-only capability receives PR observations without links:read', (t) =
   host.events.on('pr:observation', (ev) => seen.push(ev));
   store.record(url, { status, error: null });
   assert.equal(seen[0].nodeId, 'PR_42');
+});
+
+
+test('an unchanged successful fetch publishes recovery from a stale retained observation', async (t) => {
+  const { store, events } = setup(t);
+  store.record(url, { status, error: null }, '2026-11-15T12:00:00.000Z');
+  const seen = [];
+  events.on('pr:observation', (value) => seen.push(value));
+  const poll = createPrObservationPoller({ observations: store,
+    fetchStatus: async () => ({ status, error: null }), fetchUnresolved: async () => [] });
+  await collect(poll([{ url }]));
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].fetchedAt, store.get(url).fetchedAt);
+  assert.ok(Date.parse(seen[0].fetchedAt) > Date.parse('2026-11-15T12:03:00Z'));
 });
