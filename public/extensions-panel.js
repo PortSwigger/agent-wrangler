@@ -80,6 +80,7 @@ export const CAPABILITY_DESCRIPTIONS = {
   'cards:hideChips': 'Hide chips in the session cards\' meta row (presentation only; nothing is removed).',
   'board:press': 'Press the board\'s buttons, session cards, tabs and menu rows for you, as a click would (to drive the board by voice, say).',
   'session:type': 'Type into the open session\'s chat or terminal for you, and send it as a prompt, as you would (to talk to a session by voice, say).',
+  'board:wasm-worker': 'Loosen the board\'s Content Security Policy for every page while this extension is on, so scripts may turn text into code (eval, new Function) and start workers from blob: URLs, which WebAssembly code such as in-browser speech recognition needs. This weakens the board\'s protection against injected script for every extension, not just this one.',
 };
 
 function chipsEl(items, className) {
@@ -92,12 +93,12 @@ function chipsEl(items, className) {
   return wrap;
 }
 
-// The requested chips plus, below them, a plain sentence for each capability
-// with a description.
+// A plain sentence for each capability with a description, under its chips.
+const capabilityNotes = (caps) => caps.filter((c) => CAPABILITY_DESCRIPTIONS[c]).map((c) => el('div', 'ext-consent-note', `${c}: ${CAPABILITY_DESCRIPTIONS[c]}`));
+
 function capabilitiesEl(caps) {
   const box = el('div');
-  box.append(chipsEl(caps, 'ext-chip'));
-  for (const c of caps) if (CAPABILITY_DESCRIPTIONS[c]) box.append(el('div', 'ext-consent-note', `${c}: ${CAPABILITY_DESCRIPTIONS[c]}`));
+  box.append(chipsEl(caps, 'ext-chip'), ...capabilityNotes(caps));
   return box;
 }
 
@@ -1123,7 +1124,7 @@ function updateConsentEl(payload) {
   const removed = payload.removedCapabilities || [];
   if (added.length || removed.length) {
     section(wrap, 'Capabilities changed');
-    if (added.length) wrap.append(chipsEl(added.map((c) => `+ ${c}`), 'ext-chip ext-chip-add'));
+    if (added.length) wrap.append(chipsEl(added.map((c) => `+ ${c}`), 'ext-chip ext-chip-add'), ...capabilityNotes(added));
     if (removed.length) wrap.append(chipsEl(removed.map((c) => `− ${c}`), 'ext-chip ext-chip-remove'));
   }
   const depsChanged = (payload.addedCount ?? (payload.addedDependencies || []).length) || (payload.removedCount ?? (payload.removedDependencies || []).length);

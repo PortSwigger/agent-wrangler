@@ -49,12 +49,24 @@ const MIME = {
 // `deckPort()` is where the deck listens on loopback, read per request so the
 // page always names the deck's current port.
 //
+// `wasmWorker()` is true while an enabled extension holds `board:wasm-worker`,
+// read per request: every route that would send BOARD_CSP then sends
+// WASM_WORKER_CSP instead.
+//
 // `decks` (server/board-decks.js) is the board's deck list: GET /api/decks
 // reads it, POST /api/decks changes it, and GET /api/decks/stream is an event
 // stream that sends it on connect and after every change, so every browser on
 // the board shows the same list.
 
 export const BOARD_CSP = "script-src 'self'; object-src 'none'; base-uri 'self'";
+
+// BOARD_CSP plus what an in-browser WASM speech recognizer (vosk-browser 0.0.8)
+// needs, measured in Chrome: `worker-src blob:` for the worker it starts from a
+// blob: URL, and `'unsafe-eval'` for its Emscripten glue's `new Function`, which
+// also allows WebAssembly compilation, so `'wasm-unsafe-eval'` would add
+// nothing. `'self'` stays in worker-src because naming worker-src stops it
+// falling back to script-src, and the board's own diff worker is same-origin.
+export const WASM_WORKER_CSP = "script-src 'self' 'unsafe-eval'; object-src 'none'; base-uri 'self'; worker-src 'self' blob:";
 
 const FORWARDED = {
   GET: new Set(['/file', '/ext-file', '/deck']),
@@ -111,7 +123,7 @@ function deckListPost(req, res, decks, boardPort) {
   });
 }
 
-export function createBoardServer({ boardPort, deckPort, extensionAssets = () => null, extensionThemes = () => [], decks = null }) {
+export function createBoardServer({ boardPort, deckPort, extensionAssets = () => null, extensionThemes = () => [], wasmWorker = () => false, decks = null }) {
   const deckStreams = new Set();
   const announceDecks = (snapshot) => {
     const frame = `data: ${JSON.stringify(snapshot)}\n\n`;
@@ -138,7 +150,7 @@ export function createBoardServer({ boardPort, deckPort, extensionAssets = () =>
       return;
     }
 
-    res.setHeader('Content-Security-Policy', BOARD_CSP);
+    res.setHeader('Content-Security-Policy', wasmWorker() ? WASM_WORKER_CSP : BOARD_CSP);
     if (urlPath === '/') urlPath = '/index.html';
     // Browsers auto-probe /favicon.ico; serve the bundled SVG so it never 404s.
     // The explicit <link rel=icon> in index.html is what's actually used.

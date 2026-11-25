@@ -703,6 +703,21 @@ test('install review explains links:read without offering writes', () => {
   });
 });
 
+test('board:wasm-worker is named with its risk at install and when an update adds it', () => {
+  withDom(() => {
+    const line = (all) => all.find((t) => t.startsWith('board:wasm-worker: '));
+    const install = texts(consentBodyEl({ id: 'voice', label: 'Voice', sha: 'abcdef0123456789', capabilities: ['board:wasm-worker'], dependencies: [], update: false }));
+    assert.ok(install.includes('board:wasm-worker'));
+    assert.match(line(install), /Content Security Policy for every page/);
+    assert.match(line(install), /eval, new Function/);
+    assert.match(line(install), /blob: URLs/);
+    assert.match(line(install), /weakens the board's protection against injected script for every extension/);
+    const update = texts(consentBodyEl({ id: 'voice', label: 'Voice', update: true, reconsentNeeded: true, sha: 'bbbbbbbbbb', priorSha: 'aaaaaaaaaa', addedCapabilities: ['board:wasm-worker'], removedCapabilities: [] }));
+    assert.ok(update.includes('+ board:wasm-worker'));
+    assert.equal(line(update), line(install));
+  });
+});
+
 test('an UPDATE renders capability and dependency DIFFS, not full lists', () => {
   withDom(() => {
     const body = consentBodyEl({

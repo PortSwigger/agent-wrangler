@@ -450,6 +450,19 @@ blocks, inline event handlers (`onclick="…"`, including in HTML you assign to 
 modules from your `public/` directory and attach handlers with `addEventListener` or by assigning
 `el.onclick = () => …`. Styles are not restricted.
 
+A board half that runs WebAssembly in a worker it builds itself, such as an in-browser speech
+recognizer, can declare **`board:wasm-worker`** (2.3.0) in `requires`, with
+`engines: { wranglerApi: '^2.3.0' }`. While any enabled extension holds it, every board page is sent
+`script-src 'self' 'unsafe-eval'; object-src 'none'; base-uri 'self'; worker-src 'self' blob:`
+instead. Workers may then start from `blob:` URLs, and scripts may evaluate strings (`eval`,
+`new Function`), which also lets them compile WebAssembly. These are the sources vosk-browser 0.0.8
+needs, measured in Chrome: its worker starts from a `blob:` URL and inherits the page's policy, and its
+Emscripten glue calls `new Function` there, so `'wasm-unsafe-eval'` alone is not enough. A policy
+belongs to the page, so the grant loosens the board for every extension, not only the one that holds
+it, and the consent dialog says so. Turning the holder off, or a quarantine or uninstall, restores the
+policy above on the next page load. A board where no enabled extension declares it gets the policy
+above, unchanged. See [SECURITY-NOTES.md](../SECURITY-NOTES.md) for the trade-off.
+
 Routes that board code reached on its own origin before the split are forwarded by the board server
 to the deck unchanged: `GET /file`, `GET /ext-file`, `GET /deck`, `POST /mcp`, `/pr-attach` and
 `/pr-model`, and the `/ws` and `/pty` sockets. The deck still applies its own origin and host checks
@@ -1983,6 +1996,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   host (torn down if it was) but stays registered. The detail panel and task
   tiles share the builders and carry `data-chip` too, but never apply the veto —
   keep the `[hidden]` CSS scoped to `.card-meta`.
+- **`board:wasm-worker` (2.3.0) is a client-only capability the BOARD SERVER
+  checks.** It sits in `CLIENT_CAPABILITIES` (no façade key), but nothing in
+  `slots.js` reads it: `createBoardServer`'s `wasmWorker()` is
+  `enabledHolds(ext, BOARD_WASM_WORKER)` (`server/extensions/index.js`), read
+  per request, and every route that sends `BOARD_CSP` sends `WASM_WORKER_CSP`
+  (`server/http-handler.js`) while it is true. Per request is the point: a live
+  enable, disable, quarantine or uninstall changes the header on the next load
+  with no restart, and with no holder the header is `BOARD_CSP` byte for byte.
+  Routes forwarded to the deck keep the deck's headers. A CSP applies to a whole
+  document, so there is no per-extension grant. Keep `'self'` in `worker-src`:
+  naming `worker-src` stops it falling back to `script-src`, and the board's
+  diff worker is same-origin. Leave `'wasm-unsafe-eval'` out: `'unsafe-eval'`
+  already allows WebAssembly compilation.
 - **Sample cards are reconciled with the board's in ONE `syncHosts` call.**
   `renderSample` draws an inert `sessionCardHtml(SAMPLE_SESSION)`
   (`public/sample-session.js`, every core chip populated, `sessionId:

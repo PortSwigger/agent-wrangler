@@ -99,8 +99,8 @@ test('HOST_API_VERSION is a real semver version', () => {
 // ranges is saying it needs that surface to exist. An additive change bumps the
 // minor and keeps every ^1.0.0 manifest served by the same builders. 2.0.0 is
 // the deck API major: every 1.x range is still served, on the v1 shim (1.96.0).
-test('the served version is 2.2.0, and every 1.x manifest range the v1 shim can honour passes', () => {
-  assert.equal(HOST_API_VERSION, '2.2.0');
+test('the served version is 2.3.0, and every 1.x manifest range the v1 shim can honour passes', () => {
+  assert.equal(HOST_API_VERSION, '2.3.0');
   assert.equal(V1_SHIM_VERSION, '1.96.0');
   assert.equal(servesRange('^1.96.0'), true);
   assert.equal(servesRange('^1.95.0'), true);
@@ -204,7 +204,8 @@ test('the served version is 2.2.0, and every 1.x manifest range the v1 shim can 
   assert.equal(servesRange('^2.0.0'), true);
   assert.equal(servesRange('^2.1.0'), true);
   assert.equal(servesRange('^2.2.0'), true);
-  assert.equal(servesRange('^2.3.0'), false);
+  assert.equal(servesRange('^2.3.0'), true);
+  assert.equal(servesRange('^2.4.0'), false);
   assert.equal(servesRange('^3.0.0'), false);
 });
 
