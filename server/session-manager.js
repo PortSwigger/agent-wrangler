@@ -23,7 +23,7 @@ import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, codex
 import { TOOL_REFRESH_NOTE } from './extensions/tool-fingerprint.js';
 import { cleanCodexPolicy, codexApprovalPolicyError } from './extensions/codex-policy.js';
 import { ensureCodexTrust } from './codex-trust.js';
-import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
+import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust, ownedAddDirs } from './claude-trust.js';
 import { launchEnvOf, launchSecretEnvOf, withoutSecretEnv } from './launch-context.js';
 import { writeSecretEnvFile } from './launch-secrets.js';
 import { SESSION_TOKEN_ENV } from './mcp/client-config.js';
@@ -490,7 +490,7 @@ export function mayExitForUpdate(entry, tmux, { adapterFor: resolve = adapterFor
 // A provider with no trust prompt sets no `trust`.
 const LAUNCH_TRUST = {
   'codex-config': { stage: 'before-context', enabled: trustCodexLaunchCwd, run: (sm, { dir, repoRoot }) => sm._ensureCodexTrust(repoRoot || dir) },
-  'claude-config': { stage: 'after-context', enabled: trustClaudeLaunchCwd, run: (sm, { dir, launchContext }) => sm._trustClaudeLaunch(dir, launchContext) },
+  'claude-config': { stage: 'after-context', enabled: trustClaudeLaunchCwd, run: (sm, { dir, launchContext, addDirs }) => sm._trustClaudeLaunch(dir, launchContext, addDirs) },
 };
 
 export class SessionManager {
@@ -600,12 +600,17 @@ export class SessionManager {
 
   // Called after the launch context is collected, so a launch whose context
   // points CLAUDE_CONFIG_DIR at a login's own config gets the same trust there.
-  async _trustClaudeLaunch(dir, launchContext) {
+  // Each wrangler-owned --add-dir (strictly inside DATA_DIR, e.g. a Wrangler²
+  // step's evidence inbox) is trusted exactly, so Claude does not ask about it;
+  // DATA_DIR itself and a user's own folders are never trusted here.
+  async _trustClaudeLaunch(dir, launchContext, addDirs = []) {
     this._ensureClaudeTrust(SESSIONS_DIR);
     this._ensureClaudeTrust(MEMORY_DIR);
+    const owned = ownedAddDirs(addDirs, DATA_DIR);
+    for (const d of owned) this._ensureClaudeTrust(d);
     await this._mirrorWorktreeTrust(dir);
     const loginDir = launchEnvOf(launchContext).CLAUDE_CONFIG_DIR;
-    if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, sessionsDir: SESSIONS_DIR, memoryDir: MEMORY_DIR });
+    if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, sessionsDir: SESSIONS_DIR, memoryDir: MEMORY_DIR, dataDir: DATA_DIR, addDirs: owned });
   }
 
   // The secret-variable file for one pane launch (launch-secrets.js), or null.
@@ -1493,7 +1498,7 @@ export class SessionManager {
     }), agent);
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
+    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext, addDirs: prev?.addDirs });
     const addDirs = remote ? [] : await withGitDirAddDirs(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'resume', sessionId, entry: prev }, prev?.codexPolicy) : undefined;
@@ -1609,7 +1614,7 @@ export class SessionManager {
     }), agent);
     const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext });
+    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext, addDirs: parentEntry?.addDirs });
     const addDirs = remote ? [] : await withGitDirAddDirs(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
     // gate is shown the PARENT's — which is what it would inherit anyway, and
@@ -2382,7 +2387,7 @@ export class SessionManager {
     }), agent);
     const ownLaunch = ownLaunchRefusal(rt, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext });
+    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext, addDirs: grantedDirs });
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
     // the hooks fire either way) — their output just goes unused, since the

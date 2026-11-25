@@ -2594,6 +2594,37 @@ test('login trust: a refused launch context writes no trust anywhere', async () 
   });
 });
 
+test('wrangler-owned add-dir trust: a launch trusts exactly its --add-dir folders inside DATA_DIR, in the injected config and a login CLAUDE_CONFIG_DIR, never DATA_DIR or a user folder', async () => {
+  await withLoginTrustFixture(async ({ root, repo, login, trusted, serveTrust, serverDir }) => {
+    serveTrust([repo]);
+    const inbox = path.join(DATA_DIR, 'evidence', `job_${process.pid}`, 'step_y', 'inbox');
+    const userDir = path.join(root, 'user-notes');
+    fs.mkdirSync(inbox, { recursive: true });
+    fs.mkdirSync(userDir);
+    try {
+      const sm = smWithLogin();
+      sm.loginDir = login('login');
+      const { sessionId } = await sm.dispatch({ cwd: repo, intent: 'x', addDirs: [inbox, userDir] });
+      const want = [SESSIONS_DIR, MEMORY_DIR, inbox];
+      assert.deepEqual(trusted(serverDir), [...want, repo].sort());
+      assert.deepEqual(trusted(sm.loginDir), [...want, repo].sort());
+      for (const dir of [serverDir, sm.loginDir]) {
+        const projects = JSON.parse(fs.readFileSync(path.join(dir, '.claude.json'), 'utf8')).projects;
+        assert.equal(projects[inbox]?.hasTrustDialogAccepted, true, dir);
+        assert.equal(projects[DATA_DIR], undefined, 'DATA_DIR itself is never trusted');
+        assert.equal(projects[userDir], undefined, 'a user-chosen add-dir is left to Claude\'s prompt');
+      }
+      // A resume re-grants the stored add-dirs, so it re-trusts the same inbox.
+      sm.loginDir = login('login2');
+      sm.map.set('c1', { ...sm.map.get(sessionId), agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000' });
+      await sm._doResume('c1', repo, {});
+      assert.deepEqual(trusted(sm.loginDir), [...want, repo].sort());
+    } finally {
+      fs.rmSync(path.dirname(path.dirname(inbox)), { recursive: true, force: true });
+    }
+  });
+});
+
 test('login trust: a default launch writes both managed roots without a login write', async () => {
   await withLoginTrustFixture(async ({ repo, serveTrust, trusted, serverDir }) => {
     serveTrust([repo]);

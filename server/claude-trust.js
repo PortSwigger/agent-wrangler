@@ -15,9 +15,13 @@ const exec = promisify(execFile);
 // above the git top are ignored. Outside git, any ancestor still counts. So
 // trusting SESSIONS_DIR once covers every blank-cwd launch (each lands in a
 // fresh scratch dir beneath it), but a trusted ~/code no longer covers a
-// worktree of a repo under it. Never call this for a user's own cwd; a worktree
-// is only trusted through mirrorWorktreeTrust, when the repo it was cut from
-// (or an ancestor of it) already is.
+// worktree of a repo under it. Claude also asks again (or refuses) for each
+// --add-dir with no trust entry, so a launch's wrangler-owned added folders
+// (ownedAddDirs: strictly inside DATA_DIR, e.g. a Wrangler² step's evidence
+// inbox) are trusted one by one, each exactly, never DATA_DIR as a whole. Never
+// call this for a user's own cwd or a user-chosen --add-dir outside DATA_DIR; a
+// worktree is only trusted through mirrorWorktreeTrust, when the repo it was
+// cut from (or an ancestor of it) already is.
 //
 // `~/.claude.json` is big and rewritten live by running Claude sessions, so this
 // writer is conservative: idempotent (no write when already trusted), atomic
@@ -100,6 +104,19 @@ export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = co
 
 const realPath = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
 
+// The `addDirs` Wrangler owns: absolute paths strictly inside `dataDir`, both as
+// given and realpathed (so a symlink out of it is refused), never `dataDir`
+// itself. Anything else is a user's own folder and is left to Claude's prompt.
+export function ownedAddDirs(addDirs, dataDir) {
+  if (!Array.isArray(addDirs) || typeof dataDir !== 'string' || !path.isAbsolute(dataDir)) return [];
+  const root = path.resolve(dataDir);
+  const realRoot = realPath(dataDir);
+  const under = (d, r) => d.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
+  return [...new Set(addDirs
+    .filter((d) => typeof d === 'string' && path.isAbsolute(d) && under(path.resolve(d), root) && under(realPath(d), realRoot))
+    .map((d) => path.resolve(d)))];
+}
+
 // `cwd`'s git top, whether it is a linked worktree, and the repo it belongs to
 // (a worktree's main checkout; a bare repo's own dir), plain and realpathed.
 // Null outside a repo or on any git failure.
@@ -133,12 +150,13 @@ export async function mirrorWorktreeTrust(cwd, opts = {}) {
 
 // A login's own Claude config dir (the CLAUDE_CONFIG_DIR a launch context sets)
 // gets the same trust a default launch writes, authorised only by the server's
-// config: SESSIONS_DIR, MEMORY_DIR, a worktree whose repo the server config
-// trusts, and the launch cwd itself when the server config already covers it. Nothing the
+// config: SESSIONS_DIR, MEMORY_DIR, the launch's ownedAddDirs inside dataDir, a
+// worktree whose repo the server config trusts, and the launch cwd itself when
+// the server config already covers it. Nothing the
 // login's own file trusts authorises anything. The dir must already exist (it
 // is never created), must not be the server's own or the CLI's default config
 // dir, and a symlinked .claude.json is left alone. Never throws.
-export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, memoryDir, serverFile = claudeConfigFile(), log = console.warn } = {}) {
+export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, memoryDir, dataDir, addDirs, serverFile = claudeConfigFile(), log = console.warn } = {}) {
   const skip = (why) => { log(`[claude-trust] skipped login config ${JSON.stringify(configDir)}: ${why}`); return false; };
   if (typeof configDir !== 'string' || !path.isAbsolute(configDir)) return skip('not an absolute path');
   try {
@@ -155,6 +173,7 @@ export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, memo
   } catch { /* no file yet */ }
   if (sessionsDir) ensureClaudeTrust(sessionsDir, { file, log });
   if (memoryDir) ensureClaudeTrust(memoryDir, { file, log });
+  for (const d of ownedAddDirs(addDirs, dataDir)) ensureClaudeTrust(d, { file, log });
   if (!cwd) return true;
   await mirrorWorktreeTrust(cwd, { file, authority: serverFile, log });
   const gitTop = (await gitScope(cwd))?.top;

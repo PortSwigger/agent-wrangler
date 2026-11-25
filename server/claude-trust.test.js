@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
+import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust, ownedAddDirs } from './claude-trust.js';
 
 function withTemp(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-trust-test-'));
@@ -209,6 +209,35 @@ async function withLogin(fn) {
     await fn({ ...ctx, login, loginFile: path.join(login, '.claude.json') });
   });
 }
+
+test('ownedAddDirs: keeps only folders strictly inside the data dir, refusing the data dir itself, outside paths and symlinks out', () => {
+  withTemp((_file, root) => {
+    const real = fs.realpathSync(root);
+    const data = path.join(real, 'aw-data');
+    const inbox = path.join(data, 'evidence', 'job', 'step', 'inbox');
+    const outside = path.join(real, 'outside');
+    fs.mkdirSync(inbox, { recursive: true });
+    fs.mkdirSync(outside);
+    const escape = path.join(data, 'escape');
+    fs.symlinkSync(outside, escape);
+    assert.deepEqual(ownedAddDirs([inbox, inbox, data, outside, escape, path.join(real, 'aw-data-sibling'), 'evidence/rel', '', null], data), [inbox]);
+    assert.deepEqual(ownedAddDirs([inbox], undefined), []);
+    assert.deepEqual(ownedAddDirs(undefined, data), []);
+  });
+});
+
+test('ensureLoginClaudeTrust: trusts each owned add-dir exactly, never the data dir or a folder outside it', async () => {
+  await withLogin(async ({ root, file, login, loginFile }) => {
+    fs.writeFileSync(file, '{}\n');
+    const dataDir = path.join(root, 'aw-data');
+    const inbox = path.join(dataDir, 'evidence', 'job', 'step', 'inbox');
+    fs.mkdirSync(inbox, { recursive: true });
+    const userDir = path.join(root, 'notes');
+    assert.equal(await ensureLoginClaudeTrust(login, { dataDir, addDirs: [inbox, userDir, dataDir], serverFile: file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(loginFile), [inbox]);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{}\n', 'the server config is untouched');
+  });
+});
 
 test('ensureLoginClaudeTrust: writes SESSIONS_DIR, MEMORY_DIR, a trusted repo\'s worktree and a trusted cwd, never the server config', async () => {
   await withLogin(async ({ root, repo, worktree, file, login, loginFile }) => {
