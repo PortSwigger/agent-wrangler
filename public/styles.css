@@ -3129,6 +3129,55 @@ main.diff-fullscreen .diff-filelist-handle { display: block; }
 .chat-tool-row[data-failed="1"] .chat-tool-name { color: var(--red-fg); }
 .chat-tool-row[data-failed="1"] .chat-tool-output { background: color-mix(in srgb, var(--red) 9%, var(--code-bg, var(--surface-2))); }
 
+/* A tool result's images (chat-dom.js imageThumb, filled by chat-images.js).
+   em-relative so they follow the Chat font size like everything else here. A
+   run shows its images under the chip while closed; opened, each image sits
+   under its own tool row instead and the chip's strip steps aside. */
+.chat-activity-images, .chat-tool-images { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.chat-tool-images { padding: 7px 10px; border-top: 1px solid var(--border-muted); }
+.chat-activity-chip[aria-expanded="true"] + .chat-activity-images { display: none; }
+.chat-image {
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; margin: 0; font: inherit; color: var(--fg-subtle);
+  max-width: min(100%, 24em); overflow: hidden;
+  border: 1px solid var(--border-muted); border-radius: 8px;
+  background: var(--surface-2); cursor: zoom-in;
+}
+.chat-image:hover, .chat-image:focus-visible { border-color: var(--border); }
+.chat-image-img { display: block; max-width: 100%; max-height: 13em; width: auto; height: auto; }
+/* Until the bytes arrive the button is a fixed-size placeholder, so a run of
+   thumbnails loading as they scroll in does not shift the stream under the
+   reader by more than one settle per image. */
+.chat-image:not([data-state="loaded"]) { width: 9em; height: 6.5em; }
+.chat-image:not([data-state="loaded"]) .chat-image-img { display: none; }
+.chat-image[data-state="failed"] { cursor: pointer; }
+.chat-image[data-state="failed"]::after { content: "Image unavailable. Retry"; font-size: 0.74em; padding: 0 8px; text-align: center; }
+.chat-image-skipped {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px;
+  border: 1px dashed var(--border-muted); color: var(--fg-subtle); font-size: 0.74em;
+}
+.chat-image-skipped::before { content: "\1F5BC"; font-size: 0.9em; opacity: 0.75; }
+
+/* The full-size view: a <dialog> in the top layer, built on first use. */
+.chat-image-dialog {
+  padding: 0; max-width: 96vw; max-height: 94vh;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); color: var(--fg);
+  box-shadow: 0 12px 32px var(--shadow);
+}
+.chat-image-dialog[open] { display: flex; flex-direction: column; }
+.chat-image-dialog::backdrop { background: var(--overlay); }
+.chat-image-dialog-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--border-muted);
+  font-size: 12px; color: var(--fg-muted);
+}
+.chat-image-dialog-caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.chat-image-dialog-frame { overflow: auto; min-height: 0; background: var(--surface-2); }
+.chat-image-full { display: block; margin: auto; max-width: calc(96vw - 2px); max-height: calc(94vh - 46px); cursor: zoom-in; }
+.chat-image-dialog[data-zoom="1"] .chat-image-full { max-width: none; max-height: none; cursor: zoom-out; }
+
 /* Neutral, not violet — violet (--wf) is this codebase's workflow-nested-child
    colour (see .workflow-box), a deliberately distinct concept from a sub-agent.
    Matches .subagent-row's own resting style so a sub-agent reads the same way

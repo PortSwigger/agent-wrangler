@@ -244,3 +244,48 @@ test('linkifying a bubble still never reaches innerHTML', () => {
   assert.equal(walk(node).map((n) => n._html).filter(Boolean).join(''), '');
   assert.ok(textOf(node).includes('<img src=x'), 'the raw string is still carried as text');
 });
+
+test('a tool result image is a thumbnail under its row, and the run shows it while closed', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '' });
+  const node = dom.itemNode({
+    type: 'activity', label: 'Read 1 file, Ran 1 command', adds: 0, dels: 0,
+    tools: [
+      { kind: 'tool', name: 'Read', target: '/repo/shot.png', ok: true, images: [{ type: 'image/png', bytes: 2048, ref: '10-200-0-96' }] },
+      { kind: 'tool', name: 'Bash', target: 'ls', output: 'a\nb', ok: true },
+    ],
+  });
+  const [chip, strip, body] = node.children;
+  assert.equal(chip.className, 'chat-activity-chip');
+  assert.equal(strip.className, 'chat-activity-images', 'visible beside the closed chip, before the collapsed body');
+  assert.equal(body.dataset.collapsed, '1');
+  const [thumb] = strip.children;
+  assert.equal(thumb.tagName, 'BUTTON');
+  assert.equal(thumb.dataset.imageRef, '10-200-0-96');
+  assert.equal(thumb.dataset.state, 'pending');
+  assert.equal(thumb.attrs.title, 'Read: /repo/shot.png · 2 KB');
+  const [img] = thumb.children;
+  assert.equal(img.tagName, 'IMG');
+  assert.equal(img.attrs.src, undefined, 'no bytes until chat-images fetches them');
+  assert.equal(img.attrs.alt, 'Read: /repo/shot.png');
+  const readRow = body.children[0];
+  assert.equal(readRow.children.at(-1).className, 'chat-tool-images', 'the same image sits under its own row when opened');
+  assert.equal(readRow.children.at(-1).children[0].dataset.imageRef, '10-200-0-96');
+  assert.equal(body.children[1].children.some((c) => c.className === 'chat-tool-images'), false);
+  assert.equal(walk(node).map((n) => n._html).filter(Boolean).join(''), '', 'no innerHTML');
+});
+
+test('a run with no images draws no image strip', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '' });
+  const node = dom.itemNode({ type: 'activity', label: 'Ran 1 command', adds: 0, dels: 0, tools: [{ kind: 'tool', name: 'Bash', target: 'ls', ok: true }] });
+  assert.deepEqual(node.children.map((c) => c.className), ['chat-activity-chip', 'chat-activity-body']);
+});
+
+test('an image too large to offer says so instead of drawing a control', () => {
+  const dom = createChatDom({ document: stubDocument(), renderMarkdown: () => '' });
+  const node = dom.itemNode({ type: 'activity', label: 'Read 1 file', adds: 0, dels: 0, tools: [{ kind: 'tool', name: 'Read', target: '/huge.png', ok: true, images: [{ type: 'image/png', bytes: 12 * 1024 * 1024 }] }] });
+  const [skipped] = node.children[1].children;
+  assert.equal(skipped.tagName, 'SPAN');
+  assert.equal(skipped.className, 'chat-image-skipped');
+  assert.equal(skipped.textContent, 'Image not shown (12.0 MB)');
+  assert.equal(skipped.dataset.imageRef, undefined);
+});

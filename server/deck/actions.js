@@ -34,6 +34,7 @@ export const CORE_ACTIONS = {
   'diff-comments': 'session.diff-comments',
   'subagent-detail': 'session.subagent-detail',
   'chat': 'session.chat',
+  'chat-image': 'session.chat-image',
   'interrupt': 'session.interrupt',
   'paste-image': 'session.paste-image',
   'adopt-conversation': 'session.adopt-conversation',

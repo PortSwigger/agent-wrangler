@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { scanChatText, createChatScanner, mightCarryChat, recapOf, lineUuids, MAX_TOOL_TEXT } from './chat-events.js';
+import { MAX_CHAT_IMAGE_BYTES, parseImageRef, toolResultImages } from './agents/chat-scanner.js';
 
 const claudeLines = (...objs) => objs.map((o) => JSON.stringify(o)).join('\n');
 
@@ -1266,4 +1267,98 @@ test('claude: a !command containing its own closing tag is rebuilt whole', () =>
     { type: 'user', timestamp: '2026-08-14T10:00:00.000Z', message: { role: 'user', content: "<bash-input>printf '</bash-input>'</bash-input>" } },
   );
   assert.deepEqual(scanChatText(text, 'claude').events.map((e) => e.text), ["!printf '</bash-input>'"]);
+});
+
+// ---- Tool-result images ----------------------------------------------------
+// A tiny real PNG, and a "screenshot" that is a PNG header padded out to size.
+const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const bigPng = (bytes) => Buffer.concat([Buffer.from(PNG_1PX, 'base64'), Buffer.alloc(bytes)]).toString('base64');
+const imageBlock = (data, mediaType = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
+const claudeToolUse = (id, name, input) => ({ type: 'assistant', timestamp: '2026-11-25T10:00:00.000Z', message: { role: 'assistant', model: 'claude-x', content: [{ type: 'tool_use', id, name, input }] } });
+const claudeResults = (...results) => ({ type: 'user', timestamp: '2026-11-25T10:00:01.000Z', message: { role: 'user', content: results } });
+const toolResult = (id, content) => ({ type: 'tool_result', tool_use_id: id, content });
+
+test('claude: a tool result image becomes a ref on the tool event, never its bytes', () => {
+  const data = bigPng(300 * 1024);
+  const scanner = createChatScanner('claude');
+  scanner.pushTagged(JSON.stringify(claudeToolUse('t1', 'Read', { file_path: '/tmp/shot.png' })));
+  const line = JSON.stringify(claudeResults(toolResult('t1', [imageBlock(data)])));
+  const { events } = scanner.pushTagged(line, { at: 500, len: Buffer.byteLength(line) });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0].images, [{ type: 'image/png', bytes: Buffer.from(data, 'base64').length, ref: `500-${Buffer.byteLength(line)}-0-${data.length}` }]);
+  assert.ok(JSON.stringify(events).length < 1000, 'the base64 is not in the event');
+});
+
+test('claude: images are numbered across every tool result on the line, paired or not', () => {
+  const scanner = createChatScanner('claude');
+  scanner.pushTagged(JSON.stringify(claudeToolUse('b', 'mcp__browser__screenshot', {})));
+  const line = JSON.stringify(claudeResults(
+    toolResult('unknown', [imageBlock(PNG_1PX), imageBlock(PNG_1PX)]),
+    toolResult('b', [{ type: 'text', text: 'shot' }, imageBlock(PNG_1PX, 'image/jpeg')]),
+  ));
+  const { events } = scanner.pushTagged(line, { at: 0, len: 10 });
+  assert.equal(events[0].output, 'shot');
+  assert.deepEqual(events[0].images.map((i) => [i.type, i.ref.split('-')[2]]), [['image/jpeg', '2']]);
+});
+
+test('claude: without a line position an image is listed with no ref', () => {
+  const text = [claudeToolUse('t1', 'Read', { file_path: '/a.png' }), claudeResults(toolResult('t1', [imageBlock(PNG_1PX)]))].map((o) => JSON.stringify(o)).join('\n');
+  const [tool] = scanChatText(text, 'claude').events;
+  assert.deepEqual(tool.images, [{ type: 'image/png', bytes: 70 }]);
+});
+
+test('claude: only base64 rasters are offered: SVG, URL sources and odd types are left out', () => {
+  const scanner = createChatScanner('claude');
+  scanner.pushTagged(JSON.stringify(claudeToolUse('t1', 'mcp__x__render', {})));
+  const line = JSON.stringify(claudeResults(toolResult('t1', [
+    imageBlock(Buffer.from('<svg/>').toString('base64'), 'image/svg+xml'),
+    { type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } },
+    imageBlock(PNG_1PX, 'image/tiff'),
+    imageBlock(PNG_1PX, 'IMAGE/WEBP'),
+  ])));
+  const { events } = scanner.pushTagged(line, { at: 0, len: 10 });
+  assert.deepEqual(events[0].images.map((i) => i.type), ['image/webp']);
+  assert.equal(events[0].images[0].ref.split('-')[2], '0', 'numbered among the images that are offered');
+});
+
+test('claude: an image over the size cap is listed without a ref', () => {
+  const data = bigPng(MAX_CHAT_IMAGE_BYTES + 1);
+  const scanner = createChatScanner('claude');
+  scanner.pushTagged(JSON.stringify(claudeToolUse('t1', 'Read', { file_path: '/huge.png' })));
+  const { events } = scanner.pushTagged(JSON.stringify(claudeResults(toolResult('t1', [imageBlock(data)]))), { at: 0, len: 10 });
+  assert.equal(events[0].images[0].ref, undefined);
+  assert.ok(events[0].images[0].bytes > MAX_CHAT_IMAGE_BYTES);
+});
+
+test('codex: an inline data: image in a tool output becomes a ref; a remote image_url does not', () => {
+  const scanner = createChatScanner('codex');
+  scanner.pushTagged(JSON.stringify({ timestamp: '2026-11-25T10:00:00.000Z', type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'c1', name: 'exec', input: 'screenshot()' } }));
+  const line = JSON.stringify({ timestamp: '2026-11-25T10:00:01.000Z', type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'c1', output: [
+    { type: 'input_text', text: 'Script completed' },
+    { type: 'input_image', image_url: 'https://example.com/shot.png' },
+    { type: 'input_image', image_url: `data:image/png;base64,${PNG_1PX}`, detail: 'high' },
+  ] } });
+  const { events } = scanner.pushTagged(line, { at: 7, len: Buffer.byteLength(line) });
+  assert.equal(events[0].output, 'Script completed');
+  assert.deepEqual(events[0].images, [{ type: 'image/png', bytes: 70, ref: `7-${Buffer.byteLength(line)}-0-${PNG_1PX.length}` }]);
+});
+
+test('toolResultImages names the same image a ref was numbered against', () => {
+  const entry = claudeResults(toolResult('a', [imageBlock(PNG_1PX)]), toolResult('b', [imageBlock('QUJD', 'image/gif')]));
+  const ref = parseImageRef('12-34-1-4');
+  assert.deepEqual(ref, { at: 12, len: 34, n: 1, b64Length: 4 });
+  assert.deepEqual(toolResultImages(entry, 'claude')[ref.n], { type: 'image/gif', data: 'QUJD' });
+  for (const bad of ['', '1-2-3', '1-0-0-4', 'a-1-0-4', '1-2-3-4-5', null, 7]) assert.equal(parseImageRef(bad), null, String(bad));
+});
+
+test('claude: the saved-copy path Claude Code adds after an MCP image is not tool output', () => {
+  const scanner = createChatScanner('claude');
+  scanner.pushTagged(JSON.stringify(claudeToolUse('t1', 'mcp__browser__screenshot_page', { url: 'https://example.com' })));
+  const { events } = scanner.pushTagged(JSON.stringify(claudeResults(toolResult('t1', [
+    { type: 'text', text: 'Screenshot of https://example.com' },
+    imageBlock(PNG_1PX),
+    { type: 'text', text: '[Image: source: /home/u/.claude/projects/p/s/tool-results/mcp-blob-1.png]' },
+  ]))), { at: 0, len: 10 });
+  assert.equal(events[0].output, 'Screenshot of https://example.com');
+  assert.equal(events[0].images.length, 1);
 });

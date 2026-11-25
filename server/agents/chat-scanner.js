@@ -15,6 +15,21 @@ import { isRequestDump, isRequestDumpLine } from '../claude-request-dump.js';
 // pushes a multi-megabyte frame over the control socket every poll.
 export const MAX_TOOL_TEXT = 2000;
 
+// A tool result's image never rides in a chat frame either: one screenshot is
+// hundreds of KB of base64, and the frame crosses the control socket every poll.
+// The event names each image by `ref`, a pointer into the transcript line that
+// holds it, and the chat-image handler reads the bytes from there when the view
+// draws the thumbnail. The transcript's own base64 is the only source: nothing
+// is fetched and no path is read, the reason markdown-preview.js keeps data:
+// images and turns every other image URL into a link.
+//
+// Raster only. SVG is a document that can carry script and external references,
+// so it is never offered as a picture.
+export const CHAT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+// Decoded bytes. A larger image is listed without a ref, so the row says it is
+// there but nothing fetches it.
+export const MAX_CHAT_IMAGE_BYTES = 8 * 1024 * 1024;
+
 // Wrappers Claude Code writes as ordinary user messages that are not things a
 // human said. The command trio is the plumbing of a slash command: the
 // invocation (`<command-name>/model…`), whatever it printed
@@ -216,6 +231,95 @@ function textOf(content) {
     .trim();
 }
 
+// A Claude tool result's text. Claude Code follows an MCP tool's image with a
+// text block naming where it saved a copy (`[Image: source: <abs path>]`, the
+// same plumbing userTextAndImages drops from a prompt); the thumbnail is the
+// image now, so the path line is dropped here too.
+function toolResultText(content) {
+  if (!Array.isArray(content)) return typeof content === 'string' ? content : textOf(content);
+  return textOf(content.filter((b) => !(b?.type === 'text' && typeof b.text === 'string' && IMAGE_SOURCE_RE.test(b.text.trim()))));
+}
+
+// `{ type, data }` for an image the chat view may show, else null. `data` is
+// the base64 itself, which only the chat-image handler ever reads out; the
+// scanner takes its length.
+function rasterImage(type, data) {
+  const mediaType = typeof type === 'string' ? type.toLowerCase() : '';
+  if (!CHAT_IMAGE_TYPES.has(mediaType) || typeof data !== 'string' || !data) return null;
+  return { type: mediaType, data };
+}
+
+// Claude: a tool_result's `image` blocks. Only `source.type: 'base64'` is kept;
+// a `url` source would mean fetching it.
+function claudeImages(content) {
+  if (!Array.isArray(content)) return [];
+  return content
+    .map((b) => (b?.type === 'image' && b.source?.type === 'base64' ? rasterImage(b.source.media_type, b.source.data) : null))
+    .filter(Boolean);
+}
+
+// Codex: an output array's `input_image` items, whose image_url is a data: URL
+// when the image is inline. Any other URL is left alone for the same reason.
+const DATA_IMAGE_RE = /^data:(image\/[a-z0-9.+-]+);base64,/i;
+function codexImages(output) {
+  if (!Array.isArray(output)) return [];
+  return output
+    .map((b) => {
+      if (b?.type !== 'input_image' || typeof b.image_url !== 'string') return null;
+      const m = DATA_IMAGE_RE.exec(b.image_url.slice(0, 64));
+      return m ? rasterImage(m[1], b.image_url.slice(m[0].length)) : null;
+    })
+    .filter(Boolean);
+}
+
+const CODEX_TOOL_OUTPUTS = new Set(['function_call_output', 'tool_search_output', 'custom_tool_call_output']);
+
+// Every image the tool results on one transcript line carry, in line order. An
+// image's place in this list is the `n` of its ref, so the scanner (numbering)
+// and the chat-image handler (looking up) go through this one function.
+export function toolResultImages(entry, agent) {
+  if (agent === 'codex') {
+    const p = entry?.payload;
+    return entry?.type === 'response_item' && CODEX_TOOL_OUTPUTS.has(p?.type) ? codexImages(p.output) : [];
+  }
+  const content = entry?.message?.role === 'user' ? entry.message.content : null;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((b) => (b?.type === 'tool_result' ? claudeImages(b.content) : []));
+}
+
+// Base64 length → decoded bytes, without decoding.
+function decodedBytes(data) {
+  const pad = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((data.length * 3) / 4) - pad);
+}
+
+// `<line start>-<line bytes>-<n>-<base64 length>`: the virtual byte range of the
+// line, the image's place on it, and its length as a check that the range still
+// holds the same image. Opaque to the client, which only hands it back.
+export function imageRef({ at, len }, n, b64Length) {
+  return `${at}-${len}-${n}-${b64Length}`;
+}
+
+export function parseImageRef(ref) {
+  const m = typeof ref === 'string' ? /^(\d{1,15})-(\d{1,15})-(\d{1,4})-(\d{1,15})$/.exec(ref) : null;
+  if (!m) return null;
+  const [at, len, n, b64Length] = m.slice(1).map(Number);
+  return len > 0 ? { at, len, n, b64Length } : null;
+}
+
+// The event's view of a line's images, numbered from `first`. A ref only when
+// the caller said where the line sits (the chat handler does; scanChatText's
+// callers have no byte positions and no use for one) and the image is small
+// enough to offer.
+function imageMeta(images, first, where) {
+  return images.map((img, i) => {
+    const bytes = decodedBytes(img.data);
+    const meta = { type: img.type, bytes };
+    if (where && bytes <= MAX_CHAT_IMAGE_BYTES) meta.ref = imageRef(where, first + i, img.data.length);
+    return meta;
+  });
+}
+
 // Claude Code emits an attached image as THREE things in one user message: the
 // prose (with a `[Image #1]` marker where the path used to be), a real base64
 // `image` block, and a trailing text block reading `[Image: source: <abs path>]`.
@@ -353,12 +457,18 @@ function pushClaude(entry, state) {
   const ts = tsOf(entry.timestamp);
   if (msg.role === 'user') {
     if (Array.isArray(msg.content)) {
+      // Counted across every tool_result on the line, paired or not, so `n`
+      // matches toolResultImages' numbering.
+      let imagesBefore = 0;
       for (const b of msg.content) {
         if (b?.type !== 'tool_result') continue;
+        const images = claudeImages(b.content);
+        const first = imagesBefore;
+        imagesBefore += images.length;
         const open = state.pending.get(b.tool_use_id);
         if (!open) continue;
         state.pending.delete(b.tool_use_id);
-        const { text: output, truncated: outputTruncated } = cap(b.content);
+        const { text: output, truncated: outputTruncated } = cap(toolResultText(b.content));
         const { input, truncated: inputTruncated } = capInput(open.input);
         // Derived from open.input (uncapped, still in `pending` at this point) —
         // never from the just-capped copy above, or a large Write undercounts.
@@ -367,6 +477,7 @@ function pushClaude(entry, state) {
           kind: 'tool', id: open.id, name: open.name, target: open.target,
           input, output, ok: b.is_error !== true, ts, truncated: outputTruncated || inputTruncated,
           ...(counts || {}),
+          ...(images.length ? { images: imageMeta(images, first, state.where) } : {}),
         });
         // Gate on is_error first: two of the three markers ('user rejected',
         // 'user denied') are generic enough to appear in ordinary successful
@@ -582,11 +693,13 @@ function pushCodex(entry, state) {
     // Derived from open.input (uncapped) for the same reason as the Claude side —
     // apply_patch's patch body would otherwise be cut to MAX_TOOL_TEXT first.
     const counts = EDIT_COUNT_TOOLS.has(open.name) ? editCounts(open.name, open.input) : null;
+    const images = codexImages(p.output);
     // function_call_output carries no structured error flag, only free text
     // ("Process exited with code N") — `ok` can't be derived, so it's always true.
     out.push({
       kind: 'tool', id: open.id, name: open.name, target: open.target, input, output, ok: true, ts, truncated: outputTruncated || inputTruncated,
       ...(counts || {}),
+      ...(images.length ? { images: imageMeta(images, 0, state.where) } : {}),
     });
     state.prevTs = ts;
     return out;
@@ -735,13 +848,17 @@ export function createNativeChatScanner(agent = 'claude') {
     // links and no rewind representation, so there is nothing to prune.
     parents: new Map(), walls: new Set(), promptChild: new Map(), queuedPromptChildren: new Map(), answeredQueuedPrompts: new Set(), queuedAncestor: new Map(), toolUses: new Set(), toolResults: new Set(), toolResultParents: new Set(),
     overflow: false, rewound: false,
+    // The line being parsed, for image refs; set only for the length of one push.
+    where: null,
     // Queued prompts already emitted, counted rather than a Set: the same text
     // really is queued twice in one conversation (101 extra copies across 257
     // real transcripts), and a Set would swallow the second turn forever.
     queuedSeen: new Map(),
   };
 
-  function pushTagged(line) {
+  // `where` ({ at, len }: the line's start and length in bytes) is what lets a
+  // tool event's images carry a ref; without it they carry none.
+  function pushTagged(line, where = null) {
     if (!line || !line.trim()) return NO_LINE;
     // Tracking runs BEFORE the gate and on every line — see the tree comment above.
     const ids = agent === 'claude' ? track(line, state) : null;
@@ -753,7 +870,9 @@ export function createNativeChatScanner(agent = 'claude') {
     } catch {
       return uuid ? { uuid, events: [] } : NO_LINE; // a half-written trailing line is normal for a live session
     }
+    state.where = where;
     const events = agent === 'codex' ? pushCodex(entry, state) : pushClaude(entry, state);
+    state.where = null;
     if (uuid && agent === 'claude' && !state.overflow) {
       if (hasClaudeBlock(entry, 'tool_use')) state.toolUses.add(uuid);
       if (hasClaudeBlock(entry, 'tool_result')) {
