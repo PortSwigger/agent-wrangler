@@ -56,7 +56,7 @@ const scannerCache = new Map(); // convId -> { scanner, offset, agent, segments 
 // segment owns a half-open interval in that virtual stream; a newly discovered
 // resume appends an interval without changing any earlier offset. Claude has one
 // segment, so its offsets retain their existing meaning.
-async function openSegments(files) {
+export async function openSegments(files) {
   const segments = [];
   let end = 0;
   try {
@@ -80,7 +80,7 @@ async function openSegments(files) {
   }
 }
 
-async function readVirtualRange(segments, start, size) {
+export async function readVirtualRange(segments, start, size) {
   const buf = Buffer.alloc(size - start);
   for (const segment of segments) {
     const from = Math.max(start, segment.start);
@@ -188,6 +188,32 @@ function getOrCreateScanner(convId, since, agent, adapter) {
   return adapter.history.createScanner();
 }
 
+// The client sends the CARD id; the transcript is named by the CONVERSATION id.
+// Resolve card → liveSessionId off the graph, falling back to the card id for
+// legacy pre-split entries — the same resolution subagent-detail.js does.
+//
+// The graph node only carries `liveSessionId` while the session is LIVE — a
+// dormant node deliberately omits it, because it names the conversation id of
+// a running process and there isn't one. So the entry is consulted next, the
+// same precedence fork.js and view-diff.js already use (graph → entry → card
+// id, the last for legacy pre-split entries). Without the entry step every
+// dormant session resolved to its CARD id, found no transcript under that
+// name, and rendered an empty stream — which broke the one thing this view
+// does that the terminal cannot.
+//
+// Shared with chat-image.js, which must read the very transcript this handler
+// numbered its image refs against.
+export function conversationOf(msg, ctx) {
+  const node = ctx.sessionFromGraph?.(msg.sessionId);
+  const entry = ctx.sessionManager?.entryFor?.(msg.sessionId);
+  return {
+    node,
+    entry,
+    convId: node?.liveSessionId || entry?.liveSessionId || msg.sessionId,
+    agent: node?.agent ?? entry?.agent ?? 'claude',
+  };
+}
+
 // On-demand, uncached read of one session's conversation. A fresh, TARGETED reply
 // to the requesting client only (like subagent-detail / get-memory), never
 // broadcast — only the reader of this session needs it. findConversationFiles
@@ -211,21 +237,7 @@ export const chatHandler = {
   type: 'chat',
   async handler(msg, ctx) {
     const findConversationFiles = ctx.findConversationFiles || ctx.findConversationFile || realFindConversationFiles;
-    // The client sends the CARD id; the transcript is named by the CONVERSATION
-    // id. Resolve card → liveSessionId off the graph, falling back to the card id
-    // for legacy pre-split entries — the same resolution subagent-detail.js does.
-    const node = ctx.sessionFromGraph?.(msg.sessionId);
-    // The graph node only carries `liveSessionId` while the session is LIVE — a
-    // dormant node deliberately omits it, because it names the conversation id of
-    // a running process and there isn't one. So the entry is consulted next, the
-    // same precedence fork.js and view-diff.js already use (graph → entry → card
-    // id, the last for legacy pre-split entries). Without the entry step every
-    // dormant session resolved to its CARD id, found no transcript under that
-    // name, and rendered an empty stream — which broke the one thing this view
-    // does that the terminal cannot.
-    const entry = ctx.sessionManager?.entryFor?.(msg.sessionId);
-    const convId = node?.liveSessionId || entry?.liveSessionId || msg.sessionId;
-    const agent = node?.agent ?? entry?.agent ?? 'claude';
+    const { node, entry, convId, agent } = conversationOf(msg, ctx);
 
     const resolveAdapter = ctx.resolveAdapter || adapterFor;
     const adapter = resolveAdapter(agent);
@@ -398,9 +410,15 @@ export const chatHandler = {
           offset = start + from;
         } else {
           scanner = getOrCreateScanner(convId, since, agent, adapter);
-          const complete = buf.subarray(from, lastNl + 1).toString('utf8');
           const tagged = [];
-          for (const line of complete.split('\n')) tagged.push(scanner.pushTagged(line));
+          // Line by line off the buffer, so each line's virtual byte range is
+          // known: a tool result's image ref points at it (chat-image.js reads
+          // the bytes back from there), which is what keeps them off this frame.
+          for (let pos = from; pos <= lastNl;) {
+            const nl = buf.indexOf(0x0a, pos);
+            tagged.push(scanner.pushTagged(buf.toString('utf8', pos, nl), { at: start + pos, len: nl - pos }));
+            pos = nl + 1;
+          }
           // Pruning needs the whole range in hand, which is exactly what an
           // initial read has; a follow-up poll holds only the newly appended
           // lines, so filtering them against a partial tree would be guesswork.

@@ -11,6 +11,7 @@ import { sessionIdOf } from './card-key.js';
 import { createChatDom } from './chat-dom.js';
 import { createRenderer } from './markdown-preview.js';
 import { imageSources, imageMimeOf, sourceToFrame, MAX_IMAGES_PER_PASTE } from './clipboard-images.js';
+import { createChatImages } from './chat-images.js';
 
 export const POLL_MS = 2000;
 // Send → "my own message is on screen" waits on two things: the TUI writing the
@@ -133,7 +134,7 @@ export function serializeEchoes(store) {
 // The view shows one card at a time and holds it by card key (card-key.js);
 // `cardOf` keys a session id from a deck reply. Drafts and echoes are stored by
 // session id, as they always were.
-export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor } = {}) {
+export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTerminal, onPickModel, onOpenFile, cwdFor, fetchImage } = {}) {
   const wrap = document.getElementById('chat-wrap');
   const stream = document.getElementById('chat-stream');
   // The base directory a relative `.md` path linkifies against — read through
@@ -165,6 +166,9 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
   });
 
   let card = null;
+  // Tool-result thumbnails: filled in as they scroll into view and opened full
+  // size on click. Cleared wherever the stream is.
+  const images = createChatImages({ stream, fetchImage, currentCard: () => card });
   let offset = null;
   let timer = null;
   // The pending burst, cancelled by anything that puts `offset` back to null —
@@ -1081,6 +1085,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
         });
       }
       stream.appendChild(node);
+      images.observe(node);
     }
     pinTail();
     if (stick) stream.scrollTop = stream.scrollHeight;
@@ -1127,6 +1132,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
     offset = null;
     clearBurst();
     stream.textContent = '';
+    images.clear();
     detachEchoNodes();
     // Same dangling-reference reasoning as `live` below: the node this pointed
     // at was just cleared out of the document.
@@ -1237,6 +1243,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
       generation += 1;
       requestEra += 1;
       stream.textContent = '';
+      images.clear();
       detachEchoNodes();
       pruneEchoes();
       userEls = [];
@@ -1306,6 +1313,7 @@ export function initChatView({ send, cardOf, onSubagentClick, onOpenDiff, onGoTe
       requestEra += 1;
       wrap.hidden = true;
       stream.textContent = '';
+      images.clear();
       detachEchoNodes();
       userEls = [];
       jumpNav.hidden = true;

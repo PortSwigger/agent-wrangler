@@ -30,6 +30,13 @@ export function activityTitle(item) {
 
 const AGO = (ms) => `${Math.round(ms / 1000)}s`;
 
+export function sizeLabel(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // `baseDir` is the session's cwd — a getter, because one chat-dom instance serves
 // every session the view opens. It resolves a relative .md path the same way the
 // terminal's link provider does; with none, a relative path stays plain text.
@@ -84,6 +91,34 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
     return chip;
   };
 
+  // A tool result's image (chat-scanner.js): a button holding an empty <img>,
+  // its bytes fetched by chat-view.js only once it scrolls into view. The ref is
+  // the image's only handle; nothing about it is a URL. An image without a ref
+  // was too large to offer, so it says so instead of drawing a dead control.
+  const imageLabel = (t) => (t.target ? `${t.name}: ${t.target}` : t.name);
+  function imageThumb(img, label) {
+    if (!img.ref) {
+      const skipped = el('span', 'chat-image-skipped', `Image not shown (${sizeLabel(img.bytes)})`);
+      skipped.setAttribute('title', `${label}: too large to show here`);
+      return skipped;
+    }
+    const button = el('button', 'chat-image');
+    button.setAttribute('type', 'button');
+    button.setAttribute('title', `${label} · ${sizeLabel(img.bytes)}`);
+    button.setAttribute('aria-label', `Open image from ${label}`);
+    button.dataset.imageRef = img.ref;
+    button.dataset.state = 'pending';
+    const pic = el('img', 'chat-image-img');
+    pic.setAttribute('alt', label);
+    button.appendChild(pic);
+    return button;
+  }
+  const imageStrip = (className, tools) => {
+    const strip = el('div', className);
+    for (const t of tools) for (const img of t.images || []) strip.appendChild(imageThumb(img, imageLabel(t)));
+    return strip;
+  };
+
   function toolRow(t) {
     const row = el('div', 'chat-tool-row');
     // The name and target live on their own flex line rather than as bare
@@ -105,6 +140,7 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
       if (t.truncated) pre.dataset.truncated = '1';
       row.appendChild(pre);
     }
+    if (t.images?.length) row.appendChild(imageStrip('chat-tool-images', [t]));
     if (t.ok === false) row.dataset.failed = '1';
     return row;
   }
@@ -122,6 +158,10 @@ export function createChatDom({ document: doc = globalThis.document, renderMarkd
       chip.appendChild(stat);
     }
     wrap.appendChild(chip);
+    // A run collapses its machinery, but a picture is what the reader came for:
+    // the run's images stay in view under the chip while it is closed. Opened,
+    // the strip hides (styles.css) and each image sits under its own tool row.
+    if (item.tools.some((t) => t.images?.length)) wrap.appendChild(imageStrip('chat-activity-images', item.tools));
     const body = el('div', 'chat-activity-body');
     body.dataset.collapsed = '1';
     for (const t of item.tools) body.appendChild(toolRow(t));
