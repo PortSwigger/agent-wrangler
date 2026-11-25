@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { writeJsonAtomic, readJsonOrLoud } from './atomic-json.js';
 
 function tmpDir() {
@@ -40,6 +41,45 @@ test('writeJsonAtomic creates the parent directory', () => {
   writeJsonAtomic(file, { a: 1 });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { a: 1 });
 });
+
+for (const checkpoint of ['partial-temp', 'before-rename', 'after-rename']) {
+  test(`writeJsonAtomic survives a process crash at ${checkpoint}`, () => {
+    const dir = tmpDir();
+    const file = path.join(dir, 'mappings.json');
+    const previous = { generation: 1, entries: ['old'] };
+    const next = { generation: 2, entries: ['new'] };
+    writeJsonAtomic(file, previous);
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import fs from 'node:fs';
+      import { writeJsonAtomic } from ${JSON.stringify(new URL('./atomic-json.js', import.meta.url).href)};
+      const crash = () => process.kill(process.pid, 'SIGKILL');
+      const write = fs.writeFileSync;
+      const rename = fs.renameSync;
+      fs.writeFileSync = (target, body) => {
+        if (${JSON.stringify(checkpoint)} === 'partial-temp') {
+          write(target, body.slice(0, 5));
+          crash();
+        }
+        return write(target, body);
+      };
+      fs.renameSync = (source, target) => {
+        if (${JSON.stringify(checkpoint)} === 'before-rename') crash();
+        rename(source, target);
+        crash();
+      };
+      writeJsonAtomic(${JSON.stringify(file)}, ${JSON.stringify(next)});
+    `], { encoding: 'utf8', timeout: 10000 });
+    try {
+      assert.equal(result.signal, 'SIGKILL', result.stderr);
+      assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), checkpoint === 'after-rename' ? next : previous);
+      writeJsonAtomic(file, { generation: 3 });
+      assert.deepEqual(readJsonOrLoud(file), { generation: 3 });
+      assert.equal(fs.existsSync(`${file}.tmp`), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 test('readJsonOrLoud round-trips a file written by writeJsonAtomic', () => {
   const file = path.join(tmpDir(), 'state.json');

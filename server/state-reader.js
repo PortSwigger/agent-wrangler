@@ -231,10 +231,11 @@ function sessionLabel({ agent = 'claude', names = [], liveTitle, aiTitle, intent
     const t = (s || '').replace(/\s+/g, ' ').trim();
     return !t || t === '(resumed)' || (!explicit && isAutoAgentTitle(t, cwd)) ? '' : t;
   };
-  const prompt = clean(intent);
+  let prompt;
+  const getPrompt = () => (prompt ??= clean(intent));
   for (const [index, n] of names.entries()) {
     const c = clean(n, index === 0);
-    if (adapterFor(agent).labels.summaryFirst && index > 0 && c === prompt) continue;
+    if (adapterFor(agent).labels.summaryFirst && index > 0 && c === getPrompt()) continue;
     if (c) return adapterFor(agent).labels.summaryFirst && index > 0 ? shortCodexTitle(c) : c;
   }
   const live = adapterFor(agent).labels.liveTitle ? clean(liveTitle) : '';
@@ -242,11 +243,11 @@ function sessionLabel({ agent = 'claude', names = [], liveTitle, aiTitle, intent
   const ai = clean(aiTitle);
   if (ai) return ai;
   if (adapterFor(agent).labels.summaryFirst) {
-    const source = clean(summary) || prompt;
+    const source = clean(summary) || getPrompt();
     if (!source) return `${adapterFor(agent).label} session`;
     return shortCodexTitle(source);
   }
-  const derived = prompt || clean(summary);
+  const derived = getPrompt() || clean(summary);
   if (derived) return derived;
   return (cwd ? path.basename(cwd) : '') || fallback || '';
 }
