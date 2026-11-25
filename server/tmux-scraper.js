@@ -308,6 +308,17 @@ export function classify(paneText, { tailLines = 12, strictWorking = false } = {
   // invisible on the board and the idle-timer suspend gate could reap it. needs-you
   // keeps the gate off it, like the login screens above.
   if (trustDialogState(recent)) return { status: 'needs-you', waitingFor: 'trust dialog' };
+  const mcpServer = recent.match(/^[ \t]*(New MCP server found in this project:[ \t]*\S[^\n]*)$/im);
+  if (
+    mcpServer
+    && /^[ \t›❯]*(?:\d+\.[ \t]*)?(?:Use this MCP server|Use this and all future MCP servers in this project|Continue without using this MCP server)[ \t]*$/im.test(recent)
+  ) {
+    return { status: 'needs-you', waitingFor: mcpServer[1].trim() };
+  }
+  const mcpServers = recent.match(/^[ \t]*(\d+ new MCP servers found in this project)[ \t]*$/im);
+  if (mcpServers && /^[ \t›❯]*Enable selected[ \t]*$/im.test(recent)) {
+    return { status: 'needs-you', waitingFor: mcpServers[1] };
+  }
   // trustDialogState() above is pinned to the ONE copy variant it was verified
   // against live ("Accessing workspace:" / "Yes, I trust this folder") — but
   // that title/CTA wording is A/B-tested (verified against the installed
