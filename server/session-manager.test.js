@@ -2381,13 +2381,13 @@ test('dispatch: worktree mode does not add a common-git-dir --add-dir for claude
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('dispatch trusts DATA_DIR, SESSIONS_DIR and MEMORY_DIR (never the launch cwd) for a claude session, and not for codex', async () => {
+test('dispatch trusts SESSIONS_DIR and MEMORY_DIR (never the launch cwd) for a claude session, and not for codex', async () => {
   const sm = smForDispatch();
   const trusted = [];
   sm._ensureClaudeTrust = (p) => trusted.push(p);
   await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
   await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', agent: 'codex' });
-  assert.deepEqual(trusted, [DATA_DIR, SESSIONS_DIR, MEMORY_DIR]);
+  assert.deepEqual(trusted, [SESSIONS_DIR, MEMORY_DIR]);
 });
 
 async function withClaudeTrustSetting(value, fn) {
@@ -2443,7 +2443,7 @@ test('launch, resume and fork in a worktree mirror its repo\'s Claude trust onto
   assert.match(wt, /worktrees\.noindex/);
   // dispatch, resume, claude fork; never the codex fork.
   assert.deepEqual(calls.filter(([k]) => k === 'mirror').map(([, p]) => p), [wt, wt, wt]);
-  assert.deepEqual(calls.filter(([k]) => k === 'trust').map(([, p]) => p), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR, DATA_DIR, SESSIONS_DIR, MEMORY_DIR, DATA_DIR, SESSIONS_DIR, MEMORY_DIR]);
+  assert.deepEqual(calls.filter(([k]) => k === 'trust').map(([, p]) => p), [SESSIONS_DIR, MEMORY_DIR, SESSIONS_DIR, MEMORY_DIR, SESSIONS_DIR, MEMORY_DIR]);
 });
 
 test('launch, resume and fork never call the worktree trust mirror when the setting is off', async () => {
@@ -2514,24 +2514,24 @@ test('login trust: dispatch, resume, fork and worktree trust land in a fixture l
     await sm.dispatch({ cwd: repo, intent: 'x', worktree: true, worktreeAuto: true });
     const wt = sm.launchedDir;
     assert.match(wt, /worktrees\.noindex/);
-    assert.deepEqual(trusted(sm.loginDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR, wt].sort());
-    assert.deepEqual(order, ['context', ['trust', DATA_DIR], ['trust', SESSIONS_DIR], ['trust', MEMORY_DIR], ['mirror', wt], ['login', sm.loginDir]], 'launch context is collected before any trust');
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, wt].sort());
+    assert.deepEqual(order, ['context', ['trust', SESSIONS_DIR], ['trust', MEMORY_DIR], ['mirror', wt], ['login', sm.loginDir]], 'launch context is collected before any trust');
 
     sm.loginDir = login('resume');
     sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
     await sm._doResume('c1', wt, {});
-    assert.deepEqual(trusted(sm.loginDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR, wt].sort());
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, wt].sort());
 
     sm.loginDir = login('fork');
     await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: wt }, cwd: wt });
-    assert.deepEqual(trusted(sm.loginDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR, wt].sort());
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, wt].sort());
 
     // A plain checkout the server already trusts: the cwd itself, never a parent.
     sm.loginDir = login('trusted-cwd');
     await sm.dispatch({ cwd: repo, intent: 'x' });
-    assert.deepEqual(trusted(sm.loginDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR, repo].sort());
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, repo].sort());
 
-    assert.deepEqual(trusted(serverDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR, repo, wt].sort(), 'the server config gets only what a default launch writes');
+    assert.deepEqual(trusted(serverDir), [SESSIONS_DIR, MEMORY_DIR, repo, wt].sort(), 'the server config gets only what a default launch writes');
   });
 });
 
@@ -2546,22 +2546,22 @@ test('login trust: an untrusted folder is never trusted in the login config', as
     sm.loginDir = login('dispatch', { projects: { [repo]: { hasTrustDialogAccepted: true } } });
     await sm.dispatch({ cwd: repo, intent: 'x', worktree: true, worktreeAuto: true });
     const wt = sm.launchedDir;
-    assert.deepEqual(trusted(sm.loginDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR, repo].sort(), 'no worktree entry');
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, repo].sort(), 'no worktree entry');
 
     sm.loginDir = login('resume');
     sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
     await sm._doResume('c1', wt, {});
-    assert.deepEqual(trusted(sm.loginDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR].sort());
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR].sort());
 
     sm.loginDir = login('fork');
     await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: elsewhere }, cwd: elsewhere });
-    assert.deepEqual(trusted(sm.loginDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR].sort());
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR].sort());
 
     // A server config trusting an unrelated folder grants nothing here either.
     serveTrust([path.join(root, 'other')]);
     sm.loginDir = login('dispatch-2');
     await sm.dispatch({ cwd: elsewhere, intent: 'x' });
-    assert.deepEqual(trusted(sm.loginDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR].sort());
+    assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR].sort());
     assert.ok(!trusted(serverDir).includes(elsewhere) && !trusted(serverDir).includes(wt));
   });
 });
@@ -2594,6 +2594,37 @@ test('login trust: a refused launch context writes no trust anywhere', async () 
   });
 });
 
+test('wrangler-owned add-dir trust: a launch trusts exactly its --add-dir folders inside DATA_DIR, in the injected config and a login CLAUDE_CONFIG_DIR, never DATA_DIR or a user folder', async () => {
+  await withLoginTrustFixture(async ({ root, repo, login, trusted, serveTrust, serverDir }) => {
+    serveTrust([repo]);
+    const inbox = path.join(DATA_DIR, 'evidence', `job_${process.pid}`, 'step_y', 'inbox');
+    const userDir = path.join(root, 'user-notes');
+    fs.mkdirSync(inbox, { recursive: true });
+    fs.mkdirSync(userDir);
+    try {
+      const sm = smWithLogin();
+      sm.loginDir = login('login');
+      const { sessionId } = await sm.dispatch({ cwd: repo, intent: 'x', addDirs: [inbox, userDir] });
+      const want = [SESSIONS_DIR, MEMORY_DIR, inbox];
+      assert.deepEqual(trusted(serverDir), [...want, repo].sort());
+      assert.deepEqual(trusted(sm.loginDir), [...want, repo].sort());
+      for (const dir of [serverDir, sm.loginDir]) {
+        const projects = JSON.parse(fs.readFileSync(path.join(dir, '.claude.json'), 'utf8')).projects;
+        assert.equal(projects[inbox]?.hasTrustDialogAccepted, true, dir);
+        assert.equal(projects[DATA_DIR], undefined, 'DATA_DIR itself is never trusted');
+        assert.equal(projects[userDir], undefined, 'a user-chosen add-dir is left to Claude\'s prompt');
+      }
+      // A resume re-grants the stored add-dirs, so it re-trusts the same inbox.
+      sm.loginDir = login('login2');
+      sm.map.set('c1', { ...sm.map.get(sessionId), agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000' });
+      await sm._doResume('c1', repo, {});
+      assert.deepEqual(trusted(sm.loginDir), [...want, repo].sort());
+    } finally {
+      fs.rmSync(path.dirname(path.dirname(inbox)), { recursive: true, force: true });
+    }
+  });
+});
+
 test('login trust: a default launch writes both managed roots without a login write', async () => {
   await withLoginTrustFixture(async ({ repo, serveTrust, trusted, serverDir }) => {
     serveTrust([repo]);
@@ -2604,24 +2635,9 @@ test('login trust: a default launch writes both managed roots without a login wr
     sm.map.set('c1', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: wt });
     await sm._doResume('c1', wt, {});
     await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: { agent: 'claude', cwd: wt }, cwd: wt });
-    const launch = ['context', ['trust', DATA_DIR], ['trust', SESSIONS_DIR], ['trust', MEMORY_DIR], ['mirror', wt]];
+    const launch = ['context', ['trust', SESSIONS_DIR], ['trust', MEMORY_DIR], ['mirror', wt]];
     assert.deepEqual(order, [...launch, ...launch, ...launch], 'the same trust calls per launch, and no login write');
-    assert.deepEqual(trusted(serverDir), [DATA_DIR, SESSIONS_DIR, MEMORY_DIR, repo, wt].sort());
-  });
-});
-
-test('DATA_DIR trust: a claude launch writes hasTrustDialogAccepted for DATA_DIR to the injected config and a login CLAUDE_CONFIG_DIR, covering a Wrangler² evidence inbox', async () => {
-  await withLoginTrustFixture(async ({ repo, login, serveTrust, serverDir }) => {
-    serveTrust([repo]);
-    const sm = smWithLogin();
-    sm.loginDir = login('login');
-    await sm.dispatch({ cwd: repo, intent: 'x' });
-    const inbox = path.join(DATA_DIR, 'evidence', 'job_x', 'step_y', 'inbox');
-    for (const dir of [serverDir, sm.loginDir]) {
-      const projects = JSON.parse(fs.readFileSync(path.join(dir, '.claude.json'), 'utf8')).projects;
-      assert.equal(projects[DATA_DIR]?.hasTrustDialogAccepted, true, dir);
-      assert.ok(inbox.startsWith(DATA_DIR + path.sep), 'an evidence inbox sits under the trusted DATA_DIR');
-    }
+    assert.deepEqual(trusted(serverDir), [SESSIONS_DIR, MEMORY_DIR, repo, wt].sort());
   });
 });
 
