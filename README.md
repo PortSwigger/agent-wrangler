@@ -563,6 +563,9 @@ Chromium installed (or set `CHROME_BIN` to its executable). CI runs browser test
 automatically. `CI=true` (case-insensitive) or `CI=1` also enables them;
 `AW_BROWSER_TESTS=0` overrides CI too. See [Contributing](CONTRIBUTING.md).
 
+For isolated CPU measurements and persistence tradeoffs, see the
+[mapping-save investigation](docs/mapping-save-investigation.md).
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
