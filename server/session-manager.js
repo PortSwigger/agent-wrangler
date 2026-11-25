@@ -23,7 +23,7 @@ import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, codex
 import { TOOL_REFRESH_NOTE } from './extensions/tool-fingerprint.js';
 import { cleanCodexPolicy, codexApprovalPolicyError } from './extensions/codex-policy.js';
 import { ensureCodexTrust } from './codex-trust.js';
-import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
+import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust, isTrustableDataDir } from './claude-trust.js';
 import { launchEnvOf, launchSecretEnvOf, withoutSecretEnv } from './launch-context.js';
 import { writeSecretEnvFile } from './launch-secrets.js';
 import { SESSION_TOKEN_ENV } from './mcp/client-config.js';
@@ -600,12 +600,16 @@ export class SessionManager {
 
   // Called after the launch context is collected, so a launch whose context
   // points CLAUDE_CONFIG_DIR at a login's own config gets the same trust there.
+  // DATA_DIR covers every wrangler-owned --add-dir (evidence inboxes, task
+  // memory); SESSIONS_DIR and MEMORY_DIR stay for when DATA_DIR is refused as
+  // too broad (claude-trust.js isTrustableDataDir).
   async _trustClaudeLaunch(dir, launchContext) {
+    if (isTrustableDataDir(DATA_DIR)) this._ensureClaudeTrust(DATA_DIR);
     this._ensureClaudeTrust(SESSIONS_DIR);
     this._ensureClaudeTrust(MEMORY_DIR);
     await this._mirrorWorktreeTrust(dir);
     const loginDir = launchEnvOf(launchContext).CLAUDE_CONFIG_DIR;
-    if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, sessionsDir: SESSIONS_DIR, memoryDir: MEMORY_DIR });
+    if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, dataDir: DATA_DIR, sessionsDir: SESSIONS_DIR, memoryDir: MEMORY_DIR });
   }
 
   // The secret-variable file for one pane launch (launch-secrets.js), or null.

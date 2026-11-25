@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust } from './claude-trust.js';
+import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust, isTrustableDataDir } from './claude-trust.js';
 
 function withTemp(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-trust-test-'));
@@ -252,6 +252,36 @@ test('ensureLoginClaudeTrust: only the server config authorises; the login\'s ow
     fs.writeFileSync(file, '{ nope');
     await ensureLoginClaudeTrust(login, { cwd: worktree, serverFile: file, log: quiet });
     assert.deepEqual(trustedKeys(loginFile), [sessionsDir, repo].sort());
+  });
+});
+
+test('isTrustableDataDir: a dedicated folder is trustable; /, home, an ancestor of home or a relative path is not', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'claude-trust-dd-')));
+  try {
+    const home = path.join(root, 'home', 'me');
+    fs.mkdirSync(home, { recursive: true });
+    assert.equal(isTrustableDataDir(path.join(home, '.agent-wrangler'), home), true);
+    assert.equal(isTrustableDataDir(path.join(root, 'aw-data'), home), true);
+    for (const bad of ['/', home, path.join(root, 'home'), root, '.agent-wrangler', '', undefined]) {
+      assert.equal(isTrustableDataDir(bad, home), false, String(bad));
+    }
+    const link = path.join(root, 'link-to-home');
+    fs.symlinkSync(home, link);
+    assert.equal(isTrustableDataDir(link, home), false, 'a symlink to home is refused');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ensureLoginClaudeTrust: trusts a dedicated dataDir in the login config, never a too-broad one', async () => {
+  await withLogin(async ({ root, file, login, loginFile }) => {
+    fs.writeFileSync(file, '{}\n');
+    const dataDir = path.join(root, 'aw-data');
+    assert.equal(await ensureLoginClaudeTrust(login, { dataDir, serverFile: file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(loginFile), [dataDir]);
+    assert.equal(await ensureLoginClaudeTrust(login, { dataDir: os.homedir(), serverFile: file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(loginFile), [dataDir], 'home is never trusted as a data dir');
+    assert.equal(fs.readFileSync(file, 'utf8'), '{}\n', 'the server config is untouched');
   });
 });
 

@@ -13,11 +13,16 @@ const exec = promisify(execFile);
 // repo, the canonical repo root's entry (for a linked worktree, the main
 // checkout) or one on the walk from the folder up to its own git top; entries
 // above the git top are ignored. Outside git, any ancestor still counts. So
-// trusting SESSIONS_DIR once covers every blank-cwd launch (each lands in a
-// fresh scratch dir beneath it), but a trusted ~/code no longer covers a
-// worktree of a repo under it. Never call this for a user's own cwd; a worktree
-// is only trusted through mirrorWorktreeTrust, when the repo it was cut from
-// (or an ancestor of it) already is.
+// trusting DATA_DIR (the wrangler-owned root, not a git repo) once covers every
+// folder Wrangler makes beneath it: blank-cwd scratch dirs under SESSIONS_DIR,
+// task memory, and the per-step evidence inboxes a Wrangler² job passes as
+// --add-dir (Claude asks again, or refuses, for an untrusted added folder).
+// DATA_DIR is only trusted when it is a dedicated folder (see
+// isTrustableDataDir), never home, `/` or an ancestor of home. But a trusted
+// ~/code no longer covers a worktree of a repo under it. Never call this for a
+// user's own cwd or a user-chosen --add-dir outside DATA_DIR; a worktree is only
+// trusted through mirrorWorktreeTrust, when the repo it was cut from (or an
+// ancestor of it) already is.
 //
 // `~/.claude.json` is big and rewritten live by running Claude sessions, so this
 // writer is conservative: idempotent (no write when already trusted), atomic
@@ -100,6 +105,17 @@ export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = co
 
 const realPath = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
 
+// True when `dataDir` is safe to trust wholesale: an absolute path that is not
+// the filesystem root, the home dir or any ancestor of it (a mis-set
+// AW_DATA_DIR=~ must not trust everything the user owns). Checked plain and
+// realpathed, so a symlink to home is refused too.
+export function isTrustableDataDir(dataDir, home = os.homedir()) {
+  if (typeof dataDir !== 'string' || !path.isAbsolute(dataDir)) return false;
+  const homes = [...new Set([path.resolve(home), realPath(home)])];
+  return [...new Set([path.resolve(dataDir), realPath(dataDir)])].every((d) =>
+    path.dirname(d) !== d && !homes.some((h) => h === d || h.startsWith(d + path.sep)));
+}
+
 // `cwd`'s git top, whether it is a linked worktree, and the repo it belongs to
 // (a worktree's main checkout; a bare repo's own dir), plain and realpathed.
 // Null outside a repo or on any git failure.
@@ -133,12 +149,12 @@ export async function mirrorWorktreeTrust(cwd, opts = {}) {
 
 // A login's own Claude config dir (the CLAUDE_CONFIG_DIR a launch context sets)
 // gets the same trust a default launch writes, authorised only by the server's
-// config: SESSIONS_DIR, MEMORY_DIR, a worktree whose repo the server config
+// config: DATA_DIR (when isTrustableDataDir), SESSIONS_DIR, MEMORY_DIR, a worktree whose repo the server config
 // trusts, and the launch cwd itself when the server config already covers it. Nothing the
 // login's own file trusts authorises anything. The dir must already exist (it
 // is never created), must not be the server's own or the CLI's default config
 // dir, and a symlinked .claude.json is left alone. Never throws.
-export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, memoryDir, serverFile = claudeConfigFile(), log = console.warn } = {}) {
+export async function ensureLoginClaudeTrust(configDir, { cwd, dataDir, sessionsDir, memoryDir, serverFile = claudeConfigFile(), log = console.warn } = {}) {
   const skip = (why) => { log(`[claude-trust] skipped login config ${JSON.stringify(configDir)}: ${why}`); return false; };
   if (typeof configDir !== 'string' || !path.isAbsolute(configDir)) return skip('not an absolute path');
   try {
@@ -153,6 +169,7 @@ export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, memo
   try {
     if (fs.lstatSync(file).isSymbolicLink()) return skip('.claude.json is a symlink');
   } catch { /* no file yet */ }
+  if (dataDir && isTrustableDataDir(dataDir)) ensureClaudeTrust(dataDir, { file, log });
   if (sessionsDir) ensureClaudeTrust(sessionsDir, { file, log });
   if (memoryDir) ensureClaudeTrust(memoryDir, { file, log });
   if (!cwd) return true;
