@@ -243,29 +243,40 @@ notices skipped during snooze are discarded rather than delivered when the snooz
 Subscriptions survive resume, are not inherited by forks, and end when the child exits, the
 subscriber is archived or missing, or the subscriber calls `stop_status_notices` for that child. A server restart seeds observations without sending notices.
 
-## Messages at the bottom of the board
+## Notifications on the board
 
-Short messages (toasts) and persistent notifications share a stack about 12px from the
+Short notifications and persistent ones share a stack about 12px from the
 top-right corner. Messages stay at the viewport corner when dialogs open or close and
-can cover board or dialog controls. **Settings → Appearance → Toast position** switches
+can cover board or dialog controls. **Settings → Appearance → Notification position** switches
 between **Top right** (the default) and **Bottom right**, immediately and for this browser.
-Newest messages sit nearest the chosen edge, with **Clear all** beside that edge. With two or
-more messages, **Clear all** dismisses the whole stack
+Newest messages sit nearest the chosen edge. With two or more messages, **Snooze all** and
+**Clear all** appear beside that edge; **Clear all** dismisses the whole stack
 without running actions, answering requests or marking anything read. Persistent notifications
 stay until acted on or dismissed and are never evicted to make room for another message.
 All messages use the theme’s default surface and text colours. A stripe across the top shows
-severity. On timed toasts, the stripe drains in the severity colour over a tinted track; messages
+severity. On timed messages, the stripe drains in the severity colour over a tinted track; messages
 without a timer have a solid stripe. Both shades follow the active theme’s severity colours:
 information uses `accent`, success `green`, warning `warn`, and error `red`. A theme inherits
 any colour it does not set from its light or dark base.
 
-Up to three transient toasts appear at once. How long one stays depends on its kind: a success
+Up to three transient messages appear at once. How long one stays depends on its kind: a success
 3 seconds, information 5, a warning 8, and an error until you close it with **×**. Hovering over
 the stack or focusing its buttons with the keyboard pauses every timer.
 A long message shows its first three lines with **Details** for the rest; opening Details keeps that
 message up until you close it. When a fourth arrives, the oldest plain message makes room before one
 with an action (such as **Resume** after an archive) or an error. Several launch warnings from
 extensions arrive as one warning with the list under Details.
+
+Every message with **×** also has a clock beside it, except brief feedback on something you just
+did, such as **Copied**. The clock hides that message for the length set in **Settings →
+Appearance → Notification snooze length** (5, 10 or 30 minutes; 10 by default), and **Snooze
+all** hides every message with a clock at once, holding new persistent notifications and
+needs-you and PR notifications until it ends. A snoozed needs-you or PR notification comes back
+only if it still applies: the session still needs you, or the PR is still in that state. Any
+other snoozed message comes back if it is still there: a persistent notification that has not
+been withdrawn, or a message that has not been replaced or taken down meanwhile. A transient
+message comes back with what was left of its time. Snoozes of needs-you and PR notifications
+survive a reload; other snoozed messages do not.
 
 ## Session actions
 
@@ -412,7 +423,7 @@ its tiles offer neither. With only this board's own deck, the dialog has no pick
 ### Settings for each deck
 
 With more than one deck, **Settings** splits into **Board** tabs and **Deck** tabs. The Board tabs
-are this board's own: Appearance, the per-browser session view defaults and **Hide PR toasts the
+are this board's own: Appearance, the per-browser session view defaults and **Hide PR notifications the
 session already got** (under **Board**), the deck list, and Shortcuts. The Deck tabs (Sessions,
 Automation, Extensions and Updates) belong to the deck chosen in the picker beside them, this board's
 own deck by default. Each value is read from that deck and saved in that deck's own `config.json`,
@@ -453,7 +464,7 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
 
 **Settings** has Appearance, Decks, Sessions, Automation, Extensions, Shortcuts and Updates tabs, covering:
 
-- Theme, terminal side, toast position, terminal font size, and chat font size.
+- Theme, terminal side, notification position, terminal font size, and chat font size.
 - The decks this board shows, with each one's name, colour and connection (see
   [Add a deck to the board](#add-a-deck-to-the-board)).
 - Child-card and Chat defaults, the default folder for new sessions, and the Codex sandbox and approval
