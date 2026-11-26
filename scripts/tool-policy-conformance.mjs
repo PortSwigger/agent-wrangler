@@ -4,7 +4,9 @@
 // a local dummy MCP server and spends a few cents of model calls. Run it by
 // hand after changing tool-policy enforcement or raising a version floor:
 //
-//   node scripts/tool-policy-conformance.mjs [--agents claude,codex,agy] [--out receipt.json]
+//   node scripts/tool-policy-conformance.mjs [--agents claude,codex,agy,headless-tool] [--out receipt.json]
+//
+// Codex runs its default model unless AW_CONFORMANCE_CODEX_MODEL names one.
 //
 // Each case builds the launch command exactly as Agent Wrangler would (the
 // adapter's buildLaunch/buildResume/buildFork with a policy in its launch
@@ -139,7 +141,7 @@ async function codexCases() {
     ? cmd.replace(/ codex 'resume' ('[^']+') /, (_, id) => ` codex 'exec' 'resume' ${id} ${execFlags(extra)}`)
     : cmd.replace(/ codex '/, ` codex 'exec' ${execFlags(extra)}'`))
     .replace(/'--ask-for-approval' '([a-z-]+)'/, (_, v) => `'-c' ${q(`approval_policy="${v}"`)}`);
-  const model = 'gpt-6.1-sol';
+  const model = process.env.AW_CONFORMANCE_CODEX_MODEL || undefined;
   const r = await check('codex-new-exact-bypass', 'codex', 'buildLaunch, bypass sandbox and approvals, exact rule',
     toExec(codex.buildLaunch({ sessionId: 'conformance', model, effort: 'low', launchContext: ctx(EXACT), codexPolicy: { bypass: true }, intent: PROMPT })), '');
   const thread = /"thread_id":"([^"]+)"/.exec(r.out)?.[1];
