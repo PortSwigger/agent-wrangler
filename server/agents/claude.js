@@ -15,6 +15,7 @@ import { claudeMcpConfigArg, allowedToolsArg, prAttachUrl, prModelUrl, statusEve
 import { claudeStatusHookGroups } from '../status-hooks.js';
 import { AGENT_SKILLS_PLUGIN_DIR, extensionSkillPluginDirs, mandatorySkillPrompt } from '../agent-skills.js';
 import { modelFamilies, priceCatalogVersion } from '../price-catalog.js';
+import { claudeToolPolicySettings, rulesForAgent } from '../tool-policy.js';
 
 // The autopilot issue-to-pr skill ships in-repo (skills/issue-to-pr) and is loaded
 // as a plugin only on workflow launches (below), so it's available no matter which
@@ -53,8 +54,11 @@ export const PR_FOOTER_DEP_PATH = path.join(INSTALL_ROOT, 'server', 'pr-footer.j
 //     core's groups per event, so they add to core's hooks and never replace them.
 //   - on a runtime with `statusEvents: true` (launchContext.statusEvents), the
 //     status hooks (status-hooks.js) that post each state change to the session API.
+//   - a tool policy's denies and blocking PreToolUse hooks (tool-policy.js),
+//     with `disableAllHooks: false` so the user's settings cannot switch them off.
 export function launchSettings(launchContext) {
-  const hooks = { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: PR_HOOK_PATH }] }] };
+  const policy = claudeToolPolicySettings(rulesForAgent(launchContext?.toolPolicy, 'claude'));
+  const hooks = { ...(policy ? policy.hooks : {}), PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: PR_HOOK_PATH }] }] };
   if (launchContext?.statusEvents) {
     for (const [event, groups] of Object.entries(claudeStatusHookGroups())) hooks[event] = [...(hooks[event] || []), ...groups];
   }
@@ -62,6 +66,7 @@ export function launchSettings(launchContext) {
   return JSON.stringify({
     tui: 'fullscreen',
     crossSessionInbound: 'accept',
+    ...(policy ? { disableAllHooks: false, ...(policy.permissions.deny.length ? { permissions: policy.permissions } : {}) } : {}),
     hooks,
   });
 }
@@ -328,6 +333,9 @@ export const claude = {
     permissionModes: ['auto', 'manual', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'],
     autoCompact: { min: 100000, presets: [100000, 250000, 500000, 1000000] },
   },
+  // Tool policies (tool-policy.js): verified on 2.1.332 that both the denies
+  // and the hooks hold under --dangerously-skip-permissions.
+  toolPolicy: { patterns: true, bin: 'claude', minVersion: '2.1.332' },
   launch: { grantPaths: 'symlink', trust: 'claude-config', gitMetadataGrants: false, codexPolicy: false, recoverMissingConversation: false, statusEvents: true },
   terminal: {
     readySignal: 'title',

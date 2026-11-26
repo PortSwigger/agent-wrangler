@@ -405,3 +405,27 @@ test('the dispatch list says what Auto effort each Gemini family runs at', () =>
   assert.equal(byValue['gemini-4-hydrogen'], 'medium');
   assert.equal(byValue['gemini-3.1-pro'], 'low');
 });
+
+test('a tool policy adds its exact names to the user\'s own permission denies on launch and resume', () => {
+  const toolPolicy = { sources: ['slack'], fingerprint: 'f', rules: [
+    { extId: 'slack', kind: 'tool', value: 'mcp(claude_ai_Slack/slack_send_message)', agents: ['agy'], reason: 'Blocked.' },
+    { extId: 'slack', kind: 'tool', value: 'mcp__claude_ai_Slack__slack_send_message', agents: ['claude'], reason: 'Claude only.' },
+  ] };
+  const launchContext = { env: {}, addDirs: [], toolPolicy };
+  for (const cmd of [
+    agy.buildLaunch({ sessionId: 'card-1', cwd: '/work/repo', launchContext }),
+    agy.buildResume({ sessionId: 'card-1', cwd: '/work/repo', resumeId: ID, launchContext }),
+  ]) {
+    const settings = JSON.parse(/'--settings' '(\{[^']*\})'/.exec(cmd)[1]);
+    assert.ok(settings.permissions.deny.includes('mcp(claude_ai_Slack/slack_send_message)'));
+    assert.ok(!settings.permissions.deny.includes('mcp__claude_ai_Slack__slack_send_message'));
+  }
+  const s = agySessionSettings({ cwd: '/b', user: { permissions: { deny: ['command(rm)'] } }, deny: ['mcp(s/w)', 'command(rm)'] });
+  assert.deepEqual(s.permissions.deny, ['command(rm)', 'mcp(s/w)']);
+  assert.deepEqual(agy.toolPolicy, { patterns: false, bin: 'agy', minVersion: '1.5.18' });
+});
+
+test('agy refuses to build a launch whose policy holds a pattern for it', () => {
+  const toolPolicy = { sources: ['slack'], fingerprint: 'f', rules: [{ extId: 'slack', kind: 'pattern', value: 'mcp.*', agents: null, reason: 'x' }] };
+  assert.throws(() => agy.buildLaunch({ sessionId: 'c', cwd: '/w', launchContext: { env: {}, addDirs: [], toolPolicy } }), /pattern/);
+});

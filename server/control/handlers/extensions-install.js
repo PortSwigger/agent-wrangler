@@ -10,6 +10,8 @@ import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteH
 import { HOST_API_VERSION, V1_SHIM_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
 import { log } from '../../log.js';
 import { assertExtensionInstallsOn, extensionInstallsOff, INSTALLS_OFF_MESSAGE } from '../../extensions/installs.js';
+import { readConfig, writeConfig } from '../../config-store.js';
+import { clearToolPolicyRequirement } from '../../tool-policy.js';
 
 // Installing an external extension, in two frames with a human decision between
 // them: `ext-install` clones and DISCLOSES (nothing is installed, no registry is
@@ -500,6 +502,9 @@ export const extUninstallHandler = {
     // until then.
     ctx.ext.deactivate(id);
     ctx.ext.unregister(id, { remove: true });
+    // An uninstall is a human's explicit choice, so its tool policy stops
+    // being required (tool-policy.js); nothing else clears one.
+    clearToolPolicyRequirement(id, { cfg: readConfig(), write: writeConfig });
     rmQuiet(dest);
     rmQuiet(generationRoot(id));
     removeRecord(id);

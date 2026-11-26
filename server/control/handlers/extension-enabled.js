@@ -1,4 +1,5 @@
 import { readConfig, writeConfig } from '../../config-store.js';
+import { clearToolPolicyRequirement } from '../../tool-policy.js';
 
 // The one settings toggle every extension shares: flips `extensions.<id>` in
 // config.json and then makes that true of the running process. Replaces the
@@ -33,6 +34,10 @@ export const extensionEnabledHandler = {
     // the new list entry is read from it, so an activation must not be left
     // deciding off a value this frame has already superseded.
     const next = writeConfig({ extensions: { ...(cfg.extensions || {}), [msg.id]: enabled } });
+    // Turning an extension off is the human's explicit choice, so its tool
+    // policy stops being required (tool-policy.js), even when it was already
+    // off or quarantined and so refusing launches.
+    if (!enabled) clearToolPolicyRequirement(msg.id, { cfg: next, write: writeConfig });
     if (enabled && !known.quarantine && !known.enabled) {
       const manifest = ctx.ext.manifests?.get(msg.id);
       // A quarantined-at-discovery entry has no manifest to re-stage — there was

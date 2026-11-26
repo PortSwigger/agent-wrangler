@@ -116,7 +116,7 @@ test('enabled filtering: a disabled extension is listed but contributes nothing 
     description: '', author: '', homepage: '',
     requires: [], range: null, storeNames: ['fake'], settings: [], skills: ['mail'], handlerTypes: [],
     hideDispatchField: [], keybindings: [], runtimes: [], external: false, dir: path.join(HERE, 'fake'), provenance: null, earlyAdopterBranch: null,
-    telemetry: { events: null }, version: null, boardApi: null, quarantine: null,
+    telemetry: { events: null }, version: null, boardApi: null, toolPolicy: false, headlessTools: [], quarantine: null,
   }], 'a disabled extension still reports its facade inputs, but claims no handler types');
   assert.deepEqual(out.tools, []);
   assert.deepEqual(out.allowedToolNames, []);
@@ -763,7 +763,7 @@ test('an already-quarantined entry (discovery could not read it) becomes a row a
     id: 'dud', label: 'dud', help: '', description: '', author: '', homepage: '',
     defaultEnabled: false, enabled: false, requires: [], range: null, storeNames: [], settings: [], skills: [],
     handlerTypes: [], hideDispatchField: [], keybindings: [], runtimes: [], external: true, dir: null, provenance: null, earlyAdopterBranch: null,
-    telemetry: { events: null }, version: null, boardApi: null, quarantine: 'no index.js',
+    telemetry: { events: null }, version: null, boardApi: null, toolPolicy: false, headlessTools: [], quarantine: 'no index.js',
   }]);
   assert.deepEqual(out.tools, []);
 });
@@ -1394,4 +1394,31 @@ test('graph pin state and auto-update reason follow the installed record until u
   assert.match(row({ sha: 'b'.repeat(40), ref: 'v1' }).autoUpdateBlocked, /pinned to v1/i);
   assert.equal(row({ sha: 'b'.repeat(40) }).pinnedRef, null);
   assert.equal(row({ sha: 'b'.repeat(40) }).autoUpdateBlocked, null);
+});
+
+test('toolPolicy must be a function, and an enabled extension contributes it until unregistered', () => {
+  assert.throws(() => validateManifest(manifest({ toolPolicy: { rules: [] } })), /toolPolicy must be a function/);
+  const fn = () => ({ rules: [] });
+  const loaded = loadExtensions({ cfg: {}, builtin: [manifest({ toolPolicy: fn })] });
+  assert.deepEqual(loaded.toolPolicies, [{ id: 'fake', fn }]);
+  assert.equal(loaded.list[0].toolPolicy, true);
+  unregisterExtension(loaded, 'fake');
+  assert.deepEqual(loaded.toolPolicies, []);
+  const off = loadExtensions({ cfg: { extensions: { fake: false } }, builtin: [manifest({ toolPolicy: fn })] });
+  assert.deepEqual(off.toolPolicies, []);
+  assert.equal(off.list[0].toolPolicy, true, 'the row still says the manifest declares one');
+  assert.equal(extensionsForGraph(off.list, () => false)[0].toolPolicy, true);
+});
+
+test('headlessTools: declared tool names, each needing agents:headless-tool', () => {
+  const ok = manifest({ requires: ['agents:headless-tool'], headlessTools: [{ tool: 'mcp__claude_ai_Slack__slack_send_message', source: 'claudeai' }] });
+  assert.doesNotThrow(() => validateManifest(ok));
+  const loaded = loadExtensions({ cfg: {}, builtin: [ok] });
+  assert.deepEqual(loaded.list[0].headlessTools, [{ tool: 'mcp__claude_ai_Slack__slack_send_message', source: 'claudeai' }]);
+  assert.deepEqual(extensionsForGraph(loaded.list)[0].headlessTools, [{ tool: 'mcp__claude_ai_Slack__slack_send_message', source: 'claudeai' }]);
+  assert.throws(() => validateManifest(manifest({ headlessTools: [{ tool: 'x' }] })), /headlessTools requires the agents:headless-tool capability/);
+  assert.throws(() => validateManifest(manifest({ requires: ['agents:headless-tool'], headlessTools: 'x' })), /headlessTools must be an array/);
+  assert.throws(() => validateManifest(manifest({ requires: ['agents:headless-tool'], headlessTools: [{ tool: 'two words' }] })), /headlessTools\[0\]\.tool/);
+  assert.throws(() => validateManifest(manifest({ requires: ['agents:headless-tool'], headlessTools: [{ tool: 'x', source: '' }] })), /headlessTools\[0\]\.source/);
+  assert.throws(() => validateManifest(manifest({ requires: ['agents:headless-tool'], headlessTools: [{ tool: 'x', other: 1 }] })), /unknown key "other"/);
 });

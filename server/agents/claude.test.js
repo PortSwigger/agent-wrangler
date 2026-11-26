@@ -442,3 +442,43 @@ test('Claude prepends a tool refresh note to an existing resume prompt without c
   assert.ok(interactive.includes(note));
   assert.ok(!interactive.includes(` -- '${note}'`));
 });
+
+const SLACK_POLICY = Object.freeze({
+  sources: ['slack'],
+  fingerprint: 'f',
+  rules: [
+    { extId: 'slack', kind: 'tool', value: 'mcp__claude_ai_Slack__slack_send_message', agents: null, reason: 'Use the Slack approval tool.' },
+    { extId: 'slack', kind: 'pattern', value: 'mcp__.*__slack_schedule_.*', agents: ['claude'], reason: 'No scheduling.' },
+    { extId: 'slack', kind: 'tool', value: 'mcp(slack/send)', agents: ['agy'], reason: 'agy only.' },
+  ],
+});
+
+function settingsArg(cmd) {
+  const m = cmd.match(/'--settings' '([^']*(?:'\\''[^']*)*)'/);
+  return JSON.parse(m[1].replace(/'\\''/g, "'"));
+}
+
+test('a tool policy denies exact names and blocks every rule with a hook on launch, resume and fork', () => {
+  const launchContext = { env: {}, addDirs: [], toolPolicy: SLACK_POLICY };
+  for (const cmd of [
+    claude.buildLaunch({ sessionId: 's', launchContext }),
+    claude.buildResume({ sessionId: 's', resumeId: 'r', launchContext }),
+    claude.buildFork({ sessionId: 's', sourceId: 'src', launchContext }),
+  ]) {
+    const s = settingsArg(cmd);
+    assert.equal(s.disableAllHooks, false);
+    assert.deepEqual(s.permissions, { deny: ['mcp__claude_ai_Slack__slack_send_message'] });
+    const blocking = s.hooks.PreToolUse.filter((g) => g.hooks[0].onFailure === 'block');
+    assert.deepEqual(blocking.map((g) => g.matcher), ['^(?:mcp__claude_ai_Slack__slack_send_message)$', '^(?:mcp__.*__slack_schedule_.*)$']);
+    assert.match(blocking[0].hooks[0].command, /exit 2$/);
+    assert.ok(s.hooks.PostToolUse.length, 'core hooks stay');
+  }
+  assert.deepEqual(claude.toolPolicy, { patterns: true, bin: 'claude', minVersion: '2.1.332' });
+});
+
+test('without a tool policy the settings carry no denies and leave hooks to the user', () => {
+  const s = settingsArg(claude.buildLaunch({ sessionId: 's', launchContext: { env: {}, addDirs: [] } }));
+  assert.equal(s.permissions, undefined);
+  assert.equal(s.disableAllHooks, undefined);
+  assert.equal(s.hooks.PreToolUse, undefined);
+});

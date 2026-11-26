@@ -16,7 +16,7 @@ import { setExtensionInstallsOffForTest, INSTALLS_OFF_MESSAGE } from '../../exte
 import { extensionEnabledHandler } from './extension-enabled.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
 import { routeControlMessage } from '../router.js';
-import { readConfig } from '../../config-store.js';
+import { readConfig, writeConfig } from '../../config-store.js';
 import { DATA_DIR } from '../../data-dir.js';
 import { HOST_API_VERSION } from '../../host-api/version.js';
 import { createExtensionUpdateCheck } from '../../extensions/update-check.js';
@@ -278,7 +278,10 @@ test('ext-uninstall removes the directory and the record, keeps store data, and 
   await install(ctx());
   const installed = installedDir('notes', readProvenance().notes);
   const c = ctx([{ id: 'notes', external: true }, { id: 'shipped', external: false }]);
+  writeConfig({ toolPolicyRequirements: { notes: { since: 'x' }, shipped: { since: 'y' } } });
   await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c);
+  assert.deepEqual(Object.keys(readConfig().toolPolicyRequirements), ['shipped'], 'an uninstall clears only its own tool-policy requirement');
+  writeConfig({ toolPolicyRequirements: {} });
   assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
   assert.equal(readProvenance().notes, undefined);
   assert.equal(fs.existsSync(installed), false);

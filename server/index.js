@@ -46,7 +46,7 @@ import { createPaneDeferral } from './pane-deferral.js';
 import { mergePr } from './pr-status.js';
 import { createPrObservationStore, createPrObservationPoller } from './pr-observations.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, writeConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, dispatchableAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
@@ -87,6 +87,7 @@ import { sendGuarded } from './ws-backpressure.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
+import { collectToolPolicy, syncToolPolicyRequirements, toolPolicyRequirements } from './tool-policy.js';
 import { collectPrepare } from './session-prepare.js';
 import { collectBeforeSpawn, notifySpawned } from './session-spawn.js';
 import { createLinkNormaliser } from './mcp/links.js';
@@ -321,6 +322,19 @@ const installDriftNotice = () => installDriftStatus(installDrift.current(), { ma
 sessionManager._launchContext = (ctx) => {
   installDrift.poll();
   return collectLaunchContext(ctx, { ext, hostApiFor, onError: logError });
+};
+// Required tool policies (server/tool-policy.js), asked before every
+// dispatch/resume/fork; fail-closed, so a recorded requirement whose extension
+// is not active refuses the launch.
+sessionManager._toolPolicy = (ctx) => collectToolPolicy(ctx, {
+  ext, required: toolPolicyRequirements(readConfig()), hostApiFor, agentIds: registeredAgents().map((a) => a.id),
+});
+const syncToolPolicies = () => {
+  try {
+    syncToolPolicyRequirements(ext.list, { cfg: readConfig(), write: writeConfig });
+  } catch (err) {
+    logError('[tool-policy] could not record requirements', err);
+  }
 };
 sessionManager._taskFor = (sid) => taskStore.taskFor(sid);
 sessionManager._beforeSpawn = (payload) => collectBeforeSpawn(payload, { ext, hostApiFor, onError: logError });
@@ -687,6 +701,7 @@ for (const e of [...ext.list]) {
     quarantineFor(e.id, err);
   }
 }
+syncToolPolicies();
 // Every still-enabled extension has a façade, so a tagged tool/handler frame can
 // never find one missing — asserted once here rather than guarded per frame. A
 // miss now means the quarantine bookkeeping above left something registered, so
@@ -730,6 +745,7 @@ const extBag = {
   deactivate: deactivateExtension,
   quarantine: quarantineFor,
   changed: () => {
+    syncToolPolicies();
     extBag.hideTool = createToolFilter(ext, hostApiFor, logError);
     invalidateHandlerMap();
     broadcast({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION });

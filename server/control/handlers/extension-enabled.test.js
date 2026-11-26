@@ -182,3 +182,15 @@ test('one-time browser migrations preserve an explicit extension choice', async 
     assert.equal(readConfig().extensions.checklist, true);
   });
 });
+
+test('turning an extension off clears its tool-policy requirement, even when it was already off; turning one on does not', async () => {
+  await withConfig({ toolPolicyRequirements: { notes: { since: 'x' }, other: { since: 'y' } } }, async () => {
+    const c = ctx([manifest('notes'), manifest('other')], { extensions: { other: false } });
+    await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'notes', enabled: true }, c);
+    assert.deepEqual(Object.keys(readConfig().toolPolicyRequirements), ['notes', 'other']);
+    await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'other', enabled: false }, c);
+    assert.deepEqual(Object.keys(readConfig().toolPolicyRequirements), ['notes']);
+    await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'notes', enabled: false }, c);
+    assert.deepEqual(readConfig().toolPolicyRequirements, {});
+  });
+});
