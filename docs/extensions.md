@@ -1300,7 +1300,11 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   that pair, from its closed-over id, and `resumeEntry`/`forkEntry` carry it.
   `_trustClaudeLaunch` trusts `extensionAddDirs(addDirs, { extId, dataDir })`
   (`claude-trust.js`), each one exactly, in the server config and in a login's
-  `CLAUDE_CONFIG_DIR`. The function checks paths both as given and realpathed. A
+  `CLAUDE_CONFIG_DIR`. The function checks paths both as given and realpathed,
+  and an own-folder path must really sit under the canonical
+  `realpath(DATA_DIR)/ext-data/<id>`. A symlinked `ext-data/` or `ext-data/<id>`
+  trusts nothing, `ensureExtDataDir` refuses one, and a path whose realpath can't
+  be read is never trusted. A
   single entry for `ext-data/<id>` would be fewer writes, and Claude does honour a
   trusted parent for an `--add-dir` outside git (measured on 2.1.332). But it
   would also trust that folder for any agent's `add_dirs` and as a cwd, and a

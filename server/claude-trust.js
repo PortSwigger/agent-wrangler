@@ -133,10 +133,17 @@ export function addDirsInside(addDirs, root) {
 // trusted through it.
 export function extensionAddDirs(addDirs, { extId, dataDir } = {}) {
   if (!isValidExtensionId(extId) || typeof dataDir !== 'string' || !path.isAbsolute(dataDir)) return [];
-  const own = addDirsInside(addDirs, extDataDir(extId, dataDir));
+  // Judged against where the folder must really be, so a symlinked ext-data/
+  // or ext-data/<id> (into a sibling's folder, or out of DATA_DIR) trusts nothing.
+  // A path whose real location can't be read is never trusted.
+  const strictReal = (p) => { try { return fs.realpathSync(p); } catch { return null; } };
+  const realData = strictReal(dataDir);
+  if (!realData) return [];
+  const canonical = extDataDir(extId, realData);
+  const own = addDirsInside(addDirs, extDataDir(extId, dataDir)).filter((d) => { const r = strictReal(d); return r !== null && isUnder(r, canonical); });
   const root = extDataRoot(dataDir);
-  const realRoot = realPath(root);
-  const legacy = addDirsInside(addDirs, dataDir).filter((d) => !within(d, path.resolve(root)) && !within(realPath(d), realRoot));
+  const realRoots = [realPath(root), extDataRoot(realData)];
+  const legacy = addDirsInside(addDirs, dataDir).filter((d) => { const r = strictReal(d); return r !== null && !within(d, path.resolve(root)) && !realRoots.some((x) => within(r, x)); });
   return [...new Set([...own, ...legacy])];
 }
 

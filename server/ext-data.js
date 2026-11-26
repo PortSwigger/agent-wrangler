@@ -14,8 +14,13 @@ export function extDataDir(id, dataDir = DATA_DIR) {
   return path.join(extDataRoot(dataDir), id);
 }
 
+// Refuses a symlinked ext-data/ or ext-data/<id>, so the folder an extension is
+// handed is always the real one that launch trust checks against.
 export function ensureExtDataDir(id, dataDir = DATA_DIR) {
   const dir = extDataDir(id, dataDir);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (const p of [extDataRoot(dataDir), dir]) {
+    if (fs.lstatSync(p).isSymbolicLink()) throw new Error(`Extension data folder ${p} is a symlink`);
+  }
   return dir;
 }

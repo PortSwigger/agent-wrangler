@@ -25,3 +25,20 @@ test('ensureExtDataDir creates the folder owner-only and is idempotent', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('ensureExtDataDir refuses a symlinked extension folder or ext-data', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-extdata-'));
+  try {
+    const beta = ensureExtDataDir('beta', root);
+    fs.symlinkSync(beta, path.join(root, 'ext-data', 'alpha'));
+    assert.throws(() => ensureExtDataDir('alpha', root), /symlink/);
+    const other = path.join(root, 'other');
+    fs.mkdirSync(path.join(other, 'ext-data'), { recursive: true });
+    fs.symlinkSync(path.join(other, 'ext-data'), path.join(other, 'linked'));
+    fs.mkdirSync(path.join(root, 'd2'));
+    fs.symlinkSync(path.join(other, 'ext-data'), path.join(root, 'd2', 'ext-data'));
+    assert.throws(() => ensureExtDataDir('alpha', path.join(root, 'd2')), /symlink/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

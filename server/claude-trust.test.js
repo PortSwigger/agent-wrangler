@@ -242,6 +242,33 @@ test('extensionAddDirs: only an extension\'s session, only inside its own folder
     assert.deepEqual(extensionAddDirs(all, { extId: 'beta', dataDir: data }), [sibling, legacy]);
     for (const extId of [undefined, null, '', '../alpha', 'Alpha']) assert.deepEqual(extensionAddDirs(all, { extId, dataDir: data }), [], String(extId));
     assert.deepEqual(extensionAddDirs(all, { extId: 'alpha' }), []);
+    const alias = path.join(fs.realpathSync(root), 'aw-data-alias');
+    fs.symlinkSync(data, alias);
+    assert.deepEqual(extensionAddDirs([path.join(alias, 'ext-data', 'alpha', 'run', 'inbox'), path.join(alias, 'store', 'run', 'inbox')], { extId: 'alpha', dataDir: alias }),
+      [path.join(alias, 'ext-data', 'alpha', 'run', 'inbox'), path.join(alias, 'store', 'run', 'inbox')], 'a DATA_DIR reached through a symlink still works');
+  });
+});
+
+test('extensionAddDirs: a symlinked extension folder or ext-data trusts nothing through it', () => {
+  withTemp((_file, root) => {
+    const real = fs.realpathSync(root);
+    const data = path.join(real, 'aw-data');
+    const beta = path.join(data, 'ext-data', 'beta', 'inbox');
+    const outside = path.join(real, 'outside', 'inbox');
+    for (const d of [beta, outside]) fs.mkdirSync(d, { recursive: true });
+    fs.symlinkSync(path.join(data, 'ext-data', 'beta'), path.join(data, 'ext-data', 'alpha'));
+    fs.symlinkSync(path.dirname(outside), path.join(data, 'ext-data', 'gamma'));
+    assert.deepEqual(extensionAddDirs([path.join(data, 'ext-data', 'alpha', 'inbox')], { extId: 'alpha', dataDir: data }), []);
+    assert.deepEqual(extensionAddDirs([path.join(data, 'ext-data', 'gamma', 'inbox')], { extId: 'gamma', dataDir: data }), []);
+
+    const data2 = path.join(real, 'aw-data2');
+    const elsewhere = path.join(real, 'elsewhere');
+    fs.mkdirSync(path.join(elsewhere, 'delta', 'inbox'), { recursive: true });
+    fs.mkdirSync(data2);
+    fs.symlinkSync(elsewhere, path.join(data2, 'ext-data'));
+    assert.deepEqual(extensionAddDirs([path.join(data2, 'ext-data', 'delta', 'inbox')], { extId: 'delta', dataDir: data2 }), []);
+    assert.deepEqual(extensionAddDirs([path.join(data, 'ext-data', 'beta', 'missing'), path.join(data, 'gone', 'x')], { extId: 'beta', dataDir: data }), [], 'an unresolvable path is never trusted');
+    assert.deepEqual(extensionAddDirs([beta], { extId: 'beta', dataDir: path.join(real, 'no-such-data') }), []);
   });
 });
 
