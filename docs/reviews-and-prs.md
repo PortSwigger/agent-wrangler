@@ -153,21 +153,21 @@ repeating unchanged failures.
 PR notices can reach Codex during an active turn. This includes check and review
 status changes, new unresolved threads, conflicts, merged or closed PRs, and
 auto-merge results. Notices wait while the terminal holds a draft, shows a dialog,
-or cannot be read; once the input clears they arrive together. Board toasts and
+or cannot be read; once the input clears they arrive together. Board notifications and
 auto-merge actions do not wait for the session's input to clear.
 
-### PR toasts on the board
+### PR notifications on the board
 
 Once the owning session has the same notice (pasted into its pane, or carried by
-the resume that wakes a dormant session), the board skips the toast. The toast is
+the resume that wakes a dormant session), the board skips its notification. The notification is
 decided after delivery: a notice held back behind a draft, a dialog or an
-unreadable pane does not count, so the toast shows until the notice lands. **Hide PR toasts the session already got** in Settings → Automation
-controls this and is on by default. The toast still shows when the session was not
+unreadable pane does not count, so the notification shows until the notice lands. **Hide PR notifications the session already got** in Settings → Automation
+controls this and is on by default. The notification still shows when the session was not
 nudged: Auto-fix off, a task-scope link, an archived or snoozed session, a held
 notice, a failed wake, or no session to deliver to. This covers checks, conflicts, review threads and auto-merge.
 
-A PR toast that is still shown disappears after 15 seconds, including the error
-ones; hovering or focusing the toast stack pauses the countdown.
+A PR notification that is still shown disappears after 15 seconds, including the error
+ones; hovering or focusing the notification stack pauses the countdown.
 
 ### Waiting without agent polling
 
@@ -199,7 +199,7 @@ not success: agents should check current state once when resuming or before a
 consequential decision.
 
 With **Auto-fix PR checks disabled**, no PR pane wake-up is available, including
-for success, failure, review, conflicts, merge or close; board toasts remain.
+for success, failure, review, conflicts, merge or close; board notifications remain.
 Agents should not enable it without authorization. When no reliable wake-up is
 available (also task-only links, standalone Actions or same-head reruns), agents
 should report the URL and pending work, then hand back to the user or an

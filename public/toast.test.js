@@ -480,14 +480,16 @@ test('layout batches into one animation frame and releases observers and pending
   assert.ok(observed.has(listOf(doc)));
 });
 
-test('a snoozable toast gets a clock beside × that hands its value to the snooze handler', () => {
+const handlers = (extra = {}) => ({ title: () => 'Snooze for 10 minutes', minutes: () => 10, allActive: () => false, snooze() {}, snoozeAll() {}, ...extra });
+const MIN = 60e3;
+
+test('a notification with a snooze value gets a clock beside × that hands its value to the snooze handler', () => {
   const { doc, toasts } = fakeWorld();
   const snoozed = [];
-  toasts.setSnoozeHandlers({ title: () => 'Snooze for 10 minutes', snooze: (v) => snoozed.push(v), snoozeAll() {} });
+  toasts.setSnoozeHandlers(handlers({ snooze: (v) => snoozed.push(v) }));
   toasts.show('Plain');
   toasts.show('Needs you', false, { snooze: { type: 'notify' }, actions: [{ label: 'View', onClick() {} }] });
-  const [plain, needsYou] = listOf(doc).children;
-  assert.equal(part(plain, 'toast-snooze'), undefined, 'a toast without a snooze value has no clock');
+  const [, needsYou] = listOf(doc).children;
   const clock = part(needsYou, 'toast-snooze');
   assert.equal(clock.title, 'Snooze for 10 minutes');
   assert.ok(needsYou.className.includes('toast-snoozable'));
@@ -496,30 +498,133 @@ test('a snoozable toast gets a clock beside × that hands its value to the snooz
   assert.deepEqual(shown(doc), ['Plain']);
 });
 
-test('Snooze all sits beside Clear all, shows only with a snoozable toast, and snoozes every one of them', () => {
+test('every toast with × has a clock, except feedback that opts out with snooze: false', () => {
   const { doc, toasts } = fakeWorld();
-  const calls = [];
+  toasts.setSnoozeHandlers(handlers());
+  toasts.show('Schedule failed', true);
+  toasts.show('Copied', 'success', { snooze: false });
+  toasts.showPersistent('a', { title: 'Allow A?', actions: [] });
+  const [generic, feedback, card] = listOf(doc).children;
+  assert.ok(part(generic, 'toast-close'));
+  assert.ok(part(generic, 'toast-snooze'), 'a generic toast has a clock');
+  assert.ok(generic.className.includes('toast-snoozable'));
+  assert.equal(part(feedback, 'toast-snooze'), undefined, 'feedback has no clock');
+  assert.ok(!feedback.className.includes('toast-snoozable'));
+  assert.ok(part(card, 'toast-snooze'), 'a persistent card has a clock');
+  assert.ok(card.className.includes('toast-snoozable'));
+});
+
+test('no clock without snooze handlers', () => {
+  const { doc, toasts } = fakeWorld();
   toasts.show('Plain');
+  assert.equal(part(listOf(doc).children[0], 'toast-snooze'), undefined);
+});
+
+test('one notification shows a clock and no header buttons; two show Snooze all beside Clear all', () => {
+  const { doc, toasts } = fakeWorld();
+  toasts.setSnoozeHandlers(handlers({ title: () => 'Snooze for 5 minutes' }));
+  toasts.showPersistent('a', { title: 'Allow A?', actions: [] });
   const snoozeAll = part(headOf(doc), 'toast-snooze-all');
-  assert.equal(snoozeAll.hidden, true, 'no handlers yet');
-  toasts.setSnoozeHandlers({ title: () => 'Snooze for 5 minutes', snooze() {}, snoozeAll: (values) => calls.push(values) });
-  assert.equal(snoozeAll.hidden, true, 'nothing snoozable on screen');
-  toasts.show('PR #1', true, { snooze: 'pr1' });
-  toasts.show('PR #2', true, { snooze: 'pr2' });
-  assert.equal(snoozeAll.hidden, false);
+  const clear = part(headOf(doc), 'toast-clear');
+  assert.ok(part(listOf(doc).children[0], 'toast-snooze'));
+  assert.equal(snoozeAll.hidden, true);
+  assert.equal(clear.hidden, true);
+  assert.equal(headOf(doc).hidden, true);
+  toasts.show('Copied', 'success', { snooze: false });
+  assert.equal(clear.hidden, false);
+  assert.equal(snoozeAll.hidden, false, 'Snooze all shows exactly when Clear all does');
   assert.equal(snoozeAll.title, 'Snooze for 5 minutes');
   assert.deepEqual(headOf(doc).children.map((c) => c.className), ['toast-snooze-all', 'toast-clear']);
-  snoozeAll.click();
-  assert.deepEqual(calls, [['pr1', 'pr2']]);
-  assert.deepEqual(shown(doc), ['Plain']);
-  assert.equal(snoozeAll.hidden, true);
+});
+
+test('Snooze all hands over snooze values, holds every other clocked toast, and leaves feedback on screen', () => {
+  const { doc, toasts } = fakeWorld();
+  let all = false;
+  const calls = [];
+  toasts.setSnoozeHandlers(handlers({ allActive: () => all, snoozeAll: (values) => { all = true; calls.push(values); } }));
+  toasts.show('PR #1', true, { snooze: 'pr1' });
+  toasts.showPersistent('a', { title: 'Allow A?', actions: [] });
+  toasts.show('Schedule failed', true);
+  toasts.show('Copied', 'success', { snooze: false, duration: Infinity });
+  part(headOf(doc), 'toast-snooze-all').click();
+  assert.deepEqual(calls, [['pr1']]);
+  assert.deepEqual(shown(doc), ['Copied']);
+  toasts.show('Renamed', false, { snooze: false });
+  assert.deepEqual(shown(doc), ['Copied', 'Renamed'], 'new toasts still show during Snooze all');
+  all = false;
+  toasts.releaseHeld();
+  assert.deepEqual(shown(doc), ['Copied', 'Renamed', 'Allow A?', 'Schedule failed']);
+});
+
+test('a snoozed generic toast comes back at expiry with the rest of its lifetime', () => {
+  const { doc, clock, toasts } = fakeWorld();
+  toasts.setSnoozeHandlers(handlers());
+  const actions = [];
+  toasts.show('Schedule failed', true, { actions: [{ label: 'Open', onClick: () => actions.push('open') }] });
+  toasts.show('Update available', false, { duration: 10000 });
+  clock.advance(4000);
+  part(listOf(doc).children[0], 'toast-snooze').click();
+  part(listOf(doc).children[0], 'toast-snooze').click();
+  assert.equal(toasts.count(), 0);
+  clock.advance(10 * MIN - 1);
+  assert.equal(toasts.count(), 0);
+  clock.advance(1);
+  assert.deepEqual(shown(doc).sort(), ['Schedule failed', 'Update available']);
+  actionsOf(listOf(doc).children.find((c) => c.children[0].textContent === 'Schedule failed'))[0].click();
+  assert.deepEqual(actions, ['open']);
+  clock.advance(6000);
+  assert.deepEqual(shown(doc), [], 'the update toast keeps only what was left of its 10 s');
+});
+
+test('a snoozed generic toast does not come back once it is dismissed by id or replaced', () => {
+  const { doc, clock, toasts } = fakeWorld();
+  toasts.setSnoozeHandlers(handlers());
+  toasts.show('Archived A', false, { id: 'a', duration: Infinity });
+  toasts.show('Archived B', false, { id: 'b', duration: Infinity });
+  for (const el of [...listOf(doc).children]) part(el, 'toast-snooze').click();
+  toasts.dismiss('a');
+  toasts.show('Archived B again', false, { id: 'b', duration: Infinity });
+  clock.advance(10 * MIN);
+  assert.deepEqual(shown(doc), ['Archived B again']);
+});
+
+test('a snoozed persistent card stays pending and comes back at expiry only if still present', () => {
+  const { doc, clock, toasts } = fakeWorld();
+  toasts.setSnoozeHandlers(handlers());
+  const dismissed = [];
+  toasts.showPersistent('a', { title: 'Allow A?', actions: [], onDismiss: () => dismissed.push('a') });
+  toasts.showPersistent('b', { title: 'Allow B?', actions: [], onDismiss: () => dismissed.push('b') });
+  for (const el of [...listOf(doc).children]) part(el, 'toast-snooze').click();
+  assert.equal(toasts.count(), 0);
+  assert.deepEqual(dismissed, [], 'snoozing does not answer the card');
+  toasts.showPersistent('a', { title: 'Allow A (updated)?', actions: [] });
+  assert.equal(toasts.count(), 0, 'an update while snoozed stays held');
+  toasts.dismissPersistent('b');
+  toasts.releaseHeld();
+  assert.equal(toasts.count(), 0, 'another snooze ending does not release an individually snoozed card');
+  clock.advance(10 * MIN);
+  assert.deepEqual(shown(doc), ['Allow A (updated)?']);
+});
+
+test('an individual snooze that ends during Snooze all waits for Snooze all to end', () => {
+  const { doc, clock, toasts } = fakeWorld();
+  let all = false;
+  toasts.setSnoozeHandlers(handlers({ allActive: () => all }));
+  toasts.show('Schedule failed', true);
+  part(listOf(doc).children[0], 'toast-snooze').click();
+  all = true;
+  clock.advance(10 * MIN);
+  assert.equal(toasts.count(), 0);
+  all = false;
+  toasts.releaseHeld();
+  assert.deepEqual(shown(doc), ['Schedule failed']);
 });
 
 test('Snooze all holds persistent notifications, keeps them pending, and releases only those still present', () => {
   const { doc, toasts } = fakeWorld();
   let all = false;
   const dismissed = [];
-  toasts.setSnoozeHandlers({ title: () => 'Snooze', allActive: () => all, snooze() {}, snoozeAll: () => { all = true; } });
+  toasts.setSnoozeHandlers(handlers({ allActive: () => all, snoozeAll: () => { all = true; } }));
   toasts.showPersistent('a', { title: 'Allow A?', actions: [], onDismiss: () => dismissed.push('a') });
   toasts.showPersistent('b', { title: 'Allow B?', actions: [], onDismiss: () => dismissed.push('b') });
   toasts.show('Needs you', false, { snooze: 'n' });
@@ -538,11 +643,4 @@ test('Snooze all holds persistent notifications, keeps them pending, and release
   assert.deepEqual(shown(doc), ['Allow A (updated)?', 'Allow C?']);
   toasts.releaseHeld();
   assert.equal(toasts.count(), 2, 'releasing twice shows nothing twice');
-});
-
-test('Snooze all shows for a persistent card alone', () => {
-  const { doc, toasts } = fakeWorld();
-  toasts.setSnoozeHandlers({ title: () => 'Snooze', allActive: () => false, snooze() {}, snoozeAll() {} });
-  toasts.showPersistent('a', { title: 'Allow A?', actions: [] });
-  assert.equal(part(headOf(doc), 'toast-snooze-all').hidden, false);
 });
