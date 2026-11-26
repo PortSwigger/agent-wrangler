@@ -88,6 +88,7 @@ import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
 import { collectToolPolicy, syncToolPolicyRequirements, toolPolicyRequirements } from './tool-policy.js';
+import { runHeadlessTool } from './headless-tool.js';
 import { collectPrepare } from './session-prepare.js';
 import { collectBeforeSpawn, notifySpawned } from './session-spawn.js';
 import { createLinkNormaliser } from './mcp/links.js';
@@ -418,6 +419,18 @@ const paneDeferral = createPaneDeferral({
 const extFiles = createExtFiles();
 const extWiring = {
   core: extCore,
+  // `operations:run` admits extension work through the restart barrier, and
+  // refuses it once the extension is no longer active.
+  restartBarrier,
+  extActive: (id) => hostApis.has(id),
+  // `agents:headless-tool`: every OTHER extension's tool policy still applies
+  // to the one tool, so it is collected per run, fail-closed like a launch.
+  runHeadlessTool: (opts) => runHeadlessTool({
+    ...opts,
+    policy: () => collectToolPolicy({ agent: 'claude', reason: 'headless-tool' }, {
+      ext, required: toolPolicyRequirements(readConfig()), hostApiFor, agentIds: registeredAgents().map((a) => a.id),
+    }),
+  }),
   prObservations,
   extFiles,
   events: coreEvents,
@@ -536,6 +549,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
       // JSON read and host.settings is only reached from tool/handler/sweep
       // code, never from rebuildOnce.
       settingDefs: e.settings,
+      headlessTools: e.headlessTools,
       readSettings: (extId) => extensionSettings(extId),
       readExtensionReceipt: () => {
         const installedSha = readProvenance()[id]?.sha || '';

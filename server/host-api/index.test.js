@@ -14,6 +14,7 @@ import { MailboxStore } from '../mailbox-store.js';
 import { _resetUsageCache } from '../usage-scan-memo.js';
 import { createEventBus } from '../events.js';
 import { createExtFiles } from '../ext-files.js';
+import { createRestartBarrier } from '../restart-barrier.js';
 import { runWithOrigin } from '../request-origin.js';
 
 const ALWAYS = ['id', 'version', 'stores', 'settings', 'log', 'extension'];
@@ -1121,7 +1122,7 @@ test('a ^1 manifest boots on the v1 shim and its host.version says so; a ^2 one 
   assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0', boardApi: '^1.74.0' }).version, '1.96.0');
   assert.equal(buildHostApi({ id: 'new-ext', range: '^2.0.0', boardApi: '^2.0.0' }).version, HOST_API_VERSION);
   assert.equal(buildHostApi({ id: 'any-ext' }).version, HOST_API_VERSION);
-  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.97.0' }), /needs host API \^1\.97\.0, this server serves 2\.3\.0/);
+  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.97.0' }), /needs host API \^1\.97\.0, this server serves 2\.4\.0/);
 });
 
 test('spawn validates Codex approvalPolicy and forwards only the approval selection', async () => {
@@ -1180,4 +1181,63 @@ test('schema:zod serves the core zod instance only when declared', () => {
   assert.equal(schema instanceof z.ZodObject, true);
   assert.equal(z.toJSONSchema(schema).properties.name.type, 'string');
   assert.deepEqual(schema.parse({ name: 'example' }), { name: 'example' });
+});
+
+// ---- agents:headless-tool --------------------------------------------------
+test('agents.headlessTool runs only a tool this manifest declared, with its declared source and its own id', async () => {
+  const asked = [];
+  const runHeadlessTool = async (opts) => { asked.push(opts); return { text: 'DONE', liveSessionId: 'L', agent: 'claude', model: 'haiku', error: null, toolCalls: [{ input: { a: 1 }, output: 'ok', isError: false }], usage: { input_tokens: 1 }, costUsd: 0.1 }; };
+  const headlessTools = [{ tool: 'mcp__s__send', source: 'claudeai' }];
+  const host = buildHostApi({ id: 'slack', requires: ['agents:headless-tool'], headlessTools, ...wiring({ runHeadlessTool }) });
+  const out = await host.agents.headlessTool({ tool: 'mcp__s__send', prompt: 'P', stdin: 'S', effort: 'low', timeoutMs: 5, maxTurns: 2, profile: { configDir: '/p' }, callerId: 'forged', source: 'user' });
+  assert.deepEqual(asked[0], { tool: 'mcp__s__send', source: 'claudeai', callerId: 'slack', prompt: 'P', stdin: 'S', effort: 'low', timeoutMs: 5, maxTurns: 2, profile: { configDir: '/p' } });
+  assert.ok(Object.isFrozen(out) && Object.isFrozen(out.toolCalls) && Object.isFrozen(out.toolCalls[0]));
+  assert.equal(out.text, 'DONE');
+  await assert.rejects(host.agents.headlessTool({ tool: 'mcp__s__other', prompt: 'P' }), /not one of this extension's headlessTools/);
+  await assert.rejects(host.agents.headlessTool('P'), /agents\.headlessTool: pass \{ tool, prompt/);
+  assert.equal(asked.length, 1);
+  assert.equal(buildHostApi({ id: 'x', requires: ['agents:headless'], ...wiring() }).agents.headlessTool, undefined);
+});
+
+test('agents.headlessTool turns a run error into a message string', async () => {
+  const runHeadlessTool = async () => ({ text: null, liveSessionId: 'L', agent: 'claude', model: 'haiku', error: new Error('boom'), toolCalls: [], usage: null, costUsd: null });
+  const host = buildHostApi({ id: 'slack', requires: ['agents:headless-tool'], headlessTools: [{ tool: 't' }], ...wiring({ runHeadlessTool }) });
+  assert.equal((await host.agents.headlessTool({ tool: 't', prompt: 'P' })).error, 'boom');
+});
+
+// ---- operations:run ----------------------------------------------------------
+test('operations.run admits work through the restart barrier under the extension\'s own label', async () => {
+  const barrier = createRestartBarrier({ exit: () => {} });
+  const host = buildHostApi({ id: 'slack', requires: ['operations:run'], ...wiring({ restartBarrier: barrier, extActive: () => true }) });
+  let release;
+  const work = host.operations.run('send draft', () => new Promise((r) => { release = r; }));
+  assert.deepEqual(barrier.outstanding().map((o) => o.label), ['ext:slack:send draft']);
+  assert.equal(host.operations.accepting(), true);
+  release('sent');
+  assert.equal(await work, 'sent');
+  assert.equal(barrier.inFlight(), 0);
+  await assert.rejects(host.operations.run('boom', async () => { throw new Error('x'); }), /x/);
+  assert.equal(barrier.inFlight(), 0);
+  await assert.rejects(host.operations.run('', () => 1), /label must be/);
+  await assert.rejects(host.operations.run('ok', 'nope'), /fn must be a function/);
+});
+
+test('operations.run refuses new work while draining and once the extension is inactive', async () => {
+  const barrier = createRestartBarrier({ exit: () => {}, timeoutMs: 50 });
+  let active = true;
+  const host = buildHostApi({ id: 'slack', requires: ['operations:run'], ...wiring({ restartBarrier: barrier, extActive: () => active }) });
+  let release;
+  const held = host.operations.run('held', () => new Promise((r) => { release = r; }));
+  const drain = barrier.request('test');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(host.operations.accepting(), false);
+  await assert.rejects(host.operations.run('late', () => 1), (err) => err.code === 'restarting');
+  release();
+  await held;
+  await drain;
+  active = false;
+  const idle = createRestartBarrier({ exit: () => {} });
+  const off = buildHostApi({ id: 'slack', requires: ['operations:run'], ...wiring({ restartBarrier: idle, extActive: () => active }) });
+  assert.equal(off.operations.accepting(), false);
+  await assert.rejects(off.operations.run('x', () => 1), /slack is not active/);
 });

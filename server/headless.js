@@ -37,6 +37,16 @@ export function headlessRunsInFlight() {
   return headlessInFlight;
 }
 
+// Counts `fn`'s run as in flight, like runHeadless does its own.
+export async function trackHeadless(fn) {
+  headlessInFlight += 1;
+  try {
+    return await fn();
+  } finally {
+    headlessInFlight -= 1;
+  }
+}
+
 // The Background model when Settings names none: the first registered agent
 // with a headless capability, at that capability's default (Claude Haiku).
 export function defaultBackgroundModel(adapters = registeredAgents()) {
