@@ -8541,6 +8541,7 @@ function onDeckMessage(msg) {
   else if (msg.type === 'prepare-warnings') toastLaunchWarnings(msg.warnings || []);
   else if (msg.type === 'schedule-missed') toast(`Schedule "${msg.name}" was overdue and skipped`, true);
   else if (msg.type === 'snooze-wake-error') toast(`Auto-wake failed for "${msg.label}" — the snooze was cleared`, true);
+  else if (msg.type === 'wake-refused') toast(`Couldn't wake "${msg.label}" for new mail: ${msg.message}`, true);
   else if (msg.type === 'pr-wake-error') toast(`Couldn't wake "${msg.label}" for PR #${msg.number}: ${msg.message}`, true, prAlertToastOptions());
   else if (msg.type === 'fd-warning') {
     // #system-banner is one slot, so the producers have to take turns: an

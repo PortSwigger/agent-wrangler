@@ -1095,9 +1095,23 @@ const statusNotices = createStatusNoticeRunner({
   log: logError,
   onWoken: () => rebuild(),
 });
+// A wake refused by a required tool policy is retried every sweep like any
+// other failed wake, but logged and shown once per session and reason, not on
+// every tick.
+const toolPolicyWakeRefusals = new Set();
 const fireMailSettlesTick = createMailSettleSweeper({
   ...mailDeliveryDeps, mailStore, deferrals: mailDeferrals,
-  onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
+  onError: (to, err) => {
+    if (err?.code === 'tool-policy') {
+      const key = `${to}\n${err.message}`;
+      if (toolPolicyWakeRefusals.has(key)) return;
+      toolPolicyWakeRefusals.add(key);
+      const e = sessionManager.entryFor(to);
+      const label = sessionLabel({ agent: e?.agent, names: [e?.name, e?.lastLabel], intent: e?.intent, cwd: e?.cwd, fallback: to.slice(0, 8) });
+      broadcast({ type: 'wake-refused', sessionId: to, label, message: err.message });
+    }
+    logError(`[mail] delivery failed for ${to}:`, err?.message || err);
+  },
 });
 
 // POST /pr-attach — the launch-injected PostToolUse hook's callback. The hook

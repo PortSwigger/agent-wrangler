@@ -605,8 +605,11 @@ toolPolicy: async ({ sid, parentId, task, agent, runtime, reason, host }) => ({
   uninstalling it clears the requirement. A version that no longer declares
   `toolPolicy` drops it once it is active.
 - Each session stores the fingerprint of the policy it launched with
-  (`toolPolicyFingerprint` on its entry). A session launched before a policy existed,
-  or under an older one, is not protected until it next resumes.
+  (`toolPolicyFingerprint` on its entry and on `host.sessions` projections, null when
+  none). A session launched before a policy existed, or under an older one, is not
+  protected until it next resumes.
+- A mail wake that a policy refuses is retried like any failed wake, but logged and
+  shown as a notification only once per session and reason.
 - These are the agents' own tool controls. A process running as the same OS user can
   still reach the user's credentials or start an agent itself.
 

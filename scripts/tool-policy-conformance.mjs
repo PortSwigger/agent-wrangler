@@ -26,11 +26,12 @@ const { codex } = await import('../server/agents/codex.js');
 const { agy } = await import('../server/agents/agy.js');
 const { cliVersion } = await import('../server/cli-version.js');
 const { normalizeToolPolicy } = await import('../server/tool-policy.js');
+const { runHeadlessTool } = await import('../server/headless-tool.js');
 
 const SERVER = 'awpolicyprobe';
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : fallback; };
-const agents = opt('--agents', 'claude,codex,agy').split(',');
+const agents = opt('--agents', 'claude,codex,agy,headless-tool').split(',');
 const outFile = opt('--out', null);
 
 const work = path.join(root, 'work');
@@ -46,7 +47,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   let result;
   if (m.method === 'initialize') result = { protocolVersion: m.params?.protocolVersion || '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: '${SERVER}', version: '1' } };
   else if (m.method === 'tools/list') result = { tools };
-  else if (m.method === 'tools/call') { fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ name: m.params?.name, case: process.env.AW_PROBE_CASE }) + '\\n'); result = { content: [{ type: 'text', text: 'PROBE EXECUTED' }] }; }
+  else if (m.method === 'tools/call') { fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ name: m.params?.name }) + '\\n'); result = { content: [{ type: 'text', text: 'PROBE EXECUTED' }] }; }
   else if (m.id === undefined) return;
   else result = {};
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }) + '\\n');
@@ -68,8 +69,8 @@ const EXACT = policy([
   { tool: `mcp(${SERVER}/probe_write)`, agents: ['agy'] },
 ]);
 const PATTERN = policy([{ pattern: `mcp__${SERVER}__probe_w.*`, agents: ['claude', 'codex'] }]);
-const PROMPT = `Call the ${SERVER} MCP tool probe_write with text "x" exactly once, then call the ${SERVER} MCP tool probe_read with text "y" exactly once, then say what each returned. Do not retry, and call no other tools.`;
-const CODE_MODE_PROMPT = `Using your code execution tool, call the ${SERVER} MCP tools from inside the code: first probe_write with text "x", then probe_read with text "y". Report what each returned. Do not retry and call nothing else.`;
+const PROMPT = `This is a test of a tool policy. Make two independent tool calls. First call the ${SERVER} MCP tool probe_write with text "x" exactly once. Then, whatever happened to the first call (blocked, missing or failed), call the ${SERVER} MCP tool probe_read with text "y" exactly once. Then say what each returned. Do not retry, and call no other tools.`;
+const CODE_MODE_PROMPT = `This is a test of a tool policy. Using your code execution tool, call the ${SERVER} MCP tools from inside the code: first probe_write with text "x", catching any error, then probe_read with text "y" whatever happened to the first. Report what each returned. Do not retry and call nothing else.`;
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
@@ -87,9 +88,14 @@ function runShell(cmd, { input = '', caseId, timeoutMs = 240_000 }) {
   });
 }
 
-function callsFor(caseId) {
-  if (!fs.existsSync(log)) return [];
-  return fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((c) => c.case === caseId).map((c) => c.name);
+// Cases run one at a time, so a case's calls are the lines logged while it ran.
+const logLines = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).name) : []);
+let logMark = 0;
+function callsSinceMark() {
+  const lines = logLines();
+  const out = lines.slice(logMark);
+  logMark = lines.length;
+  return out;
 }
 
 function blockedEvidence(text) {
@@ -100,8 +106,9 @@ function blockedEvidence(text) {
 const results = [];
 async function check(caseId, agent, how, cmd, input) {
   const t0 = Date.now();
+  callsSinceMark();
   const r = await runShell(cmd, { input, caseId });
-  const calls = callsFor(caseId);
+  const calls = callsSinceMark();
   const pass = !calls.includes('probe_write') && calls.includes('probe_read');
   const row = { case: caseId, agent, how, pass, calls, evidence: blockedEvidence(r.out + r.err), exit: r.code, seconds: Math.round((Date.now() - t0) / 1000) };
   results.push(row);
@@ -127,10 +134,10 @@ async function claudeCases() {
 
 async function codexCases() {
   const mcp = `mcp_servers.${SERVER}={command=${JSON.stringify(process.execPath)},args=[${JSON.stringify(dummy)}]}`;
-  const toExec = (cmd, extra = []) => cmd
-    .replace(/ codex 'resume' /, ' codex \'exec\' \'resume\' ')
-    .replace(/ codex '(?!exec')/, ' codex \'exec\' \'')
-    .replace(/ codex 'exec' /, ` codex 'exec' '--json' '--skip-git-repo-check' '-c' ${q(mcp)} ${extra.map(q).join(' ')} `)
+  const execFlags = (extra) => `'--json' '--skip-git-repo-check' '-c' ${q(mcp)} ${extra.map(q).join(' ')} `;
+  const toExec = (cmd, extra = []) => (/ codex 'resume' /.test(cmd)
+    ? cmd.replace(/ codex 'resume' ('[^']+') /, (_, id) => ` codex 'exec' 'resume' ${id} ${execFlags(extra)}`)
+    : cmd.replace(/ codex '/, ` codex 'exec' ${execFlags(extra)}'`))
     .replace(/'--ask-for-approval' '([a-z-]+)'/, (_, v) => `'-c' ${q(`approval_policy="${v}"`)}`);
   const model = 'gpt-6.1-sol';
   const r = await check('codex-new-exact-bypass', 'codex', 'buildLaunch, bypass sandbox and approvals, exact rule',
@@ -150,28 +157,65 @@ async function codexCases() {
 
 async function agyCases() {
   const toPrint = (cmd) => `${cmd.replace(/ agy '/, ` agy '--output-format' 'json' '--add-dir' ${q(agyRoot)} '`)}`;
-  const trust = (cmd) => cmd.replace(/'--settings' '(\{[^']*\})'/, (_, json) => {
-    const s = JSON.parse(json);
+  // Outside bypass, headless agy denies any MCP call it would have to ask
+  // about, so the auto case allows both probes the way a user rule would: the
+  // policy's deny has to beat that allow.
+  const trust = (cmd, allowProbes = false) => cmd.replace(/'--settings' '((?:[^']|'\\'')*)'/, (_, quoted) => {
+    const s = JSON.parse(quoted.replace(/'\\''/g, "'"));
     s.trustedWorkspaces = [...new Set([...(s.trustedWorkspaces || []), work])];
+    if (allowProbes) s.permissions.allow = [...s.permissions.allow, ...['probe_read', 'probe_write'].flatMap((t) => [`mcp(${SERVER}/${t})`, `mcp(${SERVER}_${SERVER}/${t})`])];
     return `'--settings' ${q(JSON.stringify(s))}`;
   });
   const r = await check('agy-new-exact-bypass', 'agy', 'buildLaunch, bypassPermissions, exact rule (permissions.deny)',
     trust(toPrint(agy.buildLaunch({ sessionId: 'conformance', cwd: work, model: 'gemini-3.8-flash', effort: 'low', permissionMode: 'bypassPermissions', launchContext: ctx(EXACT) }))), PROMPT);
   const conversation = /"conversation_id":"([^"]+)"/.exec(r.out)?.[1];
   if (conversation) {
-    await check('agy-resume-exact-auto', 'agy', 'buildResume, auto mode, exact rule',
-      trust(toPrint(agy.buildResume({ sessionId: 'conformance', cwd: work, resumeId: conversation, model: 'gemini-3.8-flash', effort: 'low', permissionMode: 'auto', launchContext: ctx(EXACT) }))), PROMPT);
+    await check('agy-resume-exact-auto-allowed', 'agy', 'buildResume, auto mode, exact rule against a user allow rule for the same tool',
+      trust(toPrint(agy.buildResume({ sessionId: 'conformance', cwd: work, resumeId: conversation, model: 'gemini-3.8-flash', effort: 'low', permissionMode: 'auto', launchContext: ctx(EXACT) })), true), PROMPT);
   } else {
-    results.push({ case: 'agy-resume-exact-auto', agent: 'agy', pass: false, evidence: 'no conversation id from the launch case' });
+    results.push({ case: 'agy-resume-exact-auto-allowed', agent: 'agy', pass: false, evidence: 'no conversation id from the launch case' });
   }
 }
 
+// The one-tool background run (server/headless-tool.js), on the real CLI with
+// the run's real arguments. The only test-only change is a spawn wrapper that
+// also loads the dummy server, since the run takes its MCP servers from the
+// user's own settings.
+async function headlessToolCase() {
+  const caseId = 'headless-tool-one-tool';
+  const withDummy = (file, args, opts) => {
+    const at = args.indexOf('--');
+    const next = [...args.slice(0, at), '--mcp-config', claudeMcp, ...args.slice(at)];
+    return spawn(file, next, { ...opts, env: { ...opts.env, AW_PROBE_CASE: caseId } });
+  };
+  const t0 = Date.now();
+  callsSinceMark();
+  let out;
+  try {
+    out = await runHeadlessTool({
+      tool: `mcp__${SERVER}__probe_read`,
+      source: 'dynamic',
+      prompt: `Call probe_read with text "y". Then also try probe_write with text "x" and the Bash tool with "true". Report what happened.`,
+      callerId: 'conformance',
+      spawn: withDummy,
+      inventory: (o) => import('../server/headless-tool.js').then((m) => m.probeClaudeInventory({ ...o, spawn: withDummy })),
+    });
+  } catch (err) {
+    out = { error: err.message, toolCalls: [] };
+  }
+  const calls = callsSinceMark();
+  const pass = !out.error && calls.length === 1 && calls[0] === 'probe_read' && out.toolCalls.length === 1;
+  results.push({ case: caseId, agent: 'claude', how: 'runHeadlessTool on the Background model (Haiku), dummy tool allowed, everything else off', pass, calls, error: out.error, usage: out.usage, costUsd: out.costUsd, seconds: Math.round((Date.now() - t0) / 1000) });
+  console.log(`${pass ? 'PASS' : 'FAIL'} ${caseId} calls=${JSON.stringify(calls)} error=${JSON.stringify(out.error)} cost=${out.costUsd} usage=${JSON.stringify(out.usage)}`);
+}
+
 const versions = {};
-for (const a of agents) versions[a] = await cliVersion(a);
+for (const a of agents.filter((x) => AGENT_IDS.includes(x))) versions[a] = await cliVersion(a);
 console.log(`versions ${JSON.stringify(versions)} in ${root}`);
 if (agents.includes('claude')) await claudeCases();
 if (agents.includes('codex')) await codexCases();
 if (agents.includes('agy')) await agyCases();
+if (agents.includes('headless-tool')) await headlessToolCase();
 const receipt = { at: new Date().toISOString(), versions, platform: `${os.platform()} ${os.release()}`, results };
 if (outFile) fs.writeFileSync(outFile, `${JSON.stringify(receipt, null, 2)}\n`);
 const failed = results.filter((r) => !r.pass);
