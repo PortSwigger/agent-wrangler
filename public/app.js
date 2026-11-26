@@ -70,7 +70,7 @@ import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
 import { prToastActions, prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
-import { NOTIFICATION_SNOOZE_KEY, createSnoozeStore, snoozeMinutes, stillTrue, notificationKey } from './notification-snooze.js';
+import { NOTIFICATION_SNOOZE_KEY, createSnoozeStore, snoozeMinutes, stillTrue, notificationKey, createPopupTracker } from './notification-snooze.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
@@ -8720,19 +8720,8 @@ const notifSnooze = createSnoozeStore({ storage: (() => { try { return localStor
 let notifSnoozeTimer = null;
 const snoozeLength = () => snoozeMinutes(getSetting('notificationSnoozeMinutes'));
 
-// The browser pop-up each notification raised, so snoozing it closes the pop-up too.
-const popups = new Map();
-function trackPopup(msg, popup) {
-  const key = notificationKey(msg);
-  popups.set(key, popup);
-  popup.addEventListener?.('close', () => { if (popups.get(key) === popup) popups.delete(key); });
-}
-function closePopups(keys = [...popups.keys()]) {
-  for (const key of keys) {
-    try { popups.get(key)?.close(); } catch {}
-    popups.delete(key);
-  }
-}
+const popups = createPopupTracker();
+const trackPopup = (msg, popup) => popups.track(msg, popup);
 
 function holdNotification(msg, resurfaced) {
   if (!resurfaced) notifSnooze.supersede(msg);
@@ -8775,8 +8764,8 @@ function resurfaceSnoozed() {
 setToastSnoozeHandlers({
   title: () => `Snooze for ${snoozeLength()} minutes`,
   allActive: () => notifSnooze.allActive(),
-  snooze: (msg) => { closePopups([notificationKey(msg)]); notifSnooze.hold(msg, snoozeLength()); },
-  snoozeAll: (msgs) => { closePopups(); notifSnooze.snoozeAll(msgs, snoozeLength()); },
+  snooze: (msg) => { popups.close([notificationKey(msg)]); notifSnooze.hold(msg, snoozeLength()); },
+  snoozeAll: (msgs) => { popups.close(); notifSnooze.snoozeAll(msgs, snoozeLength()); },
 });
 notifSnooze.subscribe(scheduleResurface);
 window.addEventListener('storage', (e) => { if (e.key === NOTIFICATION_SNOOZE_KEY) notifSnooze.reload(); });

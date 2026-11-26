@@ -91,6 +91,36 @@ export function stillTrue(msg, { session, prLink }) {
   return true;
 }
 
+// The browser pop-ups each notification raised, so snoozing it can close them.
+// Every pop-up open for a key is kept: two notifications about one PR are two
+// pop-ups, and snoozing it closes both.
+export function createPopupTracker() {
+  const open = new Map();
+  const forget = (key, popup) => {
+    const set = open.get(key);
+    if (!set) return;
+    set.delete(popup);
+    if (!set.size) open.delete(key);
+  };
+  return {
+    track(msg, popup) {
+      const key = notificationKey(msg);
+      if (!open.has(key)) open.set(key, new Set());
+      open.get(key).add(popup);
+      popup.addEventListener?.('close', () => forget(key, popup));
+    },
+    close(keys = [...open.keys()]) {
+      for (const key of keys) {
+        for (const popup of [...(open.get(key) || [])]) {
+          try { popup.close(); } catch {}
+        }
+        open.delete(key);
+      }
+    },
+    count: () => [...open.values()].reduce((n, set) => n + set.size, 0),
+  };
+}
+
 // Persistence wrapper. Every storage access is guarded: a private window or
 // blocked site data just means snoozes don't survive a reload.
 export function createSnoozeStore({ storage, now = () => Date.now(), key = NOTIFICATION_SNOOZE_KEY }) {

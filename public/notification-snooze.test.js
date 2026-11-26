@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   emptySnoozes, snoozeMinutes, notificationKey, parseSnoozes, holdNotification, supersede, snoozeAll,
-  takeDue, nextWake, stillTrue, createSnoozeStore,
+  takeDue, nextWake, stillTrue, createSnoozeStore, createPopupTracker,
 } from './notification-snooze.js';
 
 const MIN = 60e3;
@@ -136,4 +136,40 @@ test('store notifies subscribers and reloads another tab\'s write', () => {
   store.reload();
   assert.equal(store.allActive(), true);
   assert.equal(calls, 1);
+});
+
+class FakePopup extends EventTarget {
+  closed = false;
+  close() { this.closed = true; this.dispatchEvent(new Event('close')); }
+}
+
+test('snoozing one notification closes every pop-up open for its session or PR, and only those', () => {
+  const popups = createPopupTracker();
+  const conflicts = new FakePopup();
+  const threads = new FakePopup();
+  const other = new FakePopup();
+  popups.track(dirty('u'), conflicts);
+  popups.track({ type: 'pr-unresolved', url: 'u', delta: 1, count: 1 }, threads);
+  popups.track(needsYou('s1'), other);
+  popups.close([notificationKey(dirty('u'))]);
+  assert.deepEqual([conflicts.closed, threads.closed, other.closed], [true, true, false]);
+  assert.equal(popups.count(), 1);
+  popups.close();
+  assert.equal(other.closed, true);
+  assert.equal(popups.count(), 0);
+});
+
+test('a pop-up the human closed is forgotten, and one that throws on close does not stop the rest', () => {
+  const popups = createPopupTracker();
+  const dismissed = new FakePopup();
+  const broken = { close() { throw new Error('gone'); } };
+  const fine = new FakePopup();
+  popups.track(needsYou('a'), dismissed);
+  popups.track(needsYou('b'), broken);
+  popups.track(needsYou('b'), fine);
+  dismissed.close();
+  assert.equal(popups.count(), 2);
+  popups.close();
+  assert.equal(fine.closed, true);
+  assert.equal(popups.count(), 0);
 });
