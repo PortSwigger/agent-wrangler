@@ -53,6 +53,7 @@ test('a PR toast is suppressed only when the session was nudged and the setting 
 const { readFileSync } = await import('node:fs');
 const { runInNewContext } = await import('node:vm');
 const helpers = await import('./pr-check-notification.js');
+const snooze = await import('./notification-snooze.js');
 const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 const handlers = app.slice(app.indexOf('const PR_CHECK_TEXT ='), app.indexOf('// Re-theme a live terminal'));
 
@@ -72,14 +73,16 @@ for (const [handler, variants] of [
           static permission = 'granted';
           constructor() { notifications.push(this); }
         }
+        const notifSnooze = snooze.createSnoozeStore({ storage: null, now: () => 0 });
         const context = {
-          ...helpers, Notification, window: { Notification, focus() {} },
+          ...helpers, ...snooze, notifSnooze, Notification, window: { Notification, focus() {} },
           focusSuppresses: () => false, suppressNudgedPrToasts: false,
           openSessionInBoard: id => opened.push(['session', id]),
           openTaskInBoard: id => opened.push(['task', id]),
           toast: (...args) => toasts.push(args), flashPr() {},
         };
-        runInNewContext(`${handlers}\n${handler}(${JSON.stringify({ ...variant, scope, sessionId: 'owner', number: 1 })});`, context);
+        const url = 'https://github.com/acme/widgets/pull/1';
+        runInNewContext(`${handlers}\n${handler}(${JSON.stringify({ ...variant, scope, sessionId: 'owner', number: 1, url })});`, context);
         const [, isErr, options] = toasts[0];
         const expectedErr = handler === 'onPrChecks'
           ? ['failing', 'changes-requested'].includes(variant.status)
@@ -89,6 +92,9 @@ for (const [handler, variants] of [
         assert.equal(options.actions[0].label, scope === 'session' ? 'View session' : 'View task');
         options.actions[0].onClick();
         assert.deepEqual(opened, [[scope, 'owner']]);
+        assert.deepEqual(Array.from(options.actions.slice(1), (a) => a.label), ['Snooze 10m', 'Snooze all']);
+        options.actions[1].onClick();
+        assert.equal(notifSnooze.isSnoozed([`pr:${url}`]), true);
         if (handler !== 'onPrMerge') {
           notifications[0].onclick();
           assert.deepEqual(opened, [[scope, 'owner'], [scope, 'owner']]);

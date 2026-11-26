@@ -29,7 +29,7 @@ import { compileWhen, parseWhen, whenValid, cadenceSummary, formatNextRun, actio
 import {
   TERMINAL_ICON, ROBOT_ICON, PENCIL_ICON, X_ICON, FORK_ICON, KEBAB_ICON, FOCUS_ICON,
   MAXIMIZE_ICON, MINIMIZE_ICON, MINIMISE_ICON, ARCHIVE_ICON, RESTART_ICON, CLOCK_ICON, BELL_ICON, WAKE_ICON, MOON_ICON, PROMOTE_ICON, ATTACH_ICON, CHEVRON_RIGHT_ICON,
-  CHECK_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON,
+  CHECK_ICON, PLUS_ICON, MINUS_ICON, FILTER_ICON, SORT_ICON, BELL_OFF_ICON,
   agentIcon, PR_ICON, GITHUB_ICON, WORKFLOW_ICON, DIFF_ICON, COPY_ICON,
 } from './icons.js';
 import {
@@ -70,6 +70,7 @@ import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
 import { prToastActions, prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
+import { SNOOZE_MINUTES, NOTIFICATION_SNOOZE_KEY, createSnoozeStore, snoozeKeysFor, snoozeToastActions, sessionSource, prSource, remainingLabel } from './notification-snooze.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
@@ -8698,11 +8699,63 @@ function toastLaunchWarnings(warnings) {
 }
 
 // --- notifications + toast ---
-// While focused, an event belonging to any OTHER task is silenced — toast, browser
-// Notification and PR-dot flash alike — so focus mode actually removes the
-// distraction. `ownerId` is a session id for session-scope events, a task id for
-// task-scope ones. Outside focus mode this is always false (nothing changes).
-function focusSuppresses(scope, ownerId) {
+// Notification snooze: "Snooze" on a toast silences its session or PR, "Snooze
+// all" everything, for a few minutes. The rail button shows what is snoozed and
+// how long is left, and cancels early. Snoozed notifications are dropped.
+const notifSnooze = createSnoozeStore({ storage: (() => { try { return localStorage; } catch { return null; } })() });
+const notifSnoozeBtn = document.getElementById('notif-snooze-btn');
+let notifSnoozeTimer = null;
+
+function renderNotifSnooze() {
+  clearTimeout(notifSnoozeTimer);
+  const now = Date.now();
+  const active = notifSnooze.active();
+  notifSnoozeBtn.classList.toggle('on', active.length > 0);
+  if (!active.length) {
+    notifSnoozeBtn.innerHTML = BELL_ICON;
+    notifSnoozeBtn.title = 'Snooze notifications';
+    return;
+  }
+  notifSnoozeBtn.innerHTML = `${BELL_OFF_ICON}<span class="notif-snooze-badge">${remainingLabel(active[0].until, now)}</span>`;
+  notifSnoozeBtn.title = `Snoozed: ${active.map((a) => `${a.label} (${remainingLabel(a.until, now)})`).join(', ')}`;
+  notifSnoozeTimer = setTimeout(renderNotifSnooze, 15e3);
+}
+
+function openNotifSnoozeMenu() {
+  const now = Date.now();
+  const active = notifSnooze.active();
+  const minutes = notifSnooze.minutes();
+  const items = [];
+  if (active.length) {
+    items.push({ header: 'Snoozed (click to cancel)' });
+    for (const a of active) {
+      items.push({
+        label: a.label, icon: X_ICON, title: 'Cancel this snooze',
+        trailing: `<span class="context-menu-hint">${remainingLabel(a.until, now)}</span>`,
+        run: () => (a.key === 'all' ? notifSnooze.cancelAll() : notifSnooze.cancelSource(a.key)),
+      });
+    }
+    items.push({ sep: true });
+  }
+  items.push({ header: 'Snooze all notifications for' });
+  for (const m of SNOOZE_MINUTES) items.push({ label: `${m} minutes`, icon: CLOCK_ICON, run: () => notifSnooze.snoozeAll(m) });
+  items.push({ sep: true }, { header: 'Toast "Snooze" lasts' });
+  for (const m of SNOOZE_MINUTES) items.push({ label: `${m} minutes`, trailing: m === minutes ? CHECK_ICON : '', run: () => notifSnooze.setMinutes(m) });
+  const r = notifSnoozeBtn.getBoundingClientRect();
+  mountMenu(items, r.right + 6, r.top);
+}
+
+notifSnooze.subscribe(renderNotifSnooze);
+notifSnoozeBtn.addEventListener('click', openNotifSnoozeMenu);
+window.addEventListener('storage', (e) => { if (e.key === NOTIFICATION_SNOOZE_KEY) notifSnooze.reload(); });
+renderNotifSnooze();
+
+// Silences an event that is snoozed (its session, its PR, or everything), and,
+// while focused, one belonging to any OTHER task — toast, browser Notification,
+// PR-dot flash and finish cue alike. `ownerId` is a session id for session-scope
+// events, a task id for task-scope ones; `prUrl` is the PR a PR event is about.
+function focusSuppresses(scope, ownerId, prUrl) {
+  if (notifSnooze.isSnoozed(snoozeKeysFor(scope, ownerId, prUrl))) return true;
   if (!focusModeActive()) return false;
   const focusedId = visibleTileIds(currentOrder(), minimisedIds)[0];
   const taskId = scope === 'task' ? ownerId : (assignedTaskId(ownerId) || ADHOC_ID);
@@ -8717,7 +8770,7 @@ function notify(session) {
     const n = new Notification(needsYouTitle(session), { body });
     n.onclick = () => { window.focus(); selectSession(session.cardKey); };
   }
-  toast(`⚠ ${body}`, false);
+  toast(`⚠ ${body}`, false, { actions: snoozeToastActions(notifSnooze, sessionSource(session.sessionId), session.label) });
 }
 
 // A PR's CI checks crossed into passing/failing (one-time, server-detected).
@@ -8737,8 +8790,14 @@ function prRepoName(url) {
   const m = /github\.com\/[^/]+\/([^/]+)\/pull\/\d+/.exec(url || '');
   return m ? m[1] : '';
 }
+// A PR event's snooze buttons: its PR, or its session when it has no url.
+function prSnoozeOptions(opts, msg, label) {
+  const key = msg.url ? prSource(msg.url) : (msg.scope === 'session' && msg.sessionId ? sessionSource(msg.sessionId) : null);
+  return { ...opts, actions: [...(opts.actions || []), ...snoozeToastActions(notifSnooze, key, label)] };
+}
+
 function onPrChecks(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId, msg.url) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const isErr = msg.status === 'failing' || msg.status === 'changes-requested';
   // Omit the `(<repo>)` segment entirely for an enterprise/malformed url (prRepoName
   // returns '') rather than rendering bare `()` — mirrors the server's prPaneNudge.
@@ -8747,7 +8806,7 @@ function onPrChecks(msg) {
   const phrase = PR_CHECK_TEXT[msg.status] || msg.status;
   const shortSha = typeof msg.headSha === 'string' ? msg.headSha.slice(0, 7) : '';
   const text = `[Agent Wrangler] ${label}: ${phrase}${shortSha ? ` (${shortSha})` : ''}`;
-  toast(text, isErr, prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, isErr, prSnoozeOptions(prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), msg, label));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
@@ -8760,11 +8819,11 @@ function onPrChecks(msg) {
 // Success → accent toast; failure → red .err toast + a one-shot dot flash, so a
 // blocked merge (branch protection, conflicts) is visible rather than silent.
 function onPrMerge(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId, msg.url) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const text = msg.ok
     ? `PR #${msg.number} auto-merged`
     : `PR #${msg.number} auto-merge failed: ${msg.error}`;
-  toast(text, !msg.ok, prCheckToastOptions(msg.ok ? 'passing' : 'failing', msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, !msg.ok, prSnoozeOptions(prCheckToastOptions(msg.ok ? 'passing' : 'failing', msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), msg, `PR #${msg.number}`));
   if (!msg.ok) flashPr(msg.url);
 }
 
@@ -8772,11 +8831,11 @@ function onPrMerge(msg) {
 // an alert, unlike onPrChecks where only some statuses are errors. Mirrors
 // onPrChecks' shape (focus-suppressed toast + browser Notification + dot flash).
 function onPrDirty(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId, msg.url) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
-  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, true, prSnoozeOptions(prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), msg, label));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
@@ -8790,12 +8849,12 @@ function onPrDirty(msg) {
 // toast + browser Notification + dot flash). Notification-only — no new
 // persistent PR-dot/card UI beyond the existing transient flash.
 function onPrComments(msg) {
-  if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (focusSuppresses(msg.scope, msg.sessionId, msg.url) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const phrase = `${msg.delta} new unresolved review thread${msg.delta === 1 ? '' : 's'} (${msg.count} unresolved total)`;
   const text = `[Agent Wrangler] ${label}: ${phrase}`;
-  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, true, prSnoozeOptions(prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), msg, label));
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
