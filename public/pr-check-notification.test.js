@@ -74,7 +74,7 @@ for (const [handler, variants] of [
         }
         const context = {
           ...helpers, Notification, window: { Notification, focus() {} },
-          focusSuppresses: () => false, suppressNudgedPrToasts: false, holdNotification: () => false,
+          focusSuppresses: () => false, suppressNudgedPrToasts: false, holdNotification: () => false, trackPopup: (m, n) => { n.trackedFor = m.number; },
           openSessionInBoard: id => opened.push(['session', id]),
           openTaskInBoard: id => opened.push(['task', id]),
           toast: (...args) => toasts.push(args), flashPr() {},
@@ -92,6 +92,7 @@ for (const [handler, variants] of [
         options.actions[0].onClick();
         assert.deepEqual(opened, [[scope, 'owner']]);
         if (handler !== 'onPrMerge') {
+          assert.equal(notifications[0].trackedFor, 1);
           notifications[0].onclick();
           assert.deepEqual(opened, [[scope, 'owner'], [scope, 'owner']]);
         } else {

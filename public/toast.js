@@ -14,6 +14,9 @@
 //   snooze    any value: adds a clock beside × that hands it to the snooze
 //             handler (setSnoozeHandlers); "Snooze all" beside "Clear all"
 //             hands over every snoozable toast's value at once
+// While the handler reports Snooze all active, persistent notifications are
+// held rather than shown: their callers keep waiting, a withdrawal or
+// replacement still applies, and releaseHeld() shows what is left.
 // Long text is clamped to three lines, with Details to read the rest.
 //
 // The stack is a manual popover, so it is drawn in the top layer. A modal
@@ -40,6 +43,7 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   let snoozeAllButton = null;
   let head = null;
   let snoozeHandlers = null;
+  const heldPersistent = new Map(); // id -> showPersistent options, oldest first
   let list = null;
   let held = false; // hovered or focused: every timer waits
   let listObserver = null;
@@ -95,7 +99,7 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   function place(raise = false) {
     const el = root();
     clearButton.hidden = live.length < 2;
-    snoozeAllButton.hidden = !snoozeHandlers || !live.some((t) => t.snooze != null);
+    snoozeAllButton.hidden = !snoozeHandlers || !live.some((t) => t.snooze != null || t.persistent);
     if (snoozeHandlers) snoozeAllButton.title = snoozeHandlers.title();
     head.hidden = clearButton.hidden && snoozeAllButton.hidden;
     const open = () => el.matches?.(':popover-open');
@@ -160,7 +164,17 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   function snoozeAll() {
     const snoozable = live.filter((t) => t.snooze != null);
     for (const t of snoozable) dismiss(t, false);
+    for (const t of live.filter((x) => x.persistent)) {
+      heldPersistent.set(t.id, t.options);
+      dismiss(t, false);
+    }
     snoozeHandlers?.snoozeAll(snoozable.map((t) => t.snooze));
+  }
+
+  function releaseHeld() {
+    const held = [...heldPersistent];
+    heldPersistent.clear();
+    for (const [id, options] of held) showPersistent(id, options);
   }
 
   function setSnoozeHandlers(handlers) {
@@ -293,10 +307,16 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     return t.el;
   }
 
-  function showPersistent(id, { title, body, actions, onDismiss }) {
+  function showPersistent(id, options) {
+    const { title, body, actions, onDismiss } = options;
     let t = live.find((item) => item.persistent && item.id === id);
+    if (!t && (heldPersistent.has(id) || snoozeHandlers?.allActive?.())) {
+      heldPersistent.set(id, options);
+      return;
+    }
     const fresh = !t;
     if (!t) t = { id, persistent: true, duration: Infinity, remaining: Infinity, timer: null };
+    t.options = options;
     t.onDismiss = onDismiss;
     t.el = build(t, title, 'info', { body, actions, duration: Infinity });
     if (fresh) {
@@ -352,8 +372,12 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     document.removeEventListener?.('scroll', scheduleLayout, true);
   }
 
-  const dismissId = (id, persistent = false) => { const t = live.find((x) => !!x.persistent === persistent && x.id === id); if (t) dismiss(t); };
-  return { show, showPersistent, setPosition, setSnoozeHandlers, dismiss: dismissId, dismissPersistent: (id) => dismissId(id, true), count: () => live.length, clear };
+  const dismissId = (id, persistent = false) => {
+    if (persistent && heldPersistent.delete(id)) return;
+    const t = live.find((x) => !!x.persistent === persistent && x.id === id);
+    if (t) dismiss(t);
+  };
+  return { show, showPersistent, setPosition, setSnoozeHandlers, releaseHeld, dismiss: dismissId, dismissPersistent: (id) => dismissId(id, true), count: () => live.length, clear };
 }
 
 const shared = new WeakMap();
@@ -372,6 +396,10 @@ export function dismissToast(id) {
 
 export function setToastSnoozeHandlers(handlers) {
   getToasts(globalThis.document).setSnoozeHandlers(handlers);
+}
+
+export function releaseHeldToasts() {
+  getToasts(globalThis.document).releaseHeld();
 }
 
 export function setToastPosition(position) {

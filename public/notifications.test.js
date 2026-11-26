@@ -209,3 +209,22 @@ test('persistent cards and Clear all stay interactive through nested modals and 
   find(find(stack, 'toast-head'), 'toast-clear').click();
   assert.deepEqual(await Promise.all([first, second]), [null, null]);
 });
+
+test('a card held by Snooze all still settles when withdrawn, and resolves when answered after release', async () => {
+  const doc = fakeDocument();
+  const toasts = getToasts(doc);
+  let all = false;
+  toasts.setSnoozeHandlers({ title: () => 'Snooze', allActive: () => all, snooze() {}, snoozeAll: () => { all = true; } });
+  const notifications = createNotifications({ document: doc, toasts });
+  const withdrawn = notifications.show('ext', { id: 'one', title: 'One', actions: [{ id: 'ok', label: 'OK' }] });
+  const answered = notifications.show('ext', { id: 'two', title: 'Two', actions: [{ id: 'ok', label: 'OK' }] });
+  find(find(doc.body.children[0], 'toast-head'), 'toast-snooze-all').click();
+  assert.equal(toasts.count(), 0);
+  notifications.withdraw('ext', 'one');
+  assert.equal(await withdrawn, null);
+  all = false;
+  toasts.releaseHeld();
+  assert.equal(toasts.count(), 1);
+  buttons(cards(doc)[0])[0].click();
+  assert.equal(await answered, 'ok');
+});

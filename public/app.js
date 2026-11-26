@@ -58,7 +58,7 @@ import {
 import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
-import { toast, setToastPosition, setToastSnoozeHandlers } from './toast.js';
+import { toast, setToastPosition, setToastSnoozeHandlers, releaseHeldToasts } from './toast.js';
 import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
@@ -70,7 +70,7 @@ import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
 import { prToastActions, prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
-import { NOTIFICATION_SNOOZE_KEY, createSnoozeStore, snoozeMinutes, stillTrue } from './notification-snooze.js';
+import { NOTIFICATION_SNOOZE_KEY, createSnoozeStore, snoozeMinutes, stillTrue, notificationKey } from './notification-snooze.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
@@ -8720,6 +8720,20 @@ const notifSnooze = createSnoozeStore({ storage: (() => { try { return localStor
 let notifSnoozeTimer = null;
 const snoozeLength = () => snoozeMinutes(getSetting('notificationSnoozeMinutes'));
 
+// The browser pop-up each notification raised, so snoozing it closes the pop-up too.
+const popups = new Map();
+function trackPopup(msg, popup) {
+  const key = notificationKey(msg);
+  popups.set(key, popup);
+  popup.addEventListener?.('close', () => { if (popups.get(key) === popup) popups.delete(key); });
+}
+function closePopups(keys = [...popups.keys()]) {
+  for (const key of keys) {
+    try { popups.get(key)?.close(); } catch {}
+    popups.delete(key);
+  }
+}
+
 function holdNotification(msg, resurfaced) {
   if (!resurfaced) notifSnooze.supersede(msg);
   if (!notifSnooze.allActive()) return false;
@@ -8745,7 +8759,9 @@ function scheduleResurface() {
 function resurfaceSnoozed() {
   if (!latestGraph) { clearTimeout(notifSnoozeTimer); notifSnoozeTimer = setTimeout(resurfaceSnoozed, 2000); return; }
   const lookup = { session: (id) => latestSessions.find((s) => s.sessionId === id), prLink: prLinkByUrl };
-  for (const msg of notifSnooze.takeDue()) {
+  const due = notifSnooze.takeDue();
+  if (!notifSnooze.allActive()) releaseHeldToasts();
+  for (const msg of due) {
     if (!stillTrue(msg, lookup)) continue;
     if (msg.type === 'notify') notify(msg.session, true);
     else if (msg.type === 'pr-checks') onPrChecks(msg, true);
@@ -8758,8 +8774,9 @@ function resurfaceSnoozed() {
 
 setToastSnoozeHandlers({
   title: () => `Snooze for ${snoozeLength()} minutes`,
-  snooze: (msg) => notifSnooze.hold(msg, snoozeLength()),
-  snoozeAll: (msgs) => notifSnooze.snoozeAll(msgs, snoozeLength()),
+  allActive: () => notifSnooze.allActive(),
+  snooze: (msg) => { closePopups([notificationKey(msg)]); notifSnooze.hold(msg, snoozeLength()); },
+  snoozeAll: (msgs) => { closePopups(); notifSnooze.snoozeAll(msgs, snoozeLength()); },
 });
 notifSnooze.subscribe(scheduleResurface);
 window.addEventListener('storage', (e) => { if (e.key === NOTIFICATION_SNOOZE_KEY) notifSnooze.reload(); });
@@ -8774,6 +8791,7 @@ function notify(session, resurfaced = false) {
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(needsYouTitle(session), { body });
     n.onclick = () => { window.focus(); selectSession(session.cardKey); };
+    trackPopup(msg, n);
   }
   toast(`⚠ ${body}`, false, { snooze: msg });
 }
@@ -8810,6 +8828,7 @@ function onPrChecks(msg, resurfaced = false) {
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
+    trackPopup(msg, n);
   }
   if (isErr) flashPr(msg.url);
 }
@@ -8841,6 +8860,7 @@ function onPrDirty(msg, resurfaced = false) {
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
+    trackPopup(msg, n);
   }
   flashPr(msg.url);
 }
@@ -8861,6 +8881,7 @@ function onPrComments(msg, resurfaced = false) {
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
+    trackPopup(msg, n);
   }
   flashPr(msg.url);
 }

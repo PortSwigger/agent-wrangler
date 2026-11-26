@@ -514,3 +514,35 @@ test('Snooze all sits beside Clear all, shows only with a snoozable toast, and s
   assert.deepEqual(shown(doc), ['Plain']);
   assert.equal(snoozeAll.hidden, true);
 });
+
+test('Snooze all holds persistent notifications, keeps them pending, and releases only those still present', () => {
+  const { doc, toasts } = fakeWorld();
+  let all = false;
+  const dismissed = [];
+  toasts.setSnoozeHandlers({ title: () => 'Snooze', allActive: () => all, snooze() {}, snoozeAll: () => { all = true; } });
+  toasts.showPersistent('a', { title: 'Allow A?', actions: [], onDismiss: () => dismissed.push('a') });
+  toasts.showPersistent('b', { title: 'Allow B?', actions: [], onDismiss: () => dismissed.push('b') });
+  toasts.show('Needs you', false, { snooze: 'n' });
+  const snoozeAll = part(headOf(doc), 'toast-snooze-all');
+  assert.equal(snoozeAll.hidden, false);
+  snoozeAll.click();
+  assert.equal(toasts.count(), 0);
+  assert.deepEqual(dismissed, [], 'held cards are not dismissed, so their callers keep waiting');
+  toasts.showPersistent('c', { title: 'Allow C?', actions: [] });
+  assert.equal(toasts.count(), 0, 'a new card is held too');
+  toasts.showPersistent('a', { title: 'Allow A (updated)?', actions: [] });
+  toasts.dismissPersistent('b');
+  assert.equal(toasts.count(), 0);
+  all = false;
+  toasts.releaseHeld();
+  assert.deepEqual(shown(doc), ['Allow A (updated)?', 'Allow C?']);
+  toasts.releaseHeld();
+  assert.equal(toasts.count(), 2, 'releasing twice shows nothing twice');
+});
+
+test('Snooze all shows for a persistent card alone', () => {
+  const { doc, toasts } = fakeWorld();
+  toasts.setSnoozeHandlers({ title: () => 'Snooze', allActive: () => false, snooze() {}, snoozeAll() {} });
+  toasts.showPersistent('a', { title: 'Allow A?', actions: [] });
+  assert.equal(part(headOf(doc), 'toast-snooze-all').hidden, false);
+});
