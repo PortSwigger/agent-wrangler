@@ -45,9 +45,16 @@ const PANE_FORMAT = '#{session_name}|#{pane_pid}|#{pane_current_path}|#{pane_id}
 // Parse one PANE_FORMAT line. pane_title is last and rejoined because it's the
 // only field that can itself contain '|'; every earlier field (incl. pane_id
 // `%N` and the window index) is '|'-free, so they take fixed leading slots.
+// tmux prints an empty pane_pid for a dead pane (kept by remain-on-exit), so a
+// pid that isn't a positive integer parses to null: the pane has no process.
 export function parsePaneLine(line) {
   const [name, pid, cwd, paneId, windowIndex, ...title] = line.split('|');
-  return { name, panePid: Number(pid), cwd, paneId, windowIndex, paneTitle: title.join('|') };
+  return { name, panePid: livePid(pid), cwd, paneId, windowIndex, paneTitle: title.join('|') };
+}
+
+function livePid(value) {
+  const pid = Number(value);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
 async function listClaudePanes(socket) {
@@ -100,7 +107,10 @@ let treeSkipped = false;
 // container-exec matcher (a devcontainer/docker exec wrapping the agent as an
 // argument) — a host command never has the wrapper, so this is additive, never
 // a behaviour change for host sessions. Exported for unit testing.
+// A start pid that isn't a live process (null, 0, negative) finds nothing: pid 0
+// parents launchd/init, so walking from it would adopt any agent on the machine.
 export function findAgentPid(startPid, tree) {
+  if (livePid(startPid) === null) return null;
   const queue = [startPid];
   const seen = new Set();
   while (queue.length) {
