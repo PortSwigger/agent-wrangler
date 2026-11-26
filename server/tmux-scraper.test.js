@@ -648,7 +648,7 @@ test('discoverClaudeSessions: a dead pane never adopts a Claude running elsewher
       if ((await tmux('list-panes', '-t', 'cc_dead', '-F', '#{pane_dead}')).stdout.trim() === '1') break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    assert.equal((await tmux('list-panes', '-t', 'cc_dead', '-F', '#{pane_dead}|#{pane_pid}')).stdout.trim(), '1|', 'tmux gives a dead pane an empty pid');
+    assert.equal((await tmux('list-panes', '-t', 'cc_dead', '-F', '#{pane_dead}')).stdout.trim(), '1', 'the pane is dead and kept');
     assert.deepEqual(await discoverClaudeSessions([socket]), []);
   } finally {
     decoy.kill();
@@ -697,7 +697,7 @@ test('sendText does not press Enter until the settle wait completes', async () =
 });
 
 test('parsePaneLine splits fields with pane_id/window and keeps pane_title (which may contain |) last', () => {
-  const p = parsePaneLine('cc_d3059a0b|18544|/Users/x/proj|%1|0|⠂ general-purpose');
+  const p = parsePaneLine('cc_d3059a0b|18544|0|/Users/x/proj|%1|0|⠂ general-purpose');
   assert.equal(p.name, 'cc_d3059a0b');
   assert.equal(p.panePid, 18544);
   assert.equal(p.cwd, '/Users/x/proj');
@@ -706,15 +706,18 @@ test('parsePaneLine splits fields with pane_id/window and keeps pane_title (whic
   assert.equal(p.paneTitle, '⠂ general-purpose');
 });
 
-test('parsePaneLine gives a dead pane (empty pane_pid) no pid', () => {
-  // tmux prints an empty #{pane_pid} for a pane kept by remain-on-exit.
-  assert.equal(parsePaneLine('cc_dead||/p|%0|0|host').panePid, null);
-  assert.equal(parsePaneLine('cc_x|0|/p|%0|0|host').panePid, null);
-  assert.equal(parsePaneLine('cc_x|-4|/p|%0|0|host').panePid, null);
+test('parsePaneLine gives a dead pane no pid, whatever tmux prints for it', () => {
+  // Newer tmux prints an empty #{pane_pid} for a pane kept by remain-on-exit;
+  // older tmux keeps the dead pid, which may now be an unrelated process.
+  assert.equal(parsePaneLine('cc_dead||1|/p|%0|0|host').panePid, null);
+  assert.equal(parsePaneLine('cc_dead|13377|1|/p|%0|0|host').panePid, null);
+  assert.equal(parsePaneLine('cc_x||0|/p|%0|0|host').panePid, null);
+  assert.equal(parsePaneLine('cc_x|0|0|/p|%0|0|host').panePid, null);
+  assert.equal(parsePaneLine('cc_x|-4|0|/p|%0|0|host').panePid, null);
 });
 
 test('parsePaneLine rejoins a pane_title containing pipes', () => {
-  const p = parsePaneLine('cc_1|100|/p|%0|0|✳ fix a | b | c');
+  const p = parsePaneLine('cc_1|100|0|/p|%0|0|✳ fix a | b | c');
   assert.equal(p.paneId, '%0');
   assert.equal(p.paneTitle, '✳ fix a | b | c');
 });

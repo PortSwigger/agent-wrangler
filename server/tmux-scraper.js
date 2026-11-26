@@ -34,22 +34,24 @@ export function stripAnsi(s) {
     .replace(/[\x00-\x08\x0b-\x1f]/g, '');
 }
 
-// All panes across every tmux session, with the pane's leaf pid, cwd, the tmux
-// pane id + window index (so a specific pane can be captured/targeted — a session
-// running an agent team has >1 pane), and the pane_title (Claude writes its live
-// status+summary there via an OSC sequence). pane_title is the only field that
-// can itself contain '|', so it goes last and the remainder is rejoined; pane_id
-// (`%N`) and window_index are '|'-free, so they take fixed slots before it.
-const PANE_FORMAT = '#{session_name}|#{pane_pid}|#{pane_current_path}|#{pane_id}|#{window_index}|#{pane_title}';
+// All panes across every tmux session, with the pane's leaf pid, whether it is
+// dead, cwd, the tmux pane id + window index (so a specific pane can be
+// captured/targeted — a session running an agent team has >1 pane), and the
+// pane_title (Claude writes its live status+summary there via an OSC sequence).
+// pane_title is the only field that can itself contain '|', so it goes last and
+// the remainder is rejoined; pane_id (`%N`) and window_index are '|'-free, so
+// they take fixed slots before it.
+const PANE_FORMAT = '#{session_name}|#{pane_pid}|#{pane_dead}|#{pane_current_path}|#{pane_id}|#{window_index}|#{pane_title}';
 
 // Parse one PANE_FORMAT line. pane_title is last and rejoined because it's the
 // only field that can itself contain '|'; every earlier field (incl. pane_id
 // `%N` and the window index) is '|'-free, so they take fixed leading slots.
-// tmux prints an empty pane_pid for a dead pane (kept by remain-on-exit), so a
-// pid that isn't a positive integer parses to null: the pane has no process.
+// A dead pane (kept by remain-on-exit) has no process, so its pid is null: newer
+// tmux prints its pane_pid empty, and older tmux keeps the dead pid, which the
+// OS may since have given to an unrelated process.
 export function parsePaneLine(line) {
-  const [name, pid, cwd, paneId, windowIndex, ...title] = line.split('|');
-  return { name, panePid: livePid(pid), cwd, paneId, windowIndex, paneTitle: title.join('|') };
+  const [name, pid, dead, cwd, paneId, windowIndex, ...title] = line.split('|');
+  return { name, panePid: dead === '1' ? null : livePid(pid), cwd, paneId, windowIndex, paneTitle: title.join('|') };
 }
 
 function livePid(value) {
