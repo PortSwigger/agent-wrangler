@@ -514,6 +514,29 @@ test('every toast with × has a clock, except feedback that opts out with snooze
   assert.ok(card.className.includes('toast-snoozable'));
 });
 
+test('feedback on the human\'s own action opts out of the clock at its call sites', () => {
+  const source = (f) => readFileSync(new URL(f, import.meta.url), 'utf8');
+  const app = source('./app.js');
+  const feedback = [
+    "'Copied to clipboard'", "'Copied session reference'", "'Renamed'", "'Archiving task…'",
+    "'Archive cancelled — nothing was changed.'", "else toast('Worktree removed'", "'Container stopped'",
+    "`Branch ${msg.branch} deleted`", "'Launching session…'", "'Restarting…'",
+  ];
+  for (const text of feedback) {
+    const line = app.split('\n').find((l) => l.includes(text));
+    assert.ok(line, `${text} is still in app.js`);
+    assert.match(line, /snooze: false/, `${text} has no clock`);
+  }
+  for (const [file, text] of [['./modals.js', "'Forking…'"], ['./diff-view.js', "'Review comments sent to the agent'"], ['./search.js', "'Removed'"]]) {
+    assert.match(source(file).split('\n').find((l) => l.includes(text)), /snooze: false/, `${text} has no clock`);
+  }
+  for (const text of ['Task archived${sessionsNote}`, false, {', "'Worktree removed', false, { actions"]) {
+    const line = app.split('\n').find((l) => l.includes(text));
+    assert.ok(line, `${text} is still in app.js`);
+    assert.doesNotMatch(line, /snooze: false/, 'an actionable follow-up keeps its clock');
+  }
+});
+
 test('no clock without snooze handlers', () => {
   const { doc, toasts } = fakeWorld();
   toasts.show('Plain');

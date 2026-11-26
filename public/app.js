@@ -8565,7 +8565,7 @@ function onDeckMessage(msg) {
       danger: true,
     }).then((result) => {
       if (result === 'ok') send({ ...msg.request, allowUnpushed: true });
-      else toast('Archive cancelled — nothing was changed.');
+      else toast('Archive cancelled — nothing was changed.', false, { snooze: false });
     });
   }
   else if (msg.type === 'archived' && msg.plain) {
@@ -8606,7 +8606,7 @@ function onDeckMessage(msg) {
   else if (msg.type === 'worktree-removed') {
     const card = cardOf(msg.sessionId);
     if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId, card }) }], duration: 15000 });
-    else toast('Worktree removed');
+    else toast('Worktree removed', false, { snooze: false });
   }
   else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop', false, { snooze: false });
   else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`, 'success', { snooze: false });
@@ -8633,7 +8633,7 @@ function onDeckMessage(msg) {
       body: `The folder this session ran in is gone:\n\n${tildeCollapse(msg.dir)}\n\nRecreate it and ${verb} anyway? The full conversation is restored from the transcript — but the working files that were in that folder won't be.`,
       okLabel: `Recreate & ${verb}`,
     }).then((result) => {
-      if (result !== 'ok') { toast(`${forking ? 'Fork' : 'Resume'} cancelled — original folder is gone.`); return; }
+      if (result !== 'ok') { toast(`${forking ? 'Fork' : 'Resume'} cancelled — original folder is gone.`, false, { snooze: false }); return; }
       if (forking) send({ type: 'fork', sessionId: msg.sessionId, recreateDir: true, prompt: msg.prompt || '', name: msg.name || '', card });
       else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true, card });
     });
