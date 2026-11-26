@@ -201,6 +201,14 @@ export const SETTINGS = [
     default: 'top-right',
   },
   {
+    id: 'notificationSnoozeMinutes',
+    type: 'segmented',
+    options: [{ value: '5', label: '5 min' }, { value: '10', label: '10 min' }, { value: '30', label: '30 min' }],
+    label: 'Notification snooze length',
+    help: 'How long the clock on a notification, and Snooze all beside Clear all, hide notifications. When the time is up they come back, unless they no longer apply. Saved for this browser.',
+    default: '10',
+  },
+  {
     id: 'autoUpdate',
     type: 'segmented',
     scope: 'server',
@@ -223,7 +231,7 @@ export const SETTINGS = [
 // toggle per server extension off graph.extensions, so a new extension needs
 // no settings.js edit at all.
 export const SETTINGS_TABS = [
-  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition'] },
+  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition', 'notificationSnoozeMinutes'] },
   { id: 'decks', label: 'Decks', settingIds: [] },
   {
     id: 'sessions',
@@ -250,7 +258,7 @@ export const SETTINGS_TABS = [
 // with its own sessions, read from and written to the deck chosen in the
 // picker. A board with only its own deck keeps SETTINGS_TABS.
 export const BOARD_TABS = [
-  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition'] },
+  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition', 'notificationSnoozeMinutes'] },
   { id: 'board', label: 'Board', settingIds: ['subagentsExpandedByDefault', 'childFullViewByDefault', 'chatViewDefault', 'suppressNudgedPrToasts'] },
   { id: 'decks', label: 'Decks', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },

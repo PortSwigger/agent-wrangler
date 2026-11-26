@@ -58,7 +58,7 @@ import {
 import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
-import { toast, setToastPosition } from './toast.js';
+import { toast, setToastPosition, setToastSnoozeHandlers, releaseHeldToasts } from './toast.js';
 import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
@@ -70,6 +70,7 @@ import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
 import { prToastActions, prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
+import { NOTIFICATION_SNOOZE_KEY, createSnoozeStore, snoozeMinutes, stillTrue, notificationKey, createPopupTracker } from './notification-snooze.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
@@ -3983,7 +3984,7 @@ function trackJustFinished(sessions) {
     const settled = settledStatus(s, prev);
     if (prev === 'working' && settled === 'idle') {
       justFinished.add(s.sessionId); jfChanged = true;
-      if (!playFinishCue && !focusSuppresses('session', s.sessionId)) playFinishCue = true;
+      if (!playFinishCue && !focusSuppresses('session', s.sessionId) && !notifSnooze.allActive()) playFinishCue = true;
     }
     if (settled !== 'idle' && justFinished.delete(s.sessionId)) jfChanged = true;
     // The needs-you ack re-arm stays on the raw status: needs-you is hook-driven
@@ -8709,15 +8710,79 @@ function focusSuppresses(scope, ownerId) {
   return taskId !== focusedId;
 }
 
-function notify(session) {
+// Notification snooze (notification-snooze.js): the clock on a notification
+// toast holds it for the length chosen in Settings, "Snooze all" holds every
+// notification on screen and any that arrive until it ends. A held one comes
+// back only if it is still true, and a newer one about the same session or PR
+// replaces it. Holding happens after the focus/nudge checks above have had
+// their say, so a notification they drop is never held.
+const notifSnooze = createSnoozeStore({ storage: (() => { try { return localStorage; } catch { return null; } })() });
+let notifSnoozeTimer = null;
+const snoozeLength = () => snoozeMinutes(getSetting('notificationSnoozeMinutes'));
+
+const popups = createPopupTracker();
+const trackPopup = (msg, popup) => popups.track(msg, popup);
+
+function holdNotification(msg, resurfaced) {
+  if (!resurfaced) notifSnooze.supersede(msg);
+  if (!notifSnooze.allActive()) return false;
+  notifSnooze.holdForAll(msg);
+  return true;
+}
+
+function prLinkByUrl(url) {
+  for (const owner of [...latestSessions, ...boardTasks()]) {
+    const link = owner.links?.find((l) => l.type === 'pr' && l.url === url);
+    if (link) return link;
+  }
+  return null;
+}
+
+function scheduleResurface() {
+  clearTimeout(notifSnoozeTimer);
+  const wake = notifSnooze.nextWake();
+  if (wake != null) notifSnoozeTimer = setTimeout(resurfaceSnoozed, Math.min(Math.max(wake - Date.now(), 0) + 250, 2 ** 31 - 1));
+}
+
+// Waits for the first graph: until then every session would read as gone.
+function resurfaceSnoozed() {
+  if (!latestGraph) { clearTimeout(notifSnoozeTimer); notifSnoozeTimer = setTimeout(resurfaceSnoozed, 2000); return; }
+  const lookup = { session: (id) => latestSessions.find((s) => s.sessionId === id), prLink: prLinkByUrl };
+  const due = notifSnooze.takeDue();
+  if (!notifSnooze.allActive()) releaseHeldToasts();
+  for (const msg of due) {
+    if (!stillTrue(msg, lookup)) continue;
+    if (msg.type === 'notify') notify(msg.session, true);
+    else if (msg.type === 'pr-checks') onPrChecks(msg, true);
+    else if (msg.type === 'pr-merge') onPrMerge(msg, true);
+    else if (msg.type === 'pr-dirty') onPrDirty(msg, true);
+    else if (msg.type === 'pr-unresolved') onPrComments(msg, true);
+  }
+  scheduleResurface();
+}
+
+setToastSnoozeHandlers({
+  title: () => `Snooze for ${snoozeLength()} minutes`,
+  allActive: () => notifSnooze.allActive(),
+  snooze: (msg) => { popups.close([notificationKey(msg)]); notifSnooze.hold(msg, snoozeLength()); },
+  snoozeAll: (msgs) => { popups.close(); notifSnooze.snoozeAll(msgs, snoozeLength()); },
+});
+notifSnooze.subscribe(scheduleResurface);
+window.addEventListener('storage', (e) => { if (e.key === NOTIFICATION_SNOOZE_KEY) notifSnooze.reload(); });
+scheduleResurface();
+
+function notify(session, resurfaced = false) {
   if (focusSuppresses('session', session.sessionId)) return;
+  const msg = { type: 'notify', session };
+  if (holdNotification(msg, resurfaced)) return;
   const body = `${session.label}${session.waitingFor ? ' — ' + session.waitingFor : ''}`;
   slots.notificationCue('needs-you', extApi);
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(needsYouTitle(session), { body });
     n.onclick = () => { window.focus(); selectSession(session.cardKey); };
+    trackPopup(msg, n);
   }
-  toast(`⚠ ${body}`, false);
+  toast(`⚠ ${body}`, false, { snooze: msg });
 }
 
 // A PR's CI checks crossed into passing/failing (one-time, server-detected).
@@ -8737,8 +8802,9 @@ function prRepoName(url) {
   const m = /github\.com\/[^/]+\/([^/]+)\/pull\/\d+/.exec(url || '');
   return m ? m[1] : '';
 }
-function onPrChecks(msg) {
+function onPrChecks(msg, resurfaced = false) {
   if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (holdNotification(msg, resurfaced)) return;
   const isErr = msg.status === 'failing' || msg.status === 'changes-requested';
   // Omit the `(<repo>)` segment entirely for an enterprise/malformed url (prRepoName
   // returns '') rather than rendering bare `()` — mirrors the server's prPaneNudge.
@@ -8747,10 +8813,11 @@ function onPrChecks(msg) {
   const phrase = PR_CHECK_TEXT[msg.status] || msg.status;
   const shortSha = typeof msg.headSha === 'string' ? msg.headSha.slice(0, 7) : '';
   const text = `[Agent Wrangler] ${label}: ${phrase}${shortSha ? ` (${shortSha})` : ''}`;
-  toast(text, isErr, prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, isErr, { ...prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), snooze: msg });
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
+    trackPopup(msg, n);
   }
   if (isErr) flashPr(msg.url);
 }
@@ -8759,27 +8826,30 @@ function onPrChecks(msg) {
 // transition, because that session opted into "Auto-merge when checks pass".
 // Success → accent toast; failure → red .err toast + a one-shot dot flash, so a
 // blocked merge (branch protection, conflicts) is visible rather than silent.
-function onPrMerge(msg) {
+function onPrMerge(msg, resurfaced = false) {
   if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (holdNotification(msg, resurfaced)) return;
   const text = msg.ok
     ? `PR #${msg.number} auto-merged`
     : `PR #${msg.number} auto-merge failed: ${msg.error}`;
-  toast(text, !msg.ok, prCheckToastOptions(msg.ok ? 'passing' : 'failing', msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, !msg.ok, { ...prCheckToastOptions(msg.ok ? 'passing' : 'failing', msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), snooze: msg });
   if (!msg.ok) flashPr(msg.url);
 }
 
 // A linked PR just became DIRTY (merge conflicts with its base branch) — always
 // an alert, unlike onPrChecks where only some statuses are errors. Mirrors
 // onPrChecks' shape (focus-suppressed toast + browser Notification + dot flash).
-function onPrDirty(msg) {
+function onPrDirty(msg, resurfaced = false) {
   if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (holdNotification(msg, resurfaced)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
-  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, true, { ...prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), snooze: msg });
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
+    trackPopup(msg, n);
   }
   flashPr(msg.url);
 }
@@ -8789,16 +8859,18 @@ function onPrDirty(msg) {
 // Always an alert, like onPrDirty; mirrors its exact shape (focus-suppressed
 // toast + browser Notification + dot flash). Notification-only — no new
 // persistent PR-dot/card UI beyond the existing transient flash.
-function onPrComments(msg) {
+function onPrComments(msg, resurfaced = false) {
   if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (holdNotification(msg, resurfaced)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const phrase = `${msg.delta} new unresolved review thread${msg.delta === 1 ? '' : 's'} (${msg.count} unresolved total)`;
   const text = `[Agent Wrangler] ${label}: ${phrase}`;
-  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, true, { ...prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), snooze: msg });
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
+    trackPopup(msg, n);
   }
   flashPr(msg.url);
 }
