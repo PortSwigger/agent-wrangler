@@ -22,6 +22,7 @@ test('each registered setting appears in exactly one tab', () => {
   assert.deepEqual(new Set(settingIds), new Set([
     'terminalSide',
     'toastPosition',
+    'notificationSnoozeMinutes',
     'subagentsExpandedByDefault',
     'childFullViewByDefault',
     'chatViewDefault',

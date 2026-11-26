@@ -103,7 +103,7 @@ test('Clear all dismisses mixed notices and all replacement waiters without taki
   const second = n.show('two', { id: 'a', title: 'Another request' });
   assert.equal(doc.body.children.length, 1);
   assert.equal(toasts.count(), 3);
-  const clear = find(doc.body.children[0], 'toast-clear');
+  const clear = find(find(doc.body.children[0], 'toast-head'), 'toast-clear');
   assert.equal(clear.textContent, 'Clear all');
   assert.equal(clear.hidden, false);
   assert.equal(clear.attrs.type ?? clear.type, 'button');
@@ -206,6 +206,6 @@ test('persistent cards and Clear all stay interactive through nested modals and 
   outer.open = false;
   observe([{ target: outer }]);
   assert.equal(stack.parentNode, doc.body);
-  find(stack, 'toast-clear').click();
+  find(find(stack, 'toast-head'), 'toast-clear').click();
   assert.deepEqual(await Promise.all([first, second]), [null, null]);
 });
