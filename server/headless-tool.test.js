@@ -244,3 +244,42 @@ test('the admission gate exists only once init has been checked, and is removed 
   assert.equal(seenAfter, true);
   assert.equal(fs.existsSync(path.dirname(gate)), false);
 });
+
+test('an init that arrives after the run timed out is ignored, never admitted', async () => {
+  let child;
+  const spawn = () => {
+    child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new PassThrough();
+    child.kill = () => {
+      setTimeout(() => {
+        child.stdout.write(`${JSON.stringify(init([TOOL]))}\n`);
+        child.stdout.end();
+        setImmediate(() => child.emit('close', null, 'SIGKILL'));
+      }, 5);
+      return true;
+    };
+    return child;
+  };
+  const uncaught = [];
+  const onUncaught = (err) => uncaught.push(err);
+  process.on('uncaughtException', onUncaught);
+  try {
+    const out = await runHeadlessTool(base({ spawn, timeoutMs: 1 }));
+    assert.equal(out.error, 'Timed out after 1 ms.');
+    await new Promise((r) => setTimeout(r, 30));
+  } finally {
+    process.off('uncaughtException', onUncaught);
+  }
+  assert.deepEqual(uncaught, []);
+});
+
+test('a gate that cannot be removed still settles the run and releases its in-flight count', async () => {
+  const { spawn } = fakeSpawn(SENT);
+  const before = headlessRunsInFlight();
+  const out = await runHeadlessTool(base({ spawn, removeGate: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); } }));
+  assert.equal(out.error, null);
+  assert.equal(out.text, 'DONE');
+  assert.equal(headlessRunsInFlight(), before);
+});

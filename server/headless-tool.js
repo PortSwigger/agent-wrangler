@@ -192,6 +192,7 @@ export async function runHeadlessTool({
   tool, source, prompt, stdin = '', effort, timeoutMs, maxTurns = 3, profile, callerId,
   policy = async () => null, background = backgroundModel(), spawn = defaultSpawn,
   inventory = probeClaudeInventory, version = () => cliVersion('claude'),
+  removeGate = (dir) => fs.rmSync(dir, { recursive: true, force: true }),
 } = {}) {
   if (typeof tool !== 'string' || !tool) throw new TypeError('tool must be a tool name');
   if (typeof prompt !== 'string' || !prompt.trim()) throw new TypeError('prompt must be a non-empty string');
@@ -239,7 +240,7 @@ export async function runHeadlessTool({
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      fs.rmSync(gateDir, { recursive: true, force: true });
+      try { removeGate(gateDir); } catch { /* a leftover empty dir in tmp admits nothing once the run is over */ }
       const err = refused || error || (!sawInit ? 'Claude never reported its tools, so the run was not trusted.' : null)
         || (result?.is_error ? `Claude run failed: ${result.subtype || 'error'}` : null);
       resolve({
@@ -255,7 +256,7 @@ export async function runHeadlessTool({
     };
     const timer = setTimeout(() => { child.kill('SIGKILL'); finish(`Timed out after ${timeout} ms.`); }, timeout);
     readStream(child, (e) => {
-      if (refused) return;
+      if (refused || settled) return;
       if (e.type === 'system' && e.subtype === 'init') {
         sawInit = true;
         const problem = admitted(e);
@@ -263,7 +264,12 @@ export async function runHeadlessTool({
           refused = `One-tool background run refused: ${problem}.`;
           child.kill('SIGKILL');
         } else {
-          fs.writeFileSync(gate, '');
+          try {
+            fs.writeFileSync(gate, '');
+          } catch (err) {
+            refused = `One-tool background run refused: could not admit it (${err.message}).`;
+            child.kill('SIGKILL');
+          }
         }
       } else if (!sawInit && e.type !== 'system') {
         refused = 'Claude never reported its tools, so the run was not trusted.';
