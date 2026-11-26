@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   collectToolPolicy, normalizeToolPolicy, rulesForAgent, toolPolicyRefusal, policyMatcher, ruleMatchesTool,
   claudeToolPolicySettings, codexToolPolicyHooks, agyToolPolicyDeny, headlessToolRefusal,
-  toolPolicyRequirements, syncToolPolicyRequirements, clearToolPolicyRequirement, ToolPolicyError,
+  toolPolicyRequirements, syncToolPolicyRequirements, clearToolPolicyRequirement, requiredToolPolicyIds, ToolPolicyError,
 } from './tool-policy.js';
 
 const AGENTS = ['claude', 'codex', 'agy'];
@@ -159,24 +159,55 @@ test('headlessToolRefusal: another extension denying the tool refuses; the calle
   assert.equal(headlessToolRefusal(null, 'x', 'slack'), null);
 });
 
-test('requirements: recorded for every active extension with a policy, cleared only explicitly', () => {
+test('requirements: recorded for every extension that declares a policy and is switched on, quarantined or not; never dropped automatically', () => {
   let cfg = {};
   const write = (patch) => { cfg = { ...cfg, ...patch }; return cfg; };
   const list = [
     { id: 'slack', enabled: true, quarantine: null, toolPolicy: true },
     { id: 'plain', enabled: true, quarantine: null, toolPolicy: false },
-    { id: 'broken', enabled: false, quarantine: 'boom', toolPolicy: false },
+    { id: 'early', enabled: false, quarantine: 'activate threw', toolPolicy: true },
+    { id: 'off', enabled: false, quarantine: 'boom', toolPolicy: true },
   ];
+  cfg = { extensions: { off: false } };
   syncToolPolicyRequirements(list, { cfg, write, now: () => 1 });
-  assert.deepEqual(toolPolicyRequirements(cfg), ['slack']);
-  syncToolPolicyRequirements([{ id: 'slack', enabled: false, quarantine: 'boom', toolPolicy: false }], { cfg, write });
-  assert.deepEqual(toolPolicyRequirements(cfg), ['slack'], 'a quarantined extension keeps its requirement');
-  syncToolPolicyRequirements([], { cfg, write });
-  assert.deepEqual(toolPolicyRequirements(cfg), ['slack'], 'a missing extension keeps its requirement');
+  assert.deepEqual(toolPolicyRequirements(cfg), ['slack', 'early'], 'a first activation failure is still required; an explicit off is not');
   syncToolPolicyRequirements([{ id: 'slack', enabled: true, quarantine: null, toolPolicy: false }], { cfg, write });
-  assert.deepEqual(toolPolicyRequirements(cfg), [], 'an active version that no longer declares one drops it');
-  syncToolPolicyRequirements(list, { cfg, write });
+  assert.deepEqual(toolPolicyRequirements(cfg), ['slack', 'early'], 'an update that drops toolPolicy keeps the requirement');
+  syncToolPolicyRequirements([], { cfg, write });
+  assert.deepEqual(toolPolicyRequirements(cfg), ['slack', 'early'], 'a missing extension keeps its requirement');
   clearToolPolicyRequirement('slack', { cfg, write });
-  assert.deepEqual(toolPolicyRequirements(cfg), []);
+  assert.deepEqual(toolPolicyRequirements(cfg), ['early']);
   assert.deepEqual(toolPolicyRequirements({ toolPolicyRequirements: 'junk' }), []);
+});
+
+test('requiredToolPolicyIds: recorded, declared-and-on and remembered ids, so a failed write still fails closed', () => {
+  const list = [
+    { id: 'a', enabled: true, quarantine: null, toolPolicy: true },
+    { id: 'b', enabled: false, quarantine: 'x', toolPolicy: true },
+    { id: 'c', enabled: true, quarantine: null, toolPolicy: false },
+  ];
+  assert.deepEqual(requiredToolPolicyIds({ cfg: { toolPolicyRequirements: { z: {} } }, list, remembered: new Set(['m']) }).sort(), ['a', 'b', 'm', 'z']);
+  assert.deepEqual(requiredToolPolicyIds({ cfg: { extensions: { b: false } }, list }), ['a']);
+});
+
+test('a required extension that is active but no longer declares a policy refuses, naming how to clear it', async () => {
+  await assert.rejects(
+    collect({}, { ext: loaded([], [{ id: 'slack', enabled: true, quarantine: null, toolPolicy: false }]), required: ['slack'] }),
+    /slack extension requires a tool policy but no longer declares one.*turn off the extension/,
+  );
+});
+
+test('integration: a policy extension whose first activation fails, or whose manifest fails validation, still refuses launches', async () => {
+  const { loadExtensions, quarantineExtension } = await import('./extensions/index.js');
+  const good = { id: 'guard', label: 'Guard', defaultEnabled: true, toolPolicy: () => ({ rules: [{ tool: 'x' }] }) };
+  const loaded = loadExtensions({ cfg: {}, builtin: [good] });
+  quarantineExtension(loaded, 'guard', 'activate threw');
+  const required = requiredToolPolicyIds({ cfg: {}, list: loaded.list });
+  assert.deepEqual(required, ['guard']);
+  await assert.rejects(collect({}, { ext: loaded, required }), /guard extension requires a tool policy but is quarantined: activate threw/);
+
+  const invalid = loadExtensions({ cfg: {}, builtin: [{ ...good, id: 'bad', requires: ['no:such'] }] });
+  assert.ok(invalid.list[0].quarantine);
+  await assert.rejects(collect({}, { ext: invalid, required: requiredToolPolicyIds({ cfg: {}, list: invalid.list }) }), /bad extension requires a tool policy but is quarantined/);
+  assert.deepEqual(requiredToolPolicyIds({ cfg: { extensions: { bad: false } }, list: invalid.list }), [], 'turned off by a human, it is not required');
 });

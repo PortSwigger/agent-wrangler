@@ -37,7 +37,10 @@ export const extensionEnabledHandler = {
     // Turning an extension off is the human's explicit choice, so its tool
     // policy stops being required (tool-policy.js), even when it was already
     // off or quarantined and so refusing launches.
-    if (!enabled) clearToolPolicyRequirement(msg.id, { cfg: next, write: writeConfig });
+    if (!enabled) {
+      clearToolPolicyRequirement(msg.id, { cfg: next, write: writeConfig });
+      ctx.ext.forgetToolPolicy?.(msg.id);
+    }
     if (enabled && !known.quarantine && !known.enabled) {
       const manifest = ctx.ext.manifests?.get(msg.id);
       // A quarantined-at-discovery entry has no manifest to re-stage — there was
@@ -51,6 +54,7 @@ export const extensionEnabledHandler = {
           // fails as a duplicate of the row it is about to replace.
           ctx.ext.unregister(msg.id, { remove: false });
           ctx.ext.register(manifest, { cfg: next });
+          ctx.ext.recordToolPolicies?.();
           ctx.ext.activate(msg.id);
         } catch (err) {
           ctx.ext.quarantine(msg.id, err);

@@ -87,7 +87,7 @@ import { sendGuarded } from './ws-backpressure.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
-import { collectToolPolicy, syncToolPolicyRequirements, toolPolicyRequirements } from './tool-policy.js';
+import { collectToolPolicy, syncToolPolicyRequirements, requiredToolPolicyIds, declaresToolPolicy } from './tool-policy.js';
 import { runHeadlessTool } from './headless-tool.js';
 import { collectPrepare } from './session-prepare.js';
 import { collectBeforeSpawn, notifySpawned } from './session-spawn.js';
@@ -325,18 +325,28 @@ sessionManager._launchContext = (ctx) => {
   return collectLaunchContext(ctx, { ext, hostApiFor, onError: logError });
 };
 // Required tool policies (server/tool-policy.js), asked before every
-// dispatch/resume/fork; fail-closed, so a recorded requirement whose extension
-// is not active refuses the launch.
+// dispatch/resume/fork; fail-closed, so a requirement whose extension is not
+// active refuses the launch. Required = recorded in config, declared and
+// switched on now (a quarantined row too), or remembered by this process, so
+// a failed config write still refuses until restart.
+const rememberedToolPolicies = new Set();
+const requiredToolPolicies = () => {
+  const cfg = readConfig();
+  return requiredToolPolicyIds({ cfg, list: ext.list, remembered: rememberedToolPolicies });
+};
 sessionManager._toolPolicy = (ctx) => collectToolPolicy(ctx, {
-  ext, required: toolPolicyRequirements(readConfig()), hostApiFor, agentIds: registeredAgents().map((a) => a.id),
+  ext, required: requiredToolPolicies(), hostApiFor, agentIds: registeredAgents().map((a) => a.id),
 });
 const syncToolPolicies = () => {
+  const cfg = readConfig();
+  for (const e of ext.list) if (declaresToolPolicy(e, cfg)) rememberedToolPolicies.add(e.id);
   try {
-    syncToolPolicyRequirements(ext.list, { cfg: readConfig(), write: writeConfig });
+    syncToolPolicyRequirements(ext.list, { cfg, write: writeConfig });
   } catch (err) {
-    logError('[tool-policy] could not record requirements', err);
+    logError('[tool-policy] could not record requirements; they hold in memory until restart', err);
   }
 };
+const forgetToolPolicy = (id) => rememberedToolPolicies.delete(id);
 sessionManager._taskFor = (sid) => taskStore.taskFor(sid);
 sessionManager._beforeSpawn = (payload) => collectBeforeSpawn(payload, { ext, hostApiFor, onError: logError });
 sessionManager._spawned = (payload, data) => notifySpawned(payload, data, { ext, hostApiFor, onError: logError });
@@ -428,7 +438,7 @@ const extWiring = {
   runHeadlessTool: (opts) => runHeadlessTool({
     ...opts,
     policy: () => collectToolPolicy({ agent: 'claude', reason: 'headless-tool' }, {
-      ext, required: toolPolicyRequirements(readConfig()), hostApiFor, agentIds: registeredAgents().map((a) => a.id),
+      ext, required: requiredToolPolicies(), hostApiFor, agentIds: registeredAgents().map((a) => a.id),
     }),
   }),
   prObservations,
@@ -705,6 +715,9 @@ function deactivateExtension(id) {
   }
 }
 
+// Recorded BEFORE activation, so an extension whose first activation fails
+// still has its policy required.
+syncToolPolicies();
 // Boot activation. A copy of the list, because quarantineFor splices nothing but
 // does rewrite the entry underneath us.
 for (const e of [...ext.list]) {
@@ -758,6 +771,10 @@ const extBag = {
   activate: activateExtension,
   deactivate: deactivateExtension,
   quarantine: quarantineFor,
+  // Records the requirement of a newly registered manifest before it is
+  // activated, and forgets one a human turned off or uninstalled.
+  recordToolPolicies: () => syncToolPolicies(),
+  forgetToolPolicy,
   changed: () => {
     syncToolPolicies();
     extBag.hideTool = createToolFilter(ext, hostApiFor, logError);

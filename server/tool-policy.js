@@ -112,6 +112,7 @@ function withTimeout(promise, ms, onTimeout) {
 function inactiveReason(entry) {
   if (!entry) return 'is not installed or failed to load';
   if (entry.quarantine) return `is quarantined: ${entry.quarantine}`;
+  if (entry.enabled) return 'no longer declares one';
   return 'is disabled';
 }
 
@@ -255,20 +256,34 @@ const requirementsOf = (cfg) => {
   return v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {};
 };
 
-// Records a requirement for every ACTIVE extension declaring a policy, and
-// drops one only for an extension that is active and no longer declares one
-// (an update that removed it). A quarantined, failed or missing extension
-// keeps its requirement, which is what makes it refuse launches.
+// Whether a row's manifest declares a policy and is switched on: enabled, or
+// quarantined (by a failed first activation too) without an explicit off in
+// config. Fail-closed: a declared policy counts before it has ever run.
+export function declaresToolPolicy(e, cfg) {
+  if (!e?.toolPolicy) return false;
+  return e.quarantine ? cfg?.extensions?.[e.id] !== false : Boolean(e.enabled);
+}
+
+// Records a requirement for every row that declares a policy and is switched
+// on. Never removes one: only a human turning the extension off or
+// uninstalling it does (clearToolPolicyRequirement). An update that drops
+// `toolPolicy` keeps its requirement, so its launches refuse until a human
+// turns it off.
 export function syncToolPolicyRequirements(list, { cfg, write, now = Date.now }) {
   const next = requirementsOf(cfg);
   let changed = false;
   for (const e of list) {
-    if (!e.enabled || e.quarantine) continue;
-    if (e.toolPolicy && !next[e.id]) { next[e.id] = { since: new Date(now()).toISOString() }; changed = true; }
-    if (!e.toolPolicy && next[e.id]) { delete next[e.id]; changed = true; }
+    if (declaresToolPolicy(e, cfg) && !next[e.id]) { next[e.id] = { since: new Date(now()).toISOString() }; changed = true; }
   }
   if (changed) Object.assign(cfg, write({ [TOOL_POLICY_CONFIG_KEY]: next }));
   return changed;
+}
+
+// The ids a launch must collect a policy from: recorded in config, declared
+// and switched on now, or remembered by this process (so a requirement whose
+// write failed still holds until restart).
+export function requiredToolPolicyIds({ cfg, list = [], remembered = new Set() }) {
+  return [...new Set([...toolPolicyRequirements(cfg), ...list.filter((e) => declaresToolPolicy(e, cfg)).map((e) => e.id), ...remembered])];
 }
 
 export function clearToolPolicyRequirement(id, { cfg, write }) {

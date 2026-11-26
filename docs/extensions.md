@@ -599,11 +599,15 @@ toolPolicy: async ({ sid, parentId, task, agent, runtime, reason, host }) => ({
   versions the enforcement was verified on: Claude 2.1.332, Codex 0.160.1 and agy
   1.5.18. Only the local runtime carries policies, and a runtime that builds its own
   launch never does. A refused resume leaves a running pane alone.
-- The first time the extension is active, its requirement is recorded in `config.json`
-  (`toolPolicyRequirements`). From then on, launches are refused while the extension is
-  quarantined, missing or failing to load. Only turning it off in Settings or
-  uninstalling it clears the requirement. A version that no longer declares
-  `toolPolicy` drops it once it is active.
+- The requirement is recorded in `config.json` (`toolPolicyRequirements`) as soon as a
+  manifest declaring `toolPolicy` is switched on: at boot and on enable or install,
+  before activation. A first activation that fails therefore still refuses launches.
+  So does a manifest that fails validation, unless it is turned off. From then on,
+  launches are refused while the extension is quarantined, missing or failing to
+  load, or is an update that no longer declares `toolPolicy`. Only turning it off in
+  Settings or uninstalling it clears the requirement; a failed fresh install rolls
+  its own requirement back. A requirement that can't be written to `config.json` is
+  held in memory until restart.
 - Each session stores the fingerprint of the policy it launched with
   (`toolPolicyFingerprint` on its entry and on `host.sessions` projections, null when
   none). A session launched before a policy existed, or under an older one, is not
@@ -632,7 +636,10 @@ toolPolicy: async ({ sid, parentId, task, agent, runtime, reason, host }) => ({
   - disallows every other tool by name, replaces the system prompt with one short
     instruction and turns off slash commands;
   - adds a blocking `PreToolUse` hook on any other tool;
-  - is killed unless its own `init` lists exactly that tool.
+  - is killed unless its own `init` lists exactly that tool, from one connected server
+    with the declared source;
+  - blocks even that tool, with a second hook, until core has checked `init`, so
+    admission fails closed.
 - Every other extension's tool policy still applies to the tool, and a policy that
   can't be collected refuses the run. The caller's own rules don't apply to its own
   run.

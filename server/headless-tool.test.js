@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   runHeadlessTool, probeClaudeInventory, oneToolArgs, serverForTool, HEADLESS_TOOL_SYSTEM_PROMPT, _resetInventoryCacheForTests,
 } from './headless-tool.js';
@@ -60,7 +63,8 @@ test('serverForTool maps a tool to the one server whose normalised name prefixes
 });
 
 test('oneToolArgs: only the named tool is allowed, every other tool is disallowed, a pin hook blocks the rest', () => {
-  const args = oneToolArgs({ tool: TOOL, others: ['a', 'b'], model: 'haiku', effort: 'low', liveSessionId: 'L', prompt: 'P', maxTurns: 3, hooks: {} });
+  const gate = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'gate-test-')), 'admitted');
+  const args = oneToolArgs({ tool: TOOL, others: ['a', 'b'], model: 'haiku', effort: 'low', liveSessionId: 'L', prompt: 'P', maxTurns: 3, hooks: {}, gate });
   const at = (flag) => args[args.indexOf(flag) + 1];
   assert.equal(at('--model'), 'haiku');
   assert.equal(at('--effort'), 'low');
@@ -83,6 +87,12 @@ test('oneToolArgs: only the named tool is allowed, every other tool is disallowe
   const re = new RegExp(pin.matcher);
   assert.ok(re.test('mcp__claude_ai_Gmail__send'));
   assert.ok(!re.test(TOOL));
+  const admit = settings.hooks.PreToolUse[1];
+  assert.equal(admit.matcher, `^(?:${TOOL})$`);
+  assert.equal(admit.hooks[0].onFailure, 'block');
+  assert.equal(spawnSync('/bin/sh', ['-c', admit.hooks[0].command]).status, 2, 'blocked until core admits the run');
+  fs.writeFileSync(gate, '');
+  assert.equal(spawnSync('/bin/sh', ['-c', admit.hooks[0].command]).status, 0);
 });
 
 test('runHeadlessTool runs on the Background model and returns the tool calls, usage and cost', async () => {
@@ -159,8 +169,8 @@ test('a profile names an isolated config dir and adds the caller\'s own hooks af
   assert.equal(calls[0].opts.env.CLAUDE_CONFIG_DIR, dir);
   assert.equal(probedWith.env.CLAUDE_CONFIG_DIR, dir);
   const settings = JSON.parse(calls[0].args[calls[0].args.indexOf('--settings') + 1]);
-  assert.equal(settings.hooks.PreToolUse.length, 2);
-  assert.deepEqual(settings.hooks.PreToolUse[1], hook);
+  assert.equal(settings.hooks.PreToolUse.length, 3);
+  assert.deepEqual(settings.hooks.PreToolUse[2], hook);
   assert.deepEqual(settings.hooks.PostToolUse, [hook]);
   await assert.rejects(runHeadlessTool(base({ spawn, profile: { configDir: 'relative' } })), /configDir must be an absolute path to a directory/);
   await assert.rejects(runHeadlessTool(base({ spawn, profile: { hooks: { Stop: [] } } })), /hooks\.Stop/);
@@ -188,4 +198,49 @@ test('probeClaudeInventory reads init with the API unreachable, then kills the p
   assert.equal(calls.length, 1, 'cached for the same profile');
   await probeClaudeInventory({ env: { PATH: '/bin', CLAUDE_CONFIG_DIR: '/p' }, spawn });
   assert.equal(calls.length, 2, 'another profile probes again');
+});
+
+test('the run\'s own init must report the tool on one connected server with the declared source, or it is killed', async () => {
+  for (const [servers, re] of [
+    [[{ ...INVENTORY.servers[0], source: 'plugin' }], /source "plugin" in the run, not "claudeai"/],
+    [[{ ...INVENTORY.servers[0], status: 'failed' }], /is failed in the run/],
+    [[], /does not belong to exactly one MCP server in the run/],
+  ]) {
+    const { spawn, calls } = fakeSpawn([init([TOOL], servers), ...SENT.slice(1)]);
+    const out = await runHeadlessTool(base({ spawn }));
+    assert.match(out.error, re);
+    assert.deepEqual(out.toolCalls, []);
+    assert.equal(calls[0].child.killed, 'SIGKILL');
+  }
+});
+
+test('the admission gate exists only once init has been checked, and is removed after the run', async () => {
+  let gate;
+  let seenBefore = null;
+  let seenAfter = null;
+  const spawn = (file, args, opts) => {
+    const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
+    gate = /test -f '([^']+)'/.exec(settings.hooks.PreToolUse[1].hooks[0].command)[1];
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new PassThrough();
+    child.kill = () => true;
+    child.stdout.on('end', () => setImmediate(() => child.emit('close', 0, null)));
+    setImmediate(() => {
+      seenBefore = fs.existsSync(gate);
+      child.stdout.write(`${JSON.stringify(init([TOOL]))}\n`);
+      setImmediate(() => {
+        seenAfter = fs.existsSync(gate);
+        for (const l of SENT.slice(1)) child.stdout.write(`${JSON.stringify(l)}\n`);
+        child.stdout.end();
+      });
+    });
+    return child;
+  };
+  const out = await runHeadlessTool(base({ spawn }));
+  assert.equal(out.error, null);
+  assert.equal(seenBefore, false);
+  assert.equal(seenAfter, true);
+  assert.equal(fs.existsSync(path.dirname(gate)), false);
 });

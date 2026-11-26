@@ -141,14 +141,22 @@ function checkProfile(profile) {
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-export function oneToolArgs({ tool, others, model, effort, liveSessionId, prompt, maxTurns, hooks }) {
+const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+// `gate` is a file core creates only once the run's own init has been checked:
+// until then the allowed tool is blocked too, so a run is admitted fail-closed.
+export function oneToolArgs({ tool, others, model, effort, liveSessionId, prompt, maxTurns, hooks, gate }) {
   const pin = {
     matcher: `^(?!${escapeRegex(tool)}$).*`,
     hooks: [{ type: 'command', command: "echo 'Only one tool is allowed in this run.' >&2; exit 2", timeout: 10, onFailure: 'block' }],
   };
+  const admit = {
+    matcher: `^(?:${escapeRegex(tool)})$`,
+    hooks: [{ type: 'command', command: `test -f ${shQuote(gate)} || { echo 'This run was not admitted.' >&2; exit 2; }`, timeout: 10, onFailure: 'block' }],
+  };
   const settings = {
     disableAllHooks: false,
-    hooks: { PreToolUse: [pin, ...(hooks.PreToolUse || [])], ...(hooks.PostToolUse ? { PostToolUse: hooks.PostToolUse } : {}) },
+    hooks: { PreToolUse: [pin, admit, ...(hooks.PreToolUse || [])], ...(hooks.PostToolUse ? { PostToolUse: hooks.PostToolUse } : {}) },
   };
   const args = ['-p', '--model', model];
   if (effort) args.push('--effort', effort);
@@ -208,7 +216,18 @@ export async function runHeadlessTool({
   if (server.status !== 'connected') throw new Error(`${server.name} is ${server.status}, not connected.`);
   if (source !== undefined && server.source !== source) throw new Error(`${server.name} has source "${server.source}", not "${source}".`);
   const liveSessionId = crypto.randomUUID();
-  const args = oneToolArgs({ tool, others: inv.tools.filter((t) => t !== tool), model: target.model, effort: target.effort, liveSessionId, prompt, maxTurns, hooks });
+  const gateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-headless-tool-'));
+  const gate = path.join(gateDir, 'admitted');
+  const args = oneToolArgs({ tool, others: inv.tools.filter((t) => t !== tool), model: target.model, effort: target.effort, liveSessionId, prompt, maxTurns, hooks, gate });
+  const admitted = (e) => {
+    const tools = Array.isArray(e.tools) ? e.tools : [];
+    if (tools.length !== 1 || tools[0] !== tool) return `expected exactly ${JSON.stringify([tool])}, saw ${tools.length} tools`;
+    const actual = serverForTool(tool, Array.isArray(e.mcp_servers) ? e.mcp_servers : []);
+    if (!actual) return `${tool} does not belong to exactly one MCP server in the run`;
+    if (actual.status !== 'connected') return `${actual.name} is ${actual.status} in the run, not connected`;
+    if (source !== undefined && actual.source !== source) return `${actual.name} has source "${actual.source}" in the run, not "${source}"`;
+    return null;
+  };
   return trackHeadless(() => new Promise((resolve) => {
     const child = spawn('claude', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     const calls = new Map();
@@ -220,6 +239,7 @@ export async function runHeadlessTool({
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      fs.rmSync(gateDir, { recursive: true, force: true });
       const err = refused || error || (!sawInit ? 'Claude never reported its tools, so the run was not trusted.' : null)
         || (result?.is_error ? `Claude run failed: ${result.subtype || 'error'}` : null);
       resolve({
@@ -238,10 +258,12 @@ export async function runHeadlessTool({
       if (refused) return;
       if (e.type === 'system' && e.subtype === 'init') {
         sawInit = true;
-        const tools = Array.isArray(e.tools) ? e.tools : [];
-        if (tools.length !== 1 || tools[0] !== tool) {
-          refused = `One-tool background run refused: expected exactly ${JSON.stringify([tool])}, saw ${tools.length} tools.`;
+        const problem = admitted(e);
+        if (problem) {
+          refused = `One-tool background run refused: ${problem}.`;
           child.kill('SIGKILL');
+        } else {
+          fs.writeFileSync(gate, '');
         }
       } else if (!sawInit && e.type !== 'system') {
         refused = 'Claude never reported its tools, so the run was not trusted.';

@@ -760,7 +760,9 @@ function quarantinedEntry(ext, quarantine) {
     telemetry: { events: null },
     version: null,
     boardApi: null,
-    toolPolicy: false,
+    // Kept for a manifest that failed validation, so its policy is still
+    // required (tool-policy.js declaresToolPolicy) instead of failing open.
+    toolPolicy: typeof ext?.toolPolicy === 'function',
     headlessTools: [],
     quarantine,
   };
