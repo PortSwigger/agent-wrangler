@@ -3988,3 +3988,32 @@ a.ext-row-origin { color: var(--blue-fg); }
 .deck-add input[type="text"] { flex: 1 1 auto; min-width: 0; }
 .deck-add button, .deck-row button { flex: 0 0 auto; white-space: nowrap; }
 .deck-add-error { color: #d64f6a; font-size: 12px; }
+
+/* Settings › Automation › Outside MCP clients (outside-clients-panel.js). */
+.outside-clients { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border-muted); }
+.outside-clients .oc-title { font-size: 14px; font-weight: 600; }
+.oc-rows { display: flex; flex-direction: column; gap: 6px; }
+.oc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border-muted); border-radius: 8px; }
+.oc-row.expired .oc-name, .oc-row.expired .oc-meta { color: var(--fg-subtle); }
+.oc-name { flex: 0 0 auto; font-size: 13px; font-weight: 600; color: var(--fg); }
+.oc-scopes { flex: 1 1 auto; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.oc-scope { padding: 1px 8px; border: 1px solid var(--border-muted); border-radius: 10px; font-size: 11px; color: var(--fg); cursor: help; }
+.oc-scope.gone { color: var(--fg-muted); text-decoration: line-through; }
+.oc-meta { flex: 1 0 100%; font-size: 12px; color: var(--fg-muted); }
+.oc-row .oc-revoke { flex: 0 0 auto; margin-left: auto; }
+.oc-token { display: flex; flex-direction: column; gap: 2px; padding: 10px; border: 1px solid var(--accent); border-radius: 8px; }
+.oc-token-row { display: flex; gap: 8px; align-items: center; }
+.oc-token-row .oc-token-value { flex: 1 1 auto; min-width: 0; margin-top: 6px; font-family: var(--font-mono, ui-monospace, monospace); }
+.oc-token-row button { flex: 0 0 auto; margin-top: 6px; }
+.oc-add { display: flex; flex-direction: column; gap: 6px; }
+.oc-add-fields { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.oc-add-fields .oc-new-name { flex: 1 1 200px; margin-top: 0; }
+/* Labels here are form rows, not the modal's small uppercase field captions. */
+.modal-card label.oc-days { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; text-transform: none; color: var(--fg-muted); white-space: nowrap; }
+.modal-card .oc-days .oc-new-days { width: 64px; margin-top: 0; }
+.oc-scope-choices { display: flex; flex-direction: column; gap: 4px; }
+.modal-card label.oc-scope-choice { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 6px 2px; font-size: 13px; text-transform: none; color: var(--fg); cursor: pointer; }
+.modal-card .oc-scope-choice input[type="checkbox"] { flex: 0 0 auto; width: auto; margin: 2px 0 0; }
+.oc-scope-copy { display: flex; flex-direction: column; min-width: 0; }
+.oc-scope-tools { font-size: 11px; color: var(--fg-subtle); font-family: var(--font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
+.oc-add-actions { display: flex; justify-content: flex-end; }

@@ -186,6 +186,7 @@ Supported manifest contributions are:
 | Contribution | Manifest field / implementation |
 | --- | --- |
 | MCP tools | `tools`; `server/mcp/tools/` provides core examples |
+| Outside MCP client scopes | `clientScopes`: which of its tools a program that is not a session may be given. See [Scopes for outside MCP clients](#scopes-for-outside-mcp-clients) |
 | Control messages | `handlers`; `server/control/handlers/` provides core examples |
 | State and storage | `stores`, `graph` |
 | Session lifecycle | `session` hooks |
@@ -558,6 +559,38 @@ Install and update warn when `package.json` declares `zod` in `dependencies` or
 `optionalDependencies`, or as a non-optional `peerDependencies` entry (npm installs those peers
 automatically). The warning appears in consent and the server log (including automatic
 updates); it does not block installation. Remove the dependency when migrating to `host.schema.z`.
+
+### Scopes for outside MCP clients
+
+An outside MCP client (a program on the deck's machine that is not a session; see
+[Outside MCP clients](session-api.md#outside-mcp-clients)) is offered no tool unless an extension
+declares a scope for it. A manifest's `clientScopes` lists them:
+
+```js
+export default {
+  id: 'example',
+  tools: [listThings, pressThing],
+  clientScopes: [
+    { id: 'read', label: 'Read', description: 'List things.', tools: ['example_list'] },
+    { id: 'drive', label: 'Drive', description: 'List and press things.', tools: ['example_list', 'example_press'], exclusive: true },
+  ],
+  hideTool: ({ caller, tool, client }) => client != null && !client.scopes.includes('drive') && tool === 'example_press',
+};
+```
+
+- `id` matches `/^[a-z][a-z0-9-]{0,31}$/` and is unique within the manifest. The human picks scopes
+  in **Settings › Automation › Outside MCP clients** by `label` (shown with the extension's label)
+  and `description`; the client holds them as `<extension id>:<scope id>`.
+- `tools` names at least one of this manifest's own tools. A scope can never name a core tool or
+  another extension's, so a client never reaches session tools, mail or messages.
+- `exclusive: true` lets at most one live client hold the scope.
+- A disabled extension offers no scopes, and a client keeps a scope it was minted with but is
+  offered nothing for it until the extension is enabled again.
+
+A client calls with `caller: null`. `hideTool` and every tool handler also get `client`: `{ id,
+name, scopes }` for an outside client, with only this extension's scope ids, unprefixed, and
+`null` for a session. A handler that acts for a session must refuse when `caller` is null. Each
+call a client makes is logged with its name and the tool.
 
 ### Session launch capabilities
 
@@ -1074,7 +1107,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   object is a LIVE REGISTRY, not a boot snapshot.** A manifest
   (`server/extensions/<id>/index.js`, exporting `dir` from `import.meta.url` and a
   default `{id, label, help, defaultEnabled, stores, handlers, tools, skills,
-  skillsFor, codexPolicy, hideTool, graph, session, sweeps, boardApi, board: {client, styles, themes}}`)
+  skillsFor, codexPolicy, hideTool, clientScopes, graph, session, sweeps, boardApi, board: {client, styles, themes}}`)
   is read as its deck and board halves (`manifest-halves.js`; an unsplit manifest's top-level
   `client`/`styles`/`themes` are its board half) and validated at boot (`validateManifest`,
   every throw names the id) and `index.js` exits 1 on a bad one — a manifest
@@ -1283,7 +1316,10 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   identity the session API's token check already settled (`server/session-api`), and a bug must degrade to the
   full tool list, never to a session that can do nothing. `--allowedTools` is
   baked into launch argv and unaffected: granting a tool the listing does not
-  advertise is inert.
+  advertise is inert. An outside MCP client is different: `clientTools`
+  (`server/mcp/server.js`) first cuts the list to the extension tools its
+  scopes name, and that cut IS authorization, since a tool not registered on
+  the per-request server cannot be called; `hideTool` then narrows what is left.
   A graph contributor's keys are checked ONCE PER ACTIVATION against
   `RESERVED_GRAPH_KEYS` (`assertGraphKeys`, run by `activateExtension` in
   `index.js` against the real stores) because `rebuildOnce` is the ~4s tick where nothing may log or throw;

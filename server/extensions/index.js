@@ -9,6 +9,7 @@ import { normaliseTelemetryDecl, VERSION_RE } from './telemetry-schema.js';
 import { isValidBranchName } from '../worktree.js';
 import { BOARD_FIELDS, manifestHalves } from './manifest-halves.js';
 import { warnLegacy } from '../deck/legacy.js';
+import { clientViewFor } from '../session-api/client-view.js';
 import { parseCombo, SCOPES as KEY_SCOPES } from '../../public/keybindings.js';
 import checklist from './builtin/checklist/index.js';
 import todos from './builtin/todos/index.js';
@@ -390,6 +391,7 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   if (ext.skillsFor != null && typeof ext.skillsFor !== 'function') fail(ext, 'skillsFor must be a function');
   if (ext.codexPolicy != null && typeof ext.codexPolicy !== 'function') fail(ext, 'codexPolicy must be a function');
   if (ext.hideTool != null && typeof ext.hideTool !== 'function') fail(ext, 'hideTool must be a function');
+  validateClientScopes(ext);
   if (ext.graph != null && typeof ext.graph !== 'function') fail(ext, 'graph must be a function');
   if (ext.onTaskDelete != null && typeof ext.onTaskDelete !== 'function') fail(ext, 'onTaskDelete must be a function');
   if (ext.hooks != null) {
@@ -655,6 +657,10 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     taskDeleteHooks: [],
     codexPolicies: [],
     toolFilters: [],
+    // `[{ key, extId, id, label, description, tools, exclusive }]`, one per
+    // scope an ENABLED manifest declares for outside MCP clients (`key` is
+    // `<extId>:<id>`), in load order.
+    clientScopes: [],
     sweeps: [],
     // The raw runtime definitions, tagged with their owner. server/index.js
     // binds each to its extension's façade and registers the bound copy with
@@ -881,6 +887,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   if (ext.skillsFor) out.skillGates.push({ id: ext.id, skills: [...(ext.skills || [])], gate: ext.skillsFor });
   if (ext.codexPolicy) out.codexPolicies.push({ id: ext.id, fn: ext.codexPolicy });
   if (ext.hideTool) out.toolFilters.push({ id: ext.id, hide: ext.hideTool });
+  for (const sc of ext.clientScopes || []) out.clientScopes.push(clientScopeEntry(ext, sc));
   if (ext.graph) out.graphContributors.push({ id: ext.id, contribute: ext.graph });
   if (ext.onTaskDelete) out.taskDeleteHooks.push({ id: ext.id, fn: ext.onTaskDelete });
   for (const [k, fn] of Object.entries(ext.session || {})) out.sessionHooks[k].push({ extId: ext.id, fn });
@@ -993,6 +1000,7 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
   loaded.taskDeleteHooks = loaded.taskDeleteHooks.filter((h) => h.id !== id);
   loaded.codexPolicies = loaded.codexPolicies.filter((p) => p.id !== id);
   loaded.toolFilters = loaded.toolFilters.filter((f) => f.id !== id);
+  loaded.clientScopes = (loaded.clientScopes || []).filter((sc) => sc.extId !== id);
   loaded.clientManifest = loaded.clientManifest.filter((c) => c.id !== id);
   for (const name of entry?.storeNames || []) delete loaded.stores[name];
   for (const k of SESSION_HOOKS) loaded.sessionHooks[k] = loaded.sessionHooks[k].filter((h) => h.extId !== id);
@@ -1128,6 +1136,42 @@ export function createCodexPolicyResolver(ext, hostApiFor = () => undefined, onE
   };
 }
 
+// `clientScopes`: what an outside MCP client (docs/session-api.md, Outside
+// clients) may be given. Each scope names only tools THIS manifest declares, so
+// no grant can ever reach a core tool or another extension's: that is what
+// keeps session tools, mail and messages out of a client's reach. `exclusive`
+// means at most one live client may hold the scope.
+const SCOPE_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
+function validateClientScopes(ext) {
+  if (ext.clientScopes == null) return;
+  if (!Array.isArray(ext.clientScopes)) fail(ext, 'clientScopes must be an array');
+  const own = new Set((ext.tools || []).map((t) => t?.name));
+  const ids = new Set();
+  for (const [i, sc] of ext.clientScopes.entries()) {
+    if (!sc || typeof sc !== 'object') fail(ext, `clientScopes[${i}] must be an object`);
+    if (typeof sc.id !== 'string' || !SCOPE_ID_RE.test(sc.id)) fail(ext, `clientScopes[${i}].id must match ${SCOPE_ID_RE}`);
+    if (ids.has(sc.id)) fail(ext, `clientScopes has two scopes with id "${sc.id}"`);
+    ids.add(sc.id);
+    if (typeof sc.label !== 'string' || !sc.label.trim()) fail(ext, `clientScopes.${sc.id}.label must be a non-empty string`);
+    if (sc.description != null && typeof sc.description !== 'string') fail(ext, `clientScopes.${sc.id}.description must be a string`);
+    if (sc.exclusive != null && typeof sc.exclusive !== 'boolean') fail(ext, `clientScopes.${sc.id}.exclusive must be a boolean`);
+    if (!Array.isArray(sc.tools) || !sc.tools.length) fail(ext, `clientScopes.${sc.id}.tools must name at least one tool`);
+    for (const name of sc.tools) {
+      if (!own.has(name)) fail(ext, `clientScopes.${sc.id}.tools names "${String(name)}", which is not one of this extension's tools`);
+    }
+  }
+}
+
+const clientScopeEntry = (ext, sc) => ({
+  key: `${ext.id}:${sc.id}`,
+  extId: ext.id,
+  id: sc.id,
+  label: sc.label,
+  description: sc.description || '',
+  tools: [...new Set(sc.tools)],
+  exclusive: sc.exclusive === true,
+});
+
 // Per-caller MCP tool visibility. Unlike every other extension surface this one
 // shapes tools an extension does NOT own — the point is a session KIND (a job
 // run, say) that must not see `spawn_session` — so it is a veto, not a rewrite:
@@ -1138,12 +1182,16 @@ export function createCodexPolicyResolver(ext, hostApiFor = () => undefined, onE
 // UX narrowing, not authorization (the session API's caller check is — see
 // server/session-api/check.js), so a bug here must degrade to the full tool list
 // rather than silently leaving every session unable to do anything.
+//
+// `client` is an outside MCP client (session-api/clients.js), for which `caller`
+// is null; each filter sees it as its own extension's view of it (its id, name
+// and that extension's scopes), and null for a session.
 export function createToolFilter(ext, hostApiFor = () => undefined, onError = () => {}) {
   if (!ext.toolFilters.length) return null;
-  return function hideTool(caller, toolName) {
+  return function hideTool(caller, toolName, client = null) {
     for (const { id, hide } of ext.toolFilters) {
       try {
-        if (hide({ host: hostApiFor(id), caller, tool: toolName })) return true;
+        if (hide({ host: hostApiFor(id), caller, tool: toolName, client: clientViewFor(client, id) })) return true;
       } catch (err) {
         onError(`[ext:${id}] hideTool failed`, err);
       }

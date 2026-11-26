@@ -468,6 +468,11 @@ Worktree and devcontainer cleanup is withheld while another session uses the dir
   worktree inherits the repo's trust (just that worktree, never its parent folder), so a job or
   auto-session in a worktree doesn't stall on "Do you trust this folder?". A worktree of an untrusted
   repo still asks.
+- **Outside MCP clients** (Automation): name a program on this machine that is not a session, such
+  as a bot built on an agent SDK, pick the scopes extensions offer and an expiry (30 days by
+  default), and mint its token. The token is shown once; each client shows its last use and has a
+  one-click **Revoke**. It is offered only its scopes' extension tools, never session tools, and only
+  while the session API is on loopback (see [Outside MCP clients](session-api.md#outside-mcp-clients)).
 - Extension installation, enablement, updates, and extension-specific settings. Task memory offers
   optional extraction of archive learnings under Settings > Extensions > Task memory (off by default).
   Sounds offers
