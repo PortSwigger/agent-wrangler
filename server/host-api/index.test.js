@@ -17,7 +17,7 @@ import { createExtFiles } from '../ext-files.js';
 import { createRestartBarrier } from '../restart-barrier.js';
 import { runWithOrigin } from '../request-origin.js';
 
-const ALWAYS = ['id', 'version', 'stores', 'settings', 'log', 'extension'];
+const ALWAYS = ['id', 'version', 'stores', 'settings', 'dataDir', 'log', 'extension'];
 
 function wiring(overrides = {}) {
   return {
@@ -1170,6 +1170,13 @@ test('an extension can read only its own live install receipt', () => {
   const receipt = host.extension.receipt();
   receipt.runningSha = 'changed';
   assert.equal(host.extension.receipt().runningSha, runningSha);
+});
+
+test('host.dataDir creates and returns only the extension\'s own data folder', () => {
+  const asked = [];
+  const host = buildHostApi({ id: 'x', ...wiring(), ensureDataDir: (id) => { asked.push(id); return `/data/ext-data/${id}`; } });
+  assert.equal(host.dataDir('other'), '/data/ext-data/x');
+  assert.deepEqual(asked, ['x']);
 });
 
 test('schema:zod serves the core zod instance only when declared', () => {

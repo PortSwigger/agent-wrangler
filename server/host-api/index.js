@@ -1,6 +1,7 @@
 import { CAPABILITIES, CLIENT_CAPABILITIES } from '../extensions/index.js';
 import { HOST_API_VERSION, servedVersion, servesRange } from './version.js';
 import { V1_BUILDERS } from './v1.js';
+import { ensureExtDataDir } from '../ext-data.js';
 
 // The per-extension `host` façade: what an extension's tools, handlers, hooks,
 // sweeps and gates are handed INSTEAD of the old one-object-for-everyone bag
@@ -37,6 +38,9 @@ import { V1_BUILDERS } from './v1.js';
 //              the extension's own data, not a core surface, and a capability
 //              for reading back a value a human typed into that extension's own
 //              settings row would be disclosure noise.
+//   dataDir  — ITS OWN data folder (ext-data.js), created on the first call.
+//              The path is closed over from `id`, so no argument can name a
+//              sibling's folder.
 //   log      — routed through server/log.js, prefixed `[ext:<id>]`. The prefix
 //              goes INTO the first argument only when that is a string, so
 //              log(err) / log('[tag]', err) keeps the Error its own argument and
@@ -63,13 +67,14 @@ export function buildExtSettings({ id, settingDefs = [], readSettings = () => ({
   });
 }
 
-function alwaysPresent({ id, version = HOST_API_VERSION, stores = {}, log = () => {}, settingDefs = [], readSettings = () => ({}), readExtensionReceipt = () => ({ installedSha: '', runningSha: '', restartPending: false }) }) {
+function alwaysPresent({ id, version = HOST_API_VERSION, stores = {}, log = () => {}, settingDefs = [], readSettings = () => ({}), readExtensionReceipt = () => ({ installedSha: '', runningSha: '', restartPending: false }), ensureDataDir = ensureExtDataDir }) {
   return {
     id,
     version,
     extension: { receipt: () => ({ ...readExtensionReceipt(id) }) },
     stores: Object.freeze({ ...stores }),
     settings: buildExtSettings({ id, settingDefs, readSettings }),
+    dataDir: () => ensureDataDir(id),
     log: (...args) => (typeof args[0] === 'string' ? log(`[ext:${id}] ${args[0]}`, ...args.slice(1)) : log(`[ext:${id}]`, ...args)),
   };
 }

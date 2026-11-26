@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust, ownedAddDirs } from './claude-trust.js';
+import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust, addDirsInside, extensionAddDirs } from './claude-trust.js';
 
 function withTemp(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-trust-test-'));
@@ -210,31 +210,48 @@ async function withLogin(fn) {
   });
 }
 
-test('ownedAddDirs: keeps only folders strictly inside the data dir, refusing the data dir itself, outside paths and symlinks out', () => {
+test('addDirsInside: keeps only folders strictly inside the root, refusing the root itself, outside paths and symlinks out', () => {
   withTemp((_file, root) => {
     const real = fs.realpathSync(root);
     const data = path.join(real, 'aw-data');
-    const inbox = path.join(data, 'evidence', 'job', 'step', 'inbox');
+    const inner = path.join(data, 'store', 'a', 'b');
     const outside = path.join(real, 'outside');
-    fs.mkdirSync(inbox, { recursive: true });
+    fs.mkdirSync(inner, { recursive: true });
     fs.mkdirSync(outside);
     const escape = path.join(data, 'escape');
     fs.symlinkSync(outside, escape);
-    assert.deepEqual(ownedAddDirs([inbox, inbox, data, outside, escape, path.join(real, 'aw-data-sibling'), 'evidence/rel', '', null], data), [inbox]);
-    assert.deepEqual(ownedAddDirs([inbox], undefined), []);
-    assert.deepEqual(ownedAddDirs(undefined, data), []);
+    assert.deepEqual(addDirsInside([inner, inner, data, outside, escape, path.join(real, 'aw-data-sibling'), 'store/rel', '', null], data), [inner]);
+    assert.deepEqual(addDirsInside([inner], undefined), []);
+    assert.deepEqual(addDirsInside(undefined, data), []);
   });
 });
 
-test('ensureLoginClaudeTrust: trusts each owned add-dir exactly, never the data dir or a folder outside it', async () => {
+test('extensionAddDirs: only an extension\'s session, only inside its own folder or (legacy) DATA_DIR outside ext-data', () => {
+  withTemp((_file, root) => {
+    const data = path.join(fs.realpathSync(root), 'aw-data');
+    const own = path.join(data, 'ext-data', 'alpha');
+    const ownInner = path.join(own, 'run', 'inbox');
+    const sibling = path.join(data, 'ext-data', 'beta', 'inbox');
+    const legacy = path.join(data, 'store', 'run', 'inbox');
+    const outside = path.join(fs.realpathSync(root), 'notes');
+    for (const d of [ownInner, sibling, legacy, outside]) fs.mkdirSync(d, { recursive: true });
+    const intoSibling = path.join(data, 'store', 'link');
+    fs.symlinkSync(sibling, intoSibling);
+    const all = [ownInner, own, sibling, path.join(data, 'ext-data'), legacy, intoSibling, outside, data];
+    assert.deepEqual(extensionAddDirs(all, { extId: 'alpha', dataDir: data }), [ownInner, legacy]);
+    assert.deepEqual(extensionAddDirs(all, { extId: 'beta', dataDir: data }), [sibling, legacy]);
+    for (const extId of [undefined, null, '', '../alpha', 'Alpha']) assert.deepEqual(extensionAddDirs(all, { extId, dataDir: data }), [], String(extId));
+    assert.deepEqual(extensionAddDirs(all, { extId: 'alpha' }), []);
+  });
+});
+
+test('ensureLoginClaudeTrust: trusts each given add-dir exactly and nothing above it', async () => {
   await withLogin(async ({ root, file, login, loginFile }) => {
     fs.writeFileSync(file, '{}\n');
-    const dataDir = path.join(root, 'aw-data');
-    const inbox = path.join(dataDir, 'evidence', 'job', 'step', 'inbox');
-    fs.mkdirSync(inbox, { recursive: true });
-    const userDir = path.join(root, 'notes');
-    assert.equal(await ensureLoginClaudeTrust(login, { dataDir, addDirs: [inbox, userDir, dataDir], serverFile: file, log: quiet }), true);
-    assert.deepEqual(trustedKeys(loginFile), [inbox]);
+    const inner = path.join(root, 'aw-data', 'ext-data', 'alpha', 'run');
+    fs.mkdirSync(inner, { recursive: true });
+    assert.equal(await ensureLoginClaudeTrust(login, { addDirs: [inner, 'relative/dir', null], serverFile: file, log: quiet }), true);
+    assert.deepEqual(trustedKeys(loginFile), [inner]);
     assert.equal(fs.readFileSync(file, 'utf8'), '{}\n', 'the server config is untouched');
   });
 });

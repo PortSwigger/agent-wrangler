@@ -846,6 +846,21 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `{ installedSha, runningSha, restartPending }`. The returned object is a copy,
   the installed receipt is read afresh on every call, and no extension-id
   argument is accepted. Declare `engines.wranglerApi: '^1.90.0'` when using it.
+- **Data folder.** On host API **2.5.0**, every extension can call
+  `host.dataDir()` without a capability grant. It returns the extension's own
+  folder, `DATA_DIR/ext-data/<id>/`, creating it (owner-only) on the first call.
+  A store factory's bag has the same `dataDir()`. No argument is accepted, so an
+  extension can't reach another extension's folder this way. Keep the
+  extension's files there rather than at the top of `DATA_DIR`. A Claude session
+  the extension launches with `host.sessions.spawn({ addDirs })` is granted each
+  folder strictly inside its data folder without Claude's trust prompt, and its
+  resumes and forks keep that trust. The data folder itself is never trusted as a
+  whole. An `add_dirs` folder that an agent passes to `spawn_session` or
+  `spawn_workflow`, or that a person picks in the dispatch dialog, keeps Claude's
+  prompt. Until extensions have moved their data, a session an extension launched
+  also has folders elsewhere in `DATA_DIR` trusted, except other extensions'
+  `ext-data/` folders. That fallback will be removed. Declare
+  `engines.wranglerApi: '^2.5.0'` when using it.
 - **Restart draining.** Core stops accepting new MCP calls,
   control actions and launches before a restart. It waits up to 30 seconds for
   admitted requests, responses, extension sweeps, event subscribers and
@@ -1279,6 +1294,19 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   (`HOST_API_VERSION` 1.3.0); every boot-time seam (session hooks, the skill gate, the tool
   filter) is instead bound over a `hostApiFor(extId)` LOOKUP so it can be wired
   before the Map is filled, since all three only fire at run time.
+- **Extension add-dir trust is keyed on `launchedByExt`, never on the path
+  alone.** `_doDispatch` stamps `entry.launchedByExt` only when `launchSource` is
+  `'extension'` and `spawner` is a valid id. Only `host.sessions.spawn` sets
+  that pair, from its closed-over id, and `resumeEntry`/`forkEntry` carry it.
+  `_trustClaudeLaunch` trusts `extensionAddDirs(addDirs, { extId, dataDir })`
+  (`claude-trust.js`), each one exactly, in the server config and in a login's
+  `CLAUDE_CONFIG_DIR`. The function checks paths both as given and realpathed. A
+  single entry for `ext-data/<id>` would be fewer writes, and Claude does honour a
+  trusted parent for an `--add-dir` outside git (measured on 2.1.332). But it
+  would also trust that folder for any agent's `add_dirs` and as a cwd, and a
+  folder inside a git repo under it still prompts. So exact entries are
+  deliberate. The legacy `DATA_DIR` branch in `extensionAddDirs` excludes
+  `ext-data/` and is temporary.
   **Failure posture, three tiers**: a bad `requires`, an unknown capability or an
   invalid/unsatisfied range is a BOOT failure (logged naming the extension,
   `process.exit(1)` — a manifest wanting a surface this server does not serve is

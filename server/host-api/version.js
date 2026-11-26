@@ -669,7 +669,12 @@ import semver from 'semver';
 // `headlessTools`) and `operations:run` (host.operations.run/accepting). An
 // older server quarantines the unknown capabilities and ignores `toolPolicy`,
 // so a manifest relying on any of them declares `^2.4.0`.
-export const HOST_API_VERSION = '2.4.0';
+// 2.5.0 adds `host.dataDir()` and the store factory bag's `dataDir()`: the
+// extension's own folder, DATA_DIR/ext-data/<id>/, created on first call. A
+// Claude session the extension launches is granted folders inside it without a
+// trust prompt. Not a capability, like `host.settings` in 1.1.0, so a manifest
+// that calls it declares `^2.5.0`.
+export const HOST_API_VERSION = '2.5.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
 export const V1_SHIM_VERSION = '1.96.0';

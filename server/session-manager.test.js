@@ -151,6 +151,12 @@ test('forkEntry inherits disallowedTools as its own copy, and adds none to a pla
   assert.equal('disallowedTools' in forkEntry({ short: 'x', tmux: 'cc_x', cwd: '/c', parentEntry: {}, parentId: 'p', createdAt: 1 }), false);
 });
 
+test('forkEntry and resumeEntry keep the extension that launched the conversation', () => {
+  assert.equal(forkEntry({ short: 'x', tmux: 'cc_x', cwd: '/c', parentEntry: { launchedByExt: 'alpha' }, parentId: 'p', createdAt: 1 }).launchedByExt, 'alpha');
+  assert.equal('launchedByExt' in forkEntry({ short: 'x', tmux: 'cc_x', cwd: '/c', parentEntry: {}, parentId: 'p', createdAt: 1 }), false);
+  assert.equal(resumeEntry({ launchedByExt: 'alpha' }, { short: 's', tmux: 't', cwd: '/x', agent: 'claude', resumeId: 'L', socket: '', now: 1 }).launchedByExt, 'alpha');
+});
+
 test('forkEntry never inherits Remote Control: two sessions under one name would race for the phone', () => {
   const entry = forkEntry({ short: 'x', tmux: 'cc_x', cwd: '/c', parentEntry: { remoteControl: { name: 'Phone' } }, parentId: 'p', createdAt: 1 });
   assert.equal('remoteControl' in entry, false);
@@ -2594,33 +2600,53 @@ test('login trust: a refused launch context writes no trust anywhere', async () 
   });
 });
 
-test('wrangler-owned add-dir trust: a launch trusts exactly its --add-dir folders inside DATA_DIR, in the injected config and a login CLAUDE_CONFIG_DIR, never DATA_DIR or a user folder', async () => {
+test('extension add-dir trust: only an extension\'s launch trusts its folders, exactly, and its resume and fork keep that trust', async () => {
   await withLoginTrustFixture(async ({ root, repo, login, trusted, serveTrust, serverDir }) => {
     serveTrust([repo]);
-    const inbox = path.join(DATA_DIR, 'evidence', `job_${process.pid}`, 'step_y', 'inbox');
+    const tag = `t${process.pid}`;
+    const own = path.join(DATA_DIR, 'ext-data', 'alpha', tag, 'inbox');
+    const sibling = path.join(DATA_DIR, 'ext-data', 'beta', tag, 'inbox');
+    const legacy = path.join(DATA_DIR, `legacy-${tag}`, 'inbox');
     const userDir = path.join(root, 'user-notes');
-    fs.mkdirSync(inbox, { recursive: true });
-    fs.mkdirSync(userDir);
+    for (const d of [own, sibling, legacy, userDir]) fs.mkdirSync(d, { recursive: true });
+    const projects = (dir) => JSON.parse(fs.readFileSync(path.join(dir, '.claude.json'), 'utf8')).projects;
     try {
       const sm = smWithLogin();
-      sm.loginDir = login('login');
-      const { sessionId } = await sm.dispatch({ cwd: repo, intent: 'x', addDirs: [inbox, userDir] });
-      const want = [SESSIONS_DIR, MEMORY_DIR, inbox];
-      assert.deepEqual(trusted(serverDir), [...want, repo].sort());
-      assert.deepEqual(trusted(sm.loginDir), [...want, repo].sort());
+      const addDirs = [own, sibling, legacy, userDir];
+
+      sm.loginDir = login('agent');
+      await sm.dispatch({ cwd: repo, intent: 'x', addDirs, launchSource: 'agent', spawnedBy: undefined });
+      assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, repo].sort(), 'an agent\'s add-dirs keep Claude\'s prompt');
+      assert.deepEqual(trusted(serverDir), [SESSIONS_DIR, MEMORY_DIR, repo].sort());
+
+      sm.loginDir = login('ext');
+      const { sessionId } = await sm.dispatch({ cwd: repo, intent: 'x', addDirs, launchSource: 'extension', spawner: 'alpha' });
+      assert.equal(sm.map.get(sessionId).launchedByExt, 'alpha');
+      const want = [SESSIONS_DIR, MEMORY_DIR, repo, own, legacy].sort();
+      assert.deepEqual(trusted(sm.loginDir), want);
+      assert.deepEqual(trusted(serverDir), want);
       for (const dir of [serverDir, sm.loginDir]) {
-        const projects = JSON.parse(fs.readFileSync(path.join(dir, '.claude.json'), 'utf8')).projects;
-        assert.equal(projects[inbox]?.hasTrustDialogAccepted, true, dir);
-        assert.equal(projects[DATA_DIR], undefined, 'DATA_DIR itself is never trusted');
-        assert.equal(projects[userDir], undefined, 'a user-chosen add-dir is left to Claude\'s prompt');
+        assert.equal(projects(dir)[DATA_DIR], undefined, 'DATA_DIR itself is never trusted');
+        assert.equal(projects(dir)[path.join(DATA_DIR, 'ext-data', 'alpha')], undefined, 'nor the extension\'s folder as a whole');
       }
-      // A resume re-grants the stored add-dirs, so it re-trusts the same inbox.
-      sm.loginDir = login('login2');
+
+      sm.loginDir = login('resume');
       sm.map.set('c1', { ...sm.map.get(sessionId), agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000000' });
       await sm._doResume('c1', repo, {});
-      assert.deepEqual(trusted(sm.loginDir), [...want, repo].sort());
+      assert.deepEqual(trusted(sm.loginDir), want);
+      assert.equal(sm.map.get('c1').launchedByExt, 'alpha', 'a resume keeps the launching extension');
+
+      sm.loginDir = login('fork');
+      const fork = await sm.fork({ sourceId: 'L0', parentId: 'c1', parentEntry: sm.map.get('c1'), cwd: repo });
+      assert.deepEqual(trusted(sm.loginDir), want);
+      assert.equal(sm.map.get(fork.sessionId).launchedByExt, 'alpha', 'a fork keeps the launching extension');
+
+      sm.loginDir = login('bad-spawner');
+      const bad = await sm.dispatch({ cwd: repo, intent: 'x', addDirs, launchSource: 'extension', spawner: '../alpha' });
+      assert.equal(sm.map.get(bad.sessionId).launchedByExt, undefined);
+      assert.deepEqual(trusted(sm.loginDir), [SESSIONS_DIR, MEMORY_DIR, repo].sort());
     } finally {
-      fs.rmSync(path.dirname(path.dirname(inbox)), { recursive: true, force: true });
+      for (const d of [path.join(DATA_DIR, 'ext-data'), path.join(DATA_DIR, `legacy-${tag}`)]) fs.rmSync(d, { recursive: true, force: true });
     }
   });
 });

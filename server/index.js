@@ -79,6 +79,7 @@ import { acquireInstanceLock, InstanceLockError } from './instance-lock.js';
 import { resolveTmuxBin, TmuxNotFoundError } from './tmux-resolve.js';
 import { devShutdownConfig, devShutdownDecision } from './dev-shutdown.js';
 import { DATA_DIR } from './data-dir.js';
+import { ensureExtDataDir } from './ext-data.js';
 import { scanAllDaily } from './usage-report.js';
 import { startFdWatchdog } from './fd-watchdog.js';
 import { startHeapWatchdog } from './heap-watchdog.js';
@@ -534,12 +535,14 @@ function activateExtension(id, { startSweeps = true } = {}) {
     // `id` stays the STORE NAME (a store logs and names itself by it) and the
     // extension's own id rides alongside as `extId`: a factory that wants to
     // place a file under a per-extension path needs the latter, and renaming
-    // `id` would break every store that already reads it.
+    // `id` would break every store that already reads it. `dataDir()` is that
+    // per-extension path, the same folder `host.dataDir()` returns.
     for (const name of e.storeNames) {
       extStores[name] = restartBarrier.wrapStore(ext.stores[name]({
         id: name,
         extId: id,
         settings: buildExtSettings({ id, settingDefs: e.settings, readSettings: (extId) => extensionSettings(extId) }),
+        dataDir: () => ensureExtDataDir(id),
         log,
       }), `ext-store:${name === id ? id : `${id}:${name}`}`);
     }

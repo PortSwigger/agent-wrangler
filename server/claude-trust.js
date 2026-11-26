@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { extDataDir, extDataRoot } from './ext-data.js';
+import { isValidExtensionId } from './extensions/provenance.js';
 
 const exec = promisify(execFile);
 
@@ -16,12 +18,13 @@ const exec = promisify(execFile);
 // trusting SESSIONS_DIR once covers every blank-cwd launch (each lands in a
 // fresh scratch dir beneath it), but a trusted ~/code no longer covers a
 // worktree of a repo under it. Claude also asks again (or refuses) for each
-// --add-dir with no trust entry, so a launch's wrangler-owned added folders
-// (ownedAddDirs: strictly inside DATA_DIR, e.g. a Wrangler² step's evidence
-// inbox) are trusted one by one, each exactly, never DATA_DIR as a whole. Never
-// call this for a user's own cwd or a user-chosen --add-dir outside DATA_DIR; a
-// worktree is only trusted through mirrorWorktreeTrust, when the repo it was
-// cut from (or an ancestor of it) already is.
+// --add-dir with no trust entry, by the same walk (a trusted parent covers it
+// outside git, not inside a repo). Only a session an extension launched has
+// added folders trusted for it (extensionAddDirs), each exactly, never the
+// folder they sit in. Never call this for a user's own cwd or an --add-dir an
+// agent or the board chose; a worktree is only trusted through
+// mirrorWorktreeTrust, when the repo it was cut from (or an ancestor of it)
+// already is.
 //
 // `~/.claude.json` is big and rewritten live by running Claude sessions, so this
 // writer is conservative: idempotent (no write when already trusted), atomic
@@ -104,17 +107,37 @@ export function ensureClaudeTrust(dirPath, { file = claudeConfigFile(), log = co
 
 const realPath = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
 
-// The `addDirs` Wrangler owns: absolute paths strictly inside `dataDir`, both as
-// given and realpathed (so a symlink out of it is refused), never `dataDir`
-// itself. Anything else is a user's own folder and is left to Claude's prompt.
-export function ownedAddDirs(addDirs, dataDir) {
-  if (!Array.isArray(addDirs) || typeof dataDir !== 'string' || !path.isAbsolute(dataDir)) return [];
-  const root = path.resolve(dataDir);
-  const realRoot = realPath(dataDir);
-  const under = (d, r) => d.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
+const isUnder = (d, r) => d.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
+const within = (d, r) => d === r || isUnder(d, r);
+
+// The absolute `addDirs` strictly inside `root`, both as given and realpathed
+// (so a symlink out of it is refused), never `root` itself.
+export function addDirsInside(addDirs, root) {
+  if (!Array.isArray(addDirs) || typeof root !== 'string' || !path.isAbsolute(root)) return [];
+  const plain = path.resolve(root);
+  const real = realPath(root);
   return [...new Set(addDirs
-    .filter((d) => typeof d === 'string' && path.isAbsolute(d) && under(path.resolve(d), root) && under(realPath(d), realRoot))
+    .filter((d) => typeof d === 'string' && path.isAbsolute(d) && isUnder(path.resolve(d), plain) && isUnder(realPath(d), real))
     .map((d) => path.resolve(d)))];
+}
+
+// The `addDirs` a launch trusts without Claude asking. Only a session an
+// extension launched (`extId`, carried through its resumes and forks) has any:
+// those strictly inside that extension's own data folder (ext-data.js).
+// Everything else, including every --add-dir an agent or the board chose, is
+// left to Claude's prompt.
+//
+// LEGACY, to be removed once extensions keep their data in their own folders:
+// an extension's session also keeps the older rule for folders strictly inside
+// `dataDir` but outside `ext-data/`, so another extension's folder is never
+// trusted through it.
+export function extensionAddDirs(addDirs, { extId, dataDir } = {}) {
+  if (!isValidExtensionId(extId) || typeof dataDir !== 'string' || !path.isAbsolute(dataDir)) return [];
+  const own = addDirsInside(addDirs, extDataDir(extId, dataDir));
+  const root = extDataRoot(dataDir);
+  const realRoot = realPath(root);
+  const legacy = addDirsInside(addDirs, dataDir).filter((d) => !within(d, path.resolve(root)) && !within(realPath(d), realRoot));
+  return [...new Set([...own, ...legacy])];
 }
 
 // `cwd`'s git top, whether it is a linked worktree, and the repo it belongs to
@@ -150,13 +173,13 @@ export async function mirrorWorktreeTrust(cwd, opts = {}) {
 
 // A login's own Claude config dir (the CLAUDE_CONFIG_DIR a launch context sets)
 // gets the same trust a default launch writes, authorised only by the server's
-// config: SESSIONS_DIR, MEMORY_DIR, the launch's ownedAddDirs inside dataDir, a
-// worktree whose repo the server config trusts, and the launch cwd itself when
-// the server config already covers it. Nothing the
+// config: SESSIONS_DIR, MEMORY_DIR, the launch's extensionAddDirs (`addDirs`,
+// already filtered by the caller), a worktree whose repo the server config
+// trusts, and the launch cwd itself when the server config already covers it. Nothing the
 // login's own file trusts authorises anything. The dir must already exist (it
 // is never created), must not be the server's own or the CLI's default config
 // dir, and a symlinked .claude.json is left alone. Never throws.
-export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, memoryDir, dataDir, addDirs, serverFile = claudeConfigFile(), log = console.warn } = {}) {
+export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, memoryDir, addDirs = [], serverFile = claudeConfigFile(), log = console.warn } = {}) {
   const skip = (why) => { log(`[claude-trust] skipped login config ${JSON.stringify(configDir)}: ${why}`); return false; };
   if (typeof configDir !== 'string' || !path.isAbsolute(configDir)) return skip('not an absolute path');
   try {
@@ -173,7 +196,7 @@ export async function ensureLoginClaudeTrust(configDir, { cwd, sessionsDir, memo
   } catch { /* no file yet */ }
   if (sessionsDir) ensureClaudeTrust(sessionsDir, { file, log });
   if (memoryDir) ensureClaudeTrust(memoryDir, { file, log });
-  for (const d of ownedAddDirs(addDirs, dataDir)) ensureClaudeTrust(d, { file, log });
+  for (const d of addDirs) if (typeof d === 'string' && path.isAbsolute(d)) ensureClaudeTrust(d, { file, log });
   if (!cwd) return true;
   await mirrorWorktreeTrust(cwd, { file, authority: serverFile, log });
   const gitTop = (await gitScope(cwd))?.top;

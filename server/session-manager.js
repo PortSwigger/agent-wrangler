@@ -23,7 +23,8 @@ import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, codex
 import { TOOL_REFRESH_NOTE } from './extensions/tool-fingerprint.js';
 import { cleanCodexPolicy, codexApprovalPolicyError } from './extensions/codex-policy.js';
 import { ensureCodexTrust } from './codex-trust.js';
-import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust, ownedAddDirs } from './claude-trust.js';
+import { ensureClaudeTrust, mirrorWorktreeTrust, ensureLoginClaudeTrust, extensionAddDirs } from './claude-trust.js';
+import { isValidExtensionId } from './extensions/provenance.js';
 import { launchEnvOf, launchSecretEnvOf, withoutSecretEnv } from './launch-context.js';
 import { writeSecretEnvFile } from './launch-secrets.js';
 import { SESSION_TOKEN_ENV } from './mcp/client-config.js';
@@ -263,6 +264,9 @@ export function forkEntry({ short, tmux, cwd, parentEntry, parentId, name = '', 
     runtime: parentEntry?.runtime,
     runtimeExt: parentEntry?.runtimeExt,
     ...(parentEntry?.addDirs ? { addDirs: [...parentEntry.addDirs] } : {}),
+    // The extension that launched the conversation, so a fork's added folders
+    // keep the trust its parent's had (claude-trust.js extensionAddDirs).
+    ...(parentEntry?.launchedByExt ? { launchedByExt: parentEntry.launchedByExt } : {}),
     ...(parentEntry?.location === undefined ? {} : { location: parentEntry.location }),
     ...(parentEntry?.branch ? { branch: parentEntry.branch } : {}),
     ...(parentEntry?.branchBase ? { branchBase: parentEntry.branchBase } : {}),
@@ -366,7 +370,8 @@ export function ownLaunchRefusal(rt, launchContext) {
 // onto the board), and the Remote Control name (remoteControl — every relaunch
 // passes it again, or the phone loses the session after an idle-suspend), and
 // the tools it launched without (disallowedTools — a mail or snooze wake must not
-// hand an unwatched pane back the tool its host removed);
+// hand an unwatched pane back the tool its host removed), and the extension that
+// launched it (launchedByExt — its added folders keep their trust);
 // note `entry.snooze` is deliberately NOT here — it's dropped unconditionally by this
 // function's own field list, not because callers reliably clearSnooze() before resume
 // — some resume() call sites don't) all survive.
@@ -402,6 +407,7 @@ export function resumeEntry(prev, { short, tmux, cwd, agent, resumeId, socket, n
     statusNotify: prev?.statusNotify,
     worktree: prev?.worktree,
     addDirs: prev?.addDirs,
+    launchedByExt: prev?.launchedByExt,
     ...(prev?.location === undefined ? {} : { location: prev.location }),
     branch: prev?.branch,
     branchBase: prev?.branchBase,
@@ -492,7 +498,7 @@ export function mayExitForUpdate(entry, tmux, { adapterFor: resolve = adapterFor
 // A provider with no trust prompt sets no `trust`.
 const LAUNCH_TRUST = {
   'codex-config': { stage: 'before-context', enabled: trustCodexLaunchCwd, run: (sm, { dir, repoRoot }) => sm._ensureCodexTrust(repoRoot || dir) },
-  'claude-config': { stage: 'after-context', enabled: trustClaudeLaunchCwd, run: (sm, { dir, launchContext, addDirs }) => sm._trustClaudeLaunch(dir, launchContext, addDirs) },
+  'claude-config': { stage: 'after-context', enabled: trustClaudeLaunchCwd, run: (sm, { dir, launchContext, addDirs, launchedByExt }) => sm._trustClaudeLaunch(dir, launchContext, addDirs, launchedByExt) },
 };
 
 export class SessionManager {
@@ -622,17 +628,17 @@ export class SessionManager {
 
   // Called after the launch context is collected, so a launch whose context
   // points CLAUDE_CONFIG_DIR at a login's own config gets the same trust there.
-  // Each wrangler-owned --add-dir (strictly inside DATA_DIR, e.g. a Wrangler²
-  // step's evidence inbox) is trusted exactly, so Claude does not ask about it;
-  // DATA_DIR itself and a user's own folders are never trusted here.
-  async _trustClaudeLaunch(dir, launchContext, addDirs = []) {
+  // A session an extension launched (`launchedByExt`) has each of its
+  // extensionAddDirs trusted exactly, so Claude does not ask about them; an
+  // --add-dir an agent or the board chose keeps Claude's prompt.
+  async _trustClaudeLaunch(dir, launchContext, addDirs = [], launchedByExt = null) {
     this._ensureClaudeTrust(SESSIONS_DIR);
     this._ensureClaudeTrust(MEMORY_DIR);
-    const owned = ownedAddDirs(addDirs, DATA_DIR);
+    const owned = extensionAddDirs(addDirs, { extId: launchedByExt, dataDir: DATA_DIR });
     for (const d of owned) this._ensureClaudeTrust(d);
     await this._mirrorWorktreeTrust(dir);
     const loginDir = launchEnvOf(launchContext).CLAUDE_CONFIG_DIR;
-    if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, sessionsDir: SESSIONS_DIR, memoryDir: MEMORY_DIR, dataDir: DATA_DIR, addDirs: owned });
+    if (loginDir) await this._ensureLoginClaudeTrust(loginDir, { cwd: dir, sessionsDir: SESSIONS_DIR, memoryDir: MEMORY_DIR, addDirs: owned });
   }
 
   // The secret-variable file for one pane launch (launch-secrets.js), or null.
@@ -1530,7 +1536,7 @@ export class SessionManager {
     }), agent), toolPolicy);
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext, addDirs: prev?.addDirs });
+    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext, addDirs: prev?.addDirs, launchedByExt: prev?.launchedByExt });
     const addDirs = remote ? [] : await withGitDirAddDirs(agent, dir, prev?.addDirs || []);
     const disabledSkills = this._extLaunchSkills({ sessionId, entry: prev, agent, phase: 'resume' });
     const codexPolicy = adapterFor(agent).launch.codexPolicy ? this._codexPolicyFor({ phase: 'resume', sessionId, entry: prev }, prev?.codexPolicy) : undefined;
@@ -1648,7 +1654,7 @@ export class SessionManager {
     }), agent), toolPolicy);
     const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext, addDirs: parentEntry?.addDirs });
+    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext, addDirs: parentEntry?.addDirs, launchedByExt: parentEntry?.launchedByExt });
     const addDirs = remote ? [] : await withGitDirAddDirs(agent, dir, parentEntry?.addDirs || []);
     // A fork has no entry of its own yet (forkEntry runs after launch), so the
     // gate is shown the PARENT's — which is what it would inherit anyway, and
@@ -2335,6 +2341,7 @@ export class SessionManager {
     const sessionId = crypto.randomUUID();
     const toolPolicy = await this._collectToolPolicy({ sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason });
     const spawnData = await this._beforeSpawn(spawnPayload);
+    const launchedByExt = launchSource === 'extension' && isValidExtensionId(spawner) ? spawner : undefined;
     const short = crypto.randomBytes(4).toString('hex');
     // A location is provisioned after the last refusal and before anything is
     // created; its cwd is a path there, never made on this machine.
@@ -2423,7 +2430,7 @@ export class SessionManager {
     }), agent), toolPolicy);
     const ownLaunch = ownLaunchRefusal(rt, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
-    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext, addDirs: grantedDirs });
+    if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext, addDirs: grantedDirs, launchedByExt });
     // On the `buildLaunch` path the skill gate, the codex policy and the launch
     // context above still run (an extension may persist state from them, and
     // the hooks fire either way) — their output just goes unused, since the
@@ -2484,7 +2491,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, ...(remote ? { location: locationRef } : {}), ...locationBranch, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined, launchedToolFingerprint: toolFingerprint, toolPolicyFingerprint: toolPolicy?.fingerprint };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, ...(remote ? { location: locationRef } : {}), ...locationBranch, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, launchedByExt, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined, launchedToolFingerprint: toolFingerprint, toolPolicyFingerprint: toolPolicy?.fingerprint };
     this.map.set(sessionId, entry);
     delete pending.entry;
     this._save();
