@@ -34,20 +34,29 @@ export function stripAnsi(s) {
     .replace(/[\x00-\x08\x0b-\x1f]/g, '');
 }
 
-// All panes across every tmux session, with the pane's leaf pid, cwd, the tmux
-// pane id + window index (so a specific pane can be captured/targeted — a session
-// running an agent team has >1 pane), and the pane_title (Claude writes its live
-// status+summary there via an OSC sequence). pane_title is the only field that
-// can itself contain '|', so it goes last and the remainder is rejoined; pane_id
-// (`%N`) and window_index are '|'-free, so they take fixed slots before it.
-const PANE_FORMAT = '#{session_name}|#{pane_pid}|#{pane_current_path}|#{pane_id}|#{window_index}|#{pane_title}';
+// All panes across every tmux session, with the pane's leaf pid, whether it is
+// dead, cwd, the tmux pane id + window index (so a specific pane can be
+// captured/targeted — a session running an agent team has >1 pane), and the
+// pane_title (Claude writes its live status+summary there via an OSC sequence).
+// pane_title is the only field that can itself contain '|', so it goes last and
+// the remainder is rejoined; pane_id (`%N`) and window_index are '|'-free, so
+// they take fixed slots before it.
+const PANE_FORMAT = '#{session_name}|#{pane_pid}|#{pane_dead}|#{pane_current_path}|#{pane_id}|#{window_index}|#{pane_title}';
 
 // Parse one PANE_FORMAT line. pane_title is last and rejoined because it's the
 // only field that can itself contain '|'; every earlier field (incl. pane_id
 // `%N` and the window index) is '|'-free, so they take fixed leading slots.
+// A dead pane (kept by remain-on-exit) has no process, so its pid is null: newer
+// tmux prints its pane_pid empty, and older tmux keeps the dead pid, which the
+// OS may since have given to an unrelated process.
 export function parsePaneLine(line) {
-  const [name, pid, cwd, paneId, windowIndex, ...title] = line.split('|');
-  return { name, panePid: Number(pid), cwd, paneId, windowIndex, paneTitle: title.join('|') };
+  const [name, pid, dead, cwd, paneId, windowIndex, ...title] = line.split('|');
+  return { name, panePid: dead === '1' ? null : livePid(pid), cwd, paneId, windowIndex, paneTitle: title.join('|') };
+}
+
+function livePid(value) {
+  const pid = Number(value);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
 async function listClaudePanes(socket) {
@@ -100,7 +109,10 @@ let treeSkipped = false;
 // container-exec matcher (a devcontainer/docker exec wrapping the agent as an
 // argument) — a host command never has the wrapper, so this is additive, never
 // a behaviour change for host sessions. Exported for unit testing.
+// A start pid that isn't a live process (null, 0, negative) finds nothing: pid 0
+// parents launchd/init, so walking from it would adopt any agent on the machine.
 export function findAgentPid(startPid, tree) {
+  if (livePid(startPid) === null) return null;
   const queue = [startPid];
   const seen = new Set();
   while (queue.length) {

@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, findAgentPid, parsePaneLine, paneModelLabel, paneContextPercent, trustDialogState, isCompacting, codexApprovalState } from './tmux-scraper.js';
+import crypto from 'node:crypto';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { tmuxesForSession, claudeTitle, hasBackgroundShell, prefillPane, sendText, classify, discoverClaudeSessions, findAgentPid, parsePaneLine, paneModelLabel, paneContextPercent, trustDialogState, isCompacting, codexApprovalState } from './tmux-scraper.js';
 
 const ID = '53fa5416-3437-4126-897c-e1c0b3daa2ac';
 
@@ -620,6 +623,39 @@ test('findAgentPid: null for a non-agent tree', () => {
   assert.equal(findAgentPid(300, tree), null);
 });
 
+test('findAgentPid: a missing or non-positive pane pid is no process, never the whole tree', () => {
+  // ps lists launchd (pid 1) as a child of pid 0, so a walk from 0 reaches every
+  // process on the machine and would adopt an unrelated Claude.
+  const tree = {
+    cmd: new Map([[1, '/sbin/launchd'], [50, 'tmux'], [51, '/usr/bin/claude --session-id other']]),
+    children: new Map([[0, [1]], [1, [50]], [50, [51]]]),
+  };
+  for (const pid of [0, null, undefined, NaN, -1]) assert.equal(findAgentPid(pid, tree), null, String(pid));
+  assert.equal(findAgentPid(50, tree)?.pid, 51, 'a live pane still finds its own claude');
+});
+
+// Real tmux, on a test-scoped socket: a pane kept by remain-on-exit after its
+// command exited 1 (Claude's "No, exit") must not be discovered at all.
+test('discoverClaudeSessions: a dead pane never adopts a Claude running elsewhere', async () => {
+  const socket = `aw-deadpane-${crypto.randomBytes(4).toString('hex')}`;
+  const tmux = (...a) => promisify(execFile)('tmux', ['-L', socket, ...a]);
+  // An unrelated "claude" elsewhere on the machine (ps shows argv0), so a walk
+  // from pid 0 has one to adopt even where no real Claude runs.
+  const decoy = spawn('sleep', ['30'], { argv0: 'claude', stdio: 'ignore' });
+  try {
+    await tmux('new-session', '-d', '-s', 'cc_dead', 'sleep 0.2; exit 1', ';', 'set-option', '-t', 'cc_dead', 'remain-on-exit', 'on');
+    for (let i = 0; i < 50; i++) {
+      if ((await tmux('list-panes', '-t', 'cc_dead', '-F', '#{pane_dead}')).stdout.trim() === '1') break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal((await tmux('list-panes', '-t', 'cc_dead', '-F', '#{pane_dead}')).stdout.trim(), '1', 'the pane is dead and kept');
+    assert.deepEqual(await discoverClaudeSessions([socket]), []);
+  } finally {
+    decoy.kill();
+    await tmux('kill-server').catch(() => {});
+  }
+});
+
 test('sendText waits for the paste to settle before its trailing Enter', async () => {
   const cmds = [];
   const waits = [];
@@ -661,7 +697,7 @@ test('sendText does not press Enter until the settle wait completes', async () =
 });
 
 test('parsePaneLine splits fields with pane_id/window and keeps pane_title (which may contain |) last', () => {
-  const p = parsePaneLine('cc_d3059a0b|18544|/Users/x/proj|%1|0|⠂ general-purpose');
+  const p = parsePaneLine('cc_d3059a0b|18544|0|/Users/x/proj|%1|0|⠂ general-purpose');
   assert.equal(p.name, 'cc_d3059a0b');
   assert.equal(p.panePid, 18544);
   assert.equal(p.cwd, '/Users/x/proj');
@@ -670,8 +706,18 @@ test('parsePaneLine splits fields with pane_id/window and keeps pane_title (whic
   assert.equal(p.paneTitle, '⠂ general-purpose');
 });
 
+test('parsePaneLine gives a dead pane no pid, whatever tmux prints for it', () => {
+  // Newer tmux prints an empty #{pane_pid} for a pane kept by remain-on-exit;
+  // older tmux keeps the dead pid, which may now be an unrelated process.
+  assert.equal(parsePaneLine('cc_dead||1|/p|%0|0|host').panePid, null);
+  assert.equal(parsePaneLine('cc_dead|13377|1|/p|%0|0|host').panePid, null);
+  assert.equal(parsePaneLine('cc_x||0|/p|%0|0|host').panePid, null);
+  assert.equal(parsePaneLine('cc_x|0|0|/p|%0|0|host').panePid, null);
+  assert.equal(parsePaneLine('cc_x|-4|0|/p|%0|0|host').panePid, null);
+});
+
 test('parsePaneLine rejoins a pane_title containing pipes', () => {
-  const p = parsePaneLine('cc_1|100|/p|%0|0|✳ fix a | b | c');
+  const p = parsePaneLine('cc_1|100|0|/p|%0|0|✳ fix a | b | c');
   assert.equal(p.paneId, '%0');
   assert.equal(p.paneTitle, '✳ fix a | b | c');
 });
