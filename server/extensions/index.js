@@ -100,6 +100,8 @@ export const CAPABILITIES = new Set([
   'files:view',
   'agents:read',
   'agents:headless',
+  'agents:headless-tool',
+  'operations:run',
   'telemetry:emit',
 ]);
 
@@ -203,6 +205,25 @@ const ID_RE = /^[a-z][a-z0-9-]*$/;
 // enforcement, and it rejects rather than clamps.
 const SETTING_KEY_RE = /^[a-z][a-zA-Z0-9]*$/;
 const SETTING_TYPES = ['text', 'number', 'toggle', 'select', 'list', 'textarea'];
+
+const HEADLESS_TOOL_RE = /^[A-Za-z0-9_.:-]{1,200}$/;
+const HEADLESS_TOOL_KEYS = new Set(['tool', 'source']);
+
+// The tools `host.agents.headlessTool` may name, declared up front so the
+// consent dialog can show them: `[{ tool, source? }]`, `source` being the MCP
+// server source Claude reports for the tool's server (`claudeai` for a
+// claude.ai connector), checked on every run.
+function validateHeadlessTools(ext) {
+  if (ext.headlessTools == null) return;
+  if (!Array.isArray(ext.headlessTools)) fail(ext, 'headlessTools must be an array of { tool, source? }');
+  if (ext.headlessTools.length && !(ext.requires || []).includes('agents:headless-tool')) fail(ext, 'headlessTools requires the agents:headless-tool capability');
+  for (const [i, t] of ext.headlessTools.entries()) {
+    if (!t || typeof t !== 'object' || Array.isArray(t)) fail(ext, `headlessTools[${i}] must be { tool, source? }`);
+    for (const k of Object.keys(t)) if (!HEADLESS_TOOL_KEYS.has(k)) fail(ext, `headlessTools[${i}]: unknown key "${k}"`);
+    if (typeof t.tool !== 'string' || !HEADLESS_TOOL_RE.test(t.tool)) fail(ext, `headlessTools[${i}].tool must match ${HEADLESS_TOOL_RE}`);
+    if (t.source !== undefined && (typeof t.source !== 'string' || !HEADLESS_TOOL_RE.test(t.source))) fail(ext, `headlessTools[${i}].source must match ${HEADLESS_TOOL_RE}`);
+  }
+}
 
 function fail(ext, reason) {
   const id = ext && typeof ext.id === 'string' ? ext.id : '<no id>';
@@ -389,6 +410,9 @@ export function validateManifest(ext, { dir = ext?.dir, repoSkills = inRepoSkill
   }
   if (ext.skillsFor != null && typeof ext.skillsFor !== 'function') fail(ext, 'skillsFor must be a function');
   if (ext.codexPolicy != null && typeof ext.codexPolicy !== 'function') fail(ext, 'codexPolicy must be a function');
+  // A required tool policy (server/tool-policy.js), asked on every launch.
+  if (ext.toolPolicy != null && typeof ext.toolPolicy !== 'function') fail(ext, 'toolPolicy must be a function');
+  validateHeadlessTools(ext);
   if (ext.hideTool != null && typeof ext.hideTool !== 'function') fail(ext, 'hideTool must be a function');
   if (ext.graph != null && typeof ext.graph !== 'function') fail(ext, 'graph must be a function');
   if (ext.onTaskDelete != null && typeof ext.onTaskDelete !== 'function') fail(ext, 'onTaskDelete must be a function');
@@ -531,7 +555,7 @@ export function themeSources(themeDirs, valuesFor = extensionSettings) {
 export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFor = extensionSettings, installed = {}) {
   return list.map(({
     id, label, help, defaultEnabled, enabled: bootEnabled, handlerTypes, hideDispatchField, keybindings,
-    quarantine, external, description, author, homepage, provenance, requires, settings, runtimes, earlyAdopterBranch,
+    quarantine, external, description, author, homepage, provenance, requires, settings, runtimes, earlyAdopterBranch, toolPolicy, headlessTools,
   }) => ({
     id, label, help, defaultEnabled, bootEnabled: Boolean(bootEnabled) && !quarantine,
     enabled: quarantine ? false : enabledFor(id, defaultEnabled),
@@ -544,6 +568,9 @@ export function extensionsForGraph(list, enabledFor = extensionEnabled, valuesFo
     author: author || '',
     homepage: homepage || '',
     requires: [...(requires || [])],
+    // Disclosure: it blocks tools for every agent, and the tools it may run alone.
+    toolPolicy: Boolean(toolPolicy),
+    headlessTools: (headlessTools || []).map((t) => ({ ...t })),
     // The runtimes it contributes, for the dispatch dialog's Runtime select.
     // Filled only while the extension is staged (empty for a disabled or
     // quarantined row, like `handlerTypes`), and the client ALSO filters to an
@@ -654,6 +681,8 @@ export function loadExtensions({ cfg = readConfig(), builtin = BUILTIN, coreTool
     skillGates: [],
     taskDeleteHooks: [],
     codexPolicies: [],
+    // `[{ id, fn }]` per enabled extension declaring `toolPolicy`.
+    toolPolicies: [],
     toolFilters: [],
     sweeps: [],
     // The raw runtime definitions, tagged with their owner. server/index.js
@@ -731,6 +760,10 @@ function quarantinedEntry(ext, quarantine) {
     telemetry: { events: null },
     version: null,
     boardApi: null,
+    // Kept for a manifest that failed validation, so its policy is still
+    // required (tool-policy.js declaresToolPolicy) instead of failing open.
+    toolPolicy: typeof ext?.toolPolicy === 'function',
+    headlessTools: [],
     quarantine,
   };
 }
@@ -809,6 +842,8 @@ function stageExtension(ext, { cfg, out, reg }) {
     telemetry: normaliseTelemetryDecl(ext.telemetry, ext.requires || []),
     version: typeof ext.version === 'string' ? ext.version : null,
     boardApi: board.boardApi,
+    toolPolicy: typeof ext.toolPolicy === 'function',
+    headlessTools: (ext.headlessTools || []).map(({ tool, source }) => ({ tool, ...(source === undefined ? {} : { source }) })),
     quarantine: null,
   };
   if (!enabled) {
@@ -880,6 +915,7 @@ function stageExtension(ext, { cfg, out, reg }) {
   // so one extension can never silently suppress another's.
   if (ext.skillsFor) out.skillGates.push({ id: ext.id, skills: [...(ext.skills || [])], gate: ext.skillsFor });
   if (ext.codexPolicy) out.codexPolicies.push({ id: ext.id, fn: ext.codexPolicy });
+  if (ext.toolPolicy) out.toolPolicies.push({ id: ext.id, fn: ext.toolPolicy });
   if (ext.hideTool) out.toolFilters.push({ id: ext.id, hide: ext.hideTool });
   if (ext.graph) out.graphContributors.push({ id: ext.id, contribute: ext.graph });
   if (ext.onTaskDelete) out.taskDeleteHooks.push({ id: ext.id, fn: ext.onTaskDelete });
@@ -992,6 +1028,7 @@ export function unregisterExtension(loaded, id, { remove = false } = {}) {
   loaded.skillGates = loaded.skillGates.filter((g) => g.id !== id);
   loaded.taskDeleteHooks = loaded.taskDeleteHooks.filter((h) => h.id !== id);
   loaded.codexPolicies = loaded.codexPolicies.filter((p) => p.id !== id);
+  loaded.toolPolicies = (loaded.toolPolicies || []).filter((p) => p.id !== id);
   loaded.toolFilters = loaded.toolFilters.filter((f) => f.id !== id);
   loaded.clientManifest = loaded.clientManifest.filter((c) => c.id !== id);
   for (const name of entry?.storeNames || []) delete loaded.stores[name];

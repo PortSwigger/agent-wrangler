@@ -19,6 +19,7 @@ import { codexPolicyArgs, codexPolicyAllowsAddDirs } from '../extensions/codex-p
 import { codexModels, codexEfforts, defaultCodexModel } from './codex-catalog.js';
 import { tomlString, notifyOverride } from '../codex-notify-config.js';
 import { codexHookOverrides, PR_FOOTER_MATCHER } from '../codex-hook-config.js';
+import { codexToolPolicyHooks, rulesForAgent } from '../tool-policy.js';
 import { codexStatusHooks } from '../status-hooks.js';
 import { statusEventEnv } from './claude.js';
 import { fileURLToPath } from 'node:url';
@@ -72,7 +73,9 @@ function commonFlags({ toolRefreshNote, sessionId, cwd, addDirs = [], worktree =
   args.push(...launchCodexConfigArgs(launchContext));
   args.push('-c', `developer_instructions=${tomlString(instructions)}`);
   args.push('-c', notifyOverride(process.execPath, HOOK_PATH));
-  const hooks = [{ event: 'PostToolUse', matcher: PR_FOOTER_MATCHER, command: `${shellQuote(process.execPath)} ${shellQuote(PR_FOOTER_HOOK_PATH)}` }];
+  const policyHooks = codexToolPolicyHooks(rulesForAgent(launchContext?.toolPolicy, 'codex'));
+  if (policyHooks.length) args.push('--enable', 'hooks');
+  const hooks = [...policyHooks, { event: 'PostToolUse', matcher: PR_FOOTER_MATCHER, command: `${shellQuote(process.execPath)} ${shellQuote(PR_FOOTER_HOOK_PATH)}` }];
   if (launchContext?.statusEvents) hooks.push(...codexStatusHooks());
   for (const o of codexHookOverrides(hooks)) args.push('-c', o);
   // A read-only sandbox refuses any --add-dir and the launch dies (see
@@ -182,6 +185,9 @@ export const codex = {
     permissionModes: ['auto'],
     autoCompact: { min: 50000, presets: [50000, 100000, 250000] },
   },
+  // Tool policies (tool-policy.js) ride synchronous PreToolUse hooks, verified
+  // on 0.160.1 to block direct and code-mode MCP calls, bypass included.
+  toolPolicy: { patterns: true, bin: 'codex', minVersion: '0.160.1' },
   launch: { grantPaths: 'realpath', availabilityOverride: 'codexAvailable', trust: 'codex-config', gitMetadataGrants: true, codexPolicy: true, recoverMissingConversation: true, statusEvents: true },
   terminal: {
     readySignal: 'composer',

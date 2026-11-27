@@ -668,6 +668,57 @@ const agentsHeadless = ({ runHeadless: run = runHeadless }) => ({
   },
 });
 
+// `agents:headless-tool` (2.4.0): a one-shot on the Background model with
+// exactly one tool (server/headless-tool.js), Claude only. The tool must be one
+// this manifest declared in `headlessTools`, and its declared `source` and the
+// caller's id are FORCED from the manifest and `id`, never from the call, so an
+// extension cannot name another's tool or claim another's policy exemption.
+// Resolves a frozen `{ text, liveSessionId, agent, model, error, toolCalls,
+// usage, costUsd }`; rejects for a bad call or a refusal (a non-Claude
+// Background model, a tool policy that blocks the tool, a tool not connected).
+const HEADLESS_TOOL_OPTS = ['prompt', 'stdin', 'effort', 'timeoutMs', 'maxTurns', 'profile'];
+const agentsHeadlessTool = ({ id, headlessTools = [], runHeadlessTool: run }) => ({
+  agents: {
+    headlessTool: async (opts) => {
+      if (!opts || typeof opts !== 'object') throw new TypeError('agents.headlessTool: pass { tool, prompt, stdin?, effort?, timeoutMs?, maxTurns?, profile? }');
+      const declared = headlessTools.find((t) => t.tool === opts.tool);
+      if (!declared) throw new TypeError(`agents.headlessTool: ${JSON.stringify(opts.tool)} is not one of this extension's headlessTools`);
+      const picked = Object.fromEntries(HEADLESS_TOOL_OPTS.filter((k) => opts[k] !== undefined).map((k) => [k, opts[k]]));
+      const r = await run({ tool: declared.tool, source: declared.source, callerId: id, ...picked });
+      return deepFreeze({
+        text: r.text,
+        liveSessionId: r.liveSessionId,
+        agent: r.agent,
+        model: r.model,
+        error: r.error ? String(r.error.message || r.error) : null,
+        toolCalls: r.toolCalls || [],
+        usage: r.usage ?? null,
+        costUsd: r.costUsd ?? null,
+      });
+    },
+  },
+});
+
+// `operations:run` (2.4.0): long work an extension must not have cut short by
+// a restart (a send it has recorded as started), admitted through the same
+// restart barrier as core's own writes and labelled `ext:<id>:<label>` in its
+// drain diagnostics. `run` rejects with `code: 'restarting'` while a restart
+// drains, and once the extension has been turned off; `accepting()` says
+// whether it would admit now. Tracking is not a delivery guarantee: a forced
+// restart or a killed process still ends the work.
+const OPERATION_LABEL_RE = /^[\x20-\x7e]{1,80}$/;
+const operationsRun = ({ id, restartBarrier, extActive = () => true }) => ({
+  operations: {
+    accepting: () => Boolean(extActive(id) && restartBarrier.accepting()),
+    run: async (label, fn) => {
+      if (typeof label !== 'string' || !OPERATION_LABEL_RE.test(label)) throw new TypeError('operations.run: label must be 1-80 printable characters');
+      if (typeof fn !== 'function') throw new TypeError('operations.run: fn must be a function');
+      if (!extActive(id)) throw new Error(`operations.run: ${id} is not active`);
+      return restartBarrier.run(() => fn(), `ext:${id}:${label}`);
+    },
+  },
+});
+
 // `telemetry:emit` (1.72.0): emit an event this extension declared under
 // `telemetry.events`. The wire type is FORCED to `<own id>.<name>`, closed over
 // like broadcast's type, so no extension can emit (or forge) another's events.
@@ -719,5 +770,7 @@ export const V1_BUILDERS = {
   'files:view': filesView,
   'agents:read': agentsRead,
   'agents:headless': agentsHeadless,
+  'agents:headless-tool': agentsHeadlessTool,
+  'operations:run': operationsRun,
   'telemetry:emit': telemetryEmit,
 };

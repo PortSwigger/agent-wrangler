@@ -33,8 +33,10 @@ function eventLabel(event) {
 }
 
 // async: Codex starts the hook and carries on, so it never delays the agent.
-function handler(command) {
-  return { type: 'command', command, timeout: TIMEOUT_SEC, async: true };
+// A tool-policy hook (tool-policy.js) is synchronous: Codex waits for it and an
+// exit 2 blocks the call.
+function handler(command, async = true) {
+  return { type: 'command', command, timeout: TIMEOUT_SEC, async };
 }
 
 export function hookTrustKey(event = 'PostToolUse', group = 0) {
@@ -43,12 +45,12 @@ export function hookTrustKey(event = 'PostToolUse', group = 0) {
 
 // A hook with no matcher hashes with the key left out. With no options it is
 // the PR footer's Bash PostToolUse hook.
-export function hookTrustHash(command, { event = 'PostToolUse', matcher } = { matcher: PR_FOOTER_MATCHER }) {
-  const identity = { event_name: eventLabel(event), ...(matcher == null ? {} : { matcher }), hooks: [handler(command)] };
+export function hookTrustHash(command, { event = 'PostToolUse', matcher, async = true } = { matcher: PR_FOOTER_MATCHER }) {
+  const identity = { event_name: eventLabel(event), ...(matcher == null ? {} : { matcher }), hooks: [handler(command, async)] };
   return `sha256:${createHash('sha256').update(JSON.stringify(sortKeys(identity))).digest('hex')}`;
 }
 
-// The `-c` values for a list of hooks, each `{ event, matcher?, command }` and
+// The `-c` values for a list of hooks, each `{ event, matcher?, command, async? }` and
 // each its own group: one `hooks.<Event>=[...]` per event, in the order given,
 // and ONE `hooks.state` trusting them all. `hooks.state` is set as an inline
 // table because Codex splits a dotted `-c` key on every `.`, which would break
@@ -63,8 +65,8 @@ export function codexHookOverrides(hooks) {
   const trust = [];
   for (const [event, list] of byEvent) {
     const groups = list.map((h, i) => {
-      const x = handler(h.command);
-      trust.push(`${tomlString(hookTrustKey(event, i))}={trusted_hash=${tomlString(hookTrustHash(h.command, { event, matcher: h.matcher }))}}`);
+      const x = handler(h.command, h.async !== false);
+      trust.push(`${tomlString(hookTrustKey(event, i))}={trusted_hash=${tomlString(hookTrustHash(h.command, { event, matcher: h.matcher, async: x.async }))}}`);
       const matcher = h.matcher == null ? '' : `matcher=${tomlString(h.matcher)},`;
       return `{${matcher}hooks=[{type=${tomlString(x.type)},command=${tomlString(h.command)},timeout=${x.timeout},async=${x.async}}]}`;
     });

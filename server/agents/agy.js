@@ -13,6 +13,7 @@ import { AGY_DIR, IDS_DIR, MIRROR_DIR, conversationCwd, discoverAgyLiveId, forEa
 import { createAgyChatScanner, extractAgyLine, mightCarryAgyChat, mightCarryAgyText } from './agy-transcript.js';
 import { activityInRangeAgy, agySources, analyzeAgy, listResumableAgy, scanDaily, scanMonth } from './agy-usage.js';
 import { readAgySettingsModel, resolveAgyAutoEffort } from './auto-effort.js';
+import { agyToolPolicyDeny, rulesForAgent } from '../tool-policy.js';
 
 // Google's Antigravity CLI (`agy`, verified against 1.5.13). Next to Gemini CLI:
 //   - agy picks its own conversation id; the board's SessionStart hook records
@@ -120,12 +121,15 @@ function readUserSettings(agyDir = AGY_DIR) {
 // The launch's `--settings` (this session only, never saved): the launch folder
 // trusted, and the board's always-on MCP tools allowed. Each list keeps the
 // user's own entries, since a session setting replaces the saved one.
-export function agySessionSettings({ cwd, user = readUserSettings(), ext } = {}) {
+// A tool policy's `deny` entries join the user's own the same way.
+export function agySessionSettings({ cwd, user = readUserSettings(), ext, deny = [] } = {}) {
   const trusted = [...new Set([...(Array.isArray(user.trustedWorkspaces) ? user.trustedWorkspaces : []), ...(cwd ? [cwd] : [])])];
   const perms = user.permissions && typeof user.permissions === 'object' ? user.permissions : {};
   const grants = allowedAgyTools({ ext }).flatMap((t) => [`mcp(${MCP_SERVER_NAME}/${t})`, `mcp(${MCP_SERVER_NAME}_${MCP_SERVER_NAME}/${t})`]);
   const allow = [...new Set([...(Array.isArray(perms.allow) ? perms.allow : []), ...grants])];
   const settings = { permissions: { ...perms, allow } };
+  const denied = [...new Set([...(Array.isArray(perms.deny) ? perms.deny : []), ...deny])];
+  if (denied.length) settings.permissions.deny = denied;
   if (trusted.length) settings.trustedWorkspaces = trusted;
   return settings;
 }
@@ -174,13 +178,14 @@ export async function agyLaunchSecretEnv({ env = process.env, platform = process
 }
 
 function command(opts, args) {
+  const deny = agyToolPolicyDeny(rulesForAgent(opts.launchContext?.toolPolicy, 'agy'));
   const root = ensureAgyRoot();
   const flags = [
     ...agyModeArgs(opts.permissionMode),
     ...agyModelArgs(opts.model, opts.effort),
     '--add-dir', root,
     ...[...launchAddDirsOf(opts.launchContext), ...(opts.addDirs || [])].flatMap((d) => ['--add-dir', d]),
-    '--settings', JSON.stringify(agySessionSettings({ cwd: opts.cwd })),
+    '--settings', JSON.stringify(agySessionSettings({ cwd: opts.cwd, deny })),
     ...args,
   ];
   return `${envPrefix(opts)}agy ${flags.map(shellQuote).join(' ')}`;
@@ -323,6 +328,9 @@ const agyHeadless = {
 export const agy = {
   id: 'agy',
   label: 'agy',
+  // Tool policies (tool-policy.js) ride `permissions.deny`, verified on 1.5.18
+  // to hold under --dangerously-skip-permissions. agy matches whole names only.
+  toolPolicy: { patterns: false, bin: 'agy', minVersion: '1.5.18' },
   tmuxPrefix: 'ag_',
   reviewPriority: 30,
   models: MODELS,

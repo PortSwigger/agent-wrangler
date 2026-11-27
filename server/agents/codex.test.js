@@ -246,3 +246,31 @@ test('launch, resume and fork all pass the notify hook override', () => {
     assert.ok(cmd.includes(`'-c' ${expected}`), cmd);
   }
 });
+
+test('a tool policy adds a synchronous trusted PreToolUse hook per rule and forces hooks on, on launch, resume and fork', () => {
+  const toolPolicy = { sources: ['slack'], fingerprint: 'f', rules: [
+    { extId: 'slack', kind: 'tool', value: 'mcp__codex_apps__slack_send', agents: null, reason: 'Blocked.' },
+    { extId: 'slack', kind: 'tool', value: 'mcp(slack/send)', agents: ['agy'], reason: 'agy only.' },
+  ] };
+  const launchContext = { env: {}, addDirs: [], toolPolicy };
+  for (const cmd of [
+    codex.buildLaunch({ sessionId: 's', launchContext }),
+    codex.buildResume({ sessionId: 's', resumeId: 'r', launchContext }),
+    codex.buildFork({ sessionId: 's', sourceId: 'src', launchContext }),
+  ]) {
+    assert.match(cmd, /'--enable' 'hooks'/);
+    const pre = cmd.match(/'hooks\.PreToolUse=([^']*(?:'\\''[^']*)*)'/);
+    assert.ok(pre, 'a PreToolUse declaration');
+    assert.match(pre[1], /matcher="\^\(\?:mcp__codex_apps__slack_send\)\$",hooks=\[\{type="command",command="echo '\\''Blocked\.'\\'' >&2; exit 2",timeout=10,async=false\}\]/);
+    assert.doesNotMatch(pre[1], /mcp\(slack\/send\)/);
+    assert.equal((cmd.match(/'hooks\.state=/g) || []).length, 1, 'one hooks.state, or the second would replace the first');
+    assert.equal((cmd.match(/'hooks\.PostToolUse=/g) || []).length, 1);
+  }
+  assert.deepEqual(codex.toolPolicy, { patterns: true, bin: 'codex', minVersion: '0.160.1' });
+});
+
+test('without a tool policy Codex hooks stay as they were', () => {
+  const cmd = codex.buildLaunch({ sessionId: 's', launchContext: { env: {}, addDirs: [] } });
+  assert.doesNotMatch(cmd, /hooks\.PreToolUse=/);
+  assert.doesNotMatch(cmd, /'--enable' 'hooks'/);
+});

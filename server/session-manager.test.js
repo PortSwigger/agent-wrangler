@@ -4176,3 +4176,109 @@ test('launchContext can refuse scheduled resume and allow restore of the same ar
   assert.equal(sm.map.get('archived-card').archivedAt, undefined);
   assert.deepEqual(resumed, ['restore']);
 });
+
+// ── Required tool policies (tool-policy.js) ──
+const SLACK_RULES = Object.freeze({
+  sources: ['slack'],
+  fingerprint: 'fp-slack',
+  rules: [{ extId: 'slack', kind: 'tool', value: 'mcp__claude_ai_Slack__slack_send_message', agents: null, reason: 'Blocked.' }],
+});
+
+function smWithPolicy(policyFn) {
+  const sm = smForDispatch();
+  const calls = [];
+  sm._toolPolicy = async (ctx) => { calls.push(ctx); return policyFn(ctx); };
+  sm._toolPolicyVersion = async () => '9.9.9';
+  return { sm, calls };
+}
+
+test('dispatch: a tool policy that cannot be collected refuses before anything is created', async () => {
+  const { sm } = smWithPolicy(() => { throw new Error('Launch refused: the slack extension is quarantined'); });
+  const effects = [];
+  sm._beforeSpawn = async () => { effects.push('beforeSpawn'); return new Map(); };
+  sm._prepare = async () => { effects.push('prepare'); return { abort: null, warnings: [] }; };
+  sm._launchContext = async () => { effects.push('context'); return { env: {}, addDirs: [] }; };
+  sm._newSession = async () => { effects.push('launch'); };
+  await assert.rejects(sm.dispatch({ cwd: os.tmpdir(), intent: 'x' }), /slack extension is quarantined/);
+  assert.deepEqual(effects, []);
+  assert.equal(sm.map.size, 0);
+});
+
+test('dispatch: the policy is asked with the launch\'s identity, rides the command and is fingerprinted on the entry', async () => {
+  const { sm, calls } = smWithPolicy(() => SLACK_RULES);
+  let inner = '';
+  sm._newSession = async (_t, _d, cmd) => { inner = cmd; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', taskId: 't1', launchReason: 'spawn' });
+  assert.deepEqual(calls, [{ sid: sessionId, task: { id: 't1' }, agent: 'claude', runtime: 'local', reason: 'spawn' }]);
+  assert.match(inner, /\^\(\?:mcp__claude_ai_Slack__slack_send_message\)\$/);
+  assert.match(inner, /"permissions":\{"deny":\["mcp__claude_ai_Slack__slack_send_message"\]\}/);
+  assert.equal(sm.map.get(sessionId).toolPolicyFingerprint, 'fp-slack');
+});
+
+test('dispatch: no policy leaves the entry unfingerprinted and the command as before', async () => {
+  const { sm } = smWithPolicy(() => null);
+  let inner = '';
+  sm._newSession = async (_t, _d, cmd) => { inner = cmd; };
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
+  assert.doesNotMatch(inner, /disableAllHooks/);
+  assert.equal(sm.map.get(sessionId).toolPolicyFingerprint, undefined);
+});
+
+test('dispatch: a runtime that does not carry tool policies refuses a launch the policy applies to', async () => {
+  const { sm } = smWithPolicy(() => SLACK_RULES);
+  let launched = false;
+  sm._newSession = async () => { launched = true; };
+  await withRuntime({ id: 'toyrt', label: 'Toy', wrapLaunch: async ({ inner }) => inner }, 'toy', async () => {
+    await assert.rejects(sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'toyrt' }), /Toy runtime does not carry tool policies/);
+  });
+  assert.equal(launched, false);
+  await withRuntime({ id: 'toyrt', label: 'Toy', toolPolicy: true, wrapLaunch: async ({ inner }) => inner }, 'toy', async () => {
+    await sm.dispatch({ cwd: os.tmpdir(), intent: 'x', runtime: 'toyrt' });
+  });
+  assert.equal(launched, true);
+});
+
+test('dispatch: an installed CLI older than the tested floor, or one that cannot be read, refuses', async () => {
+  const { sm } = smWithPolicy(() => SLACK_RULES);
+  sm._toolPolicyVersion = async () => '2.0.0';
+  await assert.rejects(sm.dispatch({ cwd: os.tmpdir(), intent: 'x' }), /Claude 2\.0\.0 is older than 2\.1\.332/);
+  sm._toolPolicyVersion = async () => null;
+  await assert.rejects(sm.dispatch({ cwd: os.tmpdir(), intent: 'x' }), /could not read the installed Claude version/);
+  assert.equal(sm.map.size, 0);
+});
+
+test('dispatch: a policy with no rules for this agent does not need the agent to enforce anything', async () => {
+  const { sm } = smWithPolicy(() => ({ ...SLACK_RULES, rules: [{ ...SLACK_RULES.rules[0], agents: ['codex'] }] }));
+  sm._toolPolicyVersion = async () => null;
+  const { sessionId } = await sm.dispatch({ cwd: os.tmpdir(), intent: 'x' });
+  assert.equal(sm.map.get(sessionId).toolPolicyFingerprint, 'fp-slack');
+});
+
+test('resume: a refused tool policy leaves the running pane alone', async () => {
+  for (const reason of ['resume', 'restore', 'message', 'snooze-wake']) {
+    const { sm, calls } = smWithPolicy(() => { throw new Error('policy down'); });
+    const effects = [];
+    sm.killForSession = async () => { effects.push('kill'); return []; };
+    sm._newSession = async () => { effects.push('launch'); };
+    sm._launchContext = async () => { effects.push('context'); return { env: {}, addDirs: [] }; };
+    sm.map.set('c1', { agent: 'claude', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: os.tmpdir() });
+    await assert.rejects(sm._doResume('c1', os.tmpdir(), { reason }), /policy down/);
+    assert.deepEqual(effects, []);
+    assert.equal(calls[0].reason, reason);
+    assert.equal(calls[0].sid, 'c1');
+  }
+});
+
+test('fork: a refused tool policy creates nothing and is asked with the parent', async () => {
+  const { sm, calls } = smWithPolicy(() => { throw new Error('policy down'); });
+  const effects = [];
+  sm._beforeSpawn = async () => { effects.push('beforeSpawn'); return new Map(); };
+  sm._newSession = async () => { effects.push('launch'); };
+  const entry = { agent: 'claude', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: os.tmpdir() };
+  sm.map.set('p1', entry);
+  await assert.rejects(sm.fork({ sourceId: 'L0', parentId: 'p1', parentEntry: entry, cwd: os.tmpdir() }), /policy down/);
+  assert.deepEqual(effects, []);
+  assert.equal(calls[0].reason, 'fork');
+  assert.equal(calls[0].parentId, 'p1');
+  assert.deepEqual([...sm.map.keys()], ['p1']);
+});

@@ -14,6 +14,8 @@ export const local = {
   label: 'Local (host)',
   skipsHostResumeGuard: false,
   secretEnv: true,
+  // The agent runs here, unwrapped, so a tool policy's flags reach it as built.
+  toolPolicy: true,
   async wrapLaunch({ inner, secretEnvFile = null }) {
     return sourceSecretEnv(secretEnvFile) + inner;
   },

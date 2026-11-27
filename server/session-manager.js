@@ -37,6 +37,8 @@ import { INSTALL_ENV, INSTALL_SCOPED_ENV } from './install-env.js';
 import { checkGuiSession } from './gui-session.js';
 import { gentleKill } from './tmux-gentle-kill.js';
 import { holdPane, warmUpPane, deliverFirstPrompt, waitForComposerReady } from './pane-ready.js';
+import { ToolPolicyError, rulesForAgent, toolPolicyRefusal, toolPolicyVersionRefusal } from './tool-policy.js';
+import { cliVersion } from './cli-version.js';
 
 
 const exec = promisify(execFile);
@@ -549,6 +551,12 @@ export class SessionManager {
     // the loader and façades closed over; the default answers nothing, so every
     // existing launch is byte-identical and every test stays inert.
     this._launchContext = async () => ({ env: {}, addDirs: [] });
+    // Seam for the required tool policy (tool-policy.js): asked by
+    // dispatch/resume/fork before anything is created or killed. A throw, or a
+    // policy this agent, runtime or installed CLI cannot enforce, refuses the
+    // launch. server/index.js binds collectToolPolicy; the default answers none.
+    this._toolPolicy = async () => null;
+    this._toolPolicyVersion = (agent) => cliVersion(adapterFor(agent).toolPolicy?.bin || agent);
     this._beforeSpawn = async () => new Map();
     this._spawned = async () => {};
     // Seam for writing a launch's secretEnv file (launch-secrets.js), so a test
@@ -590,6 +598,20 @@ export class SessionManager {
   // Undefined only when that leaves nothing, i.e. core's default flags.
   _codexPolicyFor(context, stored) {
     return this._extCodexPolicy(context) ?? cleanCodexPolicy(stored ?? this._codexPolicyDefaults());
+  }
+
+  // The tool policy a launch must carry, or null. Throws when it cannot be
+  // collected or enforced, so callers ask BEFORE their first side effect.
+  async _collectToolPolicy({ sid, parentId, task, agent, runtime, reason }) {
+    const policy = await this._toolPolicy({ sid, ...(parentId ? { parentId } : {}), task, agent, runtime: runtime || 'local', reason });
+    const adapter = adapterFor(agent);
+    const refusal = toolPolicyRefusal(policy, { agent, adapter, runtime: runtimeFor(runtime) });
+    if (refusal) throw new ToolPolicyError(refusal);
+    if (rulesForAgent(policy, agent).length) {
+      const old = toolPolicyVersionRefusal(adapter, await this._toolPolicyVersion(agent));
+      if (old) throw new ToolPolicyError(old);
+    }
+    return policy;
   }
 
   // The launch cwd's trust, in the store the agent's adapter names (LAUNCH_TRUST).
@@ -646,6 +668,13 @@ export class SessionManager {
       return { ...ctx, env, secretEnv: { ...launchSecretEnvOf(ctx), [SESSION_TOKEN_ENV]: token } };
     }
     return { ...ctx, env: { ...env, [SESSION_TOKEN_ENV]: token } };
+  }
+
+  // The launch context carrying the tool policy the adapter compiles. Set
+  // here, after the extensions answered, so no launchContext hook can claim it.
+  _withToolPolicy(launchContext, toolPolicy) {
+    const { toolPolicy: _claimed, ...ctx } = launchContext || {};
+    return toolPolicy ? { ...ctx, toolPolicy } : ctx;
   }
 
   // What wrapLaunch is handed for a launch whose status hooks post events: the
@@ -1404,6 +1433,9 @@ export class SessionManager {
     // machine and names nothing there, and nothing here is created for it.
     const remote = hasLocation(runtime);
     if (remote && !atLocation(prev)) throw new Error(`This session's "${runtime.label || runtime.id}" location was never provisioned, so it can't be resumed.`);
+    const launchReason = ['restore', 'message', 'snooze-wake'].includes(reason) ? reason : 'resume';
+    // Before the kill below: a refused policy must leave a running pane alone.
+    const toolPolicy = await this._collectToolPolicy({ sid: sessionId, task: this._taskFor(sessionId) || null, agent, runtime: prev?.runtime, reason: launchReason });
     let opened = {};
     if (remote) {
       await this._resumeLocation(runtime, prev);
@@ -1492,10 +1524,10 @@ export class SessionManager {
     // Awaited before the command is built: the hook may bind state (task-memory
     // repoints the session's symlink) that the launch reads. A resume's reason is
     // passed through when it is one a hook distinguishes, else plain 'resume'.
-    const launchContext = this._withSessionToken(runtime, sessionId, await this._launchContext({
+    const launchContext = this._withToolPolicy(this._withSessionToken(runtime, sessionId, await this._launchContext({
       sid: sessionId, task: this._taskFor(sessionId) || null, agent, runtime: prev?.runtime || 'local',
-      reason: ['restore', 'message', 'snooze-wake'].includes(reason) ? reason : 'resume',
-    }), agent);
+      reason: launchReason,
+    }), agent), toolPolicy);
     const ownLaunch = ownLaunchRefusal(runtime, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
     if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext, addDirs: prev?.addDirs });
@@ -1548,6 +1580,7 @@ export class SessionManager {
       paneId: paneId || undefined,
       launchedCodeVersion: this.codeVersion || undefined,
       launchedToolFingerprint: toolFingerprint,
+      toolPolicyFingerprint: toolPolicy?.fingerprint,
     });
     this._save();
     // Here, not in resume(): that wrapper coalesces concurrent callers onto one
@@ -1594,12 +1627,13 @@ export class SessionManager {
       await this._resumeLocation(forkRuntime, parentEntry);
       opened = await openLocation(forkRuntime, parentEntry, 'fork');
     }
+    const sessionId = crypto.randomUUID(); // fresh CARD id (mapping key), NOT the source id
+    const toolPolicy = await this._collectToolPolicy({ sid: sessionId, parentId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime, reason: 'fork' });
     const spawnData = await this._beforeSpawn(spawnPayload);
     const adapter = adapterFor(agent);
     const short = crypto.randomBytes(4).toString('hex');
     const tmux = this._tmuxName(agent, short);
     const dir = remote ? opened.cwd || parentEntry?.cwd || '' : cwd && fs.existsSync(cwd) ? cwd : os.homedir();
-    const sessionId = crypto.randomUUID(); // fresh CARD id (mapping key), NOT the source id
     // The fork's live conversation gets its own id, distinct from the card id. A
     // preset agent (Claude) is handed it via --session-id so the conversation lives
     // under a known id (no phantom → the fork is resumable); a discover agent (Codex)
@@ -1609,9 +1643,9 @@ export class SessionManager {
     // The fork lands in its parent's task, so the launch context is asked with
     // that task before the command is built (an extension that binds per-task
     // state, like task-memory, must see it first).
-    const launchContext = this._withSessionToken(runtimeFor(parentEntry?.runtime), sessionId, await this._launchContext({
+    const launchContext = this._withToolPolicy(this._withSessionToken(runtimeFor(parentEntry?.runtime), sessionId, await this._launchContext({
       sid: sessionId, task: this._taskFor(parentId) || null, agent, runtime: parentEntry?.runtime || 'local', reason: 'fork', parentId,
-    }), agent);
+    }), agent), toolPolicy);
     const ownLaunch = ownLaunchRefusal(runtimeFor(parentEntry?.runtime), launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
     if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir, launchContext, addDirs: parentEntry?.addDirs });
@@ -1653,6 +1687,7 @@ export class SessionManager {
     entry.paneId = paneId || undefined;
     entry.launchedCodeVersion = this.codeVersion || undefined;
     entry.launchedToolFingerprint = toolFingerprint;
+    entry.toolPolicyFingerprint = toolPolicy?.fingerprint;
     this.map.set(sessionId, entry);
     this._save();
     await this._spawned({ ...spawnPayload, sessionId, cwd: dir }, spawnData);
@@ -2297,9 +2332,10 @@ export class SessionManager {
       model: model || null, effort: effort || null, cwd: trimmed || null,
       intent: intent == null ? null : String(intent).slice(0, 8_000), source: launchSource || (spawnedBy ? 'agent' : 'board'), taskId: taskId || null,
     };
+    const sessionId = crypto.randomUUID();
+    const toolPolicy = await this._collectToolPolicy({ sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason });
     const spawnData = await this._beforeSpawn(spawnPayload);
     const short = crypto.randomBytes(4).toString('hex');
-    const sessionId = crypto.randomUUID();
     // A location is provisioned after the last refusal and before anything is
     // created; its cwd is a path there, never made on this machine.
     let locationRef;
@@ -2382,9 +2418,9 @@ export class SessionManager {
     // collected before the command is built. dispatch mints sessionId, so the
     // caller names the task by `taskId` (before its own assign lands) rather than
     // handing in anything pre-built.
-    const launchContext = this._withSessionToken(rt, sessionId, await this._launchContext({
+    const launchContext = this._withToolPolicy(this._withSessionToken(rt, sessionId, await this._launchContext({
       sid: sessionId, task: taskId ? { id: taskId } : null, agent, runtime, reason: launchReason,
-    }), agent);
+    }), agent), toolPolicy);
     const ownLaunch = ownLaunchRefusal(rt, launchContext);
     if (ownLaunch) throw new Error(ownLaunch);
     if (!remote) await this._trustLaunchCwd(agent, 'after-context', { dir: cwd, launchContext, addDirs: grantedDirs });
@@ -2448,7 +2484,7 @@ export class SessionManager {
     // send_message routes a peer message to that `deliver` instead.
     // `offBoard` is the id of the extension hosting this card in its own view
     // (sessions.spawn({ offBoard: true })); the board's grid leaves it out.
-    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, ...(remote ? { location: locationRef } : {}), ...locationBranch, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined, launchedToolFingerprint: toolFingerprint };
+    const entry = { ...existing, short, tmux, cwd, agent, runtime: runtime === 'local' ? undefined : runtime, runtimeExt: rt.extId || undefined, ...(remote ? { location: locationRef } : {}), ...locationBranch, intent, model: model || null, effort: effort || null, permissionMode, ...(normalizedAutoCompactTokens === undefined ? {} : { autoCompactTokens: normalizedAutoCompactTokens }), ...(storedCodexPolicy ? { codexPolicy: storedCodexPolicy } : {}), createdAt: launchedAt, liveSessionId: liveSessionId || undefined, worktree: worktreeEntry, addDirs: grantedDirs.length ? grantedDirs : undefined, socket: this.socket, paneId: paneId || undefined, workflow: workflowOpt ?? existing?.workflow, autoMergeOnPass: autoMergeOnPass ? true : (existing?.autoMergeOnPass || undefined), spawnedBy: spawnedBy || undefined, statusNotify: statusNotify ? { to: statusNotify.to, since: launchedAt } : undefined, parentSession: nestedParent, offBoard: offBoard || existing?.offBoard || undefined, remoteControl: remoteControl || undefined, disallowedTools, mailCapable: !(rt.buildLaunch || rt.deliver), launchedCodeVersion: this.codeVersion || undefined, launchedToolFingerprint: toolFingerprint, toolPolicyFingerprint: toolPolicy?.fingerprint };
     this.map.set(sessionId, entry);
     delete pending.entry;
     this._save();

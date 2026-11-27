@@ -664,7 +664,12 @@ import semver from 'semver';
 // lets a board half run a blob: worker that compiles WebAssembly and evaluates
 // strings. An older server quarantines the unknown capability, so a manifest
 // declaring it declares `^2.3.0`.
-export const HOST_API_VERSION = '2.3.0';
+// 2.4.0 adds required tool policies (manifest `toolPolicy`, server/tool-policy.js),
+// `agents:headless-tool` (host.agents.headlessTool, with the manifest's
+// `headlessTools`) and `operations:run` (host.operations.run/accepting). An
+// older server quarantines the unknown capabilities and ignores `toolPolicy`,
+// so a manifest relying on any of them declares `^2.4.0`.
+export const HOST_API_VERSION = '2.4.0';
 
 // The last 1.x, which every `^1` range this server honours is served as.
 export const V1_SHIM_VERSION = '1.96.0';
