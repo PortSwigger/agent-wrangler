@@ -24,7 +24,7 @@ function submitFork() {
   send({ type: 'fork', sessionId: forkParentId, prompt, name });
   forkModal.classList.add('hidden');
   forkParentId = null;
-  toast('Forking…');
+  toast('Forking…', false, { snooze: false });
 }
 document.getElementById('fk-cancel').addEventListener('click', () => { forkModal.classList.add('hidden'); forkParentId = null; });
 document.getElementById('fk-go').addEventListener('click', submitFork);

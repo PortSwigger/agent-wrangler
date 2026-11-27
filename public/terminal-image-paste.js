@@ -30,7 +30,7 @@ export function createTerminalImagePaste({ send, toast, frameOf = sourceToFrame,
     e.stopPropagation();
     if (text) pasteText(text);
     const chosen = sources.slice(0, MAX_IMAGES_PER_PASTE);
-    if (sources.length > chosen.length) toast(`Pasting ${chosen.length} images — ${sources.length - chosen.length} more were skipped.`, false);
+    if (sources.length > chosen.length) toast(`Pasting ${chosen.length} images — ${sources.length - chosen.length} more were skipped.`, false, { snooze: false });
     // One at a time, each waiting for the previous reply: the control socket
     // does not await its handlers, so firing them together could land the
     // images in the pane out of the order they were copied.

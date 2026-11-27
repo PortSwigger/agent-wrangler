@@ -64,8 +64,8 @@ export const SETTINGS = [
     id: 'suppressNudgedPrToasts',
     type: 'toggle',
     scope: 'server',
-    label: 'Hide PR toasts the session already got',
-    help: 'Skip the board toast for a PR status change (checks, merge conflict, review threads, auto-merge) once the owning session has the same notice in its pane. The toast still shows when the session was not nudged (auto-fix off, a task-level PR, no live session) or when the notice is held back, for example behind a draft or a dialog.',
+    label: 'Hide PR notifications the session already got',
+    help: 'Skip the board notification for a PR status change (checks, merge conflict, review threads, auto-merge) once the owning session has the same notice in its pane. The notification still shows when the session was not nudged (auto-fix off, a task-level PR, no live session) or when the notice is held back, for example behind a draft or a dialog.',
     default: true,
   },
   {
@@ -196,9 +196,17 @@ export const SETTINGS = [
     id: 'toastPosition',
     type: 'segmented',
     options: [{ value: 'top-right', label: 'Top right' }, { value: 'bottom-right', label: 'Bottom right' }],
-    label: 'Toast position',
-    help: 'Where board messages and persistent notification cards appear. Applies immediately and is saved for this browser.',
+    label: 'Notification position',
+    help: 'Where notifications appear on the board. Applies immediately and is saved for this browser.',
     default: 'top-right',
+  },
+  {
+    id: 'notificationSnoozeMinutes',
+    type: 'segmented',
+    options: [{ value: '5', label: '5 min' }, { value: '10', label: '10 min' }, { value: '30', label: '30 min' }],
+    label: 'Notification snooze length',
+    help: 'How long the clock on a notification, and Snooze all beside Clear all, hide notifications. When the time is up they come back, unless they no longer apply. Saved for this browser.',
+    default: '10',
   },
   {
     id: 'autoUpdate',
@@ -223,7 +231,7 @@ export const SETTINGS = [
 // toggle per server extension off graph.extensions, so a new extension needs
 // no settings.js edit at all.
 export const SETTINGS_TABS = [
-  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition'] },
+  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition', 'notificationSnoozeMinutes'] },
   { id: 'decks', label: 'Decks', settingIds: [] },
   {
     id: 'sessions',
@@ -250,7 +258,7 @@ export const SETTINGS_TABS = [
 // with its own sessions, read from and written to the deck chosen in the
 // picker. A board with only its own deck keeps SETTINGS_TABS.
 export const BOARD_TABS = [
-  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition'] },
+  { id: 'appearance', label: 'Appearance', settingIds: ['terminalSide', 'toastPosition', 'notificationSnoozeMinutes'] },
   { id: 'board', label: 'Board', settingIds: ['subagentsExpandedByDefault', 'childFullViewByDefault', 'chatViewDefault', 'suppressNudgedPrToasts'] },
   { id: 'decks', label: 'Decks', settingIds: [] },
   { id: 'shortcuts', label: 'Shortcuts', settingIds: ['flipNavHotkeys'] },

@@ -58,7 +58,7 @@ import {
 import { STATUS_WORDS, waitingStatusWord, CORE_CHIPS, sessionCardHtml, linkChipsHtml, tileHtml, ghostHtml, visibleTaskLinkCount, visibleSubAgents, subagentRowHtml, subagentDividerHtml, modelPillHtml, compactPillHtml, tokenChipHtml, costTagHtml } from './cards.js';
 import { SAMPLE_SESSION } from './sample-session.js';
 import { readTerminalTheme, readTerminalFont, setCustomStyles, loadedStyles, onThemeChange, initStyles, renderThemeRows, selectStyle, themeButtonHtml } from './theme.js';
-import { toast, setToastPosition } from './toast.js';
+import { toast, setToastPosition, setToastSnoozeHandlers, releaseHeldToasts } from './toast.js';
 import { createDeckClient, restoreCompat, stateToGraph, supportedItems, DECK_API_MAJOR } from './deck-client.js';
 import { deckOrigin } from './deck-origin.js';
 import { cardKey, sessionIdOf, deckIdOf, stampDeck } from './card-key.js';
@@ -70,6 +70,7 @@ import { toActionCall } from './deck-actions.js';
 import { createNotifications } from './notifications.js';
 import { createInputGates } from './input-gate.js';
 import { prToastActions, prCheckToastOptions, prAlertToastOptions, prToastSuppressed } from './pr-check-notification.js';
+import { NOTIFICATION_SNOOZE_KEY, createSnoozeStore, snoozeMinutes, stillTrue, notificationKey, createPopupTracker } from './notification-snooze.js';
 import { showSystemBanner, hideSystemBanner } from './system-banner.js';
 import { openFork, openCustomSnooze } from './modals.js';
 import { createRenderer } from './markdown-preview.js';
@@ -390,7 +391,7 @@ let inputGatesQueued = false;
 // chat composer is disabled with the gate's reason. Told once per lock.
 const inputGates = createInputGates({
   gateFor: (s) => slots.inputGate(s, latestGraph, extApi),
-  notify: (_sid, g) => toast(`Input locked: ${g.reason}`),
+  notify: (_sid, g) => toast(`Input locked: ${g.reason}`, false, { snooze: false }),
 });
 function refreshInputGates() {
   if (!inputGates.refresh(latestSessions)) return;
@@ -409,7 +410,7 @@ function openSessionInBoard(sessionId, { diff = false, onClose = null } = {}) {
   boardOpen.request(card, { diff, onClose });
   setPendingSelect(card);
   send({ type: 'resume', sessionId });
-  toast('Restoring…');
+  toast('Restoring…', false, { snooze: false });
 }
 
 // The rest of openSessionInBoard, once the card is on the board: now for a live
@@ -447,7 +448,7 @@ function scrollTaskIntoView(taskId) {
 // board (archived, deleted) toasts instead.
 function openTaskInBoard(taskId) {
   setView('grid');
-  if (!currentOrder().includes(taskId)) { toast('Task is not on the board', true); return false; }
+  if (!currentOrder().includes(taskId)) { toast('Task is not on the board', true, { snooze: false }); return false; }
   // A maximised session pane or an open diff panel hides #grid entirely.
   if (maximized) setMaximized(false);
   if (isDiffPanelOpen()) closeDiffPanel();
@@ -1782,7 +1783,7 @@ function isWorkerSid(sessionId) {
 // Returns whether the move can go ahead.
 function promoteDraggedChild(sessionId) {
   if (isWorkerSid(sessionId)) {
-    toast('A workflow worker stays with its run. Drag it within its spine to reorder it.', true);
+    toast('A workflow worker stays with its run. Drag it within its spine to reorder it.', true, { snooze: false });
     return false;
   }
   promoteSession(sessionId);
@@ -3155,8 +3156,8 @@ function openCardMenu(card, x, y) {
 function copySessionReference(s) {
   const ref = `Agent Wrangler session "${s.label || s.sessionId.slice(0, 8)}" (id: ${s.sessionId}) — read it with the read_session_transcript tool`;
   const p = navigator.clipboard?.writeText(ref);
-  if (!p) return toast('Clipboard unavailable', true);
-  p.then(() => toast('Copied session reference', 'success', { duration: 1500 }), () => toast('Could not copy to clipboard', true));
+  if (!p) return toast('Clipboard unavailable', true, { snooze: false });
+  p.then(() => toast('Copied session reference', 'success', { duration: 1500, snooze: false }), () => toast('Could not copy to clipboard', true, { snooze: false }));
 }
 
 // The session pane header's "Actions" overflow menu — the inline icon row
@@ -3350,7 +3351,7 @@ async function archiveTask(taskId, name) {
       danger: true,
     });
     if (result !== 'ok') return;
-    toast('Archiving task…');
+    toast('Archiving task…', false, { snooze: false });
   }
   send({ type: 'task-archive', taskId });
 }
@@ -3368,7 +3369,7 @@ export async function restoreTaskWithPrompt(taskId, name) {
   const cascaded = latestHistory.filter((h) => h.viaTaskArchive === taskId);
   if (!cascaded.length) {
     send({ type: 'task-unarchive', taskId, restoreSessions: false });
-    toast('Task restored');
+    toast('Task restored', false, { snooze: false });
     return;
   }
   const names = cascaded.map((h) => h.label || h.sessionId.slice(0, 8));
@@ -3381,7 +3382,7 @@ export async function restoreTaskWithPrompt(taskId, name) {
   });
   if (result === 'cancel') return;
   send({ type: 'task-unarchive', taskId, restoreSessions: result === 'ok' });
-  toast(result === 'ok' ? 'Task and sessions restored' : 'Task restored');
+  toast(result === 'ok' ? 'Task and sessions restored' : 'Task restored', false, { snooze: false });
 }
 
 function openTaskMenu(cell, x, y) {
@@ -3737,7 +3738,7 @@ function commitTaskReorder() {
   // Each deck orders its own tasks; Unassigned sits among the own deck's.
   const deckOfTile = (id) => findTask(id)?.deckId || null;
   if (deckOfTile(draggedTaskId) !== deckOfTile(taskDropTargetId)) {
-    toast("Tasks stay with their own deck's tasks", true);
+    toast("Tasks stay with their own deck's tasks", true, { snooze: false });
     return;
   }
   const order = currentOrder();
@@ -3984,7 +3985,7 @@ function trackJustFinished(sessions) {
     const settled = settledStatus(s, prev);
     if (prev === 'working' && settled === 'idle') {
       justFinished.add(s.sessionId); jfChanged = true;
-      if (!playFinishCue && !focusSuppresses('session', s.sessionId)) playFinishCue = true;
+      if (!playFinishCue && !focusSuppresses('session', s.sessionId) && !notifSnooze.allActive()) playFinishCue = true;
     }
     if (settled !== 'idle' && justFinished.delete(s.sessionId)) jfChanged = true;
     // The needs-you ack re-arm stays on the raw status: needs-you is hook-driven
@@ -4119,7 +4120,7 @@ async function archiveSession(sessionId) {
   // A card at a remote location is checked for unpushed commits server-side
   // first, so its toast waits for the 'archived' (or 'archive-unpushed') reply.
   const showArchived = s && runtimeIdHasLocation(s.runtime)
-    ? () => toast('Checking for unpushed commits…')
+    ? () => toast('Checking for unpushed commits…', false, { snooze: false })
     : archivedToast;
 
   if (count > 0) {
@@ -4211,7 +4212,7 @@ function beginRestart(sessionId, s, killJobsFirst) {
   const prev = restartingTerms.get(card);
   if (prev) clearTimeout(prev.timer);
   send(killJobsFirst ? { type: 'resume', sessionId, killJobsFirst: true } : { type: 'resume', sessionId });
-  toast('Restarting…');
+  toast('Restarting…', false, { snooze: false });
   // Fallback keyed PER SESSION (not one shared timer): two concurrent restarts must
   // not cancel each other's timeout, or a failed relaunch could strand a stuck
   // spinner. If the fresh tmux never shows, stop holding so the panel reverts to
@@ -4370,7 +4371,7 @@ function resumeDormant(card) {
   resuming.add(card);
   setPendingSelect(card);
   send({ type: 'resume', sessionId: sessionIdOf(card), card });
-  toast('Resuming…');
+  toast('Resuming…', false, { snooze: false });
   selectSession(card);
   // Re-arm a single timer so repeated clicks during the window don't stack
   // multiple failure toasts firing 8s apart.
@@ -5245,7 +5246,7 @@ function renderSidebar(s) {
   </div>`;
   term.querySelector('#resume-btn')?.addEventListener('click', () => {
     send({ type: 'resume', sessionId: s.sessionId, card: s.cardKey });
-    toast('Resuming…');
+    toast('Resuming…', false, { snooze: false });
   });
 }
 
@@ -5282,7 +5283,7 @@ function beginRename(card) {
       if (name !== seed.trim()) {
         send({ type: 'rename', sessionId, name, card });
         if (s && name) s.label = name; // optimistic (rename drops the marker); server confirms on next graph
-        toast(name ? 'Renamed' : 'Name reset');
+        toast(name ? 'Renamed' : 'Name reset', false, { snooze: false });
       }
     }
     renderPanel(card);
@@ -5844,7 +5845,7 @@ function attachClipboard(term) {
       if (!text) return;
       const p = navigator.clipboard?.writeText(text);
       if (!p) return;
-      return p.then(() => { if (text && text.trim()) toast('Copied to clipboard', 'success', { duration: 1500 }); }, () => {});
+      return p.then(() => { if (text && text.trim()) toast('Copied to clipboard', 'success', { duration: 1500, snooze: false }); }, () => {});
     },
   }));
 }
@@ -6263,7 +6264,7 @@ function setDispatchDeck(deckId) {
   const next = deckId || null;
   if (next === dispatchDeck) return;
   dispatchDeck = next;
-  if (intentImages.names().length) { intentImages.reset(); toast('Images are kept by one deck: paste them again for this one.'); }
+  if (intentImages.names().length) { intentImages.reset(); toast('Images are kept by one deck: paste them again for this one.', false, { snooze: false }); }
   populateTaskSelect(null);
   if (scheduleMode()) populateTargetSelect(null);
   syncDispatchRuntimes();
@@ -7048,14 +7049,14 @@ function submitDispatch(over) {
   const wtOn = fields.worktree && !wfOn;
   // Cmd+Enter bypasses the disabled Launch button, so re-check here too.
   if (!selectedRuntimeHasLocation() && cwdBlocked()) { renderCwdState(); return false; }
-  if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.'); return false; }
-  if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.'); return false; }
-  if (intentImages.busy()) { toast('Still attaching images — launch again in a moment.'); return false; }
+  if (additionalFolders.invalid()) { toast('Choose an existing folder for each additional folder.', false, { snooze: false }); return false; }
+  if (fields.runtime && fields.runtime !== 'local' && fields.addDirs.length) { toast('Additional folders require a local launch.', false, { snooze: false }); return false; }
+  if (intentImages.busy()) { toast('Still attaching images — launch again in a moment.', false, { snooze: false }); return false; }
   const imageNames = intentImages.names();
-  if (imageNames.length && fields.runtime && fields.runtime !== 'local') { toast('Images in the first prompt need a local launch.'); return false; }
+  if (imageNames.length && fields.runtime && fields.runtime !== 'local') { toast('Images in the first prompt need a local launch.', false, { snooze: false }); return false; }
   if (imageNames.length) fields.imageNames = imageNames;
   const blocked = slots.validateDispatch(dispatchFieldCtx(fields));
-  if (blocked) { toast(blocked); return false; }
+  if (blocked) { toast(blocked, false, { snooze: false }); return false; }
   if (wtOn && wtValidation && wtValidation.ok === false) {
     document.getElementById('m-worktree-msg').classList.remove('hidden');
     return false; // can't create a worktree here — let the user untick or fix the folder
@@ -7072,10 +7073,10 @@ function submitDispatch(over) {
   dispatchWaiter.submit();
   // Both a workflow run and a manual worktree create the worktree server-side, so
   // keep the dialog open (pending) until the 'dispatched' ack lands.
-  if (wfOn || wtOn) { wtPending = true; setDispatchPending(true); toast(wfOn ? 'Starting workflow…' : 'Creating worktree…'); return true; }
+  if (wfOn || wtOn) { wtPending = true; setDispatchPending(true); toast(wfOn ? 'Starting workflow…' : 'Creating worktree…', false, { snooze: false }); return true; }
   modal.classList.add('hidden');
   document.getElementById('m-intent').value = '';
-  toast('Launching session…');
+  toast('Launching session…', false, { snooze: false });
   return true;
 }
 
@@ -7170,7 +7171,7 @@ function submitSchedule() {
   if (!sent) return;
   closeModal();
   openSchedulesPanel(); // back to the list, which the rebuild refreshes
-  toast(editing ? 'Schedule saved' : 'Schedule created');
+  toast(editing ? 'Schedule saved' : 'Schedule created', false, { snooze: false });
 }
 
 // Close #modal and reset to launch mode. If we were editing/creating a schedule,
@@ -8124,7 +8125,7 @@ function renderSchedules() {
     row.querySelector('.sched-enable input').addEventListener('change', (e) =>
       send({ type: 'schedule-toggle', id, enabled: e.target.checked }));
     row.querySelector('.sched-run').addEventListener('click', () => {
-      if (send({ type: 'schedule-run-now', id })) toast(`Running "${byId(id)?.name || 'schedule'}" now…`);
+      if (send({ type: 'schedule-run-now', id })) toast(`Running "${byId(id)?.name || 'schedule'}" now…`, false, { snooze: false });
     });
     row.querySelector('.sched-edit')?.addEventListener('click', () => {
       closeSchedulesPanel();
@@ -8132,7 +8133,7 @@ function renderSchedules() {
     });
     row.querySelector('.sched-del').addEventListener('click', () => {
       const name = byId(id)?.name || 'schedule';
-      if (send({ type: 'schedule-delete', id })) toast(`Schedule "${name}" deleted`);
+      if (send({ type: 'schedule-delete', id })) toast(`Schedule "${name}" deleted`, false, { snooze: false });
     });
   });
 }
@@ -8342,7 +8343,7 @@ export function send(obj, extId = null) {
   let deckId = deckForCall(named.sessionId, card);
   const owner = scope.deckId === undefined ? deckId : scope.deckId || boardDeckId;
   if (!toDeck && (scope.conflict || ((card || named.sessionId) && deckId !== owner))) {
-    toast('Tasks stay on their own deck: move it to a task on the same deck', true);
+    toast('Tasks stay on their own deck: move it to a task on the same deck', true, { snooze: false });
     return false;
   }
   // An extension's frame may name its deck outright (`deck`, slots checks it).
@@ -8578,7 +8579,7 @@ function onDeckMessage(msg) {
       danger: true,
     }).then((result) => {
       if (result === 'ok') send({ ...msg.request, allowUnpushed: true });
-      else toast('Archive cancelled — nothing was changed.');
+      else toast('Archive cancelled — nothing was changed.', false, { snooze: false });
     });
   }
   else if (msg.type === 'archived' && msg.plain) {
@@ -8619,10 +8620,10 @@ function onDeckMessage(msg) {
   else if (msg.type === 'worktree-removed') {
     const card = cardOf(msg.sessionId);
     if (msg.branchExists) toast('Worktree removed', false, { actions: [{ label: 'Delete branch', onClick: () => send({ type: 'branch-delete', sessionId: msg.sessionId, card }) }], duration: 15000 });
-    else toast('Worktree removed');
+    else toast('Worktree removed', false, { snooze: false });
   }
-  else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop');
-  else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`, 'success');
+  else if (msg.type === 'container-stopped') toast(msg.stopped ? 'Container stopped' : 'No running container to stop', false, { snooze: false });
+  else if (msg.type === 'branch-deleted') toast(`Branch ${msg.branch} deleted`, 'success', { snooze: false });
   else if (msg.type === 'branch-delete-blocked') {
     const card = cardOf(msg.sessionId);
     confirmDialog({
@@ -8646,7 +8647,7 @@ function onDeckMessage(msg) {
       body: `The folder this session ran in is gone:\n\n${tildeCollapse(msg.dir)}\n\nRecreate it and ${verb} anyway? The full conversation is restored from the transcript — but the working files that were in that folder won't be.`,
       okLabel: `Recreate & ${verb}`,
     }).then((result) => {
-      if (result !== 'ok') { toast(`${forking ? 'Fork' : 'Resume'} cancelled — original folder is gone.`); return; }
+      if (result !== 'ok') { toast(`${forking ? 'Fork' : 'Resume'} cancelled — original folder is gone.`, false, { snooze: false }); return; }
       if (forking) send({ type: 'fork', sessionId: msg.sessionId, recreateDir: true, prompt: msg.prompt || '', name: msg.name || '', card });
       else send({ type: 'resume', sessionId: msg.sessionId, recreateDir: true, card });
     });
@@ -8723,15 +8724,80 @@ function focusSuppresses(scope, ownerId) {
   return taskId !== focusedId;
 }
 
-function notify(session) {
+// Notification snooze (notification-snooze.js): the clock on a notification
+// toast holds it for the length chosen in Settings, "Snooze all" holds every
+// notification on screen and any that arrive until it ends. A held one comes
+// back only if it is still true, and a newer one about the same session or PR
+// replaces it. Holding happens after the focus/nudge checks above have had
+// their say, so a notification they drop is never held.
+const notifSnooze = createSnoozeStore({ storage: (() => { try { return localStorage; } catch { return null; } })() });
+let notifSnoozeTimer = null;
+const snoozeLength = () => snoozeMinutes(getSetting('notificationSnoozeMinutes'));
+
+const popups = createPopupTracker();
+const trackPopup = (msg, popup) => popups.track(msg, popup);
+
+function holdNotification(msg, resurfaced) {
+  if (!resurfaced) notifSnooze.supersede(msg);
+  if (!notifSnooze.allActive()) return false;
+  notifSnooze.holdForAll(msg);
+  return true;
+}
+
+function prLinkByUrl(url) {
+  for (const owner of [...latestSessions, ...boardTasks()]) {
+    const link = owner.links?.find((l) => l.type === 'pr' && l.url === url);
+    if (link) return link;
+  }
+  return null;
+}
+
+function scheduleResurface() {
+  clearTimeout(notifSnoozeTimer);
+  const wake = notifSnooze.nextWake();
+  if (wake != null) notifSnoozeTimer = setTimeout(resurfaceSnoozed, Math.min(Math.max(wake - Date.now(), 0) + 250, 2 ** 31 - 1));
+}
+
+// Waits for the first graph: until then every session would read as gone.
+function resurfaceSnoozed() {
+  if (!latestGraph) { clearTimeout(notifSnoozeTimer); notifSnoozeTimer = setTimeout(resurfaceSnoozed, 2000); return; }
+  const lookup = { session: (id) => latestSessions.find((s) => s.sessionId === id), prLink: prLinkByUrl };
+  const due = notifSnooze.takeDue();
+  if (!notifSnooze.allActive()) releaseHeldToasts();
+  for (const msg of due) {
+    if (!stillTrue(msg, lookup)) continue;
+    if (msg.type === 'notify') notify(msg.session, true);
+    else if (msg.type === 'pr-checks') onPrChecks(msg, true);
+    else if (msg.type === 'pr-merge') onPrMerge(msg, true);
+    else if (msg.type === 'pr-dirty') onPrDirty(msg, true);
+    else if (msg.type === 'pr-unresolved') onPrComments(msg, true);
+  }
+  scheduleResurface();
+}
+
+setToastSnoozeHandlers({
+  title: () => `Snooze for ${snoozeLength()} minutes`,
+  minutes: snoozeLength,
+  allActive: () => notifSnooze.allActive(),
+  snooze: (msg) => { popups.close([notificationKey(msg)]); notifSnooze.hold(msg, snoozeLength()); },
+  snoozeAll: (msgs) => { popups.close(); notifSnooze.snoozeAll(msgs, snoozeLength()); },
+});
+notifSnooze.subscribe(scheduleResurface);
+window.addEventListener('storage', (e) => { if (e.key === NOTIFICATION_SNOOZE_KEY) notifSnooze.reload(); });
+scheduleResurface();
+
+function notify(session, resurfaced = false) {
   if (focusSuppresses('session', session.sessionId)) return;
+  const msg = { type: 'notify', session };
+  if (holdNotification(msg, resurfaced)) return;
   const body = `${session.label}${session.waitingFor ? ' — ' + session.waitingFor : ''}`;
   slots.notificationCue('needs-you', extApi);
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(needsYouTitle(session), { body });
     n.onclick = () => { window.focus(); selectSession(session.cardKey); };
+    trackPopup(msg, n);
   }
-  toast(`⚠ ${body}`, false);
+  toast(`⚠ ${body}`, false, { snooze: msg });
 }
 
 // A PR's CI checks crossed into passing/failing (one-time, server-detected).
@@ -8751,8 +8817,9 @@ function prRepoName(url) {
   const m = /github\.com\/[^/]+\/([^/]+)\/pull\/\d+/.exec(url || '');
   return m ? m[1] : '';
 }
-function onPrChecks(msg) {
+function onPrChecks(msg, resurfaced = false) {
   if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (holdNotification(msg, resurfaced)) return;
   const isErr = msg.status === 'failing' || msg.status === 'changes-requested';
   // Omit the `(<repo>)` segment entirely for an enterprise/malformed url (prRepoName
   // returns '') rather than rendering bare `()` — mirrors the server's prPaneNudge.
@@ -8761,10 +8828,11 @@ function onPrChecks(msg) {
   const phrase = PR_CHECK_TEXT[msg.status] || msg.status;
   const shortSha = typeof msg.headSha === 'string' ? msg.headSha.slice(0, 7) : '';
   const text = `[Agent Wrangler] ${label}: ${phrase}${shortSha ? ` (${shortSha})` : ''}`;
-  toast(text, isErr, prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, isErr, { ...prCheckToastOptions(msg.status, msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), snooze: msg });
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
+    trackPopup(msg, n);
   }
   if (isErr) flashPr(msg.url);
 }
@@ -8773,27 +8841,30 @@ function onPrChecks(msg) {
 // transition, because that session opted into "Auto-merge when checks pass".
 // Success → accent toast; failure → red .err toast + a one-shot dot flash, so a
 // blocked merge (branch protection, conflicts) is visible rather than silent.
-function onPrMerge(msg) {
+function onPrMerge(msg, resurfaced = false) {
   if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (holdNotification(msg, resurfaced)) return;
   const text = msg.ok
     ? `PR #${msg.number} auto-merged`
     : `PR #${msg.number} auto-merge failed: ${msg.error}`;
-  toast(text, !msg.ok, prCheckToastOptions(msg.ok ? 'passing' : 'failing', msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, !msg.ok, { ...prCheckToastOptions(msg.ok ? 'passing' : 'failing', msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), snooze: msg });
   if (!msg.ok) flashPr(msg.url);
 }
 
 // A linked PR just became DIRTY (merge conflicts with its base branch) — always
 // an alert, unlike onPrChecks where only some statuses are errors. Mirrors
 // onPrChecks' shape (focus-suppressed toast + browser Notification + dot flash).
-function onPrDirty(msg) {
+function onPrDirty(msg, resurfaced = false) {
   if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (holdNotification(msg, resurfaced)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const text = `[Agent Wrangler] ${label}: merge conflicts with the base branch`;
-  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, true, { ...prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), snooze: msg });
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
+    trackPopup(msg, n);
   }
   flashPr(msg.url);
 }
@@ -8803,16 +8874,18 @@ function onPrDirty(msg) {
 // Always an alert, like onPrDirty; mirrors its exact shape (focus-suppressed
 // toast + browser Notification + dot flash). Notification-only — no new
 // persistent PR-dot/card UI beyond the existing transient flash.
-function onPrComments(msg) {
+function onPrComments(msg, resurfaced = false) {
   if (focusSuppresses(msg.scope, msg.sessionId) || prToastSuppressed(msg, suppressNudgedPrToasts)) return;
+  if (holdNotification(msg, resurfaced)) return;
   const repo = prRepoName(msg.url);
   const label = repo ? `PR #${msg.number} (${repo})` : `PR #${msg.number}`;
   const phrase = `${msg.delta} new unresolved review thread${msg.delta === 1 ? '' : 's'} (${msg.count} unresolved total)`;
   const text = `[Agent Wrangler] ${label}: ${phrase}`;
-  toast(text, true, prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard));
+  toast(text, true, { ...prAlertToastOptions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard), snooze: msg });
   if (window.Notification && Notification.permission === 'granted') {
     const n = new Notification(text);
     n.onclick = () => { window.focus(); prToastActions(msg.scope, msg.sessionId, openSessionInBoard, openTaskInBoard)[0]?.onClick(); };
+    trackPopup(msg, n);
   }
   flashPr(msg.url);
 }

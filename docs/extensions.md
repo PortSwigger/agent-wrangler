@@ -2692,7 +2692,7 @@ The remainder is the maintainer reference. Read it before changing `server/exten
   `api.ui.withdraw(id)` takes one down. Ids are per extension, and an extension's
   cards are removed when it is turned off. Persistent cards do not count towards
   the transient toast limit and are never evicted. The stack defaults to top-right;
-  core **Settings → Appearance → Toast position** can move it to bottom-right for
+  core **Settings → Appearance → Notification position** can move it to bottom-right for
   this browser. Newest messages sit nearest the chosen corner, about 12px from the
   viewport edges, including while dialogs open or close. They can cover board or
   dialog controls. All text is set as text.

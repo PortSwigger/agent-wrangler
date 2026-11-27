@@ -11,6 +11,17 @@
 //   duration  overrides the severity's lifetime (ms)
 //   details   longer text behind a Details expander
 //   id        a toast with the same id is replaced in place rather than stacked
+//   snooze    false: no clock, for immediate feedback on the human's own
+//             action. Any other value is handed to the snooze handler
+//             (setSnoozeHandlers), which decides whether it comes back.
+// Once snooze handlers are set, every toast and persistent card has a clock
+// beside × unless it opted out. One without a snooze value is held here and
+// shown again when the snooze length is up (a transient one with what was left
+// of its lifetime); dismissing or replacing it meanwhile drops it. "Snooze all"
+// shows beside "Clear all" and snoozes every clocked toast at once. While the
+// handler reports Snooze all active, new persistent notifications are held too:
+// their callers keep waiting, a withdrawal or replacement still applies, and
+// releaseHeld() shows what Snooze all held.
 // Long text is clamped to three lines, with Details to read the rest.
 //
 // The stack is a manual popover, so it is drawn in the top layer. A modal
@@ -27,11 +38,17 @@ function severityOf(isErr, opts) {
   return opts?.severity in SEVERITY_MS ? opts.severity : 'info';
 }
 
+import { CLOCK_ICON } from './icons.js';
+
 export function createToasts({ document, position = 'top-right', setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout, now = () => Date.now() }) {
   const live = []; // oldest first: { el, id, key, rank, remaining, started, timer }
   const modals = []; // open modal dialogs, in the order they opened
   let stack = null;
   let clearButton = null;
+  let snoozeAllButton = null;
+  let head = null;
+  let snoozeHandlers = null;
+  const parked = []; // snoozed here, oldest first: { persistent, id, key, options | args, remaining, timer }
   let list = null;
   let held = false; // hovered or focused: every timer waits
   let listObserver = null;
@@ -53,9 +70,13 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     stack.setAttribute('aria-label', 'Messages');
     stack.setAttribute('data-position', position);
     clearButton = button('toast-clear', 'Clear all', clear);
+    snoozeAllButton = button('toast-snooze-all', 'Snooze all', snoozeAll);
+    head = document.createElement('div');
+    head.className = 'toast-head';
+    head.append(snoozeAllButton, clearButton);
     list = document.createElement('div');
     list.className = 'toast-list';
-    stack.append(...(position === 'top-right' ? [clearButton, list] : [list, clearButton]));
+    stack.append(...(position === 'top-right' ? [head, list] : [list, head]));
     const hold = (on) => () => { held = on; for (const t of live) (on ? pause : run)(t); };
     stack.addEventListener('mouseenter', hold(true));
     stack.addEventListener('mouseleave', () => { if (!stack.matches?.(':focus-within')) hold(false)(); });
@@ -83,6 +104,9 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   function place(raise = false) {
     const el = root();
     clearButton.hidden = live.length < 2;
+    snoozeAllButton.hidden = clearButton.hidden || !snoozeHandlers;
+    if (snoozeHandlers) snoozeAllButton.title = snoozeHandlers.title();
+    head.hidden = clearButton.hidden && snoozeAllButton.hidden;
     const open = () => el.matches?.(':popover-open');
     if (!live.length) { held = false; stopWatching(); if (open()) el.hidePopover(); return; }
     watch();
@@ -137,6 +161,62 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
 
   function clear() { for (const t of [...live]) dismiss(t); }
 
+  const handedOver = (t) => t.snooze != null && t.snooze !== false;
+
+  function snoozeOne(t) {
+    if (!handedOver(t)) return park(t, false);
+    dismiss(t, false);
+    snoozeHandlers?.snooze(t.snooze);
+  }
+
+  function snoozeAll() {
+    const values = live.filter(handedOver);
+    for (const t of values) dismiss(t, false);
+    for (const t of live.filter((x) => x.snooze !== false)) park(t, true);
+    snoozeHandlers?.snoozeAll(values.map((t) => t.snooze));
+  }
+
+  function park(t, forAll) {
+    const e = t.persistent ? { persistent: true, id: t.id, options: t.options } : { id: t.id, key: t.key, args: t.args, remaining: left(t) };
+    dismiss(t, false);
+    if (!forAll) e.timer = later(() => wake(e), snoozeHandlers.minutes() * 60e3);
+    parked.push(e);
+  }
+
+  const findParked = (persistent, match) => parked.filter((e) => !!e.persistent === persistent && match(e));
+
+  function unpark(e) {
+    const i = parked.indexOf(e);
+    if (i >= 0) parked.splice(i, 1);
+    if (e.timer != null) cancel(e.timer);
+    e.timer = null;
+  }
+
+  function wake(e) {
+    e.timer = null;
+    if (snoozeHandlers?.allActive?.()) return;
+    unpark(e);
+    reshow(e);
+  }
+
+  function reshow(e) {
+    if (e.persistent) return showPersistent(e.id, e.options);
+    const [text, isErr, opts] = e.args;
+    show(text, isErr, { ...opts, duration: Math.max(e.remaining, SEVERITY_MS.success) });
+  }
+
+  function releaseHeld() {
+    for (const e of parked.filter((x) => x.timer == null)) {
+      unpark(e);
+      reshow(e);
+    }
+  }
+
+  function setSnoozeHandlers(handlers) {
+    snoozeHandlers = handlers;
+    if (stack) place();
+  }
+
   function insert(t) {
     root();
     list.insertBefore(t.el, position === 'top-right' ? list.children[0] : null);
@@ -153,7 +233,7 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     stack.setAttribute('data-position', position);
     const ordered = position === 'top-right' ? [...live].reverse() : live;
     list.replaceChildren(...ordered.map((t) => t.el));
-    stack.replaceChildren(...(position === 'top-right' ? [clearButton, list] : [list, clearButton]));
+    stack.replaceChildren(...(position === 'top-right' ? [head, list] : [list, head]));
     place();
     scrollToNewest();
   }
@@ -170,7 +250,8 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   function build(t, text, severity, { actions, duration, details, body: messageBody }) {
     const el = t.el || document.createElement('div');
     el.replaceChildren();
-    el.className = `toast toast-${severity}`;
+    const clocked = snoozeHandlers && t.snooze !== false;
+    el.className = `toast toast-${severity}${clocked ? ' toast-snoozable' : ''}`;
     if (t.persistent) el.classList.toggle('toast-persistent');
     el.setAttribute('role', severity === 'error' || severity === 'warning' ? 'alert' : 'status');
     const body = document.createElement('div');
@@ -211,6 +292,13 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     const close = button('toast-close', '×', () => dismiss(t));
     close.setAttribute('aria-label', 'Dismiss');
     el.append(close);
+    if (clocked) {
+      const clock = button('toast-close toast-snooze', '', () => snoozeOne(t));
+      clock.innerHTML = CLOCK_ICON;
+      clock.title = snoozeHandlers.title();
+      clock.setAttribute('aria-label', snoozeHandlers.title());
+      el.append(clock);
+    }
     if (Number.isFinite(duration)) {
       const bar = document.createElement('div');
       bar.className = 'toast-progress';
@@ -232,6 +320,7 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
   }
 
   function show(text, isErr, opts) {
+    const args = [text, isErr, opts];
     const severity = severityOf(isErr, opts);
     const actions = opts ? (opts.actions || (opts.label ? [opts] : [])) : [];
     const duration = opts?.duration ?? SEVERITY_MS[severity];
@@ -242,7 +331,9 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     const key = actions.length || details ? null : `${severity}\n${text}`;
     const same = live.find((t) => !t.persistent && ((id != null && t.id === id) || (key != null && t.key === key)));
     if (same) dismiss(same);
-    const t = { id, key, rank: severity === 'error' ? 2 : actions.length ? 1 : 0, duration, remaining: duration, started: 0, timer: null, bar: null };
+    for (const e of findParked(false, (e) => (id != null && e.id === id) || (key != null && e.key === key))) unpark(e);
+    const snooze = opts?.snooze ?? null;
+    const t = { id, key, snooze, args, rank: severity === 'error' ? 2 : actions.length ? 1 : 0, duration, remaining: duration, started: 0, timer: null, bar: null };
     t.el = build(t, text, severity, { actions, duration, details });
     while (live.filter((item) => !item.persistent).length >= MAX_TOASTS) evict();
     live.push(t);
@@ -254,10 +345,18 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     return t.el;
   }
 
-  function showPersistent(id, { title, body, actions, onDismiss }) {
+  function showPersistent(id, options) {
+    const { title, body, actions, onDismiss } = options;
     let t = live.find((item) => item.persistent && item.id === id);
+    const [held] = findParked(true, (e) => e.id === id);
+    if (!t && (held || snoozeHandlers?.allActive?.())) {
+      if (held) held.options = options;
+      else parked.push({ persistent: true, id, options });
+      return;
+    }
     const fresh = !t;
-    if (!t) t = { id, persistent: true, duration: Infinity, remaining: Infinity, timer: null };
+    if (!t) t = { id, persistent: true, snooze: null, duration: Infinity, remaining: Infinity, timer: null };
+    t.options = options;
     t.onDismiss = onDismiss;
     t.el = build(t, title, 'info', { body, actions, duration: Infinity });
     if (fresh) {
@@ -313,8 +412,12 @@ export function createToasts({ document, position = 'top-right', setTimeout: lat
     document.removeEventListener?.('scroll', scheduleLayout, true);
   }
 
-  const dismissId = (id, persistent = false) => { const t = live.find((x) => !!x.persistent === persistent && x.id === id); if (t) dismiss(t); };
-  return { show, showPersistent, setPosition, dismiss: dismissId, dismissPersistent: (id) => dismissId(id, true), count: () => live.length, clear };
+  const dismissId = (id, persistent = false) => {
+    for (const e of findParked(persistent, (e) => e.id === id)) unpark(e);
+    const t = live.find((x) => !!x.persistent === persistent && x.id === id);
+    if (t) dismiss(t);
+  };
+  return { show, showPersistent, setPosition, setSnoozeHandlers, releaseHeld, dismiss: dismissId, dismissPersistent: (id) => dismissId(id, true), count: () => live.length, clear };
 }
 
 const shared = new WeakMap();
@@ -329,6 +432,14 @@ export function toast(text, isErr, opts) {
 
 export function dismissToast(id) {
   shared.get(globalThis.document)?.dismiss(id);
+}
+
+export function setToastSnoozeHandlers(handlers) {
+  getToasts(globalThis.document).setSnoozeHandlers(handlers);
+}
+
+export function releaseHeldToasts() {
+  getToasts(globalThis.document).releaseHeld();
 }
 
 export function setToastPosition(position) {

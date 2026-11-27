@@ -426,7 +426,7 @@ body.dragging { user-select: none; cursor: col-resize; }
 .sess-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
 /* "Actions" overflow button — a bordered pill (kebab glyph + label) that opens
    the session-action menu. The eight inline icons collapsed into this one entry. */
-.toast-clear, .sess-actions-btn { height: 26px; padding: 0 10px 0 9px; display: inline-flex; align-items: center; font: inherit; font-size: 12px; font-weight: 500; }
+.toast-clear, .toast-snooze-all, .sess-actions-btn { height: 26px; padding: 0 10px 0 9px; display: inline-flex; align-items: center; font: inherit; font-size: 12px; font-weight: 500; }
 .sess-actions-btn { gap: 5px; background: transparent; border: 1px solid var(--border); color: var(--fg-muted); border-radius: 7px; cursor: pointer; }
 .sess-actions-btn:hover { color: var(--fg); background: var(--surface-2); }
 .sess-actions-btn svg { width: 15px; height: 15px; fill: currentColor; }
@@ -1269,12 +1269,19 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   padding: 12px 12px 24px; margin: -12px -12px -24px; overscroll-behavior: contain;
 }
 .toast-list[data-overflow="true"] { margin-top: 0; margin-bottom: 0; }
+.toast-head { display: flex; justify-content: flex-end; gap: 6px; flex-shrink: 0; pointer-events: none; }
+.toast-head[hidden] { display: none; }
 .toast-clear {
   z-index: 1; align-self: flex-end; flex-shrink: 0; pointer-events: auto;
   border: 1px solid var(--border); border-radius: 6px;
   background: var(--surface); color: var(--fg); cursor: pointer;
 }
-.toast-clear[hidden] { display: none; }
+.toast-snooze-all {
+  z-index: 1; flex-shrink: 0; pointer-events: auto;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--fg); cursor: pointer;
+}
+.toast-clear[hidden], .toast-snooze-all[hidden] { display: none; }
 #toast button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 .toast {
   --toast-accent: var(--accent);
@@ -1323,6 +1330,10 @@ body.system-banner-open { padding-top: var(--system-banner-h, 30px); }
   background: none; color: inherit; font-size: 16px; line-height: 1.2; cursor: pointer; opacity: 0.75;
 }
 .toast-close:hover { background: none; opacity: 1; }
+/* The snooze clock sits just left of ×. */
+.toast-snoozable { padding-right: 58px; }
+.toast-snooze { right: 30px; top: 7px; display: flex; align-items: center; }
+.toast-snooze svg { width: 14px; height: 14px; display: block; }
 .toast-progress {
   position: absolute; left: 0; top: 0; height: 4px; width: 100%;
   background: var(--toast-accent); transform-origin: left;

@@ -74,13 +74,15 @@ for (const [handler, variants] of [
         }
         const context = {
           ...helpers, Notification, window: { Notification, focus() {} },
-          focusSuppresses: () => false, suppressNudgedPrToasts: false,
+          focusSuppresses: () => false, suppressNudgedPrToasts: false, holdNotification: () => false, trackPopup: (m, n) => { n.trackedFor = m.number; },
           openSessionInBoard: id => opened.push(['session', id]),
           openTaskInBoard: id => opened.push(['task', id]),
           toast: (...args) => toasts.push(args), flashPr() {},
         };
-        runInNewContext(`${handlers}\n${handler}(${JSON.stringify({ ...variant, scope, sessionId: 'owner', number: 1 })});`, context);
+        const msg = { ...variant, scope, sessionId: 'owner', number: 1 };
+        runInNewContext(`${handlers}\n${handler}(${JSON.stringify(msg)});`, context);
         const [, isErr, options] = toasts[0];
+        assert.equal(JSON.stringify(options.snooze), JSON.stringify(msg));
         const expectedErr = handler === 'onPrChecks'
           ? ['failing', 'changes-requested'].includes(variant.status)
           : handler === 'onPrMerge' ? !variant.ok : true;
@@ -90,6 +92,7 @@ for (const [handler, variants] of [
         options.actions[0].onClick();
         assert.deepEqual(opened, [[scope, 'owner']]);
         if (handler !== 'onPrMerge') {
+          assert.equal(notifications[0].trackedFor, 1);
           notifications[0].onclick();
           assert.deepEqual(opened, [[scope, 'owner'], [scope, 'owner']]);
         } else {
@@ -111,4 +114,18 @@ for (const handler of ['onPrChecks', 'onPrMerge', 'onPrDirty', 'onPrComments']) 
       });
     });
   }
+}
+
+for (const handler of ['onPrChecks', 'onPrMerge', 'onPrDirty', 'onPrComments']) {
+  test(`${handler} holds the notification instead of showing it during Snooze all`, () => {
+    const held = [];
+    runInNewContext(`${handlers}\n${handler}({ scope: 'session', sessionId: 'owner', url: 'u', number: 1 });`, {
+      ...helpers,
+      focusSuppresses: () => false, suppressNudgedPrToasts: false,
+      holdNotification: (msg, resurfaced) => { held.push([msg.url, resurfaced]); return true; },
+      toast: () => assert.fail('a held event must not toast'),
+      flashPr: () => assert.fail('a held event must not flash'),
+    });
+    assert.deepEqual(held, [['u', false]]);
+  });
 }
