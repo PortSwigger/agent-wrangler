@@ -1122,7 +1122,7 @@ test('a ^1 manifest boots on the v1 shim and its host.version says so; a ^2 one 
   assert.equal(buildHostApi({ id: 'old-ext', range: '^1.15.0', boardApi: '^1.74.0' }).version, '1.96.0');
   assert.equal(buildHostApi({ id: 'new-ext', range: '^2.0.0', boardApi: '^2.0.0' }).version, HOST_API_VERSION);
   assert.equal(buildHostApi({ id: 'any-ext' }).version, HOST_API_VERSION);
-  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.97.0' }), /needs host API \^1\.97\.0, this server serves 2\.4\.0/);
+  assert.throws(() => buildHostApi({ id: 'too-new', range: '^1.97.0' }), /needs host API \^1\.97\.0, this server serves 2\.5\.0/);
 });
 
 test('spawn validates Codex approvalPolicy and forwards only the approval selection', async () => {
