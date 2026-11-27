@@ -18,6 +18,7 @@ import { launchCwd, findTranscript } from './transcript-reader.js';
 import { DATA_DIR } from './data-dir.js';
 import { MEMORY_DIR } from './extensions/builtin/task-memory/memory-store.js';
 import { paneCommand } from './launch-script.js';
+import { PaneSizeMemory } from './pane-size.js';
 import { tmuxSocketArgs, socketsToScan, socketForEntry } from './tmux-socket.js';
 import { resolveInstanceSocket, trustCodexLaunchCwd, trustClaudeLaunchCwd, codexPolicyDefaults } from './config-store.js';
 import { TOOL_REFRESH_NOTE } from './extensions/tool-fingerprint.js';
@@ -506,6 +507,7 @@ export class SessionManager {
     this.deadTime = new Map(); // dead tmux name -> epoch ms the pane died (absent if tmux didn't report one)
     this.tmuxBin = 'tmux'; // resolved to an absolute path in init()
     this.socket = ''; // this install's generated tmux socket, resolved in init()
+    this.paneSize = new PaneSizeMemory(); // the size a board terminal last reported (pane-size.js)
     // The socket pre-migration (legacy) sessions live on: the default socket ('')
     // in production, overridable for isolated migration testing.
     this.legacySocket = process.env.AW_LEGACY_TMUX_SOCKET || '';
@@ -1561,7 +1563,7 @@ export class SessionManager {
     const secretEnvFile = this._secretEnvFileFor(runtime, tmux, launchContext);
     const launchCmd = await runtime.wrapLaunch({ inner, cwd: dir, sessionId, worktree: prev?.worktree, workflow: shouldReloadWorkflowSkill(prev?.workflow), launchContext: runtimeLaunchContext(runtime, launchContext), secretEnvFile, ...this._statusHookFor(launchContext), ...(remote ? { location: prev.location } : {}) });
     const launchedAt = Date.now();
-    const paneId = await this._newSession(tmux, remote ? os.homedir() : dir, launchCmd, this.socket);
+    const paneId = await this._newSession(tmux, remote ? os.homedir() : dir, launchCmd, this.socket, this._paneSizeFor(runtime));
     if (!remote) this._prepareFirstTurn({ agent, tmux, socket: this.socket, text: freshAfterUpdate && adapter.launchCarriesIntent === false ? prev?.intent || '' : '' });
     if (freshAfterUpdate) resumeId = await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt, at: remote ? { rt: runtime, entry: { ...prev, cwd: dir } } : null }) || undefined;
     // An automatic caller (mail wake) must not resurrect a card archived or snoozed while the
@@ -1673,7 +1675,7 @@ export class SessionManager {
       ...(remote ? { location: parentEntry.location } : {}),
     });
     const launchedAt = Date.now();
-    const paneId = await this._newSession(tmux, remote ? os.homedir() : dir, launchCmd, this.socket);
+    const paneId = await this._newSession(tmux, remote ? os.homedir() : dir, launchCmd, this.socket, this._paneSizeFor(forkRuntime));
     const liveSessionId = presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd: dir, launchedAt, at: remote ? { rt: forkRuntime, entry: { ...parentEntry, cwd: dir } } : null });
     // No killForSession — the parent's mapping and tmux are deliberately left alone.
     const early = this.map.get(sessionId);
@@ -1989,14 +1991,17 @@ export class SessionManager {
   // paneCommand is what keeps a long first prompt launchable: the intent rides inline
   // in `inner`, and tmux rejects any single command over ~16 KB, so an oversized one is
   // moved into a file the pane sources instead (see launch-script.js).
-  async _newSession(tmux, dir, inner, socket) {
+  // `size` ({ cols, rows }, see _paneSizeFor) starts the pane at the board terminal's
+  // size instead of tmux's 80x24; without it tmux picks.
+  async _newSession(tmux, dir, inner, socket, size = null) {
     const cmd = paneCommand(tmux, `cd ${shellQuote(dir)} && ${inner}`);
+    const sizeArgs = size ? ['-x', String(size.cols), '-y', String(size.rows)] : [];
     // remain-on-exit rides in the same tmux invocation as new-session: tmux runs
     // the whole command list before it reaps the pane, so a command that exits at
     // once (an agent CLI that isn't installed) still leaves its output behind. Set
     // by a second call, the pane was already gone, and on an otherwise empty server
     // the server itself had exited with it.
-    const created = await this._tmux(socket, ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', tmux, '-c', dir, cmd, ';', 'set-option', '-t', tmux, 'remain-on-exit', 'on']);
+    const created = await this._tmux(socket, ['new-session', '-d', '-P', '-F', '#{pane_id}', '-s', tmux, '-c', dir, ...sizeArgs, cmd, ';', 'set-option', '-t', tmux, 'remain-on-exit', 'on']);
     const paneId = String(created?.stdout ?? '').trim();
     // Hide tmux's status bar: it's purely cosmetic here (nothing reads it) and
     // its row is better spent on Claude's TUI. Scoped per-session so it can't
@@ -2018,6 +2023,14 @@ export class SessionManager {
     // but a user's global `set-clipboard off` would silently break browser copy.
     await this._tmux(socket, ['set-option', '-t', tmux, 'set-clipboard', 'on']).catch(() => {});
     return /^%\d+$/.test(paneId) ? paneId : null;
+  }
+
+  // The size a new pane on `runtime` starts at: the board terminal's last reported
+  // size for a session on this machine, so an agent that writes before anyone opens
+  // its Terminal already wraps at the width it will be read at. Other runtimes keep
+  // tmux's own default.
+  _paneSizeFor(runtime) {
+    return runtime?.id === 'local' ? this.paneSize.get() : null;
   }
 
   // A tmux session is only attachable if it still has a live pane. `remain-on-exit`
@@ -2466,7 +2479,7 @@ export class SessionManager {
         ...(remote ? { location: locationRef } : {}),
       });
     const launchedAt = Date.now();
-    const paneId = await this._newSession(tmux, remote ? os.homedir() : cwd, inner, this.socket);
+    const paneId = await this._newSession(tmux, remote ? os.homedir() : cwd, inner, this.socket, this._paneSizeFor(rt));
     if (!builds && !remote) this._prepareFirstTurn({ agent, tmux, socket: this.socket, text: typesIntent ? firstText : '' });
 
     const liveSessionId = builds ? undefined : presetLiveId || await this._resolveLiveId(adapter, { sessionId, cwd, launchedAt, at: remote ? { rt, entry: { runtime, location: locationRef, cwd, agent } } : null });
