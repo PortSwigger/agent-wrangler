@@ -374,7 +374,7 @@ function appendActions(head, g) {
     resume.className = 'search-act';
     resume.textContent = 'Restore';
     resume.title = 'Restore this session to the board';
-    resume.addEventListener('click', () => { setPendingSelect(cardOf(g.cardId)); send({ type: 'resume', sessionId: g.cardId }); toast('Restoring…'); });
+    resume.addEventListener('click', () => { setPendingSelect(cardOf(g.cardId)); send({ type: 'resume', sessionId: g.cardId }); toast('Restoring…', false, { snooze: false }); });
     if (relaunches) head.appendChild(resume);
     const fork = document.createElement('button');
     fork.className = 'search-act search-act--icon';
@@ -389,7 +389,7 @@ function appendActions(head, g) {
     remove.addEventListener('click', () => {
       if (confirm(`Permanently remove "${truncate(rowTitle(g), 60)}"?\n\nThis deletes its record for good — it can no longer be resumed.`)) {
         send({ type: 'remove', sessionId: g.cardId });
-        toast('Removed');
+        toast('Removed', false, { snooze: false });
       }
     });
     head.appendChild(remove);
@@ -406,7 +406,7 @@ function appendActions(head, g) {
       b.disabled = true;
       b.textContent = 'Adopting…';
       send({ type: 'adopt-conversation', sessionId: g.sessionId });
-      toast('Adopting this conversation…');
+      toast('Adopting this conversation…', false, { snooze: false });
     });
     head.appendChild(b);
   }
@@ -823,7 +823,7 @@ export function initSearchView() {
     if (state.building) return;
     state.building = true;
     send({ type: 'search-reindex', rebuild: true });
-    toast('Rebuilding the search index…');
+    toast('Rebuilding the search index…', false, { snooze: false });
   });
   document.addEventListener('pointerdown', (e) => {
     for (const id of DD_IDS) closeTaskFilterOnOutsideClick(el(id), e.target);

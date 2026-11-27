@@ -64,8 +64,8 @@ export const SETTINGS = [
     id: 'suppressNudgedPrToasts',
     type: 'toggle',
     scope: 'server',
-    label: 'Hide PR toasts the session already got',
-    help: 'Skip the board toast for a PR status change (checks, merge conflict, review threads, auto-merge) once the owning session has the same notice in its pane. The toast still shows when the session was not nudged (auto-fix off, a task-level PR, no live session) or when the notice is held back, for example behind a draft or a dialog.',
+    label: 'Hide PR notifications the session already got',
+    help: 'Skip the board notification for a PR status change (checks, merge conflict, review threads, auto-merge) once the owning session has the same notice in its pane. The notification still shows when the session was not nudged (auto-fix off, a task-level PR, no live session) or when the notice is held back, for example behind a draft or a dialog.',
     default: true,
   },
   {
@@ -196,8 +196,8 @@ export const SETTINGS = [
     id: 'toastPosition',
     type: 'segmented',
     options: [{ value: 'top-right', label: 'Top right' }, { value: 'bottom-right', label: 'Bottom right' }],
-    label: 'Toast position',
-    help: 'Where board messages and persistent notification cards appear. Applies immediately and is saved for this browser.',
+    label: 'Notification position',
+    help: 'Where notifications appear on the board. Applies immediately and is saved for this browser.',
     default: 'top-right',
   },
   {

@@ -91,7 +91,7 @@ export function createIntentImages({ input, listEl, send, toast, enabled = () =>
   }
 
   function skipped(n) {
-    if (n > 0) toast(`${n} image${n === 1 ? ' was' : 's were'} skipped — a first prompt holds ${MAX_ATTACHMENTS}.`, false);
+    if (n > 0) toast(`${n} image${n === 1 ? ' was' : 's were'} skipped — a first prompt holds ${MAX_ATTACHMENTS}.`, false, { snooze: false });
   }
 
   function take(e, dt) {
