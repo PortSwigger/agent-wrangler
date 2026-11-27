@@ -10,6 +10,8 @@ import { assertAllowedUrl, cloneTo, readHead, lockDependencies, npmCi, lsRemoteH
 import { HOST_API_VERSION, V1_SHIM_VERSION, servesRange, isValidRange } from '../../host-api/version.js';
 import { log } from '../../log.js';
 import { assertExtensionInstallsOn, extensionInstallsOff, INSTALLS_OFF_MESSAGE } from '../../extensions/installs.js';
+import { readConfig, writeConfig } from '../../config-store.js';
+import { clearToolPolicyRequirement, toolPolicyRequirements } from '../../tool-policy.js';
 
 // Installing an external extension, in two frames with a human decision between
 // them: `ext-install` clones and DISCLOSES (nothing is installed, no registry is
@@ -252,6 +254,7 @@ function assertManifestMatchesDeclaration(manifest, declared) {
 // reports it and releases the lock.
 async function goLive(ctx, id, dest) {
   let registered = false;
+  const requiredBefore = toolPolicyRequirements(readConfig()).includes(id);
   try {
     const violation = importViolation(dest);
     if (violation) throw new Error(`Refusing to load it: ${violation}`);
@@ -263,6 +266,7 @@ async function goLive(ctx, id, dest) {
     if (!admitted.ok) throw new Error(admitted.quarantine);
     const entry = ctx.ext.register(admitted.entry);
     registered = true;
+    ctx.ext.recordToolPolicies?.();
     // An extension config says is OFF is registered and inactive — the same end
     // state a restart would reach, and what the toggle then turns on.
     if (entry.enabled) ctx.ext.activate(id);
@@ -271,6 +275,12 @@ async function goLive(ctx, id, dest) {
   } catch (err) {
     if (registered) {
       ctx.ext.unregister(id, { remove: true });
+      // A fresh install rolls back entirely, its new tool-policy requirement
+      // with it; one an earlier install recorded stays.
+      if (!requiredBefore) {
+        clearToolPolicyRequirement(id, { cfg: readConfig(), write: writeConfig });
+        ctx.ext.forgetToolPolicy?.(id);
+      }
       ctx.ext.changed();
     }
     rmQuiet(dest);
@@ -500,6 +510,10 @@ export const extUninstallHandler = {
     // until then.
     ctx.ext.deactivate(id);
     ctx.ext.unregister(id, { remove: true });
+    // An uninstall is a human's explicit choice, so its tool policy stops
+    // being required (tool-policy.js); nothing else clears one.
+    clearToolPolicyRequirement(id, { cfg: readConfig(), write: writeConfig });
+    ctx.ext.forgetToolPolicy?.(id);
     rmQuiet(dest);
     rmQuiet(generationRoot(id));
     removeRecord(id);

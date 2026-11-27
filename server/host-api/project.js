@@ -74,6 +74,9 @@ export function projectSession(entry, id, { taskId = null, node = null } = {}) {
     workflow: e.workflow ?? null,
     createdAt: e.createdAt ?? null,
     relaunchedAt: e.relaunchedAt ?? null,
+    // The tool policy (tool-policy.js) the running process was launched with,
+    // null when none: a different current fingerprint means it needs a restart.
+    toolPolicyFingerprint: e.toolPolicyFingerprint ?? null,
     lastActivity: node?.lastActivity ?? e.lastActivity ?? null,
     parentSession: e.parentSession ?? null,
     spawnedBy: e.spawnedBy ?? null,

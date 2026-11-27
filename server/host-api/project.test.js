@@ -73,6 +73,8 @@ test('projectSession exposes the relaunch time from the mapping', () => {
   assert.equal(projectSession({ ...entry(), relaunchedAt: 300 }, 'c').relaunchedAt, 300);
   assert.equal(projectSession(entry(), 'c').relaunchedAt, null);
   assert.equal(projectSession(null, 'c').relaunchedAt, null);
+  assert.equal(projectSession({ ...entry(), toolPolicyFingerprint: 'fp' }, 'c').toolPolicyFingerprint, 'fp');
+  assert.equal(projectSession(entry(), 'c').toolPolicyFingerprint, null);
 });
 
 test('a projection is frozen all the way down and mutating it cannot reach the source', () => {

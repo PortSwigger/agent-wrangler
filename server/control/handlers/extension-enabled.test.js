@@ -45,7 +45,7 @@ function manifest(id, overrides = {}) {
 // makes them one flip.
 function ctx(builtin, cfg = {}, { onActivate } = {}) {
   const loaded = loadExtensions({ cfg, builtin });
-  const calls = { rebuild: 0, replies: [], activated: [], deactivated: [], quarantined: [], changed: 0 };
+  const calls = { rebuild: 0, replies: [], activated: [], deactivated: [], quarantined: [], changed: 0, order: [], forgot: [] };
   return {
     calls,
     loaded,
@@ -54,13 +54,15 @@ function ctx(builtin, cfg = {}, { onActivate } = {}) {
       manifests: loaded._manifests,
       register: (m, o) => registerExtension(loaded, m, o),
       unregister: (id, o) => unregisterExtension(loaded, id, o),
-      activate: (id) => { calls.activated.push(id); onActivate?.(id); },
+      activate: (id) => { calls.order.push('activate'); calls.activated.push(id); onActivate?.(id); },
       deactivate: (id) => { calls.deactivated.push(id); },
       quarantine: (id, err) => {
         calls.quarantined.push(id);
         quarantineExtension(loaded, id, err?.message || String(err));
       },
       changed: () => { calls.changed += 1; },
+      recordToolPolicies: () => { calls.order.push('record'); },
+      forgetToolPolicy: (id) => { calls.forgot.push(id); },
     },
     rebuild: async () => { calls.rebuild += 1; },
     reply: (obj) => calls.replies.push(obj),
@@ -180,5 +182,28 @@ test('one-time browser migrations preserve an explicit extension choice', async 
     assert.equal(readConfig().extensions.checklist, true);
     await extensionEnabledHandler.handler({ id: 'checklist', enabled: false, onlyIfUnset: true }, c);
     assert.equal(readConfig().extensions.checklist, true);
+  });
+});
+
+test('turning an extension off clears its tool-policy requirement, even when it was already off; turning one on does not', async () => {
+  await withConfig({ toolPolicyRequirements: { notes: { since: 'x' }, other: { since: 'y' } } }, async () => {
+    const c = ctx([manifest('notes'), manifest('other')], { extensions: { other: false } });
+    await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'notes', enabled: true }, c);
+    assert.deepEqual(Object.keys(readConfig().toolPolicyRequirements), ['notes', 'other']);
+    await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'other', enabled: false }, c);
+    assert.deepEqual(Object.keys(readConfig().toolPolicyRequirements), ['notes']);
+    await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'notes', enabled: false }, c);
+    assert.deepEqual(readConfig().toolPolicyRequirements, {});
+  });
+});
+
+test('enabling records tool-policy requirements before activating, so a failed first activation still refuses launches', async () => {
+  await withConfig({ extensions: { notes: false } }, async () => {
+    const c = ctx([manifest('notes')], { extensions: { notes: false } }, { onActivate: () => { throw new Error('store factory threw'); } });
+    await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'notes', enabled: true }, c);
+    assert.deepEqual(c.calls.order, ['record', 'activate']);
+    assert.deepEqual(c.calls.quarantined, ['notes']);
+    await extensionEnabledHandler.handler({ type: 'extension-enabled', id: 'notes', enabled: false }, c);
+    assert.deepEqual(c.calls.forgot, ['notes']);
   });
 });

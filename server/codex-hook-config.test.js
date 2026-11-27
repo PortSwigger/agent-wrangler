@@ -30,3 +30,16 @@ test('a command with quotes or backslashes is TOML-escaped', () => {
   const [hook] = postToolHookOverrides('a "b" \\c');
   assert.match(hook, /command="a \\"b\\" \\\\c"/);
 });
+
+test('a synchronous hook is declared async=false and trusted by the hash of that handler', async () => {
+  const { codexHookOverrides } = await import('./codex-hook-config.js');
+  const [decl, state] = codexHookOverrides([
+    { event: 'PreToolUse', matcher: '^(?:x)$', command: 'exit 2', async: false },
+    { event: 'PreToolUse', matcher: 'Bash', command: 'true' },
+  ]);
+  assert.match(decl, /^hooks\.PreToolUse=\[\{matcher="\^\(\?:x\)\$",hooks=\[\{type="command",command="exit 2",timeout=10,async=false\}\]\},\{matcher="Bash",hooks=\[\{type="command",command="true",timeout=10,async=true\}\]\}\]$/);
+  assert.ok(state.includes(hookTrustHash('exit 2', { event: 'PreToolUse', matcher: '^(?:x)$', async: false })));
+  assert.ok(state.includes(hookTrustHash('true', { event: 'PreToolUse', matcher: 'Bash' })));
+  assert.notEqual(hookTrustHash('c', { event: 'PreToolUse', matcher: 'm', async: false }), hookTrustHash('c', { event: 'PreToolUse', matcher: 'm' }));
+  assert.ok(state.includes(hookTrustKey('PreToolUse', 1)));
+});

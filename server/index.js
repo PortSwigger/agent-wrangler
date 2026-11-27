@@ -46,7 +46,7 @@ import { createPaneDeferral } from './pane-deferral.js';
 import { mergePr } from './pr-status.js';
 import { createPrObservationStore, createPrObservationPoller } from './pr-observations.js';
 import { normalisePr, linkMatches } from './mcp/links.js';
-import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
+import { shouldOpenBrowser, prStatusPollSeconds, autoAttachPrEnabled, legacyBoardSettings, trustCodexLaunchCwd, trustClaudeLaunchCwd, autoFixPrChecksDefault, suppressNudgedPrToasts, mailWakesDormant, prModelFooterEnabled, defaultSessionCwd, defaultRuntime, codexPolicyDefaults, readConfig, writeConfig, extensionSettings, applyRetiredFlagMigrations, autoUpdateMode, refreshSessionsAfterUpdate } from './config-store.js';
 import { listStyles } from './styles.js';
 import { availableAgents, validateDefaultModel, providerMetadata, registeredAgents, dispatchableAgents, adapterFor, resolvedModelId } from './agents/index.js';
 import { dispatchModels } from './agents/listing.js';
@@ -88,6 +88,8 @@ import { sendGuarded } from './ws-backpressure.js';
 import { runArchiveReview } from './archive-review-runner.js';
 import { createEventBus } from './events.js';
 import { collectLaunchContext } from './launch-context.js';
+import { collectToolPolicy, syncToolPolicyRequirements, requiredToolPolicyIds, declaresToolPolicy } from './tool-policy.js';
+import { runHeadlessTool } from './headless-tool.js';
 import { collectPrepare } from './session-prepare.js';
 import { collectBeforeSpawn, notifySpawned } from './session-spawn.js';
 import { createLinkNormaliser } from './mcp/links.js';
@@ -323,6 +325,29 @@ sessionManager._launchContext = (ctx) => {
   installDrift.poll();
   return collectLaunchContext(ctx, { ext, hostApiFor, onError: logError });
 };
+// Required tool policies (server/tool-policy.js), asked before every
+// dispatch/resume/fork; fail-closed, so a requirement whose extension is not
+// active refuses the launch. Required = recorded in config, declared and
+// switched on now (a quarantined row too), or remembered by this process, so
+// a failed config write still refuses until restart.
+const rememberedToolPolicies = new Set();
+const requiredToolPolicies = () => {
+  const cfg = readConfig();
+  return requiredToolPolicyIds({ cfg, list: ext.list, remembered: rememberedToolPolicies });
+};
+sessionManager._toolPolicy = (ctx) => collectToolPolicy(ctx, {
+  ext, required: requiredToolPolicies(), hostApiFor, agentIds: registeredAgents().map((a) => a.id),
+});
+const syncToolPolicies = () => {
+  const cfg = readConfig();
+  for (const e of ext.list) if (declaresToolPolicy(e, cfg)) rememberedToolPolicies.add(e.id);
+  try {
+    syncToolPolicyRequirements(ext.list, { cfg, write: writeConfig });
+  } catch (err) {
+    logError('[tool-policy] could not record requirements; they hold in memory until restart', err);
+  }
+};
+const forgetToolPolicy = (id) => rememberedToolPolicies.delete(id);
 sessionManager._taskFor = (sid) => taskStore.taskFor(sid);
 sessionManager._beforeSpawn = (payload) => collectBeforeSpawn(payload, { ext, hostApiFor, onError: logError });
 sessionManager._spawned = (payload, data) => notifySpawned(payload, data, { ext, hostApiFor, onError: logError });
@@ -405,6 +430,18 @@ const paneDeferral = createPaneDeferral({
 const extFiles = createExtFiles();
 const extWiring = {
   core: extCore,
+  // `operations:run` admits extension work through the restart barrier, and
+  // refuses it once the extension is no longer active.
+  restartBarrier,
+  extActive: (id) => hostApis.has(id),
+  // `agents:headless-tool`: every OTHER extension's tool policy still applies
+  // to the one tool, so it is collected per run, fail-closed like a launch.
+  runHeadlessTool: (opts) => runHeadlessTool({
+    ...opts,
+    policy: () => collectToolPolicy({ agent: 'claude', reason: 'headless-tool' }, {
+      ext, required: requiredToolPolicies(), hostApiFor, agentIds: registeredAgents().map((a) => a.id),
+    }),
+  }),
   prObservations,
   extFiles,
   events: coreEvents,
@@ -523,6 +560,7 @@ function activateExtension(id, { startSweeps = true } = {}) {
       // JSON read and host.settings is only reached from tool/handler/sweep
       // code, never from rebuildOnce.
       settingDefs: e.settings,
+      headlessTools: e.headlessTools,
       readSettings: (extId) => extensionSettings(extId),
       readExtensionReceipt: () => {
         const installedSha = readProvenance()[id]?.sha || '';
@@ -678,6 +716,9 @@ function deactivateExtension(id) {
   }
 }
 
+// Recorded BEFORE activation, so an extension whose first activation fails
+// still has its policy required.
+syncToolPolicies();
 // Boot activation. A copy of the list, because quarantineFor splices nothing but
 // does rewrite the entry underneath us.
 for (const e of [...ext.list]) {
@@ -688,6 +729,7 @@ for (const e of [...ext.list]) {
     quarantineFor(e.id, err);
   }
 }
+syncToolPolicies();
 // Every still-enabled extension has a façade, so a tagged tool/handler frame can
 // never find one missing — asserted once here rather than guarded per frame. A
 // miss now means the quarantine bookkeeping above left something registered, so
@@ -733,7 +775,12 @@ const extBag = {
   activate: activateExtension,
   deactivate: deactivateExtension,
   quarantine: quarantineFor,
+  // Records the requirement of a newly registered manifest before it is
+  // activated, and forgets one a human turned off or uninstalled.
+  recordToolPolicies: () => syncToolPolicies(),
+  forgetToolPolicy,
   changed: () => {
+    syncToolPolicies();
     extBag.hideTool = createToolFilter(ext, hostApiFor, logError);
     invalidateHandlerMap();
     broadcast({ type: 'extensions', list: ext.clientManifest, version: HOST_API_VERSION });
@@ -1069,9 +1116,23 @@ const statusNotices = createStatusNoticeRunner({
   log: logError,
   onWoken: () => rebuild(),
 });
+// A wake refused by a required tool policy is retried every sweep like any
+// other failed wake, but logged and shown once per session and reason, not on
+// every tick.
+const toolPolicyWakeRefusals = new Set();
 const fireMailSettlesTick = createMailSettleSweeper({
   ...mailDeliveryDeps, mailStore, deferrals: mailDeferrals,
-  onError: (to, err) => logError(`[mail] delivery failed for ${to}:`, err?.message || err),
+  onError: (to, err) => {
+    if (err?.code === 'tool-policy') {
+      const key = `${to}\n${err.message}`;
+      if (toolPolicyWakeRefusals.has(key)) return;
+      toolPolicyWakeRefusals.add(key);
+      const e = sessionManager.entryFor(to);
+      const label = sessionLabel({ agent: e?.agent, names: [e?.name, e?.lastLabel], intent: e?.intent, cwd: e?.cwd, fallback: to.slice(0, 8) });
+      broadcast({ type: 'wake-refused', sessionId: to, label, message: err.message });
+    }
+    logError(`[mail] delivery failed for ${to}:`, err?.message || err);
+  },
 });
 
 // POST /pr-attach — the launch-injected PostToolUse hook's callback. The hook

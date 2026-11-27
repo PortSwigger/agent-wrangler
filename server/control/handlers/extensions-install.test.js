@@ -16,7 +16,7 @@ import { setExtensionInstallsOffForTest, INSTALLS_OFF_MESSAGE } from '../../exte
 import { extensionEnabledHandler } from './extension-enabled.js';
 import { extSettingSetHandler } from './ext-setting-set.js';
 import { routeControlMessage } from '../router.js';
-import { readConfig } from '../../config-store.js';
+import { readConfig, writeConfig } from '../../config-store.js';
 import { DATA_DIR } from '../../data-dir.js';
 import { HOST_API_VERSION } from '../../host-api/version.js';
 import { createExtensionUpdateCheck } from '../../extensions/update-check.js';
@@ -43,9 +43,9 @@ function reset() {
 // through the loader, so a bare `{id, external}` becomes the same quarantined
 // row discovery would have produced — which is all the uninstall and
 // check-updates paths read.
-function ctx(builtin = [], { onActivate } = {}) {
+function ctx(builtin = [], { onActivate, onRecord } = {}) {
   const loaded = loadExtensions({ cfg: {}, builtin });
-  const calls = { replies: [], broadcasts: [], rebuild: 0, activated: [], deactivated: [], changed: 0 };
+  const calls = { replies: [], broadcasts: [], rebuild: 0, activated: [], deactivated: [], changed: 0, forgot: [] };
   return {
     calls,
     loaded,
@@ -58,6 +58,8 @@ function ctx(builtin = [], { onActivate } = {}) {
       deactivate: (id) => { calls.deactivated.push(id); },
       quarantine: () => {},
       changed: () => { calls.changed += 1; },
+      recordToolPolicies: () => onRecord?.(),
+      forgetToolPolicy: (id) => calls.forgot.push(id),
     },
     reply: (o) => calls.replies.push(o),
     broadcast: (o) => calls.broadcasts.push(o),
@@ -278,7 +280,10 @@ test('ext-uninstall removes the directory and the record, keeps store data, and 
   await install(ctx());
   const installed = installedDir('notes', readProvenance().notes);
   const c = ctx([{ id: 'notes', external: true }, { id: 'shipped', external: false }]);
+  writeConfig({ toolPolicyRequirements: { notes: { since: 'x' }, shipped: { since: 'y' } } });
   await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'notes' }, c);
+  assert.deepEqual(Object.keys(readConfig().toolPolicyRequirements), ['shipped'], 'an uninstall clears only its own tool-policy requirement');
+  writeConfig({ toolPolicyRequirements: {} });
   assert.equal(fs.existsSync(path.join(externalDir(), 'notes')), false);
   assert.equal(readProvenance().notes, undefined);
   assert.equal(fs.existsSync(installed), false);
@@ -1036,4 +1041,23 @@ test('install and update warn about package.json zod without refusing installati
   const disclosure = await disclose(clean);
   assert.deepEqual(disclosure.warnings, []);
   await extConsentHandler.handler({ tempId: disclosure.tempId, approve: false }, clean);
+});
+
+test('a failed fresh install drops the tool-policy requirement it recorded, but keeps one recorded before it', async () => {
+  reset();
+  const boom = () => { throw new Error('store factory exploded'); };
+  const record = () => writeConfig({ toolPolicyRequirements: { ...(readConfig().toolPolicyRequirements || {}), boom: { since: 'now' } } });
+  let c = ctx([], { onActivate: boom, onRecord: record });
+  let disclosure = await disclose(c, { id: 'boom' });
+  await assert.rejects(() => extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, c), /store factory exploded/);
+  assert.deepEqual(readConfig().toolPolicyRequirements, {});
+  assert.deepEqual(c.calls.forgot, ['boom']);
+  writeConfig({ toolPolicyRequirements: { boom: { since: 'earlier' } } });
+  c = ctx([], { onActivate: boom, onRecord: record });
+  disclosure = await disclose(c, { id: 'boom' });
+  await assert.rejects(() => extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, c), /store factory exploded/);
+  assert.deepEqual(Object.keys(readConfig().toolPolicyRequirements), ['boom']);
+  assert.deepEqual(c.calls.forgot, []);
+  writeConfig({ toolPolicyRequirements: {} });
+  reset();
 });

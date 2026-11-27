@@ -599,6 +599,95 @@ call a client makes is logged with its name and the tool.
 | `sessions:spawn` | `host.sessions.spawn(options)` launches a session with the supplied dispatch fields. |
 | `sessions:env` (1.48.0) | `host.sessions.launchEnv({ agent?, sessionId?, ext? })` collects a headless environment for any card, including credentials from other extensions (their `secretEnv` too, 1.62.0, merged into `env`), rejecting a deliberate hook refusal. |
 
+### Required tool policies
+
+A manifest can declare **`toolPolicy`** (2.4.0), a function that names tools no agent Agent
+Wrangler launches may call. It is asked on every dispatch, spawn, resume, restore, mail or
+snooze wake and fork, before anything is created or stopped:
+
+```js
+toolPolicy: async ({ sid, parentId, task, agent, runtime, reason, host }) => ({
+  rules: [
+    { tool: 'mcp__example__post_message' },
+    { pattern: 'mcp__example__(schedule|delete)_.*', agents: ['claude', 'codex'], reason: 'Ask for approval instead.' },
+    { tool: 'mcp(example/post_message)', agents: ['agy'] },
+  ],
+}),
+```
+
+- `tool` is one exact name as the agent names it: `mcp__server__tool` for Claude and
+  Codex, `mcp(server/tool)` for agy. `pattern` is a regular expression over those
+  names, anchored at both ends, without lookaround or backreferences. `agents` limits
+  a rule to some agents (every agent when omitted), and `reason` is the one line the
+  agent is shown when a call is blocked.
+- Rules from every extension are combined. Claude gets `permissions.deny` for the
+  exact names and a blocking `PreToolUse` hook for every rule, with
+  `disableAllHooks: false`. Codex gets a synchronous, trusted `PreToolUse` hook for
+  every rule and `--enable hooks`, which also blocks calls made from code mode. agy
+  gets the exact names in `permissions.deny`, added to the user's own. agy can't match
+  a pattern, so a pattern that applies to agy refuses the launch.
+- **It fails closed.** The launch is refused if the function throws, takes longer than
+  five seconds or answers anything malformed. It is also refused if the agent, the
+  runtime or the installed agent CLI can't enforce the rules. The CLI floors are the
+  versions the enforcement was verified on: Claude 2.1.332, Codex 0.160.1 and agy
+  1.5.18. Only the local runtime carries policies, and a runtime that builds its own
+  launch never does. A refused resume leaves a running pane alone.
+- The requirement is recorded in `config.json` (`toolPolicyRequirements`) as soon as a
+  manifest declaring `toolPolicy` is switched on: at boot and on enable or install,
+  before activation. A first activation that fails therefore still refuses launches.
+  So does a manifest that fails validation, unless it is turned off. From then on,
+  launches are refused while the extension is quarantined, missing or failing to
+  load, or is an update that no longer declares `toolPolicy`. Only turning it off in
+  Settings or uninstalling it clears the requirement; a failed fresh install rolls
+  its own requirement back. A requirement that can't be written to `config.json` is
+  held in memory until restart.
+- Each session stores the fingerprint of the policy it launched with
+  (`toolPolicyFingerprint` on its entry and on `host.sessions` projections, null when
+  none). A session launched before a policy existed, or under an older one, is not
+  protected until it next resumes.
+- A mail wake that a policy refuses is retried like any failed wake, but logged and
+  shown as a notification only once per session and reason.
+- These are the agents' own tool controls. A process running as the same OS user can
+  still reach the user's credentials or start an agent itself.
+
+### One-tool background runs and long operations
+
+| Capability | Host surface |
+| --- | --- |
+| `agents:headless-tool` (2.4.0) | `host.agents.headlessTool({ tool, prompt, stdin?, effort?, timeoutMs?, maxTurns?, profile? })` runs the Background model with exactly one tool. |
+| `operations:run` (2.4.0) | `host.operations.run(label, fn)` admits work through the restart barrier; `host.operations.accepting()` says whether it would now. |
+
+- **`headlessTool`** can only name a tool the manifest declares in `headlessTools:
+  [{ tool, source? }]`, fixed before any of its code runs and listed on the extension's
+  graph row. `source` is the MCP server
+  source Claude reports, `claudeai` for a claude.ai connector. Every run checks the
+  tool belongs to exactly one connected server with that source.
+- It runs only when the **Background model** (Settings › Automation) is a Claude model,
+  and is otherwise refused with an error naming the setting. The run keeps the
+  account's connectors, so it loads the user setting source. A probe reads the tool
+  list with the API unreachable, so it spends nothing. The run then:
+  - disallows every other tool by name, replaces the system prompt with one short
+    instruction and turns off slash commands;
+  - adds a blocking `PreToolUse` hook on any other tool;
+  - is killed unless its own `init` lists exactly that tool, from one connected server
+    with the declared source;
+  - blocks even that tool, with a second hook, until core has checked `init`, so
+    admission fails closed.
+- Every other extension's tool policy still applies to the tool, and a policy that
+  can't be collected refuses the run. The caller's own rules don't apply to its own
+  run.
+- `profile.configDir` runs the probe and the run under an isolated `CLAUDE_CONFIG_DIR`,
+  so the user's own hooks and settings stay out. `profile.hooks` (`PreToolUse` and
+  `PostToolUse` groups, with `onFailure: 'block'` allowed) is added after the core pin.
+- It resolves a frozen `{ text, liveSessionId, agent, model, error, toolCalls: [{ input,
+  output, isError }], usage, costUsd }`. A run under the default profile can be billed
+  with `sessions:bill`. A run under `profile.configDir` writes its transcript where the
+  usage scan does not look, so record `usage` and `costUsd` yourself.
+- **`operations.run`** labels the work `ext:<id>:<label>` in the drain diagnostics.
+  It rejects with `code: 'restarting'` while a restart drains, and once the extension
+  is off. Persist your own state before an external call: a forced restart or a killed
+  process still ends the work.
+
 The remainder is the maintainer reference. Read it before changing `server/extensions/**`,
 `server/host-api/**`, `public/slots.js`, or `public/extensions*.js`.
 
