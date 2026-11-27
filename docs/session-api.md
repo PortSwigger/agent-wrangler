@@ -4,7 +4,7 @@ Launched sessions talk back to Agent Wrangler over four HTTP routes, together ca
 
 | Route | Who calls it | What it does |
 | --- | --- | --- |
-| `POST /mcp` | the agent's MCP client (Claude, Codex, agy) | the board's MCP tools, acting as the calling session |
+| `POST /mcp` | the agent's MCP client (Claude, Codex, agy), or an [outside client](#outside-mcp-clients) | the board's MCP tools, acting as the calling session (an outside client gets only its scopes' extension tools) |
 | `POST /pr-attach` | the PR-attach hook after `gh pr create` | attaches the new PR to the calling session's card |
 | `POST /pr-model` | the PR model footer | answers which model to tag the calling session's PR with |
 | `POST /status-event` | the status hooks, on a runtime with `statusEvents: true` | sets the calling session's card status (see [Status events](#status-events)) |
@@ -61,15 +61,19 @@ with its own check (below).
 Every request to the four routes is decided by one function before any handler runs:
 
 ```js
-resolve(req, { legacy }) -> { cardId } | { refuse, reason }
+resolve(req, { legacy }) -> { cardId } | { client } | { refuse, reason }
 ```
 
 - `req` is the Node `IncomingMessage` (headers only; the body has not been read).
 - `{ cardId }` means the request acts as that card, and only that card. The MCP tools get it as
   `caller`, and their per-tool rules (an archive or message to another session, a checklist write
   to the caller's own card) apply to it as before.
+- `{ client }` is an [outside MCP client](#outside-mcp-clients): `{ id, name, scopes }`. It is never
+  a card. Only `POST /mcp` on the session API's own port takes one; every other route acts as a
+  session and refuses it with `not-a-session`.
 - `{ refuse, reason }` is answered `403` with `{"error": refuse, "reason": reason}` and logged.
-  `refuse` is one of `missing-token`, `unknown-token`, `archived`, `claim-mismatch`.
+  `refuse` is one of `missing-token`, `unknown-token`, `archived`, `claim-mismatch`,
+  `not-loopback`, `not-a-session`.
 - `legacy` is true only on the old routes (see below).
 
 A request may also send `X-AW-Session: <card id>` as a claim. If it does, the claim must name the
@@ -83,6 +87,7 @@ bearer up in the token store and refuses:
 - a bearer that is no current token: `unknown-token`
 - a token whose card is archived: `archived`
 - a claim naming another card: `claim-mismatch`
+- an outside client's token: see [Outside MCP clients](#outside-mcp-clients)
 
 A token whose card the board has not recorded yet is accepted: an agent's MCP client can connect
 before its launch has finished recording the card, and only a launch can mint the token.
@@ -108,7 +113,48 @@ async function resolveFromTokenReview(req) {
 ```
 
 `resolve` may return a promise. Everything after the check is unchanged: handlers only ever see
-the resolved `cardId`.
+the resolved `cardId` (or `client`). A check that never answers `{ client }` simply has no outside
+clients.
+
+## Outside MCP clients
+
+A program on the deck's machine that is not a session, such as a bot built on an agent SDK, can
+call `POST /mcp` with a client token the human mints in **Settings › Automation › Outside MCP
+clients**. A client is offered only the tools that enabled extensions list under the scopes it was
+given. It never gets a core tool, so no session tools, mail, messages or archive, and it never acts
+as a card.
+
+**Minting.** The panel takes a name (unique among live clients, at most 40 characters), an expiry
+in days (30 by default, 1 to 365) and at least one scope. It shows the token, `awc_` followed by 32
+random bytes in base64url, once, with the URL to call. The server keeps only its SHA-256, in
+`outside-clients.json` in the data directory (mode 0600), beside the name, scopes, expiry and last
+use. Each row shows when the client was last used and the last tool it called, and **Revoke**
+deletes the record at once. Minting, listing and revoking are deck actions
+(`admin.outside-clients`, `admin.outside-client-mint`, `admin.outside-client-revoke`) and never MCP
+tools, so no client or session can mint, list or widen a token. A scope an extension marks
+`exclusive` can be held by only one live client at a time.
+
+**Calling.** The client sends `Authorization: Bearer awc_…` to the URL the panel shows
+(`http://127.0.0.1:<session API port>/mcp`) as an ordinary stateless streamable-HTTP MCP client.
+The laptop check accepts a client token only when:
+
+- the session API is bound to a loopback address (`AW_BIND_HOST` unset or `127.0.0.1`); bound
+  anywhere else, every client token is refused with `not-loopback` and the panel says so,
+- the request comes from a loopback peer (`127.0.0.0/8` or `::1`), else `not-loopback`,
+- it carries no `X-AW-Session` claim, else `claim-mismatch`,
+- and the token belongs to a client that is neither revoked nor expired, else `unknown-token` (an
+  expired one names the client in `reason`).
+
+A request with an `Origin` header is refused like any other, and the old routes on the deck's and
+board's ports never take a client token. There is no new port, listener or tunnel: a client
+hosted elsewhere (a model provider's servers calling MCP on your behalf) cannot reach it.
+
+**What a client sees.** `tools/list` holds only the extension tools its scopes name. Each
+extension's `hideTool` and the tool's handler get `caller: null` and `client: { id, name, scopes }`,
+where `scopes` are that extension's own scope ids, unprefixed (see
+[Scopes for outside MCP clients](extensions.md#scopes-for-outside-mcp-clients)). Every request
+updates the client's last use, and every tool call is logged as
+`[outside-clients] "<name>" (<id>) called <tool>: ok|error|threw in <n>ms`.
 
 ## Status events
 

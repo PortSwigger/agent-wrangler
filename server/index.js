@@ -56,6 +56,7 @@ import { createPrModelHandler } from './pr-model-handler.js';
 import { createMessageThrottle } from './mcp/message-throttle.js';
 import { bindHost, boardPort, deckPort, deckOnly, sessionApiPort } from './runtime.js';
 import { createSessionApi, carriesSessionCredential } from './session-api/index.js';
+import { createClientAdmin } from './session-api/client-admin.js';
 import { isAllowedOrigin, isAllowedHost } from './origin-check.js';
 import { createBoardServer } from './http-handler.js';
 import { createBoardDecks } from './board-decks.js';
@@ -759,6 +760,9 @@ const extBag = {
   // listing keeps its unfiltered identity in the common case. Re-derived on
   // every registry change, since a live install may add the first veto.
   hideTool: createToolFilter(ext, hostApiFor, logError),
+  // The scopes enabled manifests declare for outside MCP clients, read live
+  // (a registry change replaces the array).
+  clientScopes: () => ext.clientScopes,
   // Announces a deleted task to every enabled extension's `onTaskDelete`. Reads
   // the live hook list per call, so it never needs re-deriving on a registry change.
   fireTaskDelete: createTaskDeleteNotifier(ext, hostApiFor, logError),
@@ -1220,6 +1224,12 @@ const mcpRequestHandler = createMcpRequestHandler({
   // Core-owned reads over ALL extensions only (the list + the hideTool veto) —
   // see extBag. An extension's own tool is invoked with its façade instead.
   ext: extBag,
+  // An outside client's requests and calls: its last use, and a log line per
+  // call. Late-bound: the session API that owns the store is built below.
+  outsideClients: {
+    seen: (client) => outsideClients.seen(client),
+    called: (client, tool, outcome, ms) => outsideClients.called(client, tool, outcome, ms),
+  },
   // extId -> that extension's façade. mcp/server.js selects by the loader's
   // `extId` tag: a tagged tool gets { host, caller }, a core one { deps, caller }.
   hostApiFor,
@@ -1284,6 +1294,15 @@ const sessionApi = createSessionApi({
   },
   handlers: { '/mcp': mcpRequestHandler, '/pr-attach': restartBarrier.http(prAttachHandler, 'http:/pr-attach'), '/pr-model': prModelHandler, '/status-event': restartBarrier.http(statusEventHandler, 'http:/status-event') },
   log, logWarn, logError,
+});
+// Settings' Outside MCP clients panel and the MCP layer's reports of their use
+// (session-api/client-admin.js).
+const outsideClients = createClientAdmin({
+  clients: sessionApi.clients,
+  scopes: () => ext.clientScopes,
+  extLabel: (id) => ext.list.find((e) => e.id === id)?.label,
+  endpoint: () => sessionApi.endpoint(),
+  log,
 });
 // Every launch starts a fresh status lifecycle with its fresh token.
 sessionManager._issueSessionToken = (id) => { statusEvents.forget(id); return sessionApi.tokens.issue(id); };
@@ -1620,6 +1639,7 @@ controlWss.on('connection', (ws) => {
     send: (obj) => { sendGuarded(ws, JSON.stringify(obj)); },
     readMarkdownFile,
     openExtFile,
+    outsideClients,
     broadcast,
     terminalRegistry,
     createShellSession: (cwd, socket, command) => createShellSession(cwd, socket, sessionManager.tmuxBin, command),

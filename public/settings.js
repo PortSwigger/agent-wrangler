@@ -409,6 +409,7 @@ let changeBridge = () => {};
 let extensionsBridge = { mount: () => {} };
 let updatesBridge = { mount: () => {} };
 let decksBridge = { mount: () => {} };
+let outsideClientsBridge = { mount: () => {} };
 // { decks() } lists the board's decks for the picker as deck-settings.js
 // settingsDeckChoices does, own first; { startup(key) } is that deck's startup
 // choices. One deck means the single-deck layout.
@@ -591,10 +592,15 @@ function deckPanelInner(tab) {
   const rows = tab.settingIds.map((id) => rowHtml(byId.get(id), selectedDeck)).join('');
   let inner = `${note}<div class="settings-list">${rows}</div>`;
   if (tab.id === 'sessions') inner += startupChoicesHtml(selectedDeck);
+  else if (tab.id === 'automation') inner += OUTSIDE_CLIENTS_HOST;
   else if (tab.id === 'extensions') inner = `${note}<div class="ext-installed" id="settings-ext-installed"></div>`;
   else if (tab.id === 'updates') inner = `${note}<div id="settings-updates"></div><div class="settings-list">${rows}</div>`;
   return inner;
 }
+
+// Client names are typed by people and scope labels come from extensions, so
+// outside-clients-panel.js builds this section with textContent.
+const OUTSIDE_CLIENTS_HOST = '<div id="settings-outside-clients" class="outside-clients"></div>';
 
 function tabPanelHtml(tab, selected) {
   if (multiDeck && tab.deck) {
@@ -610,6 +616,8 @@ function tabPanelHtml(tab, selected) {
       appearanceItemHtml('Chat font size', 'Applies to the rich chat view only — the terminal keeps its own size above.', `<div class="fontsize-row" data-kind="chat">${appearanceBridge.chatFontSizeRowHtml()}</div>`),
       inner,
     ].join('');
+  } else if (tab.id === 'automation') {
+    inner += OUTSIDE_CLIENTS_HOST;
   } else if (tab.id === 'shortcuts') {
     inner += `<div class="shortcuts-list">${shortcutsHtml()}</div>`;
   } else if (tab.id === 'extensions') {
@@ -669,6 +677,7 @@ function renderDeckPanels(body) {
 function mountDeckHosts(body) {
   extensionsBridge.mount(body.querySelector('#settings-ext-installed'), selectedDeck);
   updatesBridge.mount(body.querySelector('#settings-updates'), selectedDeck);
+  outsideClientsBridge.mount(body.querySelector('#settings-outside-clients'), selectedDeck);
 }
 
 let lastDeckChoices = '';
@@ -814,7 +823,7 @@ function selectTab(body, tabId, focus = false) {
 // `server` is the { get(id), set(id, value) } bridge for scope:'server' entries;
 // `appearance` is the theme/font-size bridge described above; `onChange(id, value)`
 // fires after every write, either scope.
-export function initSettings({ server, appearance, onChange, extensions, updates, decks, deckScope: scope } = {}) {
+export function initSettings({ server, appearance, onChange, extensions, updates, decks, outsideClients, deckScope: scope } = {}) {
   if (scope) deckScope = scope;
   if (server) serverBridge = server;
   if (appearance) appearanceBridge = appearance;
@@ -822,6 +831,7 @@ export function initSettings({ server, appearance, onChange, extensions, updates
   if (extensions) extensionsBridge = extensions;
   if (updates) updatesBridge = updates;
   if (decks) decksBridge = decks;
+  if (outsideClients) outsideClientsBridge = outsideClients;
   const btn = document.getElementById('settings-btn');
   const modal = document.getElementById('settings-modal');
   const body = document.getElementById('settings-body');

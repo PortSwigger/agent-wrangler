@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { readJsonOrLoud, writeJsonAtomic } from '../atomic-json.js';
 import { createTokenStore } from './tokens.js';
-import { createLaptopCheck } from './check.js';
+import { createClientStore } from './clients.js';
+import { createLaptopCheck, isLoopbackAddress } from './check.js';
 import { createSessionApiServer, listenSessionApi, guarded, LEGACY_ROUTES } from './server.js';
 import { setSessionApiPort } from '../runtime.js';
 import { warnLegacy } from '../deck/legacy.js';
@@ -15,12 +16,18 @@ export { carriesSessionCredential } from './check.js';
 // the deck's port (and the board's forwarder to it) onto the same check, with
 // the legacy path for sessions launched before tokens, and log one deprecation
 // warning naming the session API's port. `resolve` is injectable so another
-// deployment can plug in its own check (docs/session-api.md).
+// deployment can plug in its own check (docs/session-api.md). `clients` is the
+// outside-client store (clients.js) the human mints tokens into from Settings;
+// the laptop check accepts those tokens only while the listener is bound to
+// loopback, which it reads off the bound socket.
 export function createSessionApi({ dataDir, cardState, handlers, resolve, log = () => {}, logWarn = () => {}, logError = () => {} }) {
   const tokens = createTokenStore({ file: path.join(dataDir, 'session-tokens.json'), onError: logError });
-  const check = resolve || createLaptopCheck({ tokens, cardState, logWarn });
+  const clients = createClientStore({ file: path.join(dataDir, 'outside-clients.json'), onError: logError });
+  let server = null;
+  const boundAddress = () => (server?.listening ? server.address()?.address ?? null : null);
+  const check = resolve || createLaptopCheck({ tokens, clients, boundAddress, cardState, logWarn });
   const onRefuse = (req, who) => logWarn(`[session-api] refused ${req.method} ${req.url.split('?')[0]}: ${who?.reason || who?.refuse || 'refused'}`);
-  const server = createSessionApiServer({ resolve: check, handlers, onRefuse });
+  server = createSessionApiServer({ resolve: check, handlers, onRefuse });
   let bound = { host: '127.0.0.1', port: null };
 
   const legacyHandlers = Object.fromEntries(Object.entries(handlers).filter(([route]) => LEGACY_ROUTES.includes(route)).map(([route, h]) => {
@@ -34,6 +41,15 @@ export function createSessionApi({ dataDir, cardState, handlers, resolve, log = 
 
   return {
     tokens,
+    clients,
+    // Where an outside client calls, and whether a client token is accepted
+    // there at all (the listener is bound to loopback).
+    endpoint: () => {
+      const addr = boundAddress();
+      const loopback = isLoopbackAddress(addr);
+      const urlHost = addr === '::1' ? '[::1]' : loopback ? addr.replace(/^::ffff:/i, '') : '127.0.0.1';
+      return { url: bound.port ? `http://${urlHost}:${bound.port}/mcp` : null, host: bound.host, loopback };
+    },
     resolve: check,
     legacyHandlers,
     server,

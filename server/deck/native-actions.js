@@ -13,8 +13,13 @@ const REASON_CODE = {
   'changed': 'conflict',
 };
 
-// Actions with no control handler behind them: the board's file reads, and
-// deck.deprecation, through which the board reports an extension's use of one
+function clientAdmin(ctx) {
+  if (!ctx?.outsideClients) throw new DeckError('unsupported', 'This deck has no outside MCP clients');
+  return ctx.outsideClients;
+}
+
+// Actions with no control handler behind them: the board's file reads, the
+// Outside MCP clients panel's, and deck.deprecation, through which the board reports an extension's use of one
 // of its own adapters (public/legacy-surface.js). The file reads
 // take their file reader from ctx, which server/index.js fills. An error keeps
 // the reader's own `status` or `reason` for the GET /file and GET /ext-file
@@ -38,6 +43,36 @@ export const NATIVE_ACTIONS = [
         throw Object.assign(new DeckError(REASON_CODE[reason] || 'failed', reason), { reason });
       }
       return r;
+    },
+  },
+  // Settings' Outside MCP clients panel (session-api/client-admin.js). Board
+  // actions only: no MCP tool mints, lists or revokes a client token.
+  {
+    action: 'admin.outside-clients',
+    async run(_args, ctx) {
+      return clientAdmin(ctx).state();
+    },
+  },
+  {
+    action: 'admin.outside-client-mint',
+    async run({ name, scopes, days } = {}, ctx) {
+      const admin = clientAdmin(ctx);
+      try {
+        return admin.mint({ name, scopes, days });
+      } catch (err) {
+        throw new DeckError('invalid', String(err?.message || err));
+      }
+    },
+  },
+  {
+    action: 'admin.outside-client-revoke',
+    async run({ id } = {}, ctx) {
+      const admin = clientAdmin(ctx);
+      try {
+        return admin.revoke(id);
+      } catch (err) {
+        throw new DeckError('not-found', String(err?.message || err));
+      }
     },
   },
   {

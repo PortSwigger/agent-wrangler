@@ -1,14 +1,20 @@
+import { isClientToken } from './clients.js';
+
 // The session API's caller check. Every request to /mcp, /pr-attach,
 // /pr-model and /status-event goes through a `resolve(req, { legacy })` function that answers
-// either `{ cardId }` (the one card this request acts as) or
+// `{ cardId }` (the one card this request acts as), `{ client }` (an outside
+// MCP client the human minted a token for, which is never a card), or
 // `{ refuse, reason }` (refuse is a short code, reason a sentence for the log
 // and the response body). Nothing else decides who the caller is: handlers get
-// the resolved card id and never read identity headers themselves.
+// the resolved card id or client and never read identity headers themselves.
 //
 // Credentials a launched session presents:
 //   Authorization: Bearer <token>   the session's token (AW_SESSION_TOKEN)
 //   X-AW-Session: <card id>         optional claim; when sent it must name the
 //                                   token's own card
+// An outside client presents only `Authorization: Bearer awc_…` (clients.js),
+// accepted only while the session API is bound to loopback and only from a
+// loopback peer, never on the legacy routes and never with a card claim.
 //
 // `createLaptopCheck` is the single-machine implementation: the token is looked
 // up in the token store (tokens.js). Another deployment swaps in its own
@@ -25,7 +31,16 @@ export const REFUSALS = {
   unknown: 'unknown-token',
   archived: 'archived',
   mismatch: 'claim-mismatch',
+  notLoopback: 'not-loopback',
+  notSession: 'not-a-session',
 };
+
+// 127.0.0.0/8 and ::1, plain or IPv4-mapped.
+export function isLoopbackAddress(address) {
+  if (typeof address !== 'string' || !address) return false;
+  const a = address.toLowerCase().replace(/^::ffff:/, '');
+  return a === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(a);
+}
 
 export function credentialsOf(req) {
   const headers = req?.headers || {};
@@ -55,8 +70,22 @@ const refuse = (code, reason) => ({ refuse: code, reason });
 // recorded the card, so a token is refused only for an archived card. The
 // legacy path takes only a running card: a stopped one has no process that
 // could need it, and gets a token when it next launches.
-export function createLaptopCheck({ tokens, cardState, logWarn = () => {} }) {
+//
+// `clients` is the outside-client store (clients.js) and `boundAddress()` the
+// address the session API's listener is bound to; with either missing every
+// client token is refused.
+export function createLaptopCheck({ tokens, cardState, clients = null, boundAddress = () => null, logWarn = () => {} }) {
   const legacySeen = new Set();
+
+  function outsideClient(req, bearer, claim, legacy) {
+    if (!clients || legacy) return refuse(REFUSALS.unknown, 'an outside client token is accepted only on the session API\'s own port');
+    if (!isLoopbackAddress(boundAddress())) return refuse(REFUSALS.notLoopback, 'the session API is bound beyond loopback, so outside client tokens are refused');
+    if (!isLoopbackAddress(req?.socket?.remoteAddress)) return refuse(REFUSALS.notLoopback, 'an outside client token is accepted only from this machine');
+    if (claim) return refuse(REFUSALS.mismatch, 'an outside client cannot claim a card');
+    const found = clients.resolve(bearer);
+    if (!found.client) return refuse(REFUSALS.unknown, found.reason === 'expired' ? `the outside client "${found.name}" has expired` : 'unknown client token');
+    return { client: found.client };
+  }
 
   function legacyCaller(id) {
     if (tokens.hasToken(id)) return refuse(REFUSALS.unknown, 'this card has a session token; its card id is no longer accepted');
@@ -72,6 +101,7 @@ export function createLaptopCheck({ tokens, cardState, logWarn = () => {} }) {
 
   return function resolve(req, { legacy = false } = {}) {
     const { bearer, claim } = credentialsOf(req);
+    if (isClientToken(bearer)) return outsideClient(req, bearer, claim, legacy);
     if (bearer) {
       const cardId = tokens.cardFor(bearer);
       if (cardId) {

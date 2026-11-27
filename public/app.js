@@ -88,6 +88,7 @@ import { CODEX_POLICY_FALLBACK, syncCodexPolicyControls, fillCodexPolicyControls
 import { initSettings, flashSettingsSaved, getSetting, migrateLegacySettings, LEGACY_SERVER_SETTING_IDS, setExtensionDefs, setRuntimeOptions, setBackgroundModelOptions, EXT_SETTING_PREFIX, openSettings, refreshThemeRows, refreshDeckSettings, OWN_DECK } from './settings.js';
 import { CODEX_DEFAULT_SETTINGS, deckSettingValue, deckSettingFrame, settingsDeckChoices, startupChoices } from './deck-settings.js';
 import { createDeckSettingsPanels } from './deck-settings-panels.js';
+import { mountOutsideClientsPanel } from './outside-clients-panel.js';
 import { sidebarWidthFromDrag, gridWidthFromSidebarDrag } from './sidebar-side.js';
 import { initChatView } from './chat-view.js';
 import { createTerminalImagePaste } from './terminal-image-paste.js';
@@ -7919,6 +7920,19 @@ initSettings({
     },
   },
   decks: { mount: (el) => mountDecksPanel(el, decksPanelBridge) },
+  // Settings › Automation's Outside MCP clients, read from and minted on the
+  // deck chosen in the picker (the board's own when there is one deck).
+  outsideClients: {
+    mount: (host, key) => {
+      if (!host) return;
+      const remote = remoteSettingsDeck(key);
+      mountOutsideClientsPanel(host, {
+        act: (action, args) => (remote ? deckActOn(remote.deckId, action, { args }) : deck.act(action, { args })),
+        copy: (text) => navigator.clipboard?.writeText(text),
+        toast,
+      });
+    },
+  },
   deckScope: {
     decks: () => settingsDeckChoices(boardDecks()),
     startup: (key) => startupChoices(boardDecks().find((d) => d.id === key)?.descriptor),
