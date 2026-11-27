@@ -141,6 +141,8 @@ export async function attachPtyChannel(ws, req, { sessionManager, tmuxFor, socke
           if (m.cols > 0 && m.rows > 0) {
             term.resize(m.cols, m.rows);
             scheduleRefresh(50);
+            // An agent's Terminal, not a shell's: the size its next pane starts at.
+            if (!shellTermEntry) sessionManager.paneSize?.note(m.cols, m.rows);
           }
           return;
         }

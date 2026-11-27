@@ -86,14 +86,16 @@ while read -r _; do printf '\033]8;;https://example.com/osc8\033\\example link\0
       await run(socket, '-f', '/dev/null', 'new-session', '-d', '-s', 'main', '-x', '80', '-y', '24', printer);
       return socket;
     },
-    attach(socket) {
+    // `shell` attaches as a plain-shell terminal on the same pane instead of an agent's.
+    attach(socket, { paneSize, shell = false } = {}) {
       const ws = new FakeWs();
       clients.push(ws);
-      const done = attachPtyChannel(ws, { url: '/pty?sessionId=card&cols=80&rows=24' }, {
-        sessionManager: { tmuxBin: bin, entryFor: () => null },
+      const done = attachPtyChannel(ws, { url: `/pty?${shell ? 'terminalId=t1' : 'sessionId=card'}&cols=80&rows=24` }, {
+        sessionManager: { tmuxBin: bin, entryFor: () => null, paneSize },
         tmuxFor: () => 'main',
         socketFor: () => socket,
         sessionFromGraph: () => ({ cwd: dir }),
+        terminalRegistry: { get: () => ({ tmuxName: 'main', socket, cwd: dir, detachable: true }), remove() {} },
       });
       return { ws, done };
     },
@@ -213,4 +215,18 @@ test('what the client sends while tmux is answering reaches the pane once attach
   await until(() => OSC8_LINK.test(ws.output), 'the link the early Enter prints to reach the client');
   await until(async () => (await tmux.run(socket, 'list-clients', '-F', '#{client_width}x#{client_height}')).trim() === '100x30',
     'the early resize to reach the client');
+});
+
+test('an agent terminal\'s size is remembered for the next pane, a shell terminal\'s is not', async (t) => {
+  const tmux = await setup(t);
+  const socket = await tmux.startServer();
+  const noted = [];
+  const paneSize = { note: (cols, rows) => noted.push(`${cols}x${rows}`) };
+  const agent = tmux.attach(socket, { paneSize });
+  await agent.done;
+  agent.ws.emit('message', Buffer.from(JSON.stringify({ type: 'resize', cols: 132, rows: 56 })));
+  const shell = tmux.attach(socket, { paneSize, shell: true });
+  await shell.done;
+  shell.ws.emit('message', Buffer.from(JSON.stringify({ type: 'resize', cols: 90, rows: 20 })));
+  assert.deepEqual(noted, ['132x56']);
 });

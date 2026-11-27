@@ -3777,6 +3777,48 @@ test('dispatch, resume and fork store the launched pane id on the entry', async 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// A pane created before anyone opens its Terminal starts at the size the board's
+// terminal last reported, so a long first reply is not wrapped at 80 columns and
+// then redrawn under itself. A session on another runtime keeps tmux's own size.
+test('dispatch, resume and fork start a local pane at the board terminal\'s last size', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-pane-size-'));
+  const sm = smForDispatch();
+  const sizes = [];
+  sm._newSession = async (_t, _d, _i, _s, size) => { sizes.push(size); };
+  sm.paneSize.note(181, 52);
+  await sm.dispatch({ cwd: dir, intent: 'x' });
+
+  sm.killForSession = async () => [];
+  sm._tmux = async () => ({});
+  // A local Claude resume needs its transcript on disk; stand one in.
+  const { history } = adapterFor('claude');
+  const { findFile, launchCwd } = history;
+  history.findFile = async () => path.join(dir, 'transcript.jsonl');
+  history.launchCwd = async () => dir;
+  try {
+    sm.map.set('c1', { agent: 'claude', liveSessionId: '00000000-0000-4000-8000-000000000000', cwd: dir });
+    await sm._doResume('c1', dir, {});
+  } finally {
+    Object.assign(history, { findFile, launchCwd });
+  }
+  await sm.fork({ sourceId: 'L0', parentId: 'PARENT', parentEntry: { agent: 'claude' }, cwd: dir });
+  sm.map.set('c2', { agent: 'claude', runtime: 'devcontainer', liveSessionId: '00000000-0000-4000-8000-000000000001', cwd: dir });
+  await sm._doResume('c2', dir, {});
+  assert.deepEqual(sizes, [{ cols: 181, rows: 52 }, { cols: 181, rows: 52 }, { cols: 181, rows: 52 }, null]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('_newSession passes a size to tmux as -x/-y, and none without one', async () => {
+  const sm = new SessionManager();
+  const calls = [];
+  sm._tmux = async (_socket, a) => { calls.push(a); return { stdout: '' }; };
+  await sm._newSession('cc_a', '/tmp', 'true', '', { cols: 181, rows: 52 });
+  await sm._newSession('cc_b', '/tmp', 'true', '');
+  const [sized, unsized] = calls.filter((a) => a[0] === 'new-session');
+  assert.deepEqual(sized.slice(9, 13), ['-x', '181', '-y', '52']);
+  assert.ok(!unsized.includes('-x') && !unsized.includes('-y'));
+});
+
 test('paneTargetFor prefers the pane id and falls back to the tmux name', () => {
   const sm = new SessionManager();
   sm.map.clear();
